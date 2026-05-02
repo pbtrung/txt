@@ -202,8 +202,11 @@ def ingest_file(conn, path: Path, master_key: bytes) -> None:
 @click.option("--src",            type=click.Path(exists=True, file_okay=False), default=None)
 @click.option("--master-key",     "master_key_path", type=click.Path(), default="creds.json", show_default=True)
 @click.option("--gen-master-key", "gen_key_path",    type=click.Path(), default=None)
+@click.option("--read-part",      "read_part_id",    type=int,          default=None)
+@click.option("--out",            "out_path",        type=click.Path(), default=None)
 @click.option("--verbose", "-v",  is_flag=True, default=False, help="Enable debug logging.")
-def main(src: str, master_key_path: str, gen_key_path: str, verbose: bool) -> None:
+def main(src: str, master_key_path: str, gen_key_path: str,
+         read_part_id: int, out_path: str, verbose: bool) -> None:
     """Split, compress, encrypt, and store .txt files in Turso libSQL."""
     logging.basicConfig(
         level=logging.DEBUG if verbose else logging.INFO,
@@ -213,6 +216,19 @@ def main(src: str, master_key_path: str, gen_key_path: str, verbose: bool) -> No
 
     if gen_key_path:
         gen_master_key(gen_key_path)
+        return
+
+    if read_part_id is not None:
+        if not out_path:
+            raise click.UsageError("--out is required with --read-part")
+        master_key = load_master_key(master_key_path)
+        conn = open_db(master_key_path)
+        row = conn.execute("SELECT content FROM txt_parts WHERE id = ?", [read_part_id]).fetchone()
+        if row is None:
+            raise click.ClickException(f"no part with id {read_part_id}")
+        plaintext = decrypt_part(bytes(row[0]), master_key)
+        Path(out_path).write_bytes(plaintext)
+        log.info("part %d written to %s (%d bytes)", read_part_id, out_path, len(plaintext))
         return
 
     if not src:
