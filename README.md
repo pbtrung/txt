@@ -20,17 +20,22 @@ pip install pynacl cryptography brotli libsql-experimental click
 
 1. **Create a Turso database** and note the database URL and auth token from the Turso dashboard.
 
-2. **Export credentials** in your shell:
+2. **Create `creds.json`** with your Turso credentials (keep this file secret):
 
-   ```bash
-   export TURSO_DATABASE_URL="libsql://your-db.turso.io"
-   export TURSO_AUTH_TOKEN="your-token-here"
+   ```json
+   {
+     "turso_database_url": "libsql://your-db.turso.io",
+     "turso_auth_token": "your-token-here",
+     "master_key": ""
+   }
    ```
 
-3. **Generate a master key** (keep this file secret — losing it means losing access to all stored data):
+   Alternatively, set `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` as environment variables (they take precedence over the file).
+
+3. **Generate a master key** and write it into `creds.json`:
 
    ```bash
-   python3 txt_vault.py --gen-master-key master_key.json
+   python3 txt_vault.py --gen-master-key creds.json
    ```
 
 ---
@@ -40,7 +45,7 @@ pip install pynacl cryptography brotli libsql-experimental click
 ### Ingest a folder of `.txt` files
 
 ```bash
-python3 txt_vault.py --src ./documents --master-key master_key.json
+python3 txt_vault.py --src ./documents --master-key creds.json
 ```
 
 All `*.txt` files under `./documents` are split, compressed, encrypted, and stored in the Turso database.
@@ -48,10 +53,10 @@ All `*.txt` files under `./documents` are split, compressed, encrypted, and stor
 ### Generate a new master key
 
 ```bash
-python3 txt_vault.py --gen-master-key master_key.json
+python3 txt_vault.py --gen-master-key creds.json
 ```
 
-Writes a fresh 32-byte random key to `master_key.json`. Exits immediately — does not touch the database.
+Adds or updates only the `master_key` field in `creds.json`. If the field already exists, you are asked to confirm before overwriting. Other fields (`turso_database_url`, `turso_auth_token`) are never modified. Exits immediately — does not touch the database.
 
 ---
 
@@ -60,13 +65,13 @@ Writes a fresh 32-byte random key to `master_key.json`. Exits immediately — do
 | Flag | Description |
 |------|-------------|
 | `--src <path>` | Folder containing `.txt` files to ingest |
-| `--master-key <path>` | Master key file (default: `master_key.json`) |
-| `--gen-master-key <path>` | Generate a new master key file and exit |
+| `--master-key <path>` | Credentials file (default: `creds.json`) |
+| `--gen-master-key <path>` | Add/update `master_key` in the credentials file and exit |
 
 ---
 
 ## Security notes
 
-- The master key is the single root secret. Store `master_key.json` outside version control.
+- The master key is the single root secret. Store `creds.json` outside version control (add it to `.gitignore`).
 - Each part uses a unique per-part key and nonce derived via HKDF-SHA3-256 over a fresh random salt; see [design.md § Encryption Design](design.md#encryption-design).
 - Brotli compression is applied *before* encryption to avoid compression-oracle attacks.

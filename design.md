@@ -7,8 +7,8 @@ A single-file CLI tool that ingests `.txt` files, splits them into compressed an
 ## CLI Interface
 
 ```
-python3 txt_vault.py --src <folder_path> --master-key master_key.json
-python3 txt_vault.py --gen-master-key master_key.json
+python3 txt_vault.py --src <folder_path> --master-key creds.json
+python3 txt_vault.py --gen-master-key creds.json
 ```
 
 ### Flags
@@ -16,19 +16,20 @@ python3 txt_vault.py --gen-master-key master_key.json
 | Flag | Description |
 |------|-------------|
 | `--src <folder_path>` | Directory to scan for `*.txt` files |
-| `--master-key master_key.json` | Path to JSON file containing the master key (default: `master_key.json`) |
-| `--gen-master-key master_key.json` | Generate a new master key and write it to the given JSON file, then exit |
+| `--master-key creds.json` | Path to credentials JSON file (default: `creds.json`) |
+| `--gen-master-key creds.json` | Add/update `master_key` in the credentials file, then exit |
 
-### Master Key JSON Format
+### Credentials JSON Format
 
 ```json
 {
-  "version": 1,
-  "key": "<base64-encoded 32-byte random key>"
+  "turso_database_url": "libsql://your-db.turso.io",
+  "turso_auth_token": "your-token-here",
+  "master_key": "<base64-encoded 32-byte random key>"
 }
 ```
 
-`--gen-master-key` generates 32 cryptographically random bytes, base64-encodes them, and writes the JSON above. The file must be kept secret — it is the root of all encryption.
+`--gen-master-key` generates 32 cryptographically random bytes, base64-encodes them, and writes only the `master_key` field. If `master_key` already exists in the file, the user is prompted to confirm before overwriting. All other fields are left untouched. The file must be kept secret — `master_key` is the root of all encryption.
 
 ---
 
@@ -71,12 +72,7 @@ CREATE TABLE IF NOT EXISTS txt_parts (
 CREATE INDEX IF NOT EXISTS idx_txt_parts_txt_id ON txt_parts(txt_id);
 ```
 
-Connection is made over HTTPS to a Turso database URL. The URL and auth token are read from environment variables:
-
-```
-TURSO_DATABASE_URL=libsql://your-db.turso.io
-TURSO_AUTH_TOKEN=...
-```
+Connection is made over HTTPS to a Turso database URL. The URL and auth token are read first from environment variables (`TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`); if not set, they fall back to the `turso_database_url` and `turso_auth_token` fields in `creds.json`.
 
 ---
 
@@ -164,4 +160,4 @@ plaintext      = brotli.decompress(compressed)
 
 - If `--src` contains a file that cannot be read (permissions, encoding), log a warning and skip it; do not abort the run.
 - If a database write fails, the entire transaction for that file is rolled back. Partial ingestion of a single file is not allowed.
-- If `--gen-master-key` target path already exists, abort with a non-zero exit code rather than silently overwriting.
+- If `--gen-master-key` target file already contains a `master_key` field, prompt the user to confirm before overwriting it; abort on refusal. Other fields are never modified.

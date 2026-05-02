@@ -28,17 +28,22 @@ PARA_SPLIT   = re.compile(r"\r?\n\r?\n")
 def load_master_key(path: str) -> bytes:
     with open(path) as f:
         data = json.load(f)
-    return base64.b64decode(data["key"])
+    return base64.b64decode(data["master_key"])
 
 
 def gen_master_key(path: str) -> None:
-    if Path(path).exists():
-        raise click.ClickException(f"{path} already exists; remove it first")
-    raw = os.urandom(32)
-    payload = {"version": 1, "key": base64.b64encode(raw).decode()}
+    p = Path(path)
+    data: dict = {}
+    if p.exists():
+        with open(path) as f:
+            data = json.load(f)
+        if "master_key" in data:
+            if not click.confirm(f"master_key already exists in {path}. Overwrite?"):
+                raise click.Abort()
+    data["master_key"] = base64.b64encode(os.urandom(32)).decode()
     with open(path, "w") as f:
-        json.dump(payload, f, indent=2)
-    click.echo(f"Master key written to {path}")
+        json.dump(data, f, indent=2)
+    click.echo(f"master_key written to {path}")
 
 
 def _derive(master_key: bytes, salt: bytes) -> tuple[bytes, bytes]:
@@ -93,11 +98,18 @@ def split_paragraphs(text: str) -> list[bytes]:
 
 # ── database ─────────────────────────────────────────────────────────────────
 
-def open_db() -> libsql.Connection:
+def open_db(creds_path: str | None = None) -> libsql.Connection:
     url   = os.environ.get("TURSO_DATABASE_URL")
     token = os.environ.get("TURSO_AUTH_TOKEN", "")
+    if not url and creds_path and Path(creds_path).exists():
+        with open(creds_path) as f:
+            data = json.load(f)
+        url   = data.get("turso_database_url") or url
+        token = data.get("turso_auth_token", token)
     if not url:
-        raise click.ClickException("TURSO_DATABASE_URL environment variable not set")
+        raise click.ClickException(
+            "TURSO_DATABASE_URL not set and not found in creds file"
+        )
     return libsql.connect(database=url, auth_token=token)
 
 
@@ -146,7 +158,7 @@ def ingest_file(conn: libsql.Connection, path: Path, master_key: bytes) -> None:
 
 @click.command()
 @click.option("--src",            type=click.Path(exists=True, file_okay=False), default=None)
-@click.option("--master-key",     "master_key_path", type=click.Path(), default="master_key.json", show_default=True)
+@click.option("--master-key",     "master_key_path", type=click.Path(), default="creds.json", show_default=True)
 @click.option("--gen-master-key", "gen_key_path",    type=click.Path(), default=None)
 def main(src: str, master_key_path: str, gen_key_path: str) -> None:
     """Split, compress, encrypt, and store .txt files in Turso libSQL."""
@@ -158,7 +170,7 @@ def main(src: str, master_key_path: str, gen_key_path: str) -> None:
         raise click.UsageError("--src is required")
 
     master_key = load_master_key(master_key_path)
-    conn       = open_db()
+    conn       = open_db(master_key_path)
     ensure_schema(conn)
 
     txt_files = sorted(Path(src).glob("*.txt"))
