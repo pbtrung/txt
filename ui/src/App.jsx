@@ -92,7 +92,9 @@ function DataScreen({ masterKey, onDisconnect }) {
     setContent(null);
     wrap(async () => {
       const rows = await fetchParts(txt.id);
-      setParts(rows.map((r, i) => ({ id: r.id, label: String(i + 1).padStart(3, '0') })));
+      const mapped = rows.map((r, i) => ({ id: r.id, label: String(i + 1).padStart(3, '0') }));
+      setParts(mapped);
+      if (mapped.length > 0) await selectPart(mapped[0]);
     });
   }
 
@@ -144,37 +146,50 @@ function DataScreen({ masterKey, onDisconnect }) {
           </div>
         </div>
 
-        {/* Column 2 — parts */}
-        <div className="col-12 col-md-2">
-          <div className="card h-100">
-            <div className="card-header py-2 fw-semibold small">Parts</div>
-            <div className="list-group list-group-flush overflow-auto" style={{ maxHeight: '78vh' }}>
-              {!selectedTxt && (
-                <div className="list-group-item text-muted small">Select a file.</div>
-              )}
-              {selectedTxt && parts.length === 0 && !loading && (
-                <div className="list-group-item text-muted small">No parts.</div>
-              )}
-              {parts.map(part => (
-                <button
-                  key={part.id}
-                  className={`list-group-item list-group-item-action small${selectedPart?.id === part.id ? ' active' : ''}`}
-                  onClick={() => selectPart(part)}
-                >
-                  {part.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Column 3 — content */}
-        <div className="col-12 col-md-7">
+        {/* Column 2 — content */}
+        <div className="col-12 col-md-9">
           <div className="card h-100">
             <div className="card-header py-2 d-flex align-items-center justify-content-between gap-2">
-              <span className="fw-semibold small text-truncate">
-                {selectedPart ? `${selectedTxt.name} — part ${selectedPart.label}` : 'Content'}
-              </span>
+              <div className="d-flex align-items-center gap-2" style={{ flex: '1 1 0', minWidth: 0 }}>
+                <span className="fw-semibold small text-truncate">
+                  {selectedTxt ? selectedTxt.name : 'Content'}
+                </span>
+                {(() => {
+                  const partIdx = parts.findIndex(p => p.id === selectedPart?.id);
+                  return (
+                    <div className="d-flex align-items-center gap-1 flex-shrink-0">
+                      <button
+                        className="btn btn-sm btn-outline-secondary py-0 px-2"
+                        disabled={partIdx <= 0}
+                        onClick={() => selectPart(parts[partIdx - 1])}
+                        title="Previous part"
+                      >‹</button>
+                      <select
+                        className="form-select form-select-sm py-0"
+                        style={{ width: 'auto', minWidth: 90 }}
+                        value={selectedPart?.id ?? ''}
+                        disabled={!selectedTxt || parts.length === 0}
+                        onChange={e => {
+                          const part = parts.find(p => p.id === Number(e.target.value));
+                          if (part) selectPart(part);
+                        }}
+                      >
+                        {!selectedTxt && <option value="">— no file —</option>}
+                        {selectedTxt && parts.length === 0 && <option value="">— no parts —</option>}
+                        {parts.map(part => (
+                          <option key={part.id} value={part.id}>{part.label}</option>
+                        ))}
+                      </select>
+                      <button
+                        className="btn btn-sm btn-outline-secondary py-0 px-2"
+                        disabled={partIdx < 0 || partIdx >= parts.length - 1}
+                        onClick={() => selectPart(parts[partIdx + 1])}
+                        title="Next part"
+                      >›</button>
+                    </div>
+                  );
+                })()}
+              </div>
               <div className="d-flex align-items-center gap-1 flex-shrink-0">
                 <button
                   className="btn btn-sm btn-outline-secondary py-0 px-1 lh-1"
