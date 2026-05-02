@@ -59,8 +59,8 @@ Parts are split on blank-line boundaries (`\n\n` or `\r\n\r\n`). The splitter ac
 ```sql
 CREATE TABLE IF NOT EXISTS txt (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
-    name      BLOB NOT NULL,         -- 32-byte salt || XChaCha20-Poly1305(filename)
-    name_hmac BLOB NOT NULL UNIQUE   -- HMAC-SHA3-256(filename) under a key derived from master_key via HKDF
+    name      BLOB NOT NULL,         -- 32-byte salt || XChaCha20-Poly1305(filename); key/nonce/hmac_key from HKDF(salt)
+    name_hmac BLOB NOT NULL          -- HMAC-SHA3-256(filename) under hmac_key from same HKDF call
 );
 
 CREATE TABLE IF NOT EXISTS txt_parts (
