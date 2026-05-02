@@ -2,6 +2,7 @@
 """txt_vault.py – split, compress, encrypt, and store .txt files in Turso libSQL."""
 
 import base64
+import hmac as _hmac
 import json
 import logging
 import os
@@ -75,6 +76,16 @@ def name_hmac(name: str, master_key: bytes, salt: bytes) -> bytes:
     h = CHMAC(hmac_key, hashes.SHA3_256())
     h.update(name.encode())
     return h.finalize()
+
+
+def find_txt_id(conn, name: str, master_key: bytes) -> int | None:
+    rows = conn.execute("SELECT id, name, name_hmac FROM txt").fetchall()
+    for row_id, enc_name, stored_hmac in rows:
+        salt = bytes(enc_name)[:32]
+        candidate = name_hmac(name, master_key, salt)
+        if _hmac.compare_digest(candidate, bytes(stored_hmac)):
+            return row_id
+    return None
 
 
 def encrypt_name(name: str, master_key: bytes) -> tuple[bytes, bytes]:
@@ -176,11 +187,12 @@ def ingest_file(conn, path: Path, master_key: bytes) -> None:
     text  = path.read_text(encoding="utf-8", errors="replace")
     parts = split_paragraphs(text)
 
-    enc_name, salt = encrypt_name(path.name, master_key)
-    hmac_val       = name_hmac(path.name, master_key, salt)
-    conn.execute("INSERT OR IGNORE INTO txt (name, name_hmac) VALUES (?, ?)", [enc_name, hmac_val])
-    row    = conn.execute("SELECT id FROM txt WHERE name_hmac = ?", [hmac_val]).fetchone()
-    txt_id = row[0]
+    txt_id = find_txt_id(conn, path.name, master_key)
+    if txt_id is None:
+        enc_name, salt = encrypt_name(path.name, master_key)
+        hmac_val = name_hmac(path.name, master_key, salt)
+        conn.execute("INSERT INTO txt (name, name_hmac) VALUES (?, ?)", [enc_name, hmac_val])
+        txt_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
 
     log.debug("%s: splitting into %d part(s)", path.name, len(parts))
     conn.execute("DELETE FROM txt_parts WHERE txt_id = ?", [txt_id])
