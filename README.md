@@ -48,7 +48,7 @@ pip install pynacl cryptography brotli libsql-experimental click
 python3 txt_vault.py --src ./documents --master-key creds.json
 ```
 
-All `*.txt` files under `./documents` are split, compressed, encrypted, and stored in the Turso database.
+All `.txt` files (case-insensitive: `.txt`, `.TXT`, etc.) under `./documents` are split, compressed, encrypted, and stored in the Turso database.
 
 ### Generate a new master key
 
@@ -64,9 +64,10 @@ Adds or updates only the `master_key` field in `creds.json`. If the field alread
 
 | Flag | Description |
 |------|-------------|
-| `--src <path>` | Folder containing `.txt` files to ingest |
+| `--src <path>` | Folder containing `.txt` files to ingest (case-insensitive match) |
 | `--master-key <path>` | Credentials file (default: `creds.json`) |
 | `--gen-master-key <path>` | Add/update `master_key` in the credentials file and exit |
+| `--verbose`, `-v` | Enable debug logging (per-part progress, DB URL, schema setup) |
 
 ---
 
