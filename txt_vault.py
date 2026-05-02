@@ -12,6 +12,7 @@ import brotli
 import click
 import nacl.bindings
 from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.hmac import HMAC as CHMAC
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 import libsql_experimental as libsql
@@ -56,18 +57,36 @@ def _derive(master_key: bytes, salt: bytes) -> tuple[bytes, bytes]:
 
 # ── encryption ───────────────────────────────────────────────────────────────
 
-def encrypt_name(name: str, master_key: bytes) -> bytes:
-    name_bytes = name.encode()
-    km = HKDF(
+def _name_hmac_key(master_key: bytes) -> bytes:
+    return HKDF(
         algorithm=hashes.SHA3_256(),
-        length=HKDF_LEN,
-        salt=name_bytes,
+        length=32,
+        salt=b"",
         info=b"",
     ).derive(master_key)
-    key, nonce = km[:32], km[32:]
-    return nacl.bindings.crypto_aead_xchacha20poly1305_ietf_encrypt(
-        message=name_bytes, aad=b"", nonce=nonce, key=key
+
+
+def name_hmac(name: str, master_key: bytes) -> bytes:
+    h = CHMAC(_name_hmac_key(master_key), hashes.SHA3_256())
+    h.update(name.encode())
+    return h.finalize()
+
+
+def encrypt_name(name: str, master_key: bytes) -> bytes:
+    salt = os.urandom(32)
+    key, nonce = _derive(master_key, salt)
+    ct = nacl.bindings.crypto_aead_xchacha20poly1305_ietf_encrypt(
+        message=name.encode(), aad=b"", nonce=nonce, key=key
     )
+    return salt + ct
+
+
+def decrypt_name(blob: bytes, master_key: bytes) -> str:
+    salt, ct = blob[:32], blob[32:]
+    key, nonce = _derive(master_key, salt)
+    return nacl.bindings.crypto_aead_xchacha20poly1305_ietf_decrypt(
+        ciphertext=ct, aad=b"", nonce=nonce, key=key
+    ).decode()
 
 
 def encrypt_part(plaintext: bytes, master_key: bytes) -> bytes:
@@ -129,8 +148,9 @@ def open_db(creds_path: str | None = None) -> libsql.Connection:
 def ensure_schema(conn: libsql.Connection) -> None:
     conn.execute("""
         CREATE TABLE IF NOT EXISTS txt (
-            id   INTEGER PRIMARY KEY AUTOINCREMENT,
-            name BLOB NOT NULL UNIQUE
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            name      BLOB NOT NULL,
+            name_hmac BLOB NOT NULL UNIQUE
         )
     """)
     conn.execute("""
@@ -150,9 +170,10 @@ def ingest_file(conn: libsql.Connection, path: Path, master_key: bytes) -> None:
     text  = path.read_text(encoding="utf-8", errors="replace")
     parts = split_paragraphs(text)
 
-    name_blob = encrypt_name(path.name, master_key)
-    conn.execute("INSERT OR IGNORE INTO txt (name) VALUES (?)", [name_blob])
-    row    = conn.execute("SELECT id FROM txt WHERE name = ?", [name_blob]).fetchone()
+    enc_name  = encrypt_name(path.name, master_key)
+    hmac_val  = name_hmac(path.name, master_key)
+    conn.execute("INSERT OR IGNORE INTO txt (name, name_hmac) VALUES (?, ?)", [enc_name, hmac_val])
+    row    = conn.execute("SELECT id FROM txt WHERE name_hmac = ?", [hmac_val]).fetchone()
     txt_id = row[0]
 
     conn.execute("DELETE FROM txt_parts WHERE txt_id = ?", [txt_id])
@@ -186,7 +207,7 @@ def main(src: str, master_key_path: str, gen_key_path: str) -> None:
     conn       = open_db(master_key_path)
     ensure_schema(conn)
 
-    txt_files = sorted(Path(src).glob("*.txt"))
+    txt_files = sorted(p for p in Path(src).iterdir() if p.is_file() and p.suffix.lower() == ".txt")
     if not txt_files:
         click.echo("No .txt files found.")
         return
