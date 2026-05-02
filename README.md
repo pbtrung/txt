@@ -11,7 +11,7 @@ See [design.md](design.md) for the full architecture, encryption scheme, and dat
 **Requirements:** Python 3.11+
 
 ```bash
-pip install pynacl cryptography brotli libsql-experimental click
+pip install pynacl cryptography brotli libsql click
 ```
 
 ---

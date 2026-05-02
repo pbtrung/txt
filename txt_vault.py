@@ -16,7 +16,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.hmac import HMAC as CHMAC
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
-import libsql_experimental as libsql
+import libsql
 
 log = logging.getLogger("txt_vault")
 
@@ -135,7 +135,7 @@ def split_paragraphs(text: str) -> list[bytes]:
 
 # ── database ─────────────────────────────────────────────────────────────────
 
-def open_db(creds_path: str | None = None) -> libsql.Connection:
+def open_db(creds_path: str | None = None):
     url   = os.environ.get("TURSO_DATABASE_URL")
     token = os.environ.get("TURSO_AUTH_TOKEN", "")
     if not url and creds_path and Path(creds_path).exists():
@@ -151,7 +151,7 @@ def open_db(creds_path: str | None = None) -> libsql.Connection:
     return libsql.connect(database=url, auth_token=token)
 
 
-def ensure_schema(conn: libsql.Connection) -> None:
+def ensure_schema(conn) -> None:
     conn.execute("""
         CREATE TABLE IF NOT EXISTS txt (
             id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -172,7 +172,7 @@ def ensure_schema(conn: libsql.Connection) -> None:
     conn.commit()
 
 
-def ingest_file(conn: libsql.Connection, path: Path, master_key: bytes) -> None:
+def ingest_file(conn, path: Path, master_key: bytes) -> None:
     text  = path.read_text(encoding="utf-8", errors="replace")
     parts = split_paragraphs(text)
 

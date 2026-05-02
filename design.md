@@ -185,7 +185,7 @@ plaintext      = brotli.decompress(compressed)
 | `pynacl` | XChaCha20-Poly1305 via `nacl.bindings` |
 | `cryptography` | HKDF-SHA3-256 |
 | `brotli` | Compression |
-| `libsql-experimental` | Turso / libSQL sync client |
+| `libsql` | Turso / libSQL client |
 | `click` | CLI argument parsing |
 
 ---
