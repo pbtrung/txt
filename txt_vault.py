@@ -39,7 +39,7 @@ def gen_master_key(path: str) -> None:
         if "master_key" in data:
             if not click.confirm(f"master_key already exists in {path}. Overwrite?"):
                 raise click.Abort()
-    data["master_key"] = base64.b64encode(os.urandom(32)).decode()
+    data["master_key"] = base64.b64encode(os.urandom(64)).decode()
     with open(path, "w") as f:
         json.dump(data, f, indent=2)
     click.echo(f"master_key written to {path}")
@@ -55,6 +55,20 @@ def _derive(master_key: bytes, salt: bytes) -> tuple[bytes, bytes]:
     return km[:32], km[32:]   # key, nonce
 
 # ── encryption ───────────────────────────────────────────────────────────────
+
+def encrypt_name(name: str, master_key: bytes) -> bytes:
+    name_bytes = name.encode()
+    km = HKDF(
+        algorithm=hashes.SHA3_256(),
+        length=HKDF_LEN,
+        salt=name_bytes,
+        info=b"",
+    ).derive(master_key)
+    key, nonce = km[:32], km[32:]
+    return nacl.bindings.crypto_aead_xchacha20poly1305_ietf_encrypt(
+        message=name_bytes, aad=b"", nonce=nonce, key=key
+    )
+
 
 def encrypt_part(plaintext: bytes, master_key: bytes) -> bytes:
     salt = os.urandom(32)
@@ -116,15 +130,14 @@ def ensure_schema(conn: libsql.Connection) -> None:
     conn.execute("""
         CREATE TABLE IF NOT EXISTS txt (
             id   INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE
+            name BLOB NOT NULL UNIQUE
         )
     """)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS txt_parts (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            txt_id     INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
-            part_index INTEGER NOT NULL,
-            content    BLOB NOT NULL
+            id      INTEGER PRIMARY KEY AUTOINCREMENT,
+            txt_id  INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
+            content BLOB NOT NULL
         )
     """)
     conn.execute(
@@ -137,17 +150,18 @@ def ingest_file(conn: libsql.Connection, path: Path, master_key: bytes) -> None:
     text  = path.read_text(encoding="utf-8", errors="replace")
     parts = split_paragraphs(text)
 
-    conn.execute("INSERT OR IGNORE INTO txt (name) VALUES (?)", [path.name])
-    row    = conn.execute("SELECT id FROM txt WHERE name = ?", [path.name]).fetchone()
+    name_blob = encrypt_name(path.name, master_key)
+    conn.execute("INSERT OR IGNORE INTO txt (name) VALUES (?)", [name_blob])
+    row    = conn.execute("SELECT id FROM txt WHERE name = ?", [name_blob]).fetchone()
     txt_id = row[0]
 
     conn.execute("DELETE FROM txt_parts WHERE txt_id = ?", [txt_id])
 
-    for idx, part_bytes in enumerate(parts):
+    for part_bytes in parts:
         blob = encrypt_part(part_bytes, master_key)
         conn.execute(
-            "INSERT INTO txt_parts (txt_id, part_index, content) VALUES (?, ?, ?)",
-            [txt_id, idx, blob],
+            "INSERT INTO txt_parts (txt_id, content) VALUES (?, ?)",
+            [txt_id, blob],
         )
 
     conn.commit()

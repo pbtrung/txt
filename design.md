@@ -59,14 +59,13 @@ Parts are split on blank-line boundaries (`\n\n` or `\r\n\r\n`). The splitter ac
 ```sql
 CREATE TABLE IF NOT EXISTS txt (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
-    name      TEXT NOT NULL UNIQUE   -- original filename, e.g. "notes.txt"
+    name      BLOB NOT NULL UNIQUE   -- deterministically encrypted filename (XChaCha20-Poly1305)
 );
 
 CREATE TABLE IF NOT EXISTS txt_parts (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    txt_id      INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
-    part_index  INTEGER NOT NULL,    -- 0-based ordering within the file
-    content     BLOB    NOT NULL     -- 32-byte salt || encrypted(brotli(plaintext))
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    txt_id  INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
+    content BLOB    NOT NULL     -- 32-byte salt || encrypted(brotli(plaintext))
 );
 
 CREATE INDEX IF NOT EXISTS idx_txt_parts_txt_id ON txt_parts(txt_id);
@@ -80,7 +79,7 @@ Connection is made over HTTPS to a Turso database URL. The URL and auth token ar
 
 ### Key Material
 
-The master key is a 32-byte random secret stored base64-encoded in the JSON key file.
+The master key is a 64-byte random secret stored base64-encoded in the JSON key file.
 
 ### Per-Part Key Derivation
 
@@ -93,7 +92,7 @@ key_material = HKDF(
     algorithm  = SHA3-256,
     length     = 56,           # 32-byte key + 24-byte nonce
     salt       = random_salt,  # 32 bytes, stored alongside ciphertext
-    ikm        = master_key,   # 32 bytes from the JSON key file
+    ikm        = master_key,   # 64 bytes from the JSON key file
     info       = b""
 )
 
