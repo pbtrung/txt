@@ -94,7 +94,7 @@ key_material = HKDF(
     length     = 56,           # 32-byte key + 24-byte nonce
     salt       = random_salt,  # 32 bytes, stored alongside ciphertext
     ikm        = master_key,   # 32 bytes from the JSON key file
-    info       = b"txt_vault v1"
+    info       = b""
 )
 
 key   = key_material[:32]   # XChaCha20-Poly1305 key

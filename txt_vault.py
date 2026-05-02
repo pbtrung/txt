@@ -19,7 +19,6 @@ import libsql_experimental as libsql
 # ── constants ────────────────────────────────────────────────────────────────
 
 PART_TARGET  = 100 * 1024          # 100 KB
-HKDF_INFO    = b"txt_vault v1"
 HKDF_LEN     = 56                  # 32-byte key + 24-byte nonce
 PARA_SPLIT   = re.compile(r"\r?\n\r?\n")
 
@@ -51,7 +50,7 @@ def _derive(master_key: bytes, salt: bytes) -> tuple[bytes, bytes]:
         algorithm=hashes.SHA3_256(),
         length=HKDF_LEN,
         salt=salt,
-        info=HKDF_INFO,
+        info=b"",
     ).derive(master_key)
     return km[:32], km[32:]   # key, nonce
 
