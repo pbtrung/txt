@@ -63,7 +63,7 @@ function DataScreen({ masterKey, onDisconnect }) {
   const [content, setContent]         = useState(null);
   const [loading, setLoading]         = useState(false);
   const [error, setError]             = useState(null);
-  const [fontSize, setFontSize]       = useState(13);
+  const [fontSize, setFontSize]       = useState(16);
   const MIN_FONT = 8, MAX_FONT = 32;
 
   const wrap = useCallback(async (fn) => {
