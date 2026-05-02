@@ -212,7 +212,7 @@ function DataScreen({ masterKey, onDisconnect }) {
             </div>
             <div className="card-body overflow-auto p-3" style={{ maxHeight: '78vh' }}>
               {!selectedPart && (
-                <p className="text-muted small mb-0">Select a part to view its content.</p>
+                <p className="text-muted small mb-0">Select a file to view its content.</p>
               )}
               {selectedPart && content === null && !loading && (
                 <p className="text-muted small mb-0">Loading…</p>
