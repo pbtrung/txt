@@ -180,7 +180,22 @@ def ensure_schema(conn) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_txt_parts_txt_id ON txt_parts(txt_id)"
     )
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS part_count (
+            id     INTEGER PRIMARY KEY AUTOINCREMENT,
+            txt_id INTEGER NOT NULL UNIQUE REFERENCES txt(id) ON DELETE CASCADE,
+            count  INTEGER NOT NULL
+        )
+    """)
     conn.commit()
+
+
+def upsert_part_count(conn, txt_id: int, count: int) -> None:
+    conn.execute(
+        "INSERT INTO part_count (txt_id, count) VALUES (?, ?)"
+        " ON CONFLICT(txt_id) DO UPDATE SET count = excluded.count",
+        [txt_id, count],
+    )
 
 
 def ingest_file(conn, path: Path, master_key: bytes) -> None:
@@ -205,6 +220,7 @@ def ingest_file(conn, path: Path, master_key: bytes) -> None:
             [txt_id, blob],
         )
 
+    upsert_part_count(conn, txt_id, len(parts))
     conn.commit()
     log.info("%s: %d part(s) committed", path.name, len(parts))
 
@@ -216,9 +232,11 @@ def ingest_file(conn, path: Path, master_key: bytes) -> None:
 @click.option("--gen-master-key", "gen_key_path",    type=click.Path(), default=None)
 @click.option("--read-part",      "read_part_id",    type=int,          default=None)
 @click.option("--out",            "out_path",        type=click.Path(), default=None)
+@click.option("--part-count",     "do_part_count",   is_flag=True,      default=False,
+              help="Rebuild part_count table from existing txt_parts rows.")
 @click.option("--verbose", "-v",  is_flag=True, default=False, help="Enable debug logging.")
 def main(src: str, master_key_path: str, gen_key_path: str,
-         read_part_id: int, out_path: str, verbose: bool) -> None:
+         read_part_id: int, out_path: str, do_part_count: bool, verbose: bool) -> None:
     """Split, compress, encrypt, and store .txt files in Turso libSQL."""
     logging.basicConfig(
         level=logging.DEBUG if verbose else logging.INFO,
@@ -243,8 +261,21 @@ def main(src: str, master_key_path: str, gen_key_path: str,
         log.info("part %d written to %s (%d bytes)", read_part_id, out_path, len(plaintext))
         return
 
+    if do_part_count:
+        master_key = load_master_key(master_key_path)
+        conn = open_db(master_key_path)
+        ensure_schema(conn)
+        rows = conn.execute(
+            "SELECT txt_id, COUNT(*) FROM txt_parts GROUP BY txt_id"
+        ).fetchall()
+        for txt_id, count in rows:
+            upsert_part_count(conn, txt_id, count)
+        conn.commit()
+        log.info("part_count updated for %d txt(s)", len(rows))
+        return
+
     if not src:
-        raise click.UsageError("--src is required")
+        raise click.UsageError("--src or --part-count is required")
 
     log.info("loading master key from %s", master_key_path)
     master_key = load_master_key(master_key_path)
