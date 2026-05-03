@@ -45,10 +45,18 @@ pip install pynacl cryptography brotli libsql click
 ### Ingest a folder of `.txt` files
 
 ```bash
-python3 txt_vault.py --src ./documents --master-key creds.json
+python3 txt_vault.py --src ./documents --creds creds.json
 ```
 
-All `.txt` files (case-insensitive: `.txt`, `.TXT`, etc.) under `./documents` are split, compressed, encrypted, and stored in the Turso database.
+All `.txt` files (case-insensitive: `.txt`, `.TXT`, etc.) under `./documents` are split, compressed, encrypted, and stored in the Turso database. The `part_count` table is updated automatically after each file is committed.
+
+### Rebuild part counts
+
+```bash
+python3 txt_vault.py --part-count --creds creds.json
+```
+
+Queries `txt_parts` and upserts the total part count for every `txt_id` into the `part_count` table. Useful for backfilling existing data. Does not decrypt anything — only the Turso credentials from `--creds` are needed.
 
 ### Generate a new master key
 
@@ -65,14 +73,17 @@ Adds or updates only the `master_key` field in `creds.json`. If the field alread
 | Flag | Description |
 |------|-------------|
 | `--src <path>` | Folder containing `.txt` files to ingest (case-insensitive match) |
-| `--master-key <path>` | Credentials file (default: `creds.json`) |
+| `--creds <path>` | Credentials file with Turso URL/token and master key (default: `creds.json`) |
+| `--part-count` | Rebuild `part_count` table from existing `txt_parts` rows and exit |
 | `--gen-master-key <path>` | Add/update `master_key` in the credentials file and exit |
+| `--read-part <id>` | Decrypt and write a single part by its `txt_parts.id` |
+| `--out <path>` | Output file path for `--read-part` |
 | `--verbose`, `-v` | Enable debug logging (per-part progress, DB URL, schema setup) |
 
 ---
 
 ## Security notes
 
-- The master key is the single root secret. Store `creds.json` outside version control (add it to `.gitignore`).
+- The master key is the single root secret. Store `creds.json` outside version control (add it to `.gitignore`). Pass a custom path with `--creds` if needed.
 - Each part uses a unique per-part key and nonce derived via HKDF-SHA3-256 over a fresh random salt; see [design.md § Encryption Design](design.md#encryption-design).
 - Brotli compression is applied *before* encryption to avoid compression-oracle attacks.

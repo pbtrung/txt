@@ -7,7 +7,8 @@ A single-file CLI tool that ingests `.txt` files, splits them into compressed an
 ## CLI Interface
 
 ```
-python3 txt_vault.py --src <folder_path> --master-key creds.json
+python3 txt_vault.py --src <folder_path> --creds creds.json
+python3 txt_vault.py --part-count --creds creds.json
 python3 txt_vault.py --gen-master-key creds.json
 ```
 
@@ -16,8 +17,11 @@ python3 txt_vault.py --gen-master-key creds.json
 | Flag | Description |
 |------|-------------|
 | `--src <folder_path>` | Directory to scan for `.txt` files (case-insensitive) |
-| `--master-key creds.json` | Path to credentials JSON file (default: `creds.json`) |
-| `--gen-master-key creds.json` | Add/update `master_key` in the credentials file, then exit |
+| `--creds <path>` | Credentials JSON file with Turso URL/token and master key (default: `creds.json`) |
+| `--part-count` | Rebuild `part_count` table from existing `txt_parts` rows, then exit |
+| `--gen-master-key <path>` | Add/update `master_key` in the credentials file, then exit |
+| `--read-part <id>` | Decrypt a single part by `txt_parts.id` and write to `--out` |
+| `--out <path>` | Output path for `--read-part` |
 | `--verbose`, `-v` | Enable debug logging (per-part progress, DB URL, schema setup) |
 
 ### Credentials JSON Format
@@ -51,7 +55,8 @@ for each .txt file (case-insensitive) in --src:
      c. Encrypt compressed bytes with XChaCha20-Poly1305
      d. Serialize as: [32-byte salt] || [ciphertext+MAC]
      e. Store as a BLOB in txt_parts.content
-  7. Commit transaction
+  7. Upsert total part count into part_count (txt_id, count)
+  8. Commit transaction
 ```
 
 ### Paragraph Splitting
@@ -76,7 +81,15 @@ CREATE TABLE IF NOT EXISTS txt_parts (
 );
 
 CREATE INDEX IF NOT EXISTS idx_txt_parts_txt_id ON txt_parts(txt_id);
+
+CREATE TABLE IF NOT EXISTS part_count (
+    id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    txt_id INTEGER NOT NULL UNIQUE REFERENCES txt(id) ON DELETE CASCADE,
+    count  INTEGER NOT NULL      -- total number of parts for this txt entry
+);
 ```
+
+`part_count` is kept in sync automatically: `ingest_file` upserts the count after committing each file's parts. The `--part-count` flag can backfill it for data ingested before this table existed.
 
 Connection is made over HTTPS to a Turso database URL. The URL and auth token are read first from environment variables (`TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`); if not set, they fall back to the `turso_database_url` and `turso_auth_token` fields in `creds.json`.
 
