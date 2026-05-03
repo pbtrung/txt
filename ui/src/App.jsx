@@ -120,14 +120,14 @@ function DataScreen({ masterKey, onDisconnect }) {
   const hasParts  = totalParts > 0;
 
   return (
-    <div className="container-fluid py-3 px-3">
+    <div className="container py-3" style={{ maxWidth: '60%' }}>
       {/* Header */}
       <div className="d-flex align-items-center justify-content-between mb-3">
         <div className="d-flex align-items-center gap-2">
           <span className="fw-bold">txt_vault</span>
           {loading && <span className="spinner-border spinner-border-sm text-secondary" />}
         </div>
-        <button className="btn btn-sm btn-outline-secondary" onClick={onDisconnect}>
+        <button className="btn btn-outline-secondary" onClick={onDisconnect}>
           Disconnect
         </button>
       </div>
@@ -140,11 +140,10 @@ function DataScreen({ masterKey, onDisconnect }) {
         {/* Content */}
         <div className="col-12">
           <div className="card h-100">
-            <div className="card-header py-2 d-flex align-items-center justify-content-between gap-2">
+            <div className="card-header d-flex align-items-center justify-content-between gap-2">
               <div className="d-flex align-items-center gap-2" style={{ flex: '1 1 0', minWidth: 0 }}>
                 <select
-                  className="form-select form-select-sm py-0"
-                  style={{ maxWidth: 280 }}
+                  className="form-select w-auto"
                   value={selectedTxt?.id ?? ''}
                   onChange={e => {
                     const txt = txts.find(t => t.id === Number(e.target.value));
@@ -158,7 +157,7 @@ function DataScreen({ masterKey, onDisconnect }) {
                 </select>
                 <div className="d-flex align-items-center gap-1 flex-shrink-0">
                   <button
-                    className="btn btn-sm btn-outline-secondary py-0 px-2"
+                    className="btn btn-outline-secondary"
                     disabled={!hasTxt || currentPartNum <= 1}
                     onClick={() => loadPart(selectedTxt, currentPartNum - 1)}
                     title="Previous part"
@@ -166,8 +165,8 @@ function DataScreen({ masterKey, onDisconnect }) {
                   {hasTxt ? (
                     <input
                       type="number"
-                      className="form-control form-control-sm py-0 px-1 text-center"
-                      style={{ width: 52 }}
+                      className="form-control text-center"
+                      style={{ width: 64 }}
                       value={currentPartNum}
                       min={1}
                       max={totalParts || 1}
@@ -177,13 +176,13 @@ function DataScreen({ masterKey, onDisconnect }) {
                       onKeyDown={e => { if (e.key === 'Enter') loadPart(selectedTxt, currentPartNum); }}
                     />
                   ) : (
-                    <span className="small text-muted px-1">&mdash;</span>
+                    <span className="text-muted px-2">&mdash;</span>
                   )}
-                  <span className="small text-muted flex-shrink-0">
+                  <span className="text-muted flex-shrink-0">
                     / {hasTxt && hasParts ? totalParts : <>&mdash;</>}
                   </span>
                   <button
-                    className="btn btn-sm btn-outline-secondary py-0 px-2"
+                    className="btn btn-outline-secondary"
                     disabled={!hasTxt || currentPartNum >= totalParts}
                     onClick={() => loadPart(selectedTxt, currentPartNum + 1)}
                     title="Next part"
@@ -192,18 +191,16 @@ function DataScreen({ masterKey, onDisconnect }) {
               </div>
               <div className="d-flex align-items-center gap-1 flex-shrink-0">
                 <button
-                  className="btn btn-sm btn-outline-secondary py-0 px-1 lh-1"
-                  style={{ fontSize: 16 }}
+                  className="btn btn-outline-secondary"
                   disabled={fontSize <= MIN_FONT}
                   onClick={() => setFontSize(f => Math.max(MIN_FONT, f - 1))}
                   title="Decrease font size"
                 >−</button>
-                <span className="small text-muted" style={{ minWidth: 32, textAlign: 'center' }}>
+                <span className="text-muted" style={{ minWidth: 40, textAlign: 'center' }}>
                   {fontSize}px
                 </span>
                 <button
-                  className="btn btn-sm btn-outline-secondary py-0 px-1 lh-1"
-                  style={{ fontSize: 16 }}
+                  className="btn btn-outline-secondary"
                   disabled={fontSize >= MAX_FONT}
                   onClick={() => setFontSize(f => Math.min(MAX_FONT, f + 1))}
                   title="Increase font size"
