@@ -145,6 +145,7 @@ function DataScreen({ masterKey, onDisconnect }) {
                 <div style={{ flex: '1 1 0', minWidth: 0 }}>
                 <select
                   className="form-select"
+                  style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}
                   value={selectedTxt?.id ?? ''}
                   onChange={e => {
                     const txt = txts.find(t => t.id === Number(e.target.value));
@@ -152,9 +153,14 @@ function DataScreen({ masterKey, onDisconnect }) {
                   }}
                 >
                   <option value="" disabled>— select file —</option>
-                  {txts.map(txt => (
-                    <option key={txt.id} value={txt.id}>{txt.name}</option>
-                  ))}
+                  {txts.map(txt => {
+                    const label = txt.name.length > 60
+                      ? txt.name.slice(0, 59) + '…'
+                      : txt.name;
+                    return (
+                      <option key={txt.id} value={txt.id} title={txt.name}>{label}</option>
+                    );
+                  })}
                 </select>
                 </div>
                 <div className="d-flex align-items-center gap-1 flex-shrink-0">
