@@ -137,35 +137,25 @@ function DataScreen({ masterKey, onDisconnect }) {
       )}
 
       <div className="row g-2">
-        {/* Column 1 — file names */}
-        <div className="col-12 col-md-3">
-          <div className="card h-100">
-            <div className="card-header py-2 fw-semibold small">Files</div>
-            <div className="list-group list-group-flush overflow-auto" style={{ maxHeight: '78vh' }}>
-              {txts.length === 0 && !loading && (
-                <div className="list-group-item text-muted small">No files found.</div>
-              )}
-              {txts.map(txt => (
-                <button
-                  key={txt.id}
-                  className={`list-group-item list-group-item-action small${selectedTxt?.id === txt.id ? ' active' : ''}`}
-                  onClick={() => selectTxt(txt)}
-                >
-                  {txt.name}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Column 2 — content */}
-        <div className="col-12 col-md-9">
+        {/* Content */}
+        <div className="col-12">
           <div className="card h-100">
             <div className="card-header py-2 d-flex align-items-center justify-content-between gap-2">
               <div className="d-flex align-items-center gap-2" style={{ flex: '1 1 0', minWidth: 0 }}>
-                <span className="fw-semibold small text-truncate">
-                  {selectedTxt ? selectedTxt.name : 'Content'}
-                </span>
+                <select
+                  className="form-select form-select-sm py-0"
+                  style={{ maxWidth: 280 }}
+                  value={selectedTxt?.id ?? ''}
+                  onChange={e => {
+                    const txt = txts.find(t => t.id === Number(e.target.value));
+                    if (txt) selectTxt(txt);
+                  }}
+                >
+                  <option value="" disabled>— select file —</option>
+                  {txts.map(txt => (
+                    <option key={txt.id} value={txt.id}>{txt.name}</option>
+                  ))}
+                </select>
                 <div className="d-flex align-items-center gap-1 flex-shrink-0">
                   <button
                     className="btn btn-sm btn-outline-secondary py-0 px-2"
