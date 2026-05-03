@@ -142,8 +142,9 @@ function DataScreen({ masterKey, onDisconnect }) {
           <div className="card h-100">
             <div className="card-header d-flex align-items-center justify-content-between gap-2">
               <div className="d-flex align-items-center gap-2" style={{ flex: '1 1 0', minWidth: 0 }}>
+                <div style={{ flex: '1 1 0', minWidth: 0 }}>
                 <select
-                  className="form-select w-auto"
+                  className="form-select"
                   value={selectedTxt?.id ?? ''}
                   onChange={e => {
                     const txt = txts.find(t => t.id === Number(e.target.value));
@@ -155,6 +156,7 @@ function DataScreen({ masterKey, onDisconnect }) {
                     <option key={txt.id} value={txt.id}>{txt.name}</option>
                   ))}
                 </select>
+                </div>
                 <div className="d-flex align-items-center gap-1 flex-shrink-0">
                   <button
                     className="btn btn-outline-secondary"
