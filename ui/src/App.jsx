@@ -167,20 +167,24 @@ function DataScreen({ masterKey, onDisconnect }) {
                     onClick={() => loadPart(selectedTxt, currentPartNum - 1)}
                     title="Previous part"
                   >‹</button>
-                  <input
-                    type="number"
-                    className="form-control form-control-sm py-0 px-1 text-center"
-                    style={{ width: 52 }}
-                    value={currentPartNum}
-                    min={1}
-                    max={totalParts || 1}
-                    disabled={!hasTxt || !hasParts}
-                    onChange={e => setCurrentPartNum(Number(e.target.value))}
-                    onBlur={() => hasTxt && loadPart(selectedTxt, currentPartNum)}
-                    onKeyDown={e => { if (e.key === 'Enter' && hasTxt) loadPart(selectedTxt, currentPartNum); }}
-                  />
+                  {hasTxt ? (
+                    <input
+                      type="number"
+                      className="form-control form-control-sm py-0 px-1 text-center"
+                      style={{ width: 52 }}
+                      value={currentPartNum}
+                      min={1}
+                      max={totalParts || 1}
+                      disabled={!hasParts}
+                      onChange={e => setCurrentPartNum(Number(e.target.value))}
+                      onBlur={() => loadPart(selectedTxt, currentPartNum)}
+                      onKeyDown={e => { if (e.key === 'Enter') loadPart(selectedTxt, currentPartNum); }}
+                    />
+                  ) : (
+                    <span className="small text-muted px-1">&mdash;</span>
+                  )}
                   <span className="small text-muted flex-shrink-0">
-                    / {hasParts ? totalParts : '—'}
+                    / {hasTxt && hasParts ? totalParts : <>&mdash;</>}
                   </span>
                   <button
                     className="btn btn-sm btn-outline-secondary py-0 px-2"
