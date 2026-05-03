@@ -228,14 +228,14 @@ def ingest_file(conn, path: Path, master_key: bytes) -> None:
 
 @click.command()
 @click.option("--src",            type=click.Path(exists=True, file_okay=False), default=None)
-@click.option("--master-key",     "master_key_path", type=click.Path(), default="creds.json", show_default=True)
+@click.option("--creds",          "creds_path",      type=click.Path(), default="creds.json", show_default=True)
 @click.option("--gen-master-key", "gen_key_path",    type=click.Path(), default=None)
 @click.option("--read-part",      "read_part_id",    type=int,          default=None)
 @click.option("--out",            "out_path",        type=click.Path(), default=None)
 @click.option("--part-count",     "do_part_count",   is_flag=True,      default=False,
               help="Rebuild part_count table from existing txt_parts rows.")
 @click.option("--verbose", "-v",  is_flag=True, default=False, help="Enable debug logging.")
-def main(src: str, master_key_path: str, gen_key_path: str,
+def main(src: str, creds_path: str, gen_key_path: str,
          read_part_id: int, out_path: str, do_part_count: bool, verbose: bool) -> None:
     """Split, compress, encrypt, and store .txt files in Turso libSQL."""
     logging.basicConfig(
@@ -251,8 +251,8 @@ def main(src: str, master_key_path: str, gen_key_path: str,
     if read_part_id is not None:
         if not out_path:
             raise click.UsageError("--out is required with --read-part")
-        master_key = load_master_key(master_key_path)
-        conn = open_db(master_key_path)
+        master_key = load_master_key(creds_path)
+        conn = open_db(creds_path)
         row = conn.execute("SELECT content FROM txt_parts WHERE id = ?", [read_part_id]).fetchone()
         if row is None:
             raise click.ClickException(f"no part with id {read_part_id}")
@@ -262,7 +262,7 @@ def main(src: str, master_key_path: str, gen_key_path: str,
         return
 
     if do_part_count:
-        conn = open_db(master_key_path)
+        conn = open_db(creds_path)
         ensure_schema(conn)
         rows = conn.execute(
             "SELECT txt_id, COUNT(*) FROM txt_parts GROUP BY txt_id"
@@ -276,9 +276,9 @@ def main(src: str, master_key_path: str, gen_key_path: str,
     if not src:
         raise click.UsageError("--src or --part-count is required")
 
-    log.info("loading master key from %s", master_key_path)
-    master_key = load_master_key(master_key_path)
-    conn       = open_db(master_key_path)
+    log.info("loading master key from %s", creds_path)
+    master_key = load_master_key(creds_path)
+    conn       = open_db(creds_path)
     log.debug("ensuring schema")
     ensure_schema(conn)
 
