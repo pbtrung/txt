@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { initCrypto, parseMasterKey, decryptName, decryptPart } from './crypto.js';
-import { initDb, fetchTxts, fetchParts, fetchPartContent } from './db.js';
+import { initDb, fetchTxts, fetchPartCount, fetchPartByOffset } from './db.js';
 
 export default function App() {
   const [cryptoReady, setCryptoReady] = useState(false);
@@ -58,8 +58,8 @@ export default function App() {
 function DataScreen({ masterKey, onDisconnect }) {
   const [txts, setTxts]               = useState([]);
   const [selectedTxt, setSelectedTxt] = useState(null);
-  const [parts, setParts]             = useState([]);
-  const [selectedPart, setSelectedPart] = useState(null);
+  const [totalParts, setTotalParts]   = useState(0);
+  const [currentPartNum, setCurrentPartNum] = useState(1);
   const [content, setContent]         = useState(null);
   const [loading, setLoading]         = useState(false);
   const [error, setError]             = useState(null);
@@ -73,7 +73,6 @@ function DataScreen({ masterKey, onDisconnect }) {
     setLoading(false);
   }, []);
 
-  // Load txt list on mount
   useEffect(() => {
     wrap(async () => {
       const rows = await fetchTxts();
@@ -86,26 +85,33 @@ function DataScreen({ masterKey, onDisconnect }) {
     });
   }, [masterKey, wrap]);
 
-  async function selectTxt(txt) {
-    setSelectedTxt(txt);
-    setSelectedPart(null);
+  async function loadPart(txt, partNum, total = totalParts) {
+    const clamped = Math.max(1, Math.min(partNum, total || 1));
+    setCurrentPartNum(clamped);
     setContent(null);
     wrap(async () => {
-      const rows = await fetchParts(txt.id);
-      const mapped = rows.map((r, i) => ({ id: r.id, label: String(i + 1).padStart(3, '0') }));
-      setParts(mapped);
-      if (mapped.length > 0) await selectPart(mapped[0]);
-    });
-  }
-
-  async function selectPart(part) {
-    setSelectedPart(part);
-    setContent(null);
-    wrap(async () => {
-      const blob = await fetchPartContent(part.id);
+      const blob = await fetchPartByOffset(txt.id, clamped - 1);
       setContent(blob ? decryptPart(blob, masterKey) : '');
     });
   }
+
+  async function selectTxt(txt) {
+    setSelectedTxt(txt);
+    setCurrentPartNum(1);
+    setTotalParts(0);
+    setContent(null);
+    wrap(async () => {
+      const total = await fetchPartCount(txt.id);
+      setTotalParts(total);
+      if (total > 0) {
+        const blob = await fetchPartByOffset(txt.id, 0);
+        setContent(blob ? decryptPart(blob, masterKey) : '');
+      }
+    });
+  }
+
+  const hasTxt    = !!selectedTxt;
+  const hasParts  = totalParts > 0;
 
   return (
     <div className="container-fluid py-3 px-3">
@@ -154,41 +160,35 @@ function DataScreen({ masterKey, onDisconnect }) {
                 <span className="fw-semibold small text-truncate">
                   {selectedTxt ? selectedTxt.name : 'Content'}
                 </span>
-                {(() => {
-                  const partIdx = parts.findIndex(p => p.id === selectedPart?.id);
-                  return (
-                    <div className="d-flex align-items-center gap-1 flex-shrink-0">
-                      <button
-                        className="btn btn-sm btn-outline-secondary py-0 px-2"
-                        disabled={partIdx <= 0}
-                        onClick={() => selectPart(parts[partIdx - 1])}
-                        title="Previous part"
-                      >‹</button>
-                      <select
-                        className="form-select form-select-sm py-0"
-                        style={{ width: 'auto', minWidth: 90 }}
-                        value={selectedPart?.id ?? ''}
-                        disabled={!selectedTxt || parts.length === 0}
-                        onChange={e => {
-                          const part = parts.find(p => p.id === Number(e.target.value));
-                          if (part) selectPart(part);
-                        }}
-                      >
-                        {!selectedTxt && <option value="">— no file —</option>}
-                        {selectedTxt && parts.length === 0 && <option value="">— no parts —</option>}
-                        {parts.map(part => (
-                          <option key={part.id} value={part.id}>{part.label}</option>
-                        ))}
-                      </select>
-                      <button
-                        className="btn btn-sm btn-outline-secondary py-0 px-2"
-                        disabled={partIdx < 0 || partIdx >= parts.length - 1}
-                        onClick={() => selectPart(parts[partIdx + 1])}
-                        title="Next part"
-                      >›</button>
-                    </div>
-                  );
-                })()}
+                <div className="d-flex align-items-center gap-1 flex-shrink-0">
+                  <button
+                    className="btn btn-sm btn-outline-secondary py-0 px-2"
+                    disabled={!hasTxt || currentPartNum <= 1}
+                    onClick={() => loadPart(selectedTxt, currentPartNum - 1)}
+                    title="Previous part"
+                  >‹</button>
+                  <input
+                    type="number"
+                    className="form-control form-control-sm py-0 px-1 text-center"
+                    style={{ width: 52 }}
+                    value={currentPartNum}
+                    min={1}
+                    max={totalParts || 1}
+                    disabled={!hasTxt || !hasParts}
+                    onChange={e => setCurrentPartNum(Number(e.target.value))}
+                    onBlur={() => hasTxt && loadPart(selectedTxt, currentPartNum)}
+                    onKeyDown={e => { if (e.key === 'Enter' && hasTxt) loadPart(selectedTxt, currentPartNum); }}
+                  />
+                  <span className="small text-muted flex-shrink-0">
+                    / {hasParts ? totalParts : '—'}
+                  </span>
+                  <button
+                    className="btn btn-sm btn-outline-secondary py-0 px-2"
+                    disabled={!hasTxt || currentPartNum >= totalParts}
+                    onClick={() => loadPart(selectedTxt, currentPartNum + 1)}
+                    title="Next part"
+                  >›</button>
+                </div>
               </div>
               <div className="d-flex align-items-center gap-1 flex-shrink-0">
                 <button
@@ -211,10 +211,10 @@ function DataScreen({ masterKey, onDisconnect }) {
               </div>
             </div>
             <div className="card-body overflow-auto p-3" style={{ maxHeight: '78vh' }}>
-              {!selectedPart && (
+              {!hasTxt && (
                 <p className="text-muted small mb-0">Select a file to view its content.</p>
               )}
-              {selectedPart && content === null && !loading && (
+              {hasTxt && content === null && !loading && (
                 <p className="text-muted small mb-0">Loading…</p>
               )}
               {content !== null && (

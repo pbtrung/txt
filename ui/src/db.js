@@ -51,15 +51,17 @@ export async function fetchTxts() {
   return toRows(await execute('SELECT id, name FROM txt ORDER BY id'));
 }
 
-export async function fetchParts(txtId) {
-  return toRows(await execute(
-    'SELECT id FROM txt_parts WHERE txt_id = ? ORDER BY id', [txtId]
+export async function fetchPartCount(txtId) {
+  const rows = toRows(await execute(
+    'SELECT count FROM part_count WHERE txt_id = ?', [txtId]
   ));
+  return rows[0]?.count ?? 0;
 }
 
-export async function fetchPartContent(partId) {
+export async function fetchPartByOffset(txtId, offset) {
   const rows = toRows(await execute(
-    'SELECT content FROM txt_parts WHERE id = ?', [partId]
+    'SELECT content FROM txt_parts WHERE txt_id = ? ORDER BY id LIMIT 1 OFFSET ?',
+    [txtId, offset]
   ));
   return rows[0]?.content ?? null;
 }
