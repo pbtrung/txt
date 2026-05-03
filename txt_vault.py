@@ -262,7 +262,6 @@ def main(src: str, master_key_path: str, gen_key_path: str,
         return
 
     if do_part_count:
-        master_key = load_master_key(master_key_path)
         conn = open_db(master_key_path)
         ensure_schema(conn)
         rows = conn.execute(
