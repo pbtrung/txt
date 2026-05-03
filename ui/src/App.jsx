@@ -120,8 +120,8 @@ function DataScreen({ masterKey, onDisconnect }) {
   const hasParts  = totalParts > 0;
 
   return (
-    <div className="container py-3 vault-container">
-      {/* Header */}
+    <div className="container py-3 vault-container d-flex flex-column" style={{ minHeight: '100vh' }}>
+      {/* Top bar */}
       <div className="d-flex align-items-center justify-content-between mb-3">
         <div className="d-flex align-items-center gap-2">
           <span className="fw-bold">txt_vault</span>
@@ -136,101 +136,102 @@ function DataScreen({ masterKey, onDisconnect }) {
         <div className="alert alert-danger py-2 small mb-3" role="alert">{error}</div>
       )}
 
-      <div className="row g-2">
-        {/* Content */}
-        <div className="col-12">
-          <div className="card h-100">
-            <div className="card-header d-flex align-items-center justify-content-between gap-2">
-              <div className="d-flex align-items-center gap-2" style={{ flex: '1 1 0', minWidth: 0 }}>
-                <div style={{ flex: '1 1 0', minWidth: 0 }}>
-                <select
-                  className="form-select form-select-sm"
-                  style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}
-                  value={selectedTxt?.id ?? ''}
-                  onChange={e => {
-                    const txt = txts.find(t => t.id === Number(e.target.value));
-                    if (txt) selectTxt(txt);
-                  }}
-                >
-                  <option value="" disabled>— select file —</option>
-                  {txts.map(txt => (
-                    <option key={txt.id} value={txt.id} title={txt.name}>{txt.name}</option>
-                  ))}
-                </select>
-                </div>
-                <div className="d-flex align-items-center gap-1 flex-shrink-0">
-                  <button
-                    className="btn btn-sm btn-outline-secondary"
-                    disabled={!hasTxt || currentPartNum <= 1}
-                    onClick={() => loadPart(selectedTxt, currentPartNum - 1)}
-                    title="Previous part"
-                  >‹</button>
-                  {hasTxt ? (
-                    <input
-                      type="number"
-                      className="form-control form-control-sm text-center"
-                      style={{ width: 56 }}
-                      value={currentPartNum}
-                      min={1}
-                      max={totalParts || 1}
-                      disabled={!hasParts}
-                      onChange={e => setCurrentPartNum(Number(e.target.value))}
-                      onBlur={() => loadPart(selectedTxt, currentPartNum)}
-                      onKeyDown={e => { if (e.key === 'Enter') loadPart(selectedTxt, currentPartNum); }}
-                    />
-                  ) : (
-                    <span className="text-muted px-2">&mdash;</span>
-                  )}
-                  <span className="text-muted flex-shrink-0">
-                    / {hasTxt && hasParts ? totalParts : <>&mdash;</>}
-                  </span>
-                  <button
-                    className="btn btn-sm btn-outline-secondary"
-                    disabled={!hasTxt || currentPartNum >= totalParts}
-                    onClick={() => loadPart(selectedTxt, currentPartNum + 1)}
-                    title="Next part"
-                  >›</button>
-                </div>
-              </div>
-              <div className="d-flex align-items-center gap-1 flex-shrink-0">
-                <button
-                  className="btn btn-sm btn-outline-secondary"
-                  disabled={fontSize <= MIN_FONT}
-                  onClick={() => setFontSize(f => Math.max(MIN_FONT, f - 1))}
-                  title="Decrease font size"
-                >−</button>
-                <span className="text-muted" style={{ minWidth: 40, textAlign: 'center' }}>
-                  {fontSize}px
-                </span>
-                <button
-                  className="btn btn-sm btn-outline-secondary"
-                  disabled={fontSize >= MAX_FONT}
-                  onClick={() => setFontSize(f => Math.min(MAX_FONT, f + 1))}
-                  title="Increase font size"
-                >+</button>
-              </div>
-            </div>
-            <div className="card-body overflow-auto p-3" style={{ maxHeight: '78vh' }}>
-              {!hasTxt && (
-                <p className="text-muted small mb-0">Select a file to view its content.</p>
-              )}
-              {hasTxt && content === null && !loading && (
-                <p className="text-muted small mb-0">Loading…</p>
-              )}
-              {content !== null && (
-                <pre className="mb-0" style={{
-                  whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-word',
-                  fontSize: fontSize,
-                  maxWidth: '88ch',
-                  fontFamily: "'Literata', serif",
-                }}>
-                  {content}
-                </pre>
-              )}
-            </div>
+      {/* Card fills remaining height */}
+      <div className="card d-flex flex-column" style={{ flex: '1 1 0', minHeight: 0 }}>
+
+        {/* Header — file selector only */}
+        <div className="card-header py-2">
+          <select
+            className="form-select form-select-sm"
+            style={{ overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100%' }}
+            value={selectedTxt?.id ?? ''}
+            onChange={e => {
+              const txt = txts.find(t => t.id === Number(e.target.value));
+              if (txt) selectTxt(txt);
+            }}
+          >
+            <option value="" disabled>— select file —</option>
+            {txts.map(txt => (
+              <option key={txt.id} value={txt.id} title={txt.name}>{txt.name}</option>
+            ))}
+          </select>
+        </div>
+
+        {/* Body — scrollable content */}
+        <div className="card-body overflow-auto p-3" style={{ flex: '1 1 0', minHeight: 0 }}>
+          {!hasTxt && (
+            <p className="text-muted small mb-0">Select a file to view its content.</p>
+          )}
+          {hasTxt && content === null && !loading && (
+            <p className="text-muted small mb-0">Loading…</p>
+          )}
+          {content !== null && (
+            <pre className="mb-0" style={{
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+              fontSize: fontSize,
+              maxWidth: '88ch',
+              fontFamily: "'Literata', serif",
+            }}>
+              {content}
+            </pre>
+          )}
+        </div>
+
+        {/* Footer — part navigator + font size */}
+        <div className="card-footer d-flex align-items-center justify-content-between gap-2">
+          <div className="d-flex align-items-center gap-1">
+            <button
+              className="btn btn-sm btn-outline-secondary"
+              disabled={!hasTxt || currentPartNum <= 1}
+              onClick={() => loadPart(selectedTxt, currentPartNum - 1)}
+              title="Previous part"
+            >‹</button>
+            {hasTxt ? (
+              <input
+                type="number"
+                className="form-control form-control-sm text-center"
+                style={{ width: 56 }}
+                value={currentPartNum}
+                min={1}
+                max={totalParts || 1}
+                disabled={!hasParts}
+                onChange={e => setCurrentPartNum(Number(e.target.value))}
+                onBlur={() => loadPart(selectedTxt, currentPartNum)}
+                onKeyDown={e => { if (e.key === 'Enter') loadPart(selectedTxt, currentPartNum); }}
+              />
+            ) : (
+              <span className="text-muted px-2">&mdash;</span>
+            )}
+            <span className="text-muted flex-shrink-0">
+              / {hasTxt && hasParts ? totalParts : <>&mdash;</>}
+            </span>
+            <button
+              className="btn btn-sm btn-outline-secondary"
+              disabled={!hasTxt || currentPartNum >= totalParts}
+              onClick={() => loadPart(selectedTxt, currentPartNum + 1)}
+              title="Next part"
+            >›</button>
+          </div>
+          <div className="d-flex align-items-center gap-1">
+            <button
+              className="btn btn-sm btn-outline-secondary"
+              disabled={fontSize <= MIN_FONT}
+              onClick={() => setFontSize(f => Math.max(MIN_FONT, f - 1))}
+              title="Decrease font size"
+            >−</button>
+            <span className="text-muted" style={{ minWidth: 40, textAlign: 'center' }}>
+              {fontSize}px
+            </span>
+            <button
+              className="btn btn-sm btn-outline-secondary"
+              disabled={fontSize >= MAX_FONT}
+              onClick={() => setFontSize(f => Math.min(MAX_FONT, f + 1))}
+              title="Increase font size"
+            >+</button>
           </div>
         </div>
+
       </div>
     </div>
   );
