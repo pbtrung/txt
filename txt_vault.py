@@ -263,11 +263,15 @@ def main(src: str, creds_path: str, gen_key_path: str,
 
     if do_part_count:
         conn = open_db(creds_path)
+        log.debug("ensuring schema")
         ensure_schema(conn)
+        log.debug("querying part counts from txt_parts")
         rows = conn.execute(
             "SELECT txt_id, COUNT(*) FROM txt_parts GROUP BY txt_id"
         ).fetchall()
+        log.debug("found %d txt(s) with parts", len(rows))
         for txt_id, count in rows:
+            log.debug("txt_id=%d count=%d", txt_id, count)
             upsert_part_count(conn, txt_id, count)
         conn.commit()
         log.info("part_count updated for %d txt(s)", len(rows))
