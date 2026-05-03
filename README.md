@@ -82,6 +82,33 @@ Adds or updates only the `master_key` field in `creds.json`. If the field alread
 
 ---
 
+## UI
+
+A browser-based reader built with React + Bootstrap. Upload `creds.json` to connect, then browse and read encrypted files directly in the browser — all decryption happens client-side.
+
+**Requirements:** Node.js 18+
+
+```bash
+cd ui
+npm install
+```
+
+### Development server
+
+```bash
+npm run dev
+```
+
+### Production build
+
+```bash
+npm run build
+```
+
+Output goes to `ui/dist/`. Serve it with any static file server.
+
+---
+
 ## Security notes
 
 - The master key is the single root secret. Store `creds.json` outside version control (add it to `.gitignore`). Pass a custom path with `--creds` if needed.
