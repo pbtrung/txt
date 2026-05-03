@@ -30,7 +30,7 @@ python3 txt_vault.py --gen-master-key creds.json
 {
   "turso_database_url": "libsql://your-db.turso.io",
   "turso_auth_token": "your-token-here",
-  "master_key": "<base64-encoded 32-byte random key>"
+  "master_key": "<base64-encoded 64-byte random key>"
 }
 ```
 
