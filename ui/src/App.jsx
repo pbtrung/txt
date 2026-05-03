@@ -159,7 +159,7 @@ function DataScreen({ masterKey, onDisconnect }) {
               onClick={() => setDropdownOpen(o => !o)}
               aria-expanded={dropdownOpen}
             >
-              {selectedTxt ? selectedTxt.name : '— select file —'}
+              {selectedTxt ? selectedTxt.name : `— select one of ${txts.length} files —`}
             </button>
             {dropdownOpen && (
               <ul className="dropdown-menu show w-100" style={{ maxHeight: '60vh', overflowY: 'auto', fontSize: '0.875rem' }}>
