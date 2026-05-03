@@ -162,7 +162,7 @@ function DataScreen({ masterKey, onDisconnect }) {
               {selectedTxt ? selectedTxt.name : '— select file —'}
             </button>
             {dropdownOpen && (
-              <ul className="dropdown-menu show w-100" style={{ maxHeight: '60vh', overflowY: 'auto' }}>
+              <ul className="dropdown-menu show w-100" style={{ maxHeight: '60vh', overflowY: 'auto', fontSize: '0.875rem' }}>
                 {txts.map(txt => (
                   <li key={txt.id}>
                     <button
