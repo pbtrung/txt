@@ -120,7 +120,7 @@ function DataScreen({ masterKey, onDisconnect }) {
   const hasParts  = totalParts > 0;
 
   return (
-    <div className="container py-3" style={{ maxWidth: '60%' }}>
+    <div className="container py-3 vault-container">
       {/* Header */}
       <div className="d-flex align-items-center justify-content-between mb-3">
         <div className="d-flex align-items-center gap-2">
