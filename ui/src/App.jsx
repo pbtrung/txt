@@ -151,9 +151,10 @@ function DataScreen({ masterKey, onDisconnect }) {
             }}
           >
             <option value="" disabled>— select file —</option>
-            {txts.map(txt => (
-              <option key={txt.id} value={txt.id} title={txt.name}>{txt.name}</option>
-            ))}
+            {txts.map(txt => {
+              const label = txt.name.length > 40 ? txt.name.slice(0, 39) + '…' : txt.name;
+              return <option key={txt.id} value={txt.id} title={txt.name}>{label}</option>;
+            })}
           </select>
         </div>
 
