@@ -155,7 +155,7 @@ function DataScreen({ masterKey, onDisconnect }) {
           <div className="dropdown" ref={dropdownRef}>
             <button
               type="button"
-              className="btn btn-sm btn-outline-secondary dropdown-toggle w-100 text-start text-truncate"
+              className={`form-select form-select-sm text-truncate text-start${!selectedTxt ? ' text-muted' : ''}`}
               onClick={() => setDropdownOpen(o => !o)}
               aria-expanded={dropdownOpen}
             >
