@@ -64,8 +64,19 @@ function DataScreen({ masterKey, onDisconnect }) {
   const [loading, setLoading]         = useState(false);
   const [error, setError]             = useState(null);
   const [fontSize, setFontSize]       = useState(16);
+  const [dropdownOpen, setDropdownOpen] = useState(false);
   const MIN_FONT = 8, MAX_FONT = 32;
-  const loadedPartRef = useRef(null); // {txtId, partNum} of last requested load
+  const loadedPartRef  = useRef(null);
+  const dropdownRef    = useRef(null);
+
+  useEffect(() => {
+    function onClickOutside(e) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target))
+        setDropdownOpen(false);
+    }
+    document.addEventListener('mousedown', onClickOutside);
+    return () => document.removeEventListener('mousedown', onClickOutside);
+  }, []);
 
   const wrap = useCallback(async (fn) => {
     setLoading(true);
@@ -141,21 +152,32 @@ function DataScreen({ masterKey, onDisconnect }) {
 
         {/* Header — file selector only */}
         <div className="card-header py-2">
-          <select
-            className="form-select form-select-sm"
-            style={{ overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100%' }}
-            value={selectedTxt?.id ?? ''}
-            onChange={e => {
-              const txt = txts.find(t => t.id === Number(e.target.value));
-              if (txt) selectTxt(txt);
-            }}
-          >
-            <option value="" disabled>— select file —</option>
-            {txts.map(txt => {
-              const label = txt.name.length > 40 ? txt.name.slice(0, 39) + '…' : txt.name;
-              return <option key={txt.id} value={txt.id} title={txt.name}>{label}</option>;
-            })}
-          </select>
+          <div className="dropdown" ref={dropdownRef}>
+            <button
+              type="button"
+              className="btn btn-sm btn-outline-secondary dropdown-toggle w-100 text-start text-truncate"
+              onClick={() => setDropdownOpen(o => !o)}
+              aria-expanded={dropdownOpen}
+            >
+              {selectedTxt ? selectedTxt.name : '— select file —'}
+            </button>
+            {dropdownOpen && (
+              <ul className="dropdown-menu show w-100" style={{ maxHeight: '60vh', overflowY: 'auto' }}>
+                {txts.map(txt => (
+                  <li key={txt.id}>
+                    <button
+                      type="button"
+                      className={`dropdown-item text-truncate${selectedTxt?.id === txt.id ? ' active' : ''}`}
+                      title={txt.name}
+                      onClick={() => { selectTxt(txt); setDropdownOpen(false); }}
+                    >
+                      {txt.name}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </div>
 
         {/* Body — scrollable content */}
