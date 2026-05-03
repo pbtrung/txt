@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { initCrypto, parseMasterKey, decryptName, decryptPart } from './crypto.js';
 import { initDb, fetchTxts, fetchPartCount, fetchPartByOffset } from './db.js';
 
@@ -65,6 +65,7 @@ function DataScreen({ masterKey, onDisconnect }) {
   const [error, setError]             = useState(null);
   const [fontSize, setFontSize]       = useState(16);
   const MIN_FONT = 8, MAX_FONT = 32;
+  const loadedPartRef = useRef(null); // {txtId, partNum} of last requested load
 
   const wrap = useCallback(async (fn) => {
     setLoading(true);
@@ -87,6 +88,9 @@ function DataScreen({ masterKey, onDisconnect }) {
 
   async function loadPart(txt, partNum, total = totalParts) {
     const clamped = Math.max(1, Math.min(partNum, total || 1));
+    const lp = loadedPartRef.current;
+    if (lp && lp.txtId === txt.id && lp.partNum === clamped) return;
+    loadedPartRef.current = { txtId: txt.id, partNum: clamped };
     setCurrentPartNum(clamped);
     setContent(null);
     wrap(async () => {
@@ -100,10 +104,12 @@ function DataScreen({ masterKey, onDisconnect }) {
     setCurrentPartNum(1);
     setTotalParts(0);
     setContent(null);
+    loadedPartRef.current = null;
     wrap(async () => {
       const total = await fetchPartCount(txt.id);
       setTotalParts(total);
       if (total > 0) {
+        loadedPartRef.current = { txtId: txt.id, partNum: 1 };
         const blob = await fetchPartByOffset(txt.id, 0);
         setContent(blob ? decryptPart(blob, masterKey) : '');
       }
