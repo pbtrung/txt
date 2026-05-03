@@ -127,7 +127,7 @@ function DataScreen({ masterKey, onDisconnect }) {
           <span className="fw-bold">txt_vault</span>
           {loading && <span className="spinner-border spinner-border-sm text-secondary" />}
         </div>
-        <button className="btn btn-outline-secondary" onClick={onDisconnect}>
+        <button className="btn btn-sm btn-outline-secondary" onClick={onDisconnect}>
           Disconnect
         </button>
       </div>
@@ -144,7 +144,7 @@ function DataScreen({ masterKey, onDisconnect }) {
               <div className="d-flex align-items-center gap-2" style={{ flex: '1 1 0', minWidth: 0 }}>
                 <div style={{ flex: '1 1 0', minWidth: 0 }}>
                 <select
-                  className="form-select"
+                  className="form-select form-select-sm"
                   style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}
                   value={selectedTxt?.id ?? ''}
                   onChange={e => {
@@ -153,19 +153,14 @@ function DataScreen({ masterKey, onDisconnect }) {
                   }}
                 >
                   <option value="" disabled>— select file —</option>
-                  {txts.map(txt => {
-                    const label = txt.name.length > 60
-                      ? txt.name.slice(0, 59) + '…'
-                      : txt.name;
-                    return (
-                      <option key={txt.id} value={txt.id} title={txt.name}>{label}</option>
-                    );
-                  })}
+                  {txts.map(txt => (
+                    <option key={txt.id} value={txt.id} title={txt.name}>{txt.name}</option>
+                  ))}
                 </select>
                 </div>
                 <div className="d-flex align-items-center gap-1 flex-shrink-0">
                   <button
-                    className="btn btn-outline-secondary"
+                    className="btn btn-sm btn-outline-secondary"
                     disabled={!hasTxt || currentPartNum <= 1}
                     onClick={() => loadPart(selectedTxt, currentPartNum - 1)}
                     title="Previous part"
@@ -173,8 +168,8 @@ function DataScreen({ masterKey, onDisconnect }) {
                   {hasTxt ? (
                     <input
                       type="number"
-                      className="form-control text-center"
-                      style={{ width: 64 }}
+                      className="form-control form-control-sm text-center"
+                      style={{ width: 56 }}
                       value={currentPartNum}
                       min={1}
                       max={totalParts || 1}
@@ -190,7 +185,7 @@ function DataScreen({ masterKey, onDisconnect }) {
                     / {hasTxt && hasParts ? totalParts : <>&mdash;</>}
                   </span>
                   <button
-                    className="btn btn-outline-secondary"
+                    className="btn btn-sm btn-outline-secondary"
                     disabled={!hasTxt || currentPartNum >= totalParts}
                     onClick={() => loadPart(selectedTxt, currentPartNum + 1)}
                     title="Next part"
@@ -199,7 +194,7 @@ function DataScreen({ masterKey, onDisconnect }) {
               </div>
               <div className="d-flex align-items-center gap-1 flex-shrink-0">
                 <button
-                  className="btn btn-outline-secondary"
+                  className="btn btn-sm btn-outline-secondary"
                   disabled={fontSize <= MIN_FONT}
                   onClick={() => setFontSize(f => Math.max(MIN_FONT, f - 1))}
                   title="Decrease font size"
@@ -208,7 +203,7 @@ function DataScreen({ masterKey, onDisconnect }) {
                   {fontSize}px
                 </span>
                 <button
-                  className="btn btn-outline-secondary"
+                  className="btn btn-sm btn-outline-secondary"
                   disabled={fontSize >= MAX_FONT}
                   onClick={() => setFontSize(f => Math.min(MAX_FONT, f + 1))}
                   title="Increase font size"
