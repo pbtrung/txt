@@ -65,13 +65,6 @@ export default function LoginScreen({ onConnect }) {
               Initialising crypto…
             </div>
           )}
-          {verifying && (
-            <div className="d-flex align-items-center gap-2 mb-3 text-secondary small">
-              <span className="spinner-border spinner-border-sm" />
-              Verifying connection and master key…
-            </div>
-          )}
-          {error && <div className="alert alert-danger py-2 small">{error}</div>}
           <label className="form-label fw-semibold">Credentials file</label>
           <input
             type="file"
@@ -80,6 +73,13 @@ export default function LoginScreen({ onConnect }) {
             disabled={busy}
             onChange={e => e.target.files[0] && handleFile(e.target.files[0])}
           />
+          {verifying && (
+            <div className="d-flex align-items-center gap-2 mt-3 text-secondary small">
+              <span className="spinner-border spinner-border-sm" />
+              Verifying connection and master key…
+            </div>
+          )}
+          {error && <div className="alert alert-danger py-2 small mt-3">{error}</div>}
         </div>
       </div>
     </div>
