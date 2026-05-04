@@ -14,12 +14,12 @@ export default function PartFooter({
       <div className="d-flex align-items-center gap-1">
         {hasTxt ? (
           <input
-            type="number"
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
             className="form-control form-control-sm text-center"
-            style={{ width: '5ch', padding: 0 }}
+            style={{ width: '7ch' }}
             value={currentPartNum}
-            min={1}
-            max={totalParts || 1}
             disabled={!hasParts}
             onChange={e => onPartNumChange(Number(e.target.value))}
             onBlur={() => onLoadPart(currentPartNum)}
