@@ -235,7 +235,7 @@ class Crypto:
     # --- public interface ---
 
     def encrypt_part(self, plaintext: bytes) -> bytes:
-        compressed = brotli.compress(plaintext, quality=6)
+        compressed = brotli.compress(plaintext, quality=11)
         salt = os.urandom(SALT_LEN)
         key, iv = self._derive_part(salt)
         return salt + self._aead_encrypt(key, iv, compressed, salt)

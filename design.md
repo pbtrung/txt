@@ -49,7 +49,7 @@ for each .txt file (case-insensitive) in --src:
      If no match, encrypt filename and INSERT a new txt row.
   3. Split content into parts at paragraph boundaries, targeting ~100 KB per part
   4. For each part:
-     a. Compress with Brotli (quality 6)
+     a. Compress with Brotli (quality 11)
      b. Generate 64-byte random salt
      c. Derive 64-byte key and 64-byte IV via HKDF-SHA3-512(master_key, salt)
      d. Encrypt compressed bytes with Ascon-Keccak AEAD; pass salt as AAD
@@ -145,7 +145,7 @@ iv  = key_material[64:]    # Ascon-Keccak IV
 
 ```
 plaintext  = UTF-8 bytes of one part
-compressed = brotli.compress(plaintext, quality=6)
+compressed = brotli.compress(plaintext, quality=11)
 salt       = os.urandom(64)
 key, iv    = derive(salt)
 ct_tag     = Ascon-Keccak-encrypt(compressed, key, iv, aad=salt)
