@@ -16,7 +16,7 @@ export default function PartFooter({
           <input
             type="number"
             className="form-control form-control-sm text-center"
-            style={{ width: '7ch' }}
+            style={{ width: '5ch', padding: 0 }}
             value={currentPartNum}
             min={1}
             max={totalParts || 1}
