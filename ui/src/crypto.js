@@ -12,10 +12,12 @@ let lc = null;
 let brotli = null;
 
 export async function initCrypto() {
+  console.debug('[crypto] loading leancrypto WASM and brotli…');
   [lc, brotli] = await Promise.all([
     createLeancrypto({ locateFile: () => wasmUrl }),
     brotliPromise,
   ]);
+  console.debug('[crypto] ready');
 }
 
 function alloc(data) {
@@ -117,7 +119,9 @@ export function decryptName(blob, masterKey) {
   const b = blob instanceof Uint8Array ? blob : new Uint8Array(blob);
   const salt = b.slice(0, SALT_LEN);
   const { key, iv } = _deriveName(masterKey, salt);
-  return new TextDecoder().decode(_aeadDecrypt(key, iv, b.slice(SALT_LEN), salt));
+  const name = new TextDecoder().decode(_aeadDecrypt(key, iv, b.slice(SALT_LEN), salt));
+  console.debug('[crypto] decryptName:', name);
+  return name;
 }
 
 export function decryptPart(blob, masterKey) {
@@ -125,7 +129,9 @@ export function decryptPart(blob, masterKey) {
   const salt = b.slice(0, SALT_LEN);
   const { key, iv } = _derivePart(masterKey, salt);
   const compressed = _aeadDecrypt(key, iv, b.slice(SALT_LEN), salt);
-  return new TextDecoder().decode(brotli.decompress(compressed));
+  const plain = brotli.decompress(compressed);
+  console.debug(`[crypto] decryptPart: ${b.length}B blob → ${compressed.length}B compressed → ${plain.length}B plain`);
+  return new TextDecoder().decode(plain);
 }
 
 export function parseMasterKey(b64) {

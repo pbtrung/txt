@@ -275,7 +275,11 @@ class Crypto:
 class VaultStore:
     """Database connection and all storage operations."""
 
-    def __init__(self, creds: dict):
+    def __init__(self, creds: dict, verbose: bool = False):
+        if verbose:
+            lib_name = ctypes.util.find_library("leancrypto")
+            click.echo(f"leancrypto: {lib_name}")
+            click.echo(f"Turso URL: {creds['turso_database_url']}")
         self._conn = libsql.connect(
             ":memory:",
             sync_url=creds["turso_database_url"],
@@ -284,19 +288,30 @@ class VaultStore:
         self._conn.sync()
         self._conn.executescript(_SCHEMA)
         self._conn.sync()
+        if verbose:
+            n = self._conn.execute("SELECT COUNT(*) FROM txt").fetchone()[0]
+            click.echo(f"Replica ready: {n} txt row(s)")
 
     def _insert_parts(
         self, crypto: Crypto, txt_id: int, parts: list[bytes], verbose: bool
     ):
+        total_plain = total_blob = 0
         for i, part in enumerate(parts):
             blob = crypto.encrypt_part(part)
             self._conn.execute(
                 "INSERT INTO txt_parts (txt_id, content) VALUES (?, ?)", (txt_id, blob)
             )
+            total_plain += len(part)
+            total_blob += len(blob)
             if verbose:
                 click.echo(
-                    f"  part {i + 1}/{len(parts)}: {len(part):,} → {len(blob):,} bytes"
+                    f"  part {i + 1}/{len(parts)}: {len(part):,}B plain → {len(blob):,}B blob"
                 )
+        if verbose and len(parts) > 1:
+            ratio = total_plain / total_blob if total_blob else 0
+            click.echo(
+                f"  total: {total_plain:,}B plain → {total_blob:,}B blobs ({ratio:.2f}x ratio)"
+            )
 
     def ingest_file(
         self, crypto: Crypto, filepath: Path, stored_name: str, verbose: bool
@@ -310,8 +325,14 @@ class VaultStore:
                 "INSERT INTO txt (name, name_hmac) VALUES (?, ?)", (name_blob, name_mac)
             )
             txt_id = cur.lastrowid
+            action = "new"
         else:
             self._conn.execute("DELETE FROM txt_parts WHERE txt_id = ?", (txt_id,))
+            action = "update"
+        if verbose:
+            click.echo(
+                f"  [{action}] txt_id={txt_id}, {len(content):,}B, {len(parts)} part(s)"
+            )
         self._insert_parts(crypto, txt_id, parts, verbose)
         self._conn.execute(
             "INSERT OR REPLACE INTO part_count (txt_id, count) VALUES (?, ?)",
@@ -320,9 +341,9 @@ class VaultStore:
         self._conn.commit()
         self._conn.sync()
         if verbose:
-            click.echo(f"  {stored_name}: {len(parts)} part(s), txt_id={txt_id}")
+            click.echo("  committed and synced")
 
-    def rebuild_part_count(self):
+    def rebuild_part_count(self, verbose: bool = False):
         self._conn.execute("DELETE FROM part_count")
         self._conn.execute("""
             INSERT INTO part_count (txt_id, count)
@@ -330,15 +351,22 @@ class VaultStore:
         """)
         self._conn.commit()
         self._conn.sync()
+        if verbose:
+            n = self._conn.execute("SELECT COUNT(*) FROM part_count").fetchone()[0]
+            click.echo(f"Rebuilt part_count for {n} txt row(s)")
 
-    def read_part(self, crypto: Crypto, part_id: int, out_path: str):
+    def read_part(self, crypto: Crypto, part_id: int, out_path: str, verbose: bool = False):
         cur = self._conn.execute(
             "SELECT content FROM txt_parts WHERE id = ?", (part_id,)
         )
         row = cur.fetchone()
         if not row:
             raise ValueError(f"No part with id={part_id}")
-        Path(out_path).write_bytes(crypto.decrypt_part(bytes(row[0])))
+        blob = bytes(row[0])
+        data = crypto.decrypt_part(blob)
+        Path(out_path).write_bytes(data)
+        if verbose:
+            click.echo(f"Part {part_id}: {len(blob):,}B blob → {len(data):,}B plain → {out_path}")
 
 
 # ===== CLI =====
@@ -361,6 +389,8 @@ def _cmd_gen_master_key(path: str):
 def _cmd_ingest(store: VaultStore, crypto: Crypto, src: str, verbose: bool):
     src_path = Path(src)
     files = sorted(p for p in src_path.rglob("*") if p.suffix.lower() == ".txt")
+    if verbose:
+        click.echo(f"Found {len(files)} .txt file(s) under {src_path}")
     for fp in files:
         stored_name = str(fp.relative_to(src_path))
         if verbose:
@@ -384,15 +414,15 @@ def main(src, creds, do_part_count, gen_key_path, read_part_id, out, verbose):
         _cmd_gen_master_key(gen_key_path)
         return
     loaded = load_creds(creds)
-    store = VaultStore(loaded)
+    store = VaultStore(loaded, verbose=verbose)
     if do_part_count:
-        store.rebuild_part_count()
+        store.rebuild_part_count(verbose=verbose)
         return
     crypto = Crypto(get_master_key(loaded))
     if read_part_id is not None:
         if not out:
             raise click.UsageError("--out is required with --read-part")
-        store.read_part(crypto, read_part_id, out)
+        store.read_part(crypto, read_part_id, out, verbose=verbose)
     elif src:
         _cmd_ingest(store, crypto, src, verbose)
 

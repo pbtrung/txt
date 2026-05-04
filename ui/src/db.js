@@ -14,6 +14,8 @@ async function execute(sql, args = []) {
   const stmt = args.length
     ? { sql, args: args.map(toWireValue) }
     : { sql };
+  console.debug('[db]', sql, ...(args.length ? [args] : []));
+  const t0 = performance.now();
   const res = await fetch(endpoint, {
     method: 'POST',
     headers,
@@ -23,7 +25,9 @@ async function execute(sql, args = []) {
   const data = await res.json();
   const r = data.results[0];
   if (r.type === 'error') throw new Error(r.error.message);
-  return r.response.result;
+  const result = r.response.result;
+  console.debug(`[db] ${(performance.now() - t0).toFixed(1)}ms, ${result.rows.length} row(s)`);
+  return result;
 }
 
 function toWireValue(v) {
