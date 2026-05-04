@@ -14,7 +14,7 @@ export default function LoginScreen({ onConnect }) {
     try {
       const json = JSON.parse(await file.text());
       if (!json.turso_database_url || !json.turso_auth_token || !json.master_key)
-        throw new Error('Missing required fields in creds.json');
+        throw new Error('Missing required fields: turso_database_url, turso_auth_token, master_key');
 
       initDb(json.turso_database_url, json.turso_auth_token);
       const masterKey = parseMasterKey(json.master_key);
@@ -57,7 +57,7 @@ export default function LoginScreen({ onConnect }) {
         <div className="card-body p-4">
           <h4 className="mb-1 fw-bold">txt_vault</h4>
           <p className="text-muted mb-4 small">
-            Upload <code>creds.json</code> to connect to your Turso database.
+            Upload a credentials JSON file to connect to your Turso database.
           </p>
           {!cryptoReady && (
             <div className="d-flex align-items-center gap-2 mb-3 text-secondary small">
@@ -72,7 +72,7 @@ export default function LoginScreen({ onConnect }) {
             </div>
           )}
           {error && <div className="alert alert-danger py-2 small">{error}</div>}
-          <label className="form-label fw-semibold">creds.json</label>
+          <label className="form-label fw-semibold">Credentials file</label>
           <input
             type="file"
             className="form-control"
