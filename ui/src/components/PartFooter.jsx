@@ -14,6 +14,7 @@ export default function PartFooter({
       <div className="d-flex align-items-center gap-1">
         <button
           className="btn btn-sm btn-outline-secondary px-2 py-0"
+          style={{ fontSize: '1rem' }}
           disabled={!hasParts || currentPartNum <= 1}
           onClick={() => onLoadPart(currentPartNum - 1)}
         >−</button>
@@ -39,6 +40,7 @@ export default function PartFooter({
         </span>
         <button
           className="btn btn-sm btn-outline-secondary px-2 py-0"
+          style={{ fontSize: '1rem' }}
           disabled={!hasParts || currentPartNum >= totalParts}
           onClick={() => onLoadPart(currentPartNum + 1)}
         >+</button>
@@ -46,6 +48,7 @@ export default function PartFooter({
       <div className="d-flex align-items-center gap-1">
         <button
           className="btn btn-sm btn-outline-secondary px-2 py-0"
+          style={{ fontSize: '1rem' }}
           disabled={fontSize <= MIN_FONT}
           onClick={() => setFontSize(f => Math.max(MIN_FONT, f - 1))}
           title="Decrease font size"
@@ -55,6 +58,7 @@ export default function PartFooter({
         </span>
         <button
           className="btn btn-sm btn-outline-secondary px-2 py-0"
+          style={{ fontSize: '1rem' }}
           disabled={fontSize >= MAX_FONT}
           onClick={() => setFontSize(f => Math.min(MAX_FONT, f + 1))}
           title="Increase font size"
