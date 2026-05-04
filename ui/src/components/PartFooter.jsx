@@ -16,7 +16,7 @@ export default function PartFooter({
           className="btn btn-sm btn-outline-secondary px-2 py-0"
           disabled={!hasParts || currentPartNum <= 1}
           onClick={() => onLoadPart(currentPartNum - 1)}
-        >&laquo;</button>
+        >−</button>
         {hasTxt ? (
           <input
             type="text"
@@ -41,7 +41,7 @@ export default function PartFooter({
           className="btn btn-sm btn-outline-secondary px-2 py-0"
           disabled={!hasParts || currentPartNum >= totalParts}
           onClick={() => onLoadPart(currentPartNum + 1)}
-        >&raquo;</button>
+        >+</button>
       </div>
       <div className="d-flex align-items-center gap-1">
         <button
