@@ -52,7 +52,7 @@ function toRows(result) {
 }
 
 export async function fetchOneTxt() {
-  const rows = toRows(await execute('SELECT id, name FROM txt LIMIT 1'));
+  const rows = toRows(await execute('SELECT id, name FROM txt ORDER BY RANDOM() LIMIT 1'));
   return rows[0] ?? null;
 }
 
