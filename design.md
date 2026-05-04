@@ -90,7 +90,7 @@ CREATE TABLE IF NOT EXISTS part_count (
 
 `part_count` is kept in sync automatically: `ingest_file` upserts the count after committing each file's parts. The `--part-count` flag can backfill it for data ingested before this table existed.
 
-Connection is made over HTTPS to a Turso database URL. The URL and auth token are read first from environment variables (`TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`); if not set, they fall back to the `turso_database_url` and `turso_auth_token` fields in `creds.json`.
+All queries execute directly against the Turso cloud database over HTTPS — there is no local replica. The URL and auth token are read first from environment variables (`TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`); if not set, they fall back to the `turso_database_url` and `turso_auth_token` fields in `creds.json`.
 
 ---
 

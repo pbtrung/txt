@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-import atexit
 import os
 import re
 import hmac as _hmac
@@ -8,7 +7,6 @@ import json
 import base64
 import ctypes
 import ctypes.util
-import tempfile
 import brotli
 import libsql
 import click
@@ -282,24 +280,17 @@ class VaultStore:
             lib_name = ctypes.util.find_library("leancrypto")
             click.echo(f"leancrypto: {lib_name}")
             click.echo(f"Turso URL: {creds['turso_database_url']}")
-        fd, self._db_path = tempfile.mkstemp(suffix=".db", prefix="txt_vault_")
-        os.close(fd)
-        atexit.register(self._cleanup)
         self._conn = libsql.connect(
-            self._db_path,
-            sync_url=creds["turso_database_url"],
+            creds["turso_database_url"],
             auth_token=creds["turso_auth_token"],
         )
-        self._conn.sync()
-        self._conn.executescript(_SCHEMA)
-        self._conn.sync()
+        for stmt in _SCHEMA.strip().split(";"):
+            stmt = stmt.strip()
+            if stmt:
+                self._conn.execute(stmt)
         if verbose:
             n = self._conn.execute("SELECT COUNT(*) FROM txt").fetchone()[0]
-            click.echo(f"Replica ready: {n} txt row(s)")
-
-    def _cleanup(self):
-        for suffix in ("", "-shm", "-wal"):
-            Path(self._db_path + suffix).unlink(missing_ok=True)
+            click.echo(f"Connected: {n} txt row(s)")
 
     def _insert_parts(
         self, crypto: Crypto, txt_id: int, parts: list[bytes], verbose: bool
@@ -348,9 +339,8 @@ class VaultStore:
             (txt_id, len(parts)),
         )
         self._conn.commit()
-        self._conn.sync()
         if verbose:
-            click.echo("  committed and synced")
+            click.echo("  committed")
 
     def rebuild_part_count(self, verbose: bool = False):
         self._conn.execute("DELETE FROM part_count")
@@ -359,7 +349,6 @@ class VaultStore:
             SELECT txt_id, COUNT(*) FROM txt_parts GROUP BY txt_id
         """)
         self._conn.commit()
-        self._conn.sync()
         if verbose:
             n = self._conn.execute("SELECT COUNT(*) FROM part_count").fetchone()[0]
             click.echo(f"Rebuilt part_count for {n} txt row(s)")
