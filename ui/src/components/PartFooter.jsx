@@ -23,7 +23,7 @@ export default function PartFooter({
             inputMode="numeric"
             pattern="[0-9]*"
             className="form-control form-control-sm text-center"
-            style={{ width: '5ch' }}
+            style={{ width: '5ch', fontSize: '1rem' }}
             value={currentPartNum}
             disabled={!hasParts}
             onChange={e => onPartNumChange(Number(e.target.value))}
@@ -33,7 +33,7 @@ export default function PartFooter({
         ) : (
           <span className="text-muted px-2">&mdash;</span>
         )}
-        <span className="text-muted flex-shrink-0">
+        <span className="text-muted flex-shrink-0" style={{ fontSize: '1rem' }}>
           /{' '}
           {hasTxt && hasParts ? totalParts : '—'}
         </span>
