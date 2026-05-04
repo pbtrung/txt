@@ -9,10 +9,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@noble/hashes": "^2.2.0",
     "bootstrap": "^5.3.8",
     "brotli-wasm": "^3.0.1",
-    "libsodium-wrappers": "^0.8.4",
     "react": "^19.2.5",
     "react-dom": "^19.2.5"
   },
