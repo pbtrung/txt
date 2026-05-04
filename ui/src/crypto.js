@@ -40,7 +40,11 @@ function _hkdf(ikm, salt, length) {
   const outPtr = lc._malloc(length);
   try {
     const ret = lc._lc_hkdf(
-      sha3_512ptr(), ikmPtr, ikm.length, saltPtr, salt.length, 0, 0, outPtr, length,
+      sha3_512ptr(),
+      ikmPtr, ikm.length,
+      saltPtr, salt.length,
+      0, 0,
+      outPtr, length,
     );
     if (ret !== 0) throw new Error(`lc_hkdf failed: ${ret}`);
     return lc.HEAPU8.slice(outPtr, outPtr + length);
@@ -57,7 +61,10 @@ function _hmac(key, data) {
   const macPtr = lc._malloc(HMAC_LEN);
   try {
     const ret = lc._lc_hmac(
-      sha3_256ptr(), keyPtr, key.length, dataPtr, data.length, macPtr,
+      sha3_256ptr(),
+      keyPtr, key.length,
+      dataPtr, data.length,
+      macPtr,
     );
     if (ret !== 0) throw new Error(`lc_hmac failed: ${ret}`);
     return lc.HEAPU8.slice(macPtr, macPtr + HMAC_LEN);
@@ -72,13 +79,18 @@ function _aeadDecrypt(key, iv, ctTag, aad) {
   const ctxSlot = lc._malloc(4);
   let ctx = 0;
   try {
-    if (lc._lc_ak_alloc_taglen(sha3_512ptr(), TAG_LEN, ctxSlot) !== 0)
+    const ok = lc._lc_ak_alloc_taglen(
+      sha3_512ptr(), TAG_LEN, ctxSlot,
+    );
+    if (ok !== 0)
       throw new Error('lc_ak_alloc_taglen failed');
     ctx = lc.HEAP32[ctxSlot >> 2];
 
     const keyPtr = alloc(key);
     const ivPtr = alloc(iv);
-    const r = lc._lc_aead_setkey(ctx, keyPtr, key.length, ivPtr, iv.length);
+    const r = lc._lc_aead_setkey(
+      ctx, keyPtr, key.length, ivPtr, iv.length,
+    );
     lc._free(keyPtr);
     lc._free(ivPtr);
     if (r !== 0) throw new Error('lc_aead_setkey failed');
@@ -90,14 +102,16 @@ function _aeadDecrypt(key, iv, ctTag, aad) {
     const aadPtr = alloc(aad);
     const tagPtr = alloc(tag);
     const dec = lc._lc_aead_decrypt(
-      ctx, ctPtr, ptPtr, ct.length, aadPtr, aad.length, tagPtr, TAG_LEN,
+      ctx, ctPtr, ptPtr, ct.length,
+      aadPtr, aad.length, tagPtr, TAG_LEN,
     );
     const out = lc.HEAPU8.slice(ptPtr, ptPtr + ct.length);
     lc._free(ctPtr);
     lc._free(ptPtr);
     lc._free(aadPtr);
     lc._free(tagPtr);
-    if (dec !== 0) throw new Error('AEAD tag verification failed');
+    if (dec !== 0)
+      throw new Error('AEAD tag verification failed');
     return out;
   } finally {
     if (ctx) lc._lc_aead_zero_free(ctx);
@@ -112,29 +126,44 @@ function _derivePart(masterKey, salt) {
 
 function _deriveName(masterKey, salt) {
   const km = _hkdf(masterKey, salt, KEY_LEN + IV_LEN + HMAC_LEN);
-  return { key: km.slice(0, KEY_LEN), iv: km.slice(KEY_LEN, KEY_LEN + IV_LEN) };
+  return {
+    key: km.slice(0, KEY_LEN),
+    iv: km.slice(KEY_LEN, KEY_LEN + IV_LEN),
+  };
 }
 
 export function decryptName(blob, masterKey) {
-  const b = blob instanceof Uint8Array ? blob : new Uint8Array(blob);
+  const b = blob instanceof Uint8Array
+    ? blob
+    : new Uint8Array(blob);
   const salt = b.slice(0, SALT_LEN);
   const { key, iv } = _deriveName(masterKey, salt);
-  const name = new TextDecoder().decode(_aeadDecrypt(key, iv, b.slice(SALT_LEN), salt));
+  const ct = b.slice(SALT_LEN);
+  const name = new TextDecoder().decode(
+    _aeadDecrypt(key, iv, ct, salt),
+  );
   console.debug('[crypto] decryptName:', name);
   return name;
 }
 
 export function decryptPart(blob, masterKey) {
-  const b = blob instanceof Uint8Array ? blob : new Uint8Array(blob);
+  const b = blob instanceof Uint8Array
+    ? blob
+    : new Uint8Array(blob);
   const salt = b.slice(0, SALT_LEN);
   const { key, iv } = _derivePart(masterKey, salt);
-  const compressed = _aeadDecrypt(key, iv, b.slice(SALT_LEN), salt);
+  const compressed = _aeadDecrypt(
+    key, iv, b.slice(SALT_LEN), salt,
+  );
   const plain = brotli.decompress(compressed);
-  console.debug(`[crypto] decryptPart: ${b.length}B blob → ${compressed.length}B compressed → ${plain.length}B plain`);
+  console.debug(
+    `[crypto] decryptPart: ${b.length}B blob` +
+    ` → ${compressed.length}B compressed` +
+    ` → ${plain.length}B plain`,
+  );
   return new TextDecoder().decode(plain);
 }
 
 export function parseMasterKey(b64) {
   return Uint8Array.from(atob(b64), c => c.charCodeAt(0));
 }
-

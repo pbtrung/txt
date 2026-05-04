@@ -19,19 +19,25 @@ async function execute(sql, args = []) {
   const res = await fetch(endpoint, {
     method: 'POST',
     headers,
-    body: JSON.stringify({ requests: [{ type: 'execute', stmt }] }),
+    body: JSON.stringify({
+      requests: [{ type: 'execute', stmt }],
+    }),
   });
-  if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+  if (!res.ok)
+    throw new Error(`HTTP ${res.status} ${res.statusText}`);
   const data = await res.json();
   const r = data.results[0];
   if (r.type === 'error') throw new Error(r.error.message);
   const result = r.response.result;
-  console.debug(`[db] ${(performance.now() - t0).toFixed(1)}ms, ${result.rows.length} row(s)`);
+  const ms = (performance.now() - t0).toFixed(1);
+  const n = result.rows.length;
+  console.debug(`[db] ${ms}ms, ${n} row(s)`);
   return result;
 }
 
 function toWireValue(v) {
-  if (typeof v === 'number') return { type: 'integer', value: String(v) };
+  if (typeof v === 'number')
+    return { type: 'integer', value: String(v) };
   if (typeof v === 'string') return { type: 'text', value: v };
   return { type: 'null' };
 }
@@ -41,23 +47,34 @@ function fromWireValue(v) {
   if (v.type === 'integer') return parseInt(v.value, 10);
   if (v.type === 'float') return parseFloat(v.value);
   if (v.type === 'text') return v.value;
-  if (v.type === 'blob') return Uint8Array.from(atob(v.base64), c => c.charCodeAt(0));
+  if (v.type === 'blob')
+    return Uint8Array.from(
+      atob(v.base64), c => c.charCodeAt(0),
+    );
   return null;
 }
 
 function toRows(result) {
   return result.rows.map(row =>
-    Object.fromEntries(result.cols.map((col, i) => [col.name, fromWireValue(row[i])]))
+    Object.fromEntries(
+      result.cols.map(
+        (col, i) => [col.name, fromWireValue(row[i])],
+      ),
+    )
   );
 }
 
 export async function fetchOneTxt() {
-  const rows = toRows(await execute('SELECT id, name FROM txt ORDER BY RANDOM() LIMIT 1'));
+  const rows = toRows(await execute(
+    'SELECT id, name FROM txt ORDER BY RANDOM() LIMIT 1',
+  ));
   return rows[0] ?? null;
 }
 
 export async function fetchTxts() {
-  return toRows(await execute('SELECT id, name FROM txt ORDER BY id'));
+  return toRows(await execute(
+    'SELECT id, name FROM txt ORDER BY id',
+  ));
 }
 
 export async function fetchPartCount(txtId) {
@@ -69,8 +86,9 @@ export async function fetchPartCount(txtId) {
 
 export async function fetchPartByOffset(txtId, offset) {
   const rows = toRows(await execute(
-    'SELECT content FROM txt_parts WHERE txt_id = ? ORDER BY id LIMIT 1 OFFSET ?',
-    [txtId, offset]
+    'SELECT content FROM txt_parts' +
+    ' WHERE txt_id = ? ORDER BY id LIMIT 1 OFFSET ?',
+    [txtId, offset],
   ));
   return rows[0]?.content ?? null;
 }

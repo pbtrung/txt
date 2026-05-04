@@ -1,6 +1,12 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, {
+  useState, useEffect, useCallback, useRef,
+} from 'react';
 import { decryptName, decryptPart } from '../crypto.js';
-import { fetchTxts, fetchPartCount, fetchPartByOffset } from '../db.js';
+import {
+  fetchTxts,
+  fetchPartCount,
+  fetchPartByOffset,
+} from '../db.js';
 import FileDropdown from './FileDropdown.jsx';
 import PartFooter from './PartFooter.jsx';
 
@@ -37,7 +43,8 @@ export default function DataScreen({ masterKey, onDisconnect }) {
   async function loadPart(txt, partNum, total = totalParts) {
     const clamped = Math.max(1, Math.min(partNum, total || 1));
     const lp = loadedPartRef.current;
-    if (lp && lp.txtId === txt.id && lp.partNum === clamped) return;
+    if (lp && lp.txtId === txt.id && lp.partNum === clamped)
+      return;
     loadedPartRef.current = { txtId: txt.id, partNum: clamped };
     setCurrentPartNum(clamped);
     setContent(null);
@@ -68,33 +75,69 @@ export default function DataScreen({ masterKey, onDisconnect }) {
   const hasParts = totalParts > 0;
 
   return (
-    <div className="container py-3 vault-container d-flex flex-column" style={{ minHeight: '100vh' }}>
+    <div
+      className={
+        'container py-3 vault-container' +
+        ' d-flex flex-column'
+      }
+      style={{ minHeight: '100vh' }}
+    >
 
       {/* Top bar */}
-      <div className="d-flex align-items-center justify-content-between mb-3">
+      <div className={
+        'd-flex align-items-center' +
+        ' justify-content-between mb-3'
+      }>
         <div className="d-flex align-items-center gap-2">
           <span className="fw-bold">txt_vault</span>
-          {loading && <span className="spinner-border spinner-border-sm text-secondary" />}
+          {loading && (
+            <span
+              className={
+                'spinner-border spinner-border-sm' +
+                ' text-secondary'
+              }
+            />
+          )}
         </div>
-        <button className="btn btn-sm btn-outline-secondary" onClick={onDisconnect}>
+        <button
+          className="btn btn-sm btn-outline-secondary"
+          onClick={onDisconnect}
+        >
           Disconnect
         </button>
       </div>
 
       {error && (
-        <div className="alert alert-danger py-2 small mb-3" role="alert">{error}</div>
+        <div
+          className="alert alert-danger py-2 small mb-3"
+          role="alert"
+        >
+          {error}
+        </div>
       )}
 
       {/* Card fills remaining height */}
-      <div className="card d-flex flex-column" style={{ flex: '1 1 0', minHeight: 0 }}>
+      <div
+        className="card d-flex flex-column"
+        style={{ flex: '1 1 0', minHeight: 0 }}
+      >
 
         <div className="card-header py-2">
-          <FileDropdown txts={txts} selectedTxt={selectedTxt} onSelect={selectTxt} />
+          <FileDropdown
+            txts={txts}
+            selectedTxt={selectedTxt}
+            onSelect={selectTxt}
+          />
         </div>
 
-        <div className="card-body overflow-auto p-3" style={{ flex: '1 1 0', minHeight: 0 }}>
+        <div
+          className="card-body overflow-auto p-3"
+          style={{ flex: '1 1 0', minHeight: 0 }}
+        >
           {!hasTxt && (
-            <p className="text-muted small mb-0">Select a file to view its content.</p>
+            <p className="text-muted small mb-0">
+              Select a file to view its content.
+            </p>
           )}
           {hasTxt && content === null && !loading && (
             <p className="text-muted small mb-0">Loading…</p>

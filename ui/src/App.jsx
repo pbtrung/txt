@@ -8,5 +8,10 @@ export default function App() {
   if (!creds)
     return <LoginScreen onConnect={setCreds} />;
 
-  return <DataScreen masterKey={creds.masterKey} onDisconnect={() => setCreds(null)} />;
+  return (
+    <DataScreen
+      masterKey={creds.masterKey}
+      onDisconnect={() => setCreds(null)}
+    />
+  );
 }
