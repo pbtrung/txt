@@ -20,19 +20,25 @@ export default function LoginScreen({ onConnect }) {
       const masterKey = parseMasterKey(json.master_key);
 
       setVerifying(true);
+      console.debug('[login] verifying Turso connection…');
       let row;
       try {
         row = await fetchOneTxt();
       } catch (e) {
         throw new Error(`Turso connection failed: ${e.message}`);
       }
+      console.debug('[login] connection OK, row:', row ? `id=${row.id}` : 'none (empty db)');
 
       if (row) {
+        console.debug('[login] verifying master_key…');
         try {
           decryptName(row.name, masterKey);
         } catch {
           throw new Error('master_key is incorrect: failed to decrypt a stored filename');
         }
+        console.debug('[login] master_key OK');
+      } else {
+        console.debug('[login] skipping key check — database is empty');
       }
 
       onConnect({ masterKey });
