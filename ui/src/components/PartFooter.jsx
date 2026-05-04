@@ -14,7 +14,6 @@ export default function PartFooter({
       <div className="d-flex align-items-center gap-1">
         <button
           className="btn btn-sm btn-outline-secondary px-2 py-0"
-          style={{ fontSize: '1rem' }}
           disabled={!hasParts || currentPartNum <= 1}
           onClick={() => onLoadPart(currentPartNum - 1)}
         >−</button>
@@ -24,7 +23,7 @@ export default function PartFooter({
             inputMode="numeric"
             pattern="[0-9]*"
             className="form-control form-control-sm text-center"
-            style={{ width: '5ch', fontSize: '1rem' }}
+            style={{ width: '5ch' }}
             value={currentPartNum}
             disabled={!hasParts}
             onChange={e => onPartNumChange(Number(e.target.value))}
@@ -34,13 +33,12 @@ export default function PartFooter({
         ) : (
           <span className="text-muted px-2">&mdash;</span>
         )}
-        <span className="text-muted flex-shrink-0" style={{ fontSize: '1rem' }}>
+        <span className="text-muted flex-shrink-0" style={{ fontSize: '0.875rem' }}>
           /{' '}
           {hasTxt && hasParts ? totalParts : '—'}
         </span>
         <button
           className="btn btn-sm btn-outline-secondary px-2 py-0"
-          style={{ fontSize: '1rem' }}
           disabled={!hasParts || currentPartNum >= totalParts}
           onClick={() => onLoadPart(currentPartNum + 1)}
         >+</button>
@@ -48,17 +46,15 @@ export default function PartFooter({
       <div className="d-flex align-items-center gap-1">
         <button
           className="btn btn-sm btn-outline-secondary px-2 py-0"
-          style={{ fontSize: '1rem' }}
           disabled={fontSize <= MIN_FONT}
           onClick={() => setFontSize(f => Math.max(MIN_FONT, f - 1))}
           title="Decrease font size"
         >−</button>
-        <span className="text-muted" style={{ minWidth: 36, textAlign: 'center', fontSize: '1rem' }}>
+        <span className="text-muted" style={{ minWidth: 36, textAlign: 'center', fontSize: '0.875rem' }}>
           {fontSize}px
         </span>
         <button
           className="btn btn-sm btn-outline-secondary px-2 py-0"
-          style={{ fontSize: '1rem' }}
           disabled={fontSize >= MAX_FONT}
           onClick={() => setFontSize(f => Math.min(MAX_FONT, f + 1))}
           title="Increase font size"
