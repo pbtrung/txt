@@ -23,38 +23,63 @@ PART_TARGET = 100 * 1024
 
 # ===== leancrypto loading =====
 
+
 def _bind_hkdf_hmac(lib):
     lib.lc_hkdf.restype = ctypes.c_int
     lib.lc_hkdf.argtypes = [
         ctypes.c_void_p,
-        ctypes.c_char_p, ctypes.c_size_t,
-        ctypes.c_char_p, ctypes.c_size_t,
-        ctypes.c_char_p, ctypes.c_size_t,
-        ctypes.c_char_p, ctypes.c_size_t,
+        ctypes.c_char_p,
+        ctypes.c_size_t,
+        ctypes.c_char_p,
+        ctypes.c_size_t,
+        ctypes.c_char_p,
+        ctypes.c_size_t,
+        ctypes.c_char_p,
+        ctypes.c_size_t,
     ]
     lib.lc_hmac.restype = ctypes.c_int
     lib.lc_hmac.argtypes = [
         ctypes.c_void_p,
-        ctypes.c_char_p, ctypes.c_size_t,
-        ctypes.c_char_p, ctypes.c_size_t,
+        ctypes.c_char_p,
+        ctypes.c_size_t,
+        ctypes.c_char_p,
+        ctypes.c_size_t,
         ctypes.c_char_p,
     ]
 
+
 def _bind_aead(lib):
-    _A = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_size_t,
-          ctypes.c_char_p, ctypes.c_size_t, ctypes.c_char_p, ctypes.c_size_t]
+    _A = [
+        ctypes.c_void_p,
+        ctypes.c_char_p,
+        ctypes.c_char_p,
+        ctypes.c_size_t,
+        ctypes.c_char_p,
+        ctypes.c_size_t,
+        ctypes.c_char_p,
+        ctypes.c_size_t,
+    ]
     lib.lc_ak_alloc_taglen.restype = ctypes.c_int
-    lib.lc_ak_alloc_taglen.argtypes = [ctypes.c_void_p, ctypes.c_uint8,
-                                        ctypes.POINTER(ctypes.c_void_p)]
+    lib.lc_ak_alloc_taglen.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_uint8,
+        ctypes.POINTER(ctypes.c_void_p),
+    ]
     lib.lc_aead_setkey.restype = ctypes.c_int
-    lib.lc_aead_setkey.argtypes = [ctypes.c_void_p, ctypes.c_char_p,
-                                    ctypes.c_size_t, ctypes.c_char_p, ctypes.c_size_t]
+    lib.lc_aead_setkey.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_char_p,
+        ctypes.c_size_t,
+        ctypes.c_char_p,
+        ctypes.c_size_t,
+    ]
     lib.lc_aead_encrypt.restype = ctypes.c_int
     lib.lc_aead_encrypt.argtypes = _A
     lib.lc_aead_decrypt.restype = ctypes.c_int
     lib.lc_aead_decrypt.argtypes = _A
     lib.lc_aead_zero_free.restype = None
     lib.lc_aead_zero_free.argtypes = [ctypes.c_void_p]
+
 
 def _load_leancrypto():
     name = ctypes.util.find_library("leancrypto")
@@ -66,6 +91,7 @@ def _load_leancrypto():
     _bind_hkdf_hmac(lib)
     _bind_aead(lib)
     return lib, sha3_512, sha3_256
+
 
 _lib, _sha3_512, _sha3_256 = _load_leancrypto()
 
@@ -92,6 +118,7 @@ CREATE TABLE IF NOT EXISTS part_count (
 
 # ===== Utilities =====
 
+
 def split_parts(content: bytes, target: int = PART_TARGET) -> list[bytes]:
     paras = re.split(rb"\r?\n\r?\n", content)
     parts, cur = [], b""
@@ -106,16 +133,18 @@ def split_parts(content: bytes, target: int = PART_TARGET) -> list[bytes]:
         parts.append(cur)
     return parts
 
+
 def load_creds(path: str) -> dict:
     with open(path) as f:
         creds = json.load(f)
-    url   = os.environ.get("TURSO_DATABASE_URL") or creds.get("turso_database_url")
-    token = os.environ.get("TURSO_AUTH_TOKEN")   or creds.get("turso_auth_token")
+    url = os.environ.get("TURSO_DATABASE_URL") or creds.get("turso_database_url")
+    token = os.environ.get("TURSO_AUTH_TOKEN") or creds.get("turso_auth_token")
     if not url or not token:
         raise ValueError("Missing Turso URL or auth token in creds or environment")
     creds["turso_database_url"] = url
-    creds["turso_auth_token"]   = token
+    creds["turso_auth_token"] = token
     return creds
+
 
 def get_master_key(creds: dict) -> bytes:
     raw = creds.get("master_key", "")
@@ -126,7 +155,9 @@ def get_master_key(creds: dict) -> bytes:
         raise ValueError(f"master_key must be 128 bytes, got {len(key)}")
     return key
 
+
 # ===== Crypto =====
+
 
 class Crypto:
     """All cryptographic operations: primitives, key derivation, encrypt/decrypt."""
@@ -138,7 +169,9 @@ class Crypto:
 
     def _hkdf(self, ikm: bytes, salt: bytes, length: int) -> bytes:
         out = ctypes.create_string_buffer(length)
-        ret = _lib.lc_hkdf(_sha3_512, ikm, len(ikm), salt, len(salt), None, 0, out, length)
+        ret = _lib.lc_hkdf(
+            _sha3_512, ikm, len(ikm), salt, len(salt), None, 0, out, length
+        )
         if ret != 0:
             raise RuntimeError(f"lc_hkdf failed: {ret}")
         return bytes(out)
@@ -164,7 +197,10 @@ class Crypto:
                 raise RuntimeError("lc_aead_setkey failed")
             ct = ctypes.create_string_buffer(len(pt))
             tag = ctypes.create_string_buffer(TAG_LEN)
-            if _lib.lc_aead_encrypt(ctx, pt, ct, len(pt), aad, len(aad), tag, TAG_LEN) != 0:
+            if (
+                _lib.lc_aead_encrypt(ctx, pt, ct, len(pt), aad, len(aad), tag, TAG_LEN)
+                != 0
+            ):
                 raise RuntimeError("lc_aead_encrypt failed")
             return bytes(ct) + bytes(tag)
         finally:
@@ -177,7 +213,10 @@ class Crypto:
                 raise RuntimeError("lc_aead_setkey failed")
             ct, tag = ct_tag[:-TAG_LEN], ct_tag[-TAG_LEN:]
             pt = ctypes.create_string_buffer(len(ct))
-            if _lib.lc_aead_decrypt(ctx, ct, pt, len(ct), aad, len(aad), tag, len(tag)) != 0:
+            if (
+                _lib.lc_aead_decrypt(ctx, ct, pt, len(ct), aad, len(aad), tag, len(tag))
+                != 0
+            ):
                 raise ValueError("AEAD tag verification failed")
             return bytes(pt)
         finally:
@@ -191,7 +230,7 @@ class Crypto:
 
     def _derive_name(self, salt: bytes) -> tuple[bytes, bytes, bytes]:
         okm = self._hkdf(self._mk, salt, KEY_LEN + IV_LEN + HMAC_LEN)
-        return okm[:KEY_LEN], okm[KEY_LEN:KEY_LEN + IV_LEN], okm[KEY_LEN + IV_LEN:]
+        return okm[:KEY_LEN], okm[KEY_LEN : KEY_LEN + IV_LEN], okm[KEY_LEN + IV_LEN :]
 
     # --- public interface ---
 
@@ -220,14 +259,18 @@ class Crypto:
 
     def find_txt_id(self, conn, name: str) -> int | None:
         name_b = name.encode()
-        for row_id, name_blob, stored_mac in conn.execute("SELECT id, name, name_hmac FROM txt").fetchall():
+        for row_id, name_blob, stored_mac in conn.execute(
+            "SELECT id, name, name_hmac FROM txt"
+        ).fetchall():
             salt = bytes(name_blob)[:SALT_LEN]
             _, _, hmac_key = self._derive_name(salt)
             if _hmac.compare_digest(self._hmac(hmac_key, name_b), bytes(stored_mac)):
                 return row_id
         return None
 
+
 # ===== VaultStore =====
+
 
 class VaultStore:
     """Database connection and all storage operations."""
@@ -242,25 +285,38 @@ class VaultStore:
         self._conn.executescript(_SCHEMA)
         self._conn.sync()
 
-    def _insert_parts(self, crypto: Crypto, txt_id: int, parts: list[bytes], verbose: bool):
+    def _insert_parts(
+        self, crypto: Crypto, txt_id: int, parts: list[bytes], verbose: bool
+    ):
         for i, part in enumerate(parts):
             blob = crypto.encrypt_part(part)
-            self._conn.execute("INSERT INTO txt_parts (txt_id, content) VALUES (?, ?)", (txt_id, blob))
+            self._conn.execute(
+                "INSERT INTO txt_parts (txt_id, content) VALUES (?, ?)", (txt_id, blob)
+            )
             if verbose:
-                click.echo(f"  part {i + 1}/{len(parts)}: {len(part):,} → {len(blob):,} bytes")
+                click.echo(
+                    f"  part {i + 1}/{len(parts)}: {len(part):,} → {len(blob):,} bytes"
+                )
 
-    def ingest_file(self, crypto: Crypto, filepath: Path, stored_name: str, verbose: bool):
+    def ingest_file(
+        self, crypto: Crypto, filepath: Path, stored_name: str, verbose: bool
+    ):
         content = filepath.read_bytes()
         parts = split_parts(content)
         txt_id = crypto.find_txt_id(self._conn, stored_name)
         if txt_id is None:
             name_blob, name_mac = crypto.encrypt_name(stored_name)
-            cur = self._conn.execute("INSERT INTO txt (name, name_hmac) VALUES (?, ?)", (name_blob, name_mac))
+            cur = self._conn.execute(
+                "INSERT INTO txt (name, name_hmac) VALUES (?, ?)", (name_blob, name_mac)
+            )
             txt_id = cur.lastrowid
         else:
             self._conn.execute("DELETE FROM txt_parts WHERE txt_id = ?", (txt_id,))
         self._insert_parts(crypto, txt_id, parts, verbose)
-        self._conn.execute("INSERT OR REPLACE INTO part_count (txt_id, count) VALUES (?, ?)", (txt_id, len(parts)))
+        self._conn.execute(
+            "INSERT OR REPLACE INTO part_count (txt_id, count) VALUES (?, ?)",
+            (txt_id, len(parts)),
+        )
         self._conn.commit()
         self._conn.sync()
         if verbose:
@@ -276,13 +332,17 @@ class VaultStore:
         self._conn.sync()
 
     def read_part(self, crypto: Crypto, part_id: int, out_path: str):
-        cur = self._conn.execute("SELECT content FROM txt_parts WHERE id = ?", (part_id,))
+        cur = self._conn.execute(
+            "SELECT content FROM txt_parts WHERE id = ?", (part_id,)
+        )
         row = cur.fetchone()
         if not row:
             raise ValueError(f"No part with id={part_id}")
         Path(out_path).write_bytes(crypto.decrypt_part(bytes(row[0])))
 
+
 # ===== CLI =====
+
 
 def _cmd_gen_master_key(path: str):
     try:
@@ -297,6 +357,7 @@ def _cmd_gen_master_key(path: str):
         json.dump(data, f, indent=2)
     click.echo(f"master_key written to {path}")
 
+
 def _cmd_ingest(store: VaultStore, crypto: Crypto, src: str, verbose: bool):
     src_path = Path(src)
     files = sorted(p for p in src_path.rglob("*") if p.suffix.lower() == ".txt")
@@ -309,20 +370,21 @@ def _cmd_ingest(store: VaultStore, crypto: Crypto, src: str, verbose: bool):
         except Exception as e:
             click.echo(f"Warning: skipping {fp}: {e}", err=True)
 
+
 @click.command()
-@click.option("--src",            type=click.Path(exists=True))
-@click.option("--creds",          default="creds.json", show_default=True)
-@click.option("--part-count",     "do_part_count", is_flag=True)
-@click.option("--gen-master-key", "gen_key_path",  metavar="PATH")
-@click.option("--read-part",      "read_part_id",  type=int)
+@click.option("--src", type=click.Path(exists=True))
+@click.option("--creds", default="creds.json", show_default=True)
+@click.option("--part-count", "do_part_count", is_flag=True)
+@click.option("--gen-master-key", "gen_key_path", metavar="PATH")
+@click.option("--read-part", "read_part_id", type=int)
 @click.option("--out")
-@click.option("--verbose", "-v",  is_flag=True)
+@click.option("--verbose", "-v", is_flag=True)
 def main(src, creds, do_part_count, gen_key_path, read_part_id, out, verbose):
     if gen_key_path:
         _cmd_gen_master_key(gen_key_path)
         return
     loaded = load_creds(creds)
-    store  = VaultStore(loaded)
+    store = VaultStore(loaded)
     if do_part_count:
         store.rebuild_part_count()
         return
@@ -333,6 +395,7 @@ def main(src, creds, do_part_count, gen_key_path, read_part_id, out, verbose):
         store.read_part(crypto, read_part_id, out)
     elif src:
         _cmd_ingest(store, crypto, src, verbose)
+
 
 if __name__ == "__main__":
     main()
