@@ -50,7 +50,7 @@ export default function PartFooter({
           onClick={() => setFontSize(f => Math.max(MIN_FONT, f - 1))}
           title="Decrease font size"
         >−</button>
-        <span className="text-muted small" style={{ minWidth: 36, textAlign: 'center' }}>
+        <span className="text-muted" style={{ minWidth: 36, textAlign: 'center', fontSize: '1rem' }}>
           {fontSize}px
         </span>
         <button
