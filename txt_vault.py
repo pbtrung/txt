@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import atexit
 import os
 import re
 import hmac as _hmac
@@ -7,6 +8,7 @@ import json
 import base64
 import ctypes
 import ctypes.util
+import tempfile
 import brotli
 import libsql
 import click
@@ -280,8 +282,11 @@ class VaultStore:
             lib_name = ctypes.util.find_library("leancrypto")
             click.echo(f"leancrypto: {lib_name}")
             click.echo(f"Turso URL: {creds['turso_database_url']}")
+        fd, self._db_path = tempfile.mkstemp(suffix=".db", prefix="txt_vault_")
+        os.close(fd)
+        atexit.register(self._cleanup)
         self._conn = libsql.connect(
-            ":memory:",
+            self._db_path,
             sync_url=creds["turso_database_url"],
             auth_token=creds["turso_auth_token"],
         )
@@ -291,6 +296,10 @@ class VaultStore:
         if verbose:
             n = self._conn.execute("SELECT COUNT(*) FROM txt").fetchone()[0]
             click.echo(f"Replica ready: {n} txt row(s)")
+
+    def _cleanup(self):
+        for suffix in ("", "-shm", "-wal"):
+            Path(self._db_path + suffix).unlink(missing_ok=True)
 
     def _insert_parts(
         self, crypto: Crypto, txt_id: int, parts: list[bytes], verbose: bool
