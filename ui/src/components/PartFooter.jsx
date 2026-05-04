@@ -16,7 +16,7 @@ export default function PartFooter({
           <input
             type="number"
             className="form-control form-control-sm text-center"
-            style={{ width: 56 }}
+            style={{ width: '5ch' }}
             value={currentPartNum}
             min={1}
             max={totalParts || 1}
@@ -29,7 +29,10 @@ export default function PartFooter({
           <span className="text-muted px-2">&mdash;</span>
         )}
         <span className="text-muted flex-shrink-0">
-          / {hasTxt && hasParts ? totalParts : <>&mdash;</>}
+          /{' '}
+          <span style={{ display: 'inline-block', minWidth: '3ch', textAlign: 'right' }}>
+            {hasTxt && hasParts ? totalParts : '—'}
+          </span>
         </span>
       </div>
       <div className="d-flex align-items-center gap-1">
