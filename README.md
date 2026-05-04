@@ -50,7 +50,13 @@ Install leancrypto via your package manager or build from source, then run `ldco
 python3 txt_vault.py --src ./documents --creds creds.json
 ```
 
-All `.txt` files (case-insensitive: `.txt`, `.TXT`, etc.) under `./documents` are split, compressed, encrypted, and stored in the Turso database. The `part_count` table is updated automatically after each file is committed.
+All `.txt` files (case-insensitive: `.txt`, `.TXT`, etc.) under `./documents` are split, compressed, encrypted, and stored in the Turso database. Files whose name already exists in the database are **skipped**. The `part_count` table is updated automatically after each file is committed.
+
+To overwrite existing entries:
+
+```bash
+python3 txt_vault.py --src ./documents --force --creds creds.json
+```
 
 ### Rebuild part counts
 
@@ -74,7 +80,8 @@ Adds or updates only the `master_key` field in `creds.json`. If the field alread
 
 | Flag | Description |
 |------|-------------|
-| `--src <path>` | Folder containing `.txt` files to ingest (case-insensitive match) |
+| `--src <path>` | Folder containing `.txt` files to ingest; skips files already in the database |
+| `--force` | With `--src`: overwrite existing entries instead of skipping |
 | `--creds <path>` | Credentials file with Turso URL/token and master key (default: `creds.json`) |
 | `--part-count` | Rebuild `part_count` table from existing `txt_parts` rows and exit |
 | `--gen-master-key <path>` | Add/update `master_key` in the credentials file and exit |

@@ -8,6 +8,7 @@ A single-file CLI tool that ingests `.txt` files, splits them into compressed an
 
 ```
 python3 txt_vault.py --src <folder_path> --creds creds.json
+python3 txt_vault.py --src <folder_path> --force --creds creds.json
 python3 txt_vault.py --part-count --creds creds.json
 python3 txt_vault.py --gen-master-key creds.json
 ```
@@ -16,7 +17,8 @@ python3 txt_vault.py --gen-master-key creds.json
 
 | Flag | Description |
 |------|-------------|
-| `--src <folder_path>` | Directory to scan for `.txt` files (case-insensitive) |
+| `--src <folder_path>` | Directory to scan for `.txt` files (case-insensitive); skips files already in the database unless `--force` is set |
+| `--force` | With `--src`: overwrite existing entries instead of skipping them |
 | `--creds <path>` | Credentials JSON file with Turso URL/token and master key (default: `creds.json`) |
 | `--part-count` | Rebuild `part_count` table from existing `txt_parts` rows, then exit |
 | `--gen-master-key <path>` | Add/update `master_key` in the credentials file, then exit |
@@ -45,8 +47,10 @@ for each .txt file (case-insensitive) in --src:
   1. Read file bytes
   2. Scan all txt rows; for each row re-derive hmac_key from the stored salt
      and compare HMAC-SHA3-256(hmac_key, filename) against stored name_hmac
-     (constant-time). If matched, reuse that txt_id and delete its parts.
-     If no match, encrypt filename and INSERT a new txt row.
+     (constant-time).
+     - No match → encrypt filename and INSERT a new txt row.
+     - Match + no --force → skip this file entirely.
+     - Match + --force → reuse txt_id and DELETE existing parts.
   3. Split content into parts at paragraph boundaries, targeting ~200 KB per part
   4. For each part:
      a. Compress with Brotli (quality 11)
@@ -55,7 +59,7 @@ for each .txt file (case-insensitive) in --src:
      d. Encrypt compressed bytes with Ascon-Keccak AEAD; pass salt as AAD
      e. Store salt || ciphertext+tag as a single BLOB in txt_parts.content
   5. Upsert total part count into part_count (txt_id, count)
-  6. Commit and sync to Turso
+  6. Commit to Turso
 ```
 
 ### Paragraph Splitting
@@ -200,12 +204,12 @@ Owns the master key and all cryptographic logic. Constructed once per run with t
 
 ### `VaultStore`
 
-Owns the libSQL connection. Constructed once per run; establishes the connection, syncs, and creates schema in `__init__`.
+Owns the libSQL connection. Constructed once per run; establishes the direct Turso connection and creates schema in `__init__`.
 
 | Method | Role |
 |--------|------|
 | `_insert_parts` | Encrypt and insert all parts for a `txt_id` |
-| `ingest_file` | Full ingest pipeline for one file (upsert + parts + part\_count) |
+| `ingest_file` | Full ingest pipeline for one file; skips if name exists and `force=False`, overwrites if `force=True` |
 | `rebuild_part_count` | Backfill `part_count` from `txt_parts` |
 | `read_part` | Fetch and decrypt a single part by id |
 
