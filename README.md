@@ -1,6 +1,6 @@
 # txt_vault.py
 
-Ingest `.txt` files into a [Turso](https://turso.tech) cloud libSQL database. Each file is split at paragraph boundaries into ~100 KB parts, compressed with Brotli, and encrypted with XChaCha20-Poly1305 before storage.
+Ingest `.txt` files into a [Turso](https://turso.tech) cloud libSQL database. Each file is split at paragraph boundaries into ~100 KB parts, compressed with Brotli, and encrypted with Ascon-Keccak before storage. All cryptography is provided by [leancrypto](https://github.com/smuellerDD/leancrypto), loaded as a system shared library.
 
 See [design.md](design.md) for the full architecture, encryption scheme, and database schema.
 
@@ -8,11 +8,13 @@ See [design.md](design.md) for the full architecture, encryption scheme, and dat
 
 ## Install
 
-**Requirements:** Python 3.11+
+**Requirements:** Python 3.11+, leancrypto installed as a system library
 
 ```bash
-pip install pynacl cryptography brotli libsql click
+pip install brotli libsql click
 ```
+
+Install leancrypto via your package manager or build from source, then run `ldconfig` so the shared library is discoverable.
 
 ---
 
@@ -56,7 +58,7 @@ All `.txt` files (case-insensitive: `.txt`, `.TXT`, etc.) under `./documents` ar
 python3 txt_vault.py --part-count --creds creds.json
 ```
 
-Queries `txt_parts` and upserts the total part count for every `txt_id` into the `part_count` table. Useful for backfilling existing data. Does not decrypt anything — only the Turso credentials from `--creds` are needed.
+Queries `txt_parts` and upserts the total part count for every `txt_id` into the `part_count` table. Does not decrypt anything — only the Turso credentials from `--creds` are needed.
 
 ### Generate a new master key
 
@@ -111,6 +113,7 @@ Output goes to `ui/dist/`. Serve it with any static file server.
 
 ## Security notes
 
-- The master key is the single root secret. Store `creds.json` outside version control (add it to `.gitignore`). Pass a custom path with `--creds` if needed.
-- Each part uses a unique per-part key and nonce derived via HKDF-SHA3-256 over a fresh random salt; see [design.md § Encryption Design](design.md#encryption-design).
+- The master key is a 128-byte random secret — the single root of all encryption. Store `creds.json` outside version control (add it to `.gitignore`).
+- Each part uses a unique 64-byte random salt. HKDF-SHA3-512 derives a 64-byte key and 64-byte IV from that salt; the salt is also passed as AAD so any tampering with it fails authentication.
+- Filenames are encrypted independently with their own random salt; a co-derived HMAC-SHA3-256 key enables lookup without exposing the plaintext name.
 - Brotli compression is applied *before* encryption to avoid compression-oracle attacks.

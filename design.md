@@ -51,10 +51,10 @@ for each .txt file (case-insensitive) in --src:
   5. Split content into parts at paragraph boundaries, targeting ~100 KB per part
   6. For each part:
      a. Compress with Brotli (quality 6)
-     b. Derive per-part key and nonce via HKDF (see Per-Part Key Derivation)
-     c. Encrypt compressed bytes with XChaCha20-Poly1305
-     d. Serialize as: [32-byte salt] || [ciphertext+MAC]
-     e. Store as a BLOB in txt_parts.content
+     b. Generate 64-byte random salt
+     c. Derive 64-byte key and 64-byte IV via HKDF-SHA3-512(master_key, salt)
+     d. Encrypt compressed bytes with Ascon-Keccak AEAD; pass salt as AAD
+     e. Store salt || ciphertext+tag as a single BLOB in txt_parts.content
   7. Upsert total part count into part_count (txt_id, count)
   8. Commit transaction
 ```
@@ -70,14 +70,14 @@ Parts are split on blank-line boundaries (`\n\n` or `\r\n\r\n`). The splitter ac
 ```sql
 CREATE TABLE IF NOT EXISTS txt (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
-    name      BLOB NOT NULL,         -- 32-byte salt || XChaCha20-Poly1305(filename); key/nonce/hmac_key from HKDF(salt)
+    name      BLOB NOT NULL,         -- 64-byte salt || Ascon-Keccak(filename); key/iv/hmac_key from HKDF(salt)
     name_hmac BLOB NOT NULL          -- HMAC-SHA3-256(filename) under hmac_key from same HKDF call
 );
 
 CREATE TABLE IF NOT EXISTS txt_parts (
     id      INTEGER PRIMARY KEY AUTOINCREMENT,
     txt_id  INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
-    content BLOB    NOT NULL     -- 32-byte salt || encrypted(brotli(plaintext))
+    content BLOB    NOT NULL     -- 64-byte salt || Ascon-Keccak(brotli(plaintext)); salt is AAD
 );
 
 CREATE INDEX IF NOT EXISTS idx_txt_parts_txt_id ON txt_parts(txt_id);
@@ -97,97 +97,107 @@ Connection is made over HTTPS to a Turso database URL. The URL and auth token ar
 
 ## Encryption Design
 
+All cryptographic operations use **leancrypto**, loaded as a system shared library via ctypes. No other crypto dependency is required.
+
 ### Key Material
 
-The master key is a 64-byte random secret stored base64-encoded in the JSON key file.
+The master key is a 128-byte random secret stored base64-encoded in the JSON credentials file.
+
+### Primitives
+
+| Primitive | leancrypto API | Parameters |
+|-----------|---------------|------------|
+| AEAD | Ascon-Keccak (`lc_ak_alloc_taglen`) | 64-byte key, 64-byte IV, 64-byte tag |
+| KDF | HKDF-SHA3-512 (`lc_hkdf_*`) | produces 128 or 160 bytes of OKM |
+| MAC | HMAC-SHA3-256 (`lc_hmac_*`) | 32-byte digest |
 
 ### Filename Encryption
 
-Each filename is encrypted and authenticated independently. A fresh 32-byte random salt is generated per ingestion:
+A fresh 64-byte random salt is generated per ingestion:
 
 ```
-salt       = os.urandom(32)
-key_material = HKDF(
-    algorithm = SHA3-256,
-    length    = 88,       # 32 key + 24 nonce + 32 hmac_key
-    salt      = salt,
-    ikm       = master_key,
-    info      = b""
-)
+salt         = os.urandom(64)
+key_material = HKDF-SHA3-512(ikm=master_key, salt=salt, info=b"", length=160)
 
-key      = key_material[:32]
-nonce    = key_material[32:56]
-hmac_key = key_material[56:]
+key      = key_material[:64]
+iv       = key_material[64:128]
+hmac_key = key_material[128:]        # 32 bytes
 
-name_blob = salt + XChaCha20-Poly1305-encrypt(filename_bytes, key, nonce)
+name_blob = salt || Ascon-Keccak-encrypt(filename_bytes, key, iv, aad=salt)
 name_hmac = HMAC-SHA3-256(hmac_key, filename_bytes)
 ```
 
 `name_blob` is stored in `txt.name`; `name_hmac` is stored in `txt.name_hmac` and used for row lookup. Because `hmac_key` is derived from the random salt, `name_hmac` is non-deterministic across separate ingest runs of the same file.
 
-Decryption reads the 32-byte salt prefix from `txt.name`, re-derives the same 88-byte key material, and decrypts.
+Decryption reads the 64-byte salt prefix from `txt.name`, re-derives the same 160-byte key material, and decrypts.
 
 ### Per-Part Key Derivation
 
-Each part gets its own 32-byte random **salt** (generated fresh at write time with `os.urandom(32)`).
-
-HKDF-SHA3-256 is applied once to produce 56 bytes of key material:
+Each part gets its own 64-byte random salt generated at write time:
 
 ```
-key_material = HKDF(
-    algorithm  = SHA3-256,
-    length     = 56,           # 32-byte key + 24-byte nonce
-    salt       = random_salt,  # 32 bytes, stored alongside ciphertext
-    ikm        = master_key,   # 64 bytes from the JSON key file
-    info       = b""
-)
+key_material = HKDF-SHA3-512(ikm=master_key, salt=salt, info=b"", length=128)
 
-key   = key_material[:32]   # XChaCha20-Poly1305 key
-nonce = key_material[32:]   # 24-byte nonce
+key = key_material[:64]    # Ascon-Keccak key
+iv  = key_material[64:]    # Ascon-Keccak IV
 ```
-
-HKDF is provided by the `cryptography` package (`cryptography.hazmat.primitives.kdf.hkdf` with `hashes.SHA3_256()`). PyNaCl's low-level bindings (`nacl.bindings.crypto_aead_xchacha20poly1305_ietf_encrypt`) perform the authenticated encryption.
 
 ### Encrypt
 
 ```
-plaintext      = utf-8 bytes of one part
-compressed     = brotli.compress(plaintext, quality=6)
-ciphertext_mac = nacl.bindings.crypto_aead_xchacha20poly1305_ietf_encrypt(
-                     message=compressed,
-                     aad=b"",
-                     nonce=nonce,      # 24 bytes
-                     key=key           # 32 bytes
-                 )
-blob           = random_salt + ciphertext_mac   # stored in txt_parts.content
+plaintext  = UTF-8 bytes of one part
+compressed = brotli.compress(plaintext, quality=6)
+salt       = os.urandom(64)
+key, iv    = derive(salt)
+ct_tag     = Ascon-Keccak-encrypt(compressed, key, iv, aad=salt)
+blob       = salt || ct_tag          # stored in txt_parts.content
 ```
 
-The Poly1305 authentication tag (16 bytes) is appended by libsodium and included in `ciphertext_mac`.
+The 64-byte Ascon-Keccak authentication tag is appended by leancrypto and included in `ct_tag`. Passing `salt` as AAD binds the salt to the ciphertext: any tampering with the stored salt causes tag verification to fail on decrypt.
 
-### Decrypt (read path, for reference)
+### Decrypt
 
 ```
-random_salt    = blob[:32]
-ciphertext_mac = blob[32:]
-key_material   = HKDF(...)            # same derivation as above
-key, nonce     = key_material[:32], key_material[32:]
-compressed     = nacl.bindings.crypto_aead_xchacha20poly1305_ietf_decrypt(
-                     ciphertext=ciphertext_mac, aad=b"", nonce=nonce, key=key
-                 )
-plaintext      = brotli.decompress(compressed)
+salt   = blob[:64]
+ct_tag = blob[64:]
+key, iv = derive(salt)
+compressed = Ascon-Keccak-decrypt(ct_tag, key, iv, aad=salt)
+plaintext  = brotli.decompress(compressed)
 ```
 
 ### Security Properties
 
 | Property | Mechanism |
 |----------|-----------|
-| Confidentiality | XChaCha20-Poly1305 (256-bit key, 192-bit nonce) |
-| Integrity / authenticity | Poly1305 MAC (16-byte tag) |
-| Filename confidentiality | Filename encrypted with per-ingestion random salt via `_derive_name` |
+| Confidentiality | Ascon-Keccak (512-bit key+IV, 512-bit tag) |
+| Integrity / authenticity | 64-byte Ascon-Keccak tag |
+| Salt integrity | Salt passed as AAD; tag covers it |
+| Filename confidentiality | Filename encrypted with per-ingestion random salt |
 | Filename lookup | HMAC-SHA3-256 under `hmac_key` co-derived with encryption key |
 | Key isolation per part | HKDF with unique random salt per part |
 | Compression oracle mitigation | Compress before encrypt; no adaptive queries |
-| Forward secrecy of parts | Rotating master key invalidates all derived keys |
+
+---
+
+## leancrypto ctypes Symbols
+
+| Symbol | Kind | Used for |
+|--------|------|----------|
+| `lc_sha3_512` | `const struct lc_hash *` | HKDF context |
+| `lc_sha3_256` | `const struct lc_hash *` | HMAC context |
+| `lc_hkdf_alloc` | function | HKDF context allocation |
+| `lc_hkdf_extract` | function | HKDF-Extract (PRK) |
+| `lc_hkdf_expand` | function | HKDF-Expand (OKM) |
+| `lc_hkdf_zero_free` | function | HKDF context teardown |
+| `lc_hmac_alloc` | function | HMAC context allocation |
+| `lc_hmac_update` | function | HMAC feed |
+| `lc_hmac_final` | function | HMAC digest |
+| `lc_hmac_zero_free` | function | HMAC context teardown |
+| `lc_ak_alloc_taglen` | function | Ascon-Keccak AEAD allocation |
+| `lc_aead_setkey` | function | Set key and IV |
+| `lc_aead_encrypt` | function | Authenticated encryption |
+| `lc_aead_decrypt` | function | Authenticated decryption |
+| `lc_aead_zero_free` | function | AEAD context teardown |
 
 ---
 
@@ -195,8 +205,7 @@ plaintext      = brotli.decompress(compressed)
 
 | Package | Purpose |
 |---------|---------|
-| `pynacl` | XChaCha20-Poly1305 via `nacl.bindings` |
-| `cryptography` | HKDF-SHA3-256 |
+| `leancrypto` | AEAD, HKDF, HMAC (system shared library, loaded via ctypes) |
 | `brotli` | Compression |
 | `libsql` | Turso / libSQL client |
 | `click` | CLI argument parsing |
