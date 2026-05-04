@@ -19,7 +19,7 @@ TAG_LEN = 64
 KEY_LEN = 64
 IV_LEN = 64
 HMAC_LEN = 32
-PART_TARGET = 100 * 1024
+PART_TARGET = 200 * 1024
 
 # ===== leancrypto loading =====
 

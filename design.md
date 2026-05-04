@@ -47,7 +47,7 @@ for each .txt file (case-insensitive) in --src:
      and compare HMAC-SHA3-256(hmac_key, filename) against stored name_hmac
      (constant-time). If matched, reuse that txt_id and delete its parts.
      If no match, encrypt filename and INSERT a new txt row.
-  3. Split content into parts at paragraph boundaries, targeting ~100 KB per part
+  3. Split content into parts at paragraph boundaries, targeting ~200 KB per part
   4. For each part:
      a. Compress with Brotli (quality 11)
      b. Generate 64-byte random salt
@@ -60,7 +60,7 @@ for each .txt file (case-insensitive) in --src:
 
 ### Paragraph Splitting
 
-Parts are split on blank-line boundaries (`\n\n` or `\r\n\r\n`). The splitter accumulates paragraphs until adding the next paragraph would push the UTF-8 byte count past 100 KB (102 400 bytes), then starts a new part. A single paragraph larger than 100 KB becomes its own part unchanged.
+Parts are split on blank-line boundaries (`\n\n` or `\r\n\r\n`). The splitter accumulates paragraphs until adding the next paragraph would push the UTF-8 byte count past 200 KB (204 800 bytes), then starts a new part. A single paragraph larger than 200 KB becomes its own part unchanged.
 
 ---
 
