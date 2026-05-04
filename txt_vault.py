@@ -314,11 +314,16 @@ class VaultStore:
             )
 
     def ingest_file(
-        self, crypto: Crypto, filepath: Path, stored_name: str, verbose: bool
+        self, crypto: Crypto, filepath: Path, stored_name: str, verbose: bool,
+        force: bool = False,
     ):
         content = filepath.read_bytes()
         parts = split_parts(content)
         txt_id = crypto.find_txt_id(self._conn, stored_name)
+        if txt_id is not None and not force:
+            if verbose:
+                click.echo(f"  [skip] {stored_name} already exists (use --force to overwrite)")
+            return
         if txt_id is None:
             name_blob, name_mac = crypto.encrypt_name(stored_name)
             cur = self._conn.execute(
@@ -384,7 +389,7 @@ def _cmd_gen_master_key(path: str):
     click.echo(f"master_key written to {path}")
 
 
-def _cmd_ingest(store: VaultStore, crypto: Crypto, src: str, verbose: bool):
+def _cmd_ingest(store: VaultStore, crypto: Crypto, src: str, verbose: bool, force: bool):
     src_path = Path(src)
     files = sorted(p for p in src_path.rglob("*") if p.suffix.lower() == ".txt")
     if verbose:
@@ -394,20 +399,21 @@ def _cmd_ingest(store: VaultStore, crypto: Crypto, src: str, verbose: bool):
         if verbose:
             click.echo(f"Ingesting {stored_name}")
         try:
-            store.ingest_file(crypto, fp, stored_name, verbose)
+            store.ingest_file(crypto, fp, stored_name, verbose, force=force)
         except Exception as e:
             click.echo(f"Warning: skipping {fp}: {e}", err=True)
 
 
 @click.command()
 @click.option("--src", type=click.Path(exists=True))
+@click.option("--force", is_flag=True, help="Overwrite existing entries when using --src")
 @click.option("--creds", default="creds.json", show_default=True)
 @click.option("--part-count", "do_part_count", is_flag=True)
 @click.option("--gen-master-key", "gen_key_path", metavar="PATH")
 @click.option("--read-part", "read_part_id", type=int)
 @click.option("--out")
 @click.option("--verbose", "-v", is_flag=True)
-def main(src, creds, do_part_count, gen_key_path, read_part_id, out, verbose):
+def main(src, force, creds, do_part_count, gen_key_path, read_part_id, out, verbose):
     if gen_key_path:
         _cmd_gen_master_key(gen_key_path)
         return
@@ -422,7 +428,7 @@ def main(src, creds, do_part_count, gen_key_path, read_part_id, out, verbose):
             raise click.UsageError("--out is required with --read-part")
         store.read_part(crypto, read_part_id, out, verbose=verbose)
     elif src:
-        _cmd_ingest(store, crypto, src, verbose)
+        _cmd_ingest(store, crypto, src, verbose, force=force)
 
 
 if __name__ == "__main__":
