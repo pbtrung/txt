@@ -12,6 +12,11 @@ export default function PartFooter({
   return (
     <div className="card-footer d-flex align-items-center justify-content-between gap-2">
       <div className="d-flex align-items-center gap-1">
+        <button
+          className="btn btn-sm btn-outline-secondary px-2 py-0"
+          disabled={!hasParts || currentPartNum <= 1}
+          onClick={() => onLoadPart(currentPartNum - 1)}
+        >&laquo;</button>
         {hasTxt ? (
           <input
             type="text"
@@ -32,6 +37,11 @@ export default function PartFooter({
           /{' '}
           {hasTxt && hasParts ? totalParts : '—'}
         </span>
+        <button
+          className="btn btn-sm btn-outline-secondary px-2 py-0"
+          disabled={!hasParts || currentPartNum >= totalParts}
+          onClick={() => onLoadPart(currentPartNum + 1)}
+        >&raquo;</button>
       </div>
       <div className="d-flex align-items-center gap-1">
         <button
