@@ -1,311 +1,423 @@
 #!/usr/bin/env python3
-"""txt_vault.py – split, compress, encrypt, and store .txt files in Turso libSQL."""
 
-import base64
-import hmac as _hmac
-import json
-import logging
 import os
 import re
-import sys
+import hmac as _hmac
+import json
+import base64
+import ctypes
+import ctypes.util
+import brotli
+import libsql
+import click
 from pathlib import Path
 
-import brotli
-import click
-import nacl.bindings
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.hmac import HMAC as CHMAC
-from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+# ===== Constants =====
 
-import libsql
+SALT_LEN = 64
+TAG_LEN = 64
+KEY_LEN = 64
+IV_LEN = 64
+HMAC_LEN = 32
+PART_TARGET = 100 * 1024
 
-log = logging.getLogger("txt_vault")
-
-# ── constants ────────────────────────────────────────────────────────────────
-
-PART_TARGET  = 100 * 1024          # 100 KB
-HKDF_LEN     = 56                  # 32-byte key + 24-byte nonce
-PARA_SPLIT   = re.compile(r"\r?\n\r?\n")
-
-# ── key helpers ──────────────────────────────────────────────────────────────
-
-def load_master_key(path: str) -> bytes:
-    with open(path) as f:
-        data = json.load(f)
-    return base64.b64decode(data["master_key"])
+# ===== leancrypto bindings =====
 
 
-def gen_master_key(path: str) -> None:
-    p = Path(path)
-    data: dict = {}
-    if p.exists():
-        with open(path) as f:
-            data = json.load(f)
-        if "master_key" in data:
-            if not click.confirm(f"master_key already exists in {path}. Overwrite?"):
-                raise click.Abort()
-    data["master_key"] = base64.b64encode(os.urandom(64)).decode()
-    with open(path, "w") as f:
-        json.dump(data, f, indent=2)
-    log.info("master_key written to %s", path)
+def _bind_hkdf_hmac(lib):
+    lib.lc_hkdf.restype = ctypes.c_int
+    lib.lc_hkdf.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_char_p,
+        ctypes.c_size_t,
+        ctypes.c_char_p,
+        ctypes.c_size_t,
+        ctypes.c_char_p,
+        ctypes.c_size_t,
+        ctypes.c_char_p,
+        ctypes.c_size_t,
+    ]
+    lib.lc_hmac.restype = ctypes.c_int
+    lib.lc_hmac.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_char_p,
+        ctypes.c_size_t,
+        ctypes.c_char_p,
+        ctypes.c_size_t,
+        ctypes.c_char_p,
+    ]
 
 
-def _derive(master_key: bytes, salt: bytes) -> tuple[bytes, bytes]:
-    km = HKDF(
-        algorithm=hashes.SHA3_256(),
-        length=HKDF_LEN,
-        salt=salt,
-        info=b"",
-    ).derive(master_key)
-    return km[:32], km[32:]   # key, nonce
+def _bind_aead(lib):
+    _A = [
+        ctypes.c_void_p,
+        ctypes.c_char_p,
+        ctypes.c_char_p,
+        ctypes.c_size_t,
+        ctypes.c_char_p,
+        ctypes.c_size_t,
+        ctypes.c_char_p,
+        ctypes.c_size_t,
+    ]
+    lib.lc_ak_alloc_taglen.restype = ctypes.c_int
+    lib.lc_ak_alloc_taglen.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_uint8,
+        ctypes.POINTER(ctypes.c_void_p),
+    ]
+    lib.lc_aead_setkey.restype = ctypes.c_int
+    lib.lc_aead_setkey.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_char_p,
+        ctypes.c_size_t,
+        ctypes.c_char_p,
+        ctypes.c_size_t,
+    ]
+    lib.lc_aead_encrypt.restype = ctypes.c_int
+    lib.lc_aead_encrypt.argtypes = _A
+    lib.lc_aead_decrypt.restype = ctypes.c_int
+    lib.lc_aead_decrypt.argtypes = _A
+    lib.lc_aead_zero_free.restype = None
+    lib.lc_aead_zero_free.argtypes = [ctypes.c_void_p]
 
-# ── encryption ───────────────────────────────────────────────────────────────
+
+def _load_leancrypto():
+    name = ctypes.util.find_library("leancrypto")
+    if not name:
+        raise RuntimeError("leancrypto not found; install it and run ldconfig")
+    lib = ctypes.CDLL(name)
+    sha3_512 = ctypes.c_void_p.in_dll(lib, "lc_sha3_512")
+    sha3_256 = ctypes.c_void_p.in_dll(lib, "lc_sha3_256")
+    _bind_hkdf_hmac(lib)
+    _bind_aead(lib)
+    return lib, sha3_512, sha3_256
+
+
+_lib, _sha3_512, _sha3_256 = _load_leancrypto()
+
+# ===== Crypto primitives =====
+
+
+def hkdf(ikm: bytes, salt: bytes, length: int) -> bytes:
+    out = ctypes.create_string_buffer(length)
+    ret = _lib.lc_hkdf(_sha3_512, ikm, len(ikm), salt, len(salt), None, 0, out, length)
+    if ret != 0:
+        raise RuntimeError(f"lc_hkdf failed: {ret}")
+    return bytes(out)
+
+
+def hmac_sha3_256(key: bytes, data: bytes) -> bytes:
+    out = ctypes.create_string_buffer(HMAC_LEN)
+    ret = _lib.lc_hmac(_sha3_256, key, len(key), data, len(data), out)
+    if ret != 0:
+        raise RuntimeError(f"lc_hmac failed: {ret}")
+    return bytes(out)
+
+
+def _aead_alloc():
+    ctx = ctypes.c_void_p(None)
+    ret = _lib.lc_ak_alloc_taglen(_sha3_512, TAG_LEN, ctypes.byref(ctx))
+    if ret != 0:
+        raise RuntimeError(f"lc_ak_alloc_taglen failed: {ret}")
+    return ctx
+
+
+def aead_encrypt(key: bytes, iv: bytes, pt: bytes, aad: bytes) -> bytes:
+    ctx = _aead_alloc()
+    try:
+        if _lib.lc_aead_setkey(ctx, key, len(key), iv, len(iv)) != 0:
+            raise RuntimeError("lc_aead_setkey failed")
+        ct = ctypes.create_string_buffer(len(pt))
+        tag = ctypes.create_string_buffer(TAG_LEN)
+        if _lib.lc_aead_encrypt(ctx, pt, ct, len(pt), aad, len(aad), tag, TAG_LEN) != 0:
+            raise RuntimeError("lc_aead_encrypt failed")
+        return bytes(ct) + bytes(tag)
+    finally:
+        _lib.lc_aead_zero_free(ctx)
+
+
+def aead_decrypt(key: bytes, iv: bytes, ct_tag: bytes, aad: bytes) -> bytes:
+    ctx = _aead_alloc()
+    try:
+        if _lib.lc_aead_setkey(ctx, key, len(key), iv, len(iv)) != 0:
+            raise RuntimeError("lc_aead_setkey failed")
+        ct, tag = ct_tag[:-TAG_LEN], ct_tag[-TAG_LEN:]
+        pt = ctypes.create_string_buffer(len(ct))
+        if (
+            _lib.lc_aead_decrypt(ctx, ct, pt, len(ct), aad, len(aad), tag, len(tag))
+            != 0
+        ):
+            raise ValueError("AEAD tag verification failed")
+        return bytes(pt)
+    finally:
+        _lib.lc_aead_zero_free(ctx)
+
+
+# ===== Key derivation =====
+
+
+def _derive_part(master_key: bytes, salt: bytes) -> tuple[bytes, bytes]:
+    okm = hkdf(master_key, salt, KEY_LEN + IV_LEN)
+    return okm[:KEY_LEN], okm[KEY_LEN:]
+
 
 def _derive_name(master_key: bytes, salt: bytes) -> tuple[bytes, bytes, bytes]:
-    km = HKDF(
-        algorithm=hashes.SHA3_256(),
-        length=88,   # 32 key + 24 nonce + 32 hmac_key
-        salt=salt,
-        info=b"",
-    ).derive(master_key)
-    return km[:32], km[32:56], km[56:]  # key, nonce, hmac_key
+    okm = hkdf(master_key, salt, KEY_LEN + IV_LEN + HMAC_LEN)
+    return okm[:KEY_LEN], okm[KEY_LEN : KEY_LEN + IV_LEN], okm[KEY_LEN + IV_LEN :]
 
 
-def name_hmac(name: str, master_key: bytes, salt: bytes) -> bytes:
-    _, _, hmac_key = _derive_name(master_key, salt)
-    h = CHMAC(hmac_key, hashes.SHA3_256())
-    h.update(name.encode())
-    return h.finalize()
+# ===== Encryption =====
 
 
-def find_txt_id(conn, name: str, master_key: bytes) -> int | None:
-    rows = conn.execute("SELECT id, name, name_hmac FROM txt").fetchall()
-    for row_id, enc_name, stored_hmac in rows:
-        salt = bytes(enc_name)[:32]
-        candidate = name_hmac(name, master_key, salt)
-        if _hmac.compare_digest(candidate, bytes(stored_hmac)):
+def encrypt_part(master_key: bytes, plaintext: bytes) -> bytes:
+    compressed = brotli.compress(plaintext, quality=6)
+    salt = os.urandom(SALT_LEN)
+    key, iv = _derive_part(master_key, salt)
+    return salt + aead_encrypt(key, iv, compressed, salt)
+
+
+def decrypt_part(master_key: bytes, blob: bytes) -> bytes:
+    salt, ct_tag = blob[:SALT_LEN], blob[SALT_LEN:]
+    key, iv = _derive_part(master_key, salt)
+    return brotli.decompress(aead_decrypt(key, iv, ct_tag, salt))
+
+
+def encrypt_name(master_key: bytes, name: str) -> tuple[bytes, bytes]:
+    name_b = name.encode()
+    salt = os.urandom(SALT_LEN)
+    key, iv, hmac_key = _derive_name(master_key, salt)
+    blob = salt + aead_encrypt(key, iv, name_b, salt)
+    return blob, hmac_sha3_256(hmac_key, name_b)
+
+
+def decrypt_name(master_key: bytes, blob: bytes) -> str:
+    salt, ct_tag = blob[:SALT_LEN], blob[SALT_LEN:]
+    key, iv, _ = _derive_name(master_key, salt)
+    return aead_decrypt(key, iv, ct_tag, salt).decode()
+
+
+# ===== Content splitting =====
+
+
+def split_parts(content: bytes, target: int = PART_TARGET) -> list[bytes]:
+    paras = re.split(rb"\r?\n\r?\n", content)
+    parts, cur = [], b""
+    for p in paras:
+        chunk = p + b"\n\n"
+        if cur and len(cur) + len(chunk) > target:
+            parts.append(cur)
+            cur = chunk
+        else:
+            cur += chunk
+    if cur:
+        parts.append(cur)
+    return parts
+
+
+# ===== Credentials =====
+
+
+def load_creds(path: str) -> dict:
+    with open(path) as f:
+        creds = json.load(f)
+    url = os.environ.get("TURSO_DATABASE_URL") or creds.get("turso_database_url")
+    token = os.environ.get("TURSO_AUTH_TOKEN") or creds.get("turso_auth_token")
+    if not url or not token:
+        raise ValueError("Missing Turso URL or auth token in creds or environment")
+    creds["turso_database_url"] = url
+    creds["turso_auth_token"] = token
+    return creds
+
+
+def get_master_key(creds: dict) -> bytes:
+    raw = creds.get("master_key", "")
+    if not raw:
+        raise ValueError("No master_key in credentials; run --gen-master-key first")
+    key = base64.b64decode(raw)
+    if len(key) != 128:
+        raise ValueError(f"master_key must be 128 bytes, got {len(key)}")
+    return key
+
+
+# ===== Database =====
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS txt (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    name      BLOB NOT NULL,
+    name_hmac BLOB NOT NULL
+);
+CREATE TABLE IF NOT EXISTS txt_parts (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    txt_id  INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
+    content BLOB NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_txt_parts_txt_id ON txt_parts(txt_id);
+CREATE TABLE IF NOT EXISTS part_count (
+    id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    txt_id INTEGER NOT NULL UNIQUE REFERENCES txt(id) ON DELETE CASCADE,
+    count  INTEGER NOT NULL
+);
+"""
+
+
+def get_connection(creds: dict):
+    conn = libsql.connect(
+        ":memory:",
+        sync_url=creds["turso_database_url"],
+        auth_token=creds["turso_auth_token"],
+    )
+    conn.sync()
+    return conn
+
+
+def setup_schema(conn):
+    conn.executescript(_SCHEMA)
+    conn.sync()
+
+
+# ===== Ingest =====
+
+
+def _find_txt_id(conn, master_key: bytes, name: str) -> int | None:
+    name_b = name.encode()
+    for row_id, name_blob, stored_mac in conn.execute(
+        "SELECT id, name, name_hmac FROM txt"
+    ).fetchall():
+        salt = bytes(name_blob)[:SALT_LEN]
+        _, _, hmac_key = _derive_name(master_key, salt)
+        if _hmac.compare_digest(hmac_sha3_256(hmac_key, name_b), bytes(stored_mac)):
             return row_id
     return None
 
 
-def encrypt_name(name: str, master_key: bytes) -> tuple[bytes, bytes]:
-    salt = os.urandom(32)
-    key, nonce, _ = _derive_name(master_key, salt)
-    ct = nacl.bindings.crypto_aead_xchacha20poly1305_ietf_encrypt(
-        message=name.encode(), aad=b"", nonce=nonce, key=key
-    )
-    return salt + ct, salt
-
-
-def decrypt_name(blob: bytes, master_key: bytes) -> str:
-    salt, ct = blob[:32], blob[32:]
-    key, nonce, _ = _derive_name(master_key, salt)
-    return nacl.bindings.crypto_aead_xchacha20poly1305_ietf_decrypt(
-        ciphertext=ct, aad=b"", nonce=nonce, key=key
-    ).decode()
-
-
-def encrypt_part(plaintext: bytes, master_key: bytes) -> bytes:
-    salt = os.urandom(32)
-    key, nonce = _derive(master_key, salt)
-    compressed = brotli.compress(plaintext, quality=6)
-    ct = nacl.bindings.crypto_aead_xchacha20poly1305_ietf_encrypt(
-        message=compressed, aad=b"", nonce=nonce, key=key
-    )
-    return salt + ct  # 32-byte salt || ciphertext+MAC
-
-
-def decrypt_part(blob: bytes, master_key: bytes) -> bytes:
-    salt, ct = blob[:32], blob[32:]
-    key, nonce = _derive(master_key, salt)
-    compressed = nacl.bindings.crypto_aead_xchacha20poly1305_ietf_decrypt(
-        ciphertext=ct, aad=b"", nonce=nonce, key=key
-    )
-    return brotli.decompress(compressed)
-
-# ── splitting ────────────────────────────────────────────────────────────────
-
-def split_paragraphs(text: str) -> list[bytes]:
-    paragraphs = PARA_SPLIT.split(text)
-    parts: list[bytes] = []
-    buf: list[bytes] = []
-    buf_size = 0
-
-    for para in paragraphs:
-        chunk = (para + "\n\n").encode("utf-8")
-        if buf and buf_size + len(chunk) > PART_TARGET:
-            parts.append(b"".join(buf))
-            buf, buf_size = [], 0
-        buf.append(chunk)
-        buf_size += len(chunk)
-
-    if buf:
-        parts.append(b"".join(buf))
-
-    return parts or [b""]
-
-# ── database ─────────────────────────────────────────────────────────────────
-
-def open_db(creds_path: str | None = None):
-    url   = os.environ.get("TURSO_DATABASE_URL")
-    token = os.environ.get("TURSO_AUTH_TOKEN", "")
-    if not url and creds_path and Path(creds_path).exists():
-        with open(creds_path) as f:
-            data = json.load(f)
-        url   = data.get("turso_database_url") or url
-        token = data.get("turso_auth_token", token)
-    if not url:
-        raise click.ClickException(
-            "TURSO_DATABASE_URL not set and not found in creds file"
-        )
-    log.debug("connecting to %s", url)
-    return libsql.connect(database=url, auth_token=token)
-
-
-def ensure_schema(conn) -> None:
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS txt (
-            id        INTEGER PRIMARY KEY AUTOINCREMENT,
-            name      BLOB NOT NULL,
-            name_hmac BLOB NOT NULL
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS txt_parts (
-            id      INTEGER PRIMARY KEY AUTOINCREMENT,
-            txt_id  INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
-            content BLOB NOT NULL
-        )
-    """)
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_txt_parts_txt_id ON txt_parts(txt_id)"
-    )
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS part_count (
-            id     INTEGER PRIMARY KEY AUTOINCREMENT,
-            txt_id INTEGER NOT NULL UNIQUE REFERENCES txt(id) ON DELETE CASCADE,
-            count  INTEGER NOT NULL
-        )
-    """)
-    conn.commit()
-
-
-def upsert_part_count(conn, txt_id: int, count: int) -> None:
-    conn.execute(
-        "INSERT INTO part_count (txt_id, count) VALUES (?, ?)"
-        " ON CONFLICT(txt_id) DO UPDATE SET count = excluded.count",
-        [txt_id, count],
-    )
-
-
-def ingest_file(conn, path: Path, master_key: bytes) -> None:
-    text  = path.read_text(encoding="utf-8", errors="replace")
-    parts = split_paragraphs(text)
-
-    txt_id = find_txt_id(conn, path.name, master_key)
-    if txt_id is None:
-        enc_name, salt = encrypt_name(path.name, master_key)
-        hmac_val = name_hmac(path.name, master_key, salt)
-        conn.execute("INSERT INTO txt (name, name_hmac) VALUES (?, ?)", [enc_name, hmac_val])
-        txt_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-
-    log.debug("%s: splitting into %d part(s)", path.name, len(parts))
-    conn.execute("DELETE FROM txt_parts WHERE txt_id = ?", [txt_id])
-
-    for i, part_bytes in enumerate(parts):
-        log.debug("%s: encrypting part %d/%d (%d bytes)", path.name, i + 1, len(parts), len(part_bytes))
-        blob = encrypt_part(part_bytes, master_key)
+def _insert_parts(
+    conn, txt_id: int, master_key: bytes, parts: list[bytes], verbose: bool
+):
+    for i, part in enumerate(parts):
+        blob = encrypt_part(master_key, part)
         conn.execute(
-            "INSERT INTO txt_parts (txt_id, content) VALUES (?, ?)",
-            [txt_id, blob],
+            "INSERT INTO txt_parts (txt_id, content) VALUES (?, ?)", (txt_id, blob)
         )
+        if verbose:
+            click.echo(
+                f"  part {i + 1}/{len(parts)}: {len(part):,} → {len(blob):,} bytes"
+            )
 
-    upsert_part_count(conn, txt_id, len(parts))
+
+def ingest_file(
+    conn, master_key: bytes, filepath: Path, stored_name: str, verbose: bool
+):
+    content = filepath.read_bytes()
+    parts = split_parts(content)
+    txt_id = _find_txt_id(conn, master_key, stored_name)
+    if txt_id is None:
+        name_blob, name_hmac_val = encrypt_name(master_key, stored_name)
+        cur = conn.execute(
+            "INSERT INTO txt (name, name_hmac) VALUES (?, ?)",
+            (name_blob, name_hmac_val),
+        )
+        txt_id = cur.lastrowid
+    else:
+        conn.execute("DELETE FROM txt_parts WHERE txt_id = ?", (txt_id,))
+    _insert_parts(conn, txt_id, master_key, parts, verbose)
+    conn.execute(
+        "INSERT OR REPLACE INTO part_count (txt_id, count) VALUES (?, ?)",
+        (txt_id, len(parts)),
+    )
     conn.commit()
-    log.info("%s: %d part(s) committed", path.name, len(parts))
+    conn.sync()
+    if verbose:
+        click.echo(f"  {stored_name}: {len(parts)} part(s), txt_id={txt_id}")
 
-# ── CLI ──────────────────────────────────────────────────────────────────────
+
+# ===== Part count rebuild =====
+
+
+def rebuild_part_count(conn):
+    conn.execute("DELETE FROM part_count")
+    conn.execute("""
+        INSERT INTO part_count (txt_id, count)
+        SELECT txt_id, COUNT(*) FROM txt_parts GROUP BY txt_id
+    """)
+    conn.commit()
+    conn.sync()
+
+
+# ===== Read part =====
+
+
+def read_part(conn, master_key: bytes, part_id: int, out_path: str):
+    cur = conn.execute("SELECT content FROM txt_parts WHERE id = ?", (part_id,))
+    row = cur.fetchone()
+    if not row:
+        raise ValueError(f"No part with id={part_id}")
+    plaintext = decrypt_part(master_key, bytes(row[0]))
+    Path(out_path).write_bytes(plaintext)
+
+
+# ===== CLI helpers =====
+
+
+def _cmd_gen_master_key(path: str):
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        data = {}
+    if "master_key" in data:
+        click.confirm("master_key already exists. Overwrite?", abort=True)
+    data["master_key"] = base64.b64encode(os.urandom(128)).decode()
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2)
+    click.echo(f"master_key written to {path}")
+
+
+def _cmd_ingest(conn, master_key: bytes, src: str, verbose: bool):
+    src_path = Path(src)
+    files = sorted(p for p in src_path.rglob("*") if p.suffix.lower() == ".txt")
+    for fp in files:
+        stored_name = str(fp.relative_to(src_path))
+        if verbose:
+            click.echo(f"Ingesting {stored_name}")
+        try:
+            ingest_file(conn, master_key, fp, stored_name, verbose)
+        except Exception as e:
+            click.echo(f"Warning: skipping {fp}: {e}", err=True)
+
+
+def _cmd_read_part(conn, mk: bytes, part_id: int, out: str):
+    if not out:
+        raise click.UsageError("--out is required with --read-part")
+    read_part(conn, mk, part_id, out)
+
+
+# ===== CLI =====
+
 
 @click.command()
-@click.option("--src",            type=click.Path(exists=True, file_okay=False), default=None)
-@click.option("--creds",          "creds_path",      type=click.Path(), default="creds.json", show_default=True)
-@click.option("--gen-master-key", "gen_key_path",    type=click.Path(), default=None)
-@click.option("--read-part",      "read_part_id",    type=int,          default=None)
-@click.option("--out",            "out_path",        type=click.Path(), default=None)
-@click.option("--part-count",     "do_part_count",   is_flag=True,      default=False,
-              help="Rebuild part_count table from existing txt_parts rows.")
-@click.option("--verbose", "-v",  is_flag=True, default=False, help="Enable debug logging.")
-def main(src: str, creds_path: str, gen_key_path: str,
-         read_part_id: int, out_path: str, do_part_count: bool, verbose: bool) -> None:
-    """Split, compress, encrypt, and store .txt files in Turso libSQL."""
-    logging.basicConfig(
-        level=logging.DEBUG if verbose else logging.INFO,
-        format="%(asctime)s %(levelname)-8s %(message)s",
-        datefmt="%H:%M:%S",
-    )
-
+@click.option("--src", type=click.Path(exists=True))
+@click.option("--creds", default="creds.json", show_default=True)
+@click.option("--part-count", "do_part_count", is_flag=True)
+@click.option("--gen-master-key", "gen_key_path", metavar="PATH")
+@click.option("--read-part", "read_part_id", type=int)
+@click.option("--out")
+@click.option("--verbose", "-v", is_flag=True)
+def main(src, creds, do_part_count, gen_key_path, read_part_id, out, verbose):
     if gen_key_path:
-        gen_master_key(gen_key_path)
+        _cmd_gen_master_key(gen_key_path)
         return
-
-    if read_part_id is not None:
-        if not out_path:
-            raise click.UsageError("--out is required with --read-part")
-        master_key = load_master_key(creds_path)
-        conn = open_db(creds_path)
-        row = conn.execute("SELECT content FROM txt_parts WHERE id = ?", [read_part_id]).fetchone()
-        if row is None:
-            raise click.ClickException(f"no part with id {read_part_id}")
-        plaintext = decrypt_part(bytes(row[0]), master_key)
-        Path(out_path).write_bytes(plaintext)
-        log.info("part %d written to %s (%d bytes)", read_part_id, out_path, len(plaintext))
-        return
-
+    loaded = load_creds(creds)
+    conn = get_connection(loaded)
+    setup_schema(conn)
     if do_part_count:
-        conn = open_db(creds_path)
-        log.debug("ensuring schema")
-        ensure_schema(conn)
-        log.debug("querying part counts from txt_parts")
-        rows = conn.execute(
-            "SELECT txt_id, COUNT(*) FROM txt_parts GROUP BY txt_id"
-        ).fetchall()
-        log.debug("found %d txt(s) with parts", len(rows))
-        for txt_id, count in rows:
-            log.debug("txt_id=%d count=%d", txt_id, count)
-            upsert_part_count(conn, txt_id, count)
-        conn.commit()
-        log.info("part_count updated for %d txt(s)", len(rows))
+        rebuild_part_count(conn)
         return
-
-    if not src:
-        raise click.UsageError("--src or --part-count is required")
-
-    log.info("loading master key from %s", creds_path)
-    master_key = load_master_key(creds_path)
-    conn       = open_db(creds_path)
-    log.debug("ensuring schema")
-    ensure_schema(conn)
-
-    txt_files = sorted(p for p in Path(src).iterdir() if p.is_file() and p.suffix.lower() == ".txt")
-    if not txt_files:
-        log.info("no .txt files found in %s", src)
-        return
-
-    log.info("found %d file(s) in %s", len(txt_files), src)
-    errors = 0
-    for path in txt_files:
-        log.info("ingesting %s", path.name)
-        try:
-            ingest_file(conn, path, master_key)
-        except Exception as exc:
-            log.warning("skipping %s: %s", path.name, exc)
-            errors += 1
-
-    if errors:
-        log.warning("done with %d error(s)", errors)
-        sys.exit(1)
-    else:
-        log.info("done")
+    mk = get_master_key(loaded)
+    if read_part_id is not None:
+        _cmd_read_part(conn, mk, read_part_id, out)
+    elif src:
+        _cmd_ingest(conn, mk, src, verbose)
 
 
 if __name__ == "__main__":
