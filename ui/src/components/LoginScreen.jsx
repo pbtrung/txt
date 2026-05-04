@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { initCrypto, parseMasterKey } from '../crypto.js';
-import { initDb } from '../db.js';
+import { initCrypto, parseMasterKey, decryptName } from '../crypto.js';
+import { initDb, fetchOneTxt } from '../db.js';
 
 export default function LoginScreen({ onConnect }) {
   const [cryptoReady, setCryptoReady] = useState(false);
+  const [verifying, setVerifying] = useState(false);
   const [error, setError] = useState(null);
 
   useEffect(() => { initCrypto().then(() => setCryptoReady(true)); }, []);
@@ -14,12 +15,35 @@ export default function LoginScreen({ onConnect }) {
       const json = JSON.parse(await file.text());
       if (!json.turso_database_url || !json.turso_auth_token || !json.master_key)
         throw new Error('Missing required fields in creds.json');
+
       initDb(json.turso_database_url, json.turso_auth_token);
-      onConnect({ masterKey: parseMasterKey(json.master_key) });
+      const masterKey = parseMasterKey(json.master_key);
+
+      setVerifying(true);
+      let row;
+      try {
+        row = await fetchOneTxt();
+      } catch (e) {
+        throw new Error(`Turso connection failed: ${e.message}`);
+      }
+
+      if (row) {
+        try {
+          decryptName(row.name, masterKey);
+        } catch {
+          throw new Error('master_key is incorrect: failed to decrypt a stored filename');
+        }
+      }
+
+      onConnect({ masterKey });
     } catch (e) {
       setError(e.message);
+    } finally {
+      setVerifying(false);
     }
   }
+
+  const busy = !cryptoReady || verifying;
 
   return (
     <div className="min-vh-100 d-flex align-items-center justify-content-center bg-light">
@@ -35,13 +59,19 @@ export default function LoginScreen({ onConnect }) {
               Initialising crypto…
             </div>
           )}
+          {verifying && (
+            <div className="d-flex align-items-center gap-2 mb-3 text-secondary small">
+              <span className="spinner-border spinner-border-sm" />
+              Verifying connection and master key…
+            </div>
+          )}
           {error && <div className="alert alert-danger py-2 small">{error}</div>}
           <label className="form-label fw-semibold">creds.json</label>
           <input
             type="file"
             className="form-control"
             accept=".json,application/json"
-            disabled={!cryptoReady}
+            disabled={busy}
             onChange={e => e.target.files[0] && handleFile(e.target.files[0])}
           />
         </div>
