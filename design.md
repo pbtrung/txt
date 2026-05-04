@@ -34,7 +34,7 @@ python3 txt_vault.py --gen-master-key creds.json
 }
 ```
 
-`--gen-master-key` generates 64 cryptographically random bytes, base64-encodes them, and writes only the `master_key` field. If `master_key` already exists in the file, the user is prompted to confirm before overwriting. All other fields are left untouched. The file must be kept secret — `master_key` is the root of all encryption.
+`--gen-master-key` generates 128 cryptographically random bytes, base64-encodes them, and writes only the `master_key` field. If `master_key` already exists in the file, the user is prompted to confirm before overwriting. All other fields are left untouched. The file must be kept secret — `master_key` is the root of all encryption.
 
 ---
 
@@ -42,21 +42,20 @@ python3 txt_vault.py --gen-master-key creds.json
 
 ```
 for each .txt file (case-insensitive) in --src:
-  1. Read file content (UTF-8)
-  2. Encrypt filename → (salt || ciphertext) stored in txt.name
-     Compute HMAC-SHA3-256 of filename → stored in txt.name_hmac
-     (see Filename Encryption below)
-  3. INSERT OR IGNORE into txt; SELECT id WHERE name_hmac = ?
-  4. DELETE existing txt_parts for this txt_id
-  5. Split content into parts at paragraph boundaries, targeting ~100 KB per part
-  6. For each part:
+  1. Read file bytes
+  2. Scan all txt rows; for each row re-derive hmac_key from the stored salt
+     and compare HMAC-SHA3-256(hmac_key, filename) against stored name_hmac
+     (constant-time). If matched, reuse that txt_id and delete its parts.
+     If no match, encrypt filename and INSERT a new txt row.
+  3. Split content into parts at paragraph boundaries, targeting ~100 KB per part
+  4. For each part:
      a. Compress with Brotli (quality 6)
      b. Generate 64-byte random salt
      c. Derive 64-byte key and 64-byte IV via HKDF-SHA3-512(master_key, salt)
      d. Encrypt compressed bytes with Ascon-Keccak AEAD; pass salt as AAD
      e. Store salt || ciphertext+tag as a single BLOB in txt_parts.content
-  7. Upsert total part count into part_count (txt_id, count)
-  8. Commit transaction
+  5. Upsert total part count into part_count (txt_id, count)
+  6. Commit and sync to Turso
 ```
 
 ### Paragraph Splitting
@@ -179,20 +178,56 @@ plaintext  = brotli.decompress(compressed)
 
 ---
 
+## Code Structure
+
+`txt_vault.py` is organised into two classes plus thin module-level helpers.
+
+### `Crypto`
+
+Owns the master key and all cryptographic logic. Constructed once per run with the decoded master key.
+
+| Method | Role |
+|--------|------|
+| `_hkdf` | One-shot HKDF-SHA3-512 via `lc_hkdf` |
+| `_hmac` | One-shot HMAC-SHA3-256 via `lc_hmac` |
+| `_aead_alloc` | Allocate Ascon-Keccak context |
+| `_aead_encrypt` / `_aead_decrypt` | Authenticated encryption / decryption |
+| `_derive_part` | Derive (key, IV) for a part from its salt |
+| `_derive_name` | Derive (key, IV, hmac\_key) for a filename from its salt |
+| `encrypt_part` / `decrypt_part` | Compress + encrypt / decrypt + decompress a part blob |
+| `encrypt_name` / `decrypt_name` | Encrypt / decrypt a filename blob |
+| `find_txt_id` | Scan `txt` rows to find an existing entry by filename |
+
+### `VaultStore`
+
+Owns the libSQL connection. Constructed once per run; establishes the connection, syncs, and creates schema in `__init__`.
+
+| Method | Role |
+|--------|------|
+| `_insert_parts` | Encrypt and insert all parts for a `txt_id` |
+| `ingest_file` | Full ingest pipeline for one file (upsert + parts + part\_count) |
+| `rebuild_part_count` | Backfill `part_count` from `txt_parts` |
+| `read_part` | Fetch and decrypt a single part by id |
+
+### Module-level helpers
+
+| Name | Role |
+|------|------|
+| `split_parts` | Split raw bytes at paragraph boundaries |
+| `load_creds` | Load and validate credentials (file + env var override) |
+| `get_master_key` | Decode and validate the 128-byte master key |
+| `_bind_hkdf_hmac`, `_bind_aead`, `_load_leancrypto` | ctypes bindings, run once at import |
+
+---
+
 ## leancrypto ctypes Symbols
 
 | Symbol | Kind | Used for |
 |--------|------|----------|
-| `lc_sha3_512` | `const struct lc_hash *` | HKDF context |
+| `lc_sha3_512` | `const struct lc_hash *` | HKDF and AEAD contexts |
 | `lc_sha3_256` | `const struct lc_hash *` | HMAC context |
-| `lc_hkdf_alloc` | function | HKDF context allocation |
-| `lc_hkdf_extract` | function | HKDF-Extract (PRK) |
-| `lc_hkdf_expand` | function | HKDF-Expand (OKM) |
-| `lc_hkdf_zero_free` | function | HKDF context teardown |
-| `lc_hmac_alloc` | function | HMAC context allocation |
-| `lc_hmac_update` | function | HMAC feed |
-| `lc_hmac_final` | function | HMAC digest |
-| `lc_hmac_zero_free` | function | HMAC context teardown |
+| `lc_hkdf` | one-shot function | HKDF-SHA3-512 key derivation |
+| `lc_hmac` | one-shot function | HMAC-SHA3-256 digest |
 | `lc_ak_alloc_taglen` | function | Ascon-Keccak AEAD allocation |
 | `lc_aead_setkey` | function | Set key and IV |
 | `lc_aead_encrypt` | function | Authenticated encryption |
