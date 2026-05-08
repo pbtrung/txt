@@ -40,7 +40,7 @@ export default function FileDropdown({
             fontSize: '0.875rem',
           }}
         >
-          {txts.map(txt => (
+          {[...txts].sort((a, b) => a.name.localeCompare(b.name)).map(txt => (
             <li key={txt.id}>
               <button
                 type="button"
