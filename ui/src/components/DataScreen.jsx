@@ -146,7 +146,7 @@ export default function DataScreen({ masterKey, onDisconnect }) {
               whiteSpace: 'pre-wrap',
               wordBreak: 'break-word',
               fontSize,
-              maxWidth: '88ch',
+              maxWidth: '65ch',
               fontFamily: "'Literata', serif",
             }}>
               {content}
