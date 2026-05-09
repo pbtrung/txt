@@ -1,5 +1,5 @@
-@media (min-width: 1200px) {
+@media (min-width: 768px) {
   .vault-container {
-    max-width: 60% !important;
+    max-width: 50% !important;
   }
 }
