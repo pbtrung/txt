@@ -23,9 +23,10 @@ export default function DataScreen({ masterKey, onDisconnect }) {
   const [loading, setLoading]         = useState(false);
   const [error, setError]             = useState(null);
   const [fontSize, setFontSize]       = useState(16);
-  const [bookmarks, setBookmarks]         = useState(new Map());
-  const [showBookmarks, setShowBookmarks] = useState(false);
-  const [pendingScrollLine, setPendingScrollLine] = useState(null);
+  const [bookmarks, setBookmarks]             = useState(new Map());
+  const [showBookmarks, setShowBookmarks]     = useState(false);
+  const [showBookmarkChooser, setShowBookmarkChooser] = useState(false);
+  const [pendingScrollLine, setPendingScrollLine]     = useState(null);
   const loadedPartRef      = useRef(null);
   const lineRefs           = useRef({});
   const scrollContainerRef = useRef(null);
@@ -86,6 +87,7 @@ export default function DataScreen({ masterKey, onDisconnect }) {
     setContent(null);
     setPendingScrollLine(null);
     setShowBookmarks(false);
+    setShowBookmarkChooser(false);
     setBookmarks(new Map());
     loadedPartRef.current = null;
     wrap(async () => {
@@ -106,7 +108,9 @@ export default function DataScreen({ masterKey, onDisconnect }) {
         });
       }
       setBookmarks(bMap);
-      if (total > 0) {
+      if (bMap.size > 0) {
+        setShowBookmarkChooser(true);
+      } else if (total > 0) {
         loadedPartRef.current = { txtId: txt.id, partNum: 1 };
         const part = await fetchPartByOffset(txt.id, 0);
         setContent(part ? decryptPart(part.content, masterKey) : '');
@@ -145,6 +149,7 @@ export default function DataScreen({ masterKey, onDisconnect }) {
 
   function navigateToBookmark({ partNum, lineIndex }) {
     setShowBookmarks(false);
+    setShowBookmarkChooser(false);
     if (partNum !== currentPartNum) {
       setPendingScrollLine(lineIndex);
       loadPart(selectedTxt, partNum);
@@ -266,8 +271,44 @@ export default function DataScreen({ masterKey, onDisconnect }) {
             <p className="text-muted small mb-0" style={{ paddingLeft: '1rem' }}>
               Select a file to view its content.
             </p>
+          ) : showBookmarkChooser ? (
+            <div style={{ paddingLeft: '1rem' }}>
+              <p className="text-muted small mb-2">Pick up where you left off:</p>
+              <ul className="list-group list-group-flush mb-3">
+                {[...bookmarks.values()]
+                  .sort((a, b) => a.partNum - b.partNum || a.lineIndex - b.lineIndex)
+                  .map(bm => (
+                    <li
+                      key={bm.key}
+                      className="list-group-item list-group-item-action py-2 px-2 d-flex align-items-start gap-2"
+                      style={{ cursor: 'pointer' }}
+                      onClick={() => navigateToBookmark({ partNum: bm.partNum, lineIndex: bm.lineIndex })}
+                    >
+                      <div className="flex-grow-1" style={{ minWidth: 0 }}>
+                        <div className="text-muted" style={{ fontSize: '0.7rem' }}>
+                          Part {bm.partNum} &middot; Line {bm.lineIndex + 1}
+                        </div>
+                        <div className="small" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {bm.preview
+                            ? `${bm.preview}…`
+                            : <em className="text-muted">empty line</em>}
+                        </div>
+                      </div>
+                      <button
+                        className="btn btn-sm btn-link text-muted p-0 flex-shrink-0"
+                        style={{ fontSize: '1rem', lineHeight: 1 }}
+                        title="Remove bookmark"
+                        onClick={e => { e.stopPropagation(); removeBookmark(bm.key); }}
+                      >
+                        &times;
+                      </button>
+                    </li>
+                  ))
+                }
+              </ul>
+            </div>
           ) : content === null ? (
-            <p className="text-muted small mb-0">
+            <p className="text-muted small mb-0" style={{ paddingLeft: '1rem' }}>
               Loading…
             </p>
           ) : (
@@ -307,10 +348,10 @@ export default function DataScreen({ masterKey, onDisconnect }) {
         <PartFooter
           hasTxt={hasTxt}
           hasParts={hasParts}
-          currentPartNum={currentPartNum}
+          currentPartNum={showBookmarkChooser ? 0 : currentPartNum}
           totalParts={totalParts}
           onPartNumChange={setCurrentPartNum}
-          onLoadPart={partNum => loadPart(selectedTxt, partNum)}
+          onLoadPart={partNum => { setShowBookmarkChooser(false); loadPart(selectedTxt, partNum); }}
           fontSize={fontSize}
           setFontSize={setFontSize}
         />
