@@ -385,22 +385,22 @@ class VaultStore:
         if verbose:
             click.echo("  committed")
 
-    def create_bookmarks(self, verbose: bool = False):
-        for stmt in _BOOKMARKS_STMTS:
+    def create_bookmarks(self):
+        labels = ["table", "index", "trigger"]
+        for label, stmt in zip(labels, _BOOKMARKS_STMTS):
+            click.echo(f"  Creating {label}...", nl=False)
             self._conn.execute(stmt.strip())
+            click.echo(" done")
         self._conn.commit()
-        if verbose:
-            click.echo("Bookmarks table, index, and trigger created")
+        click.echo("  Committed.")
 
-    def recreate_bookmarks(self, verbose: bool = False):
+    def recreate_bookmarks(self):
+        click.echo("  Dropping existing bookmarks table...", nl=False)
         # DROP TABLE cascades to the index and trigger in SQLite/libSQL.
         self._conn.execute("DROP TABLE IF EXISTS bookmarks")
         self._conn.commit()
-        if verbose:
-            click.echo(
-                "Dropped bookmarks table (index and trigger dropped automatically)"
-            )
-        self.create_bookmarks(verbose=verbose)
+        click.echo(" done")
+        self.create_bookmarks()
 
     def rebuild_part_count(self, verbose: bool = False):
         self._conn.execute("DELETE FROM part_count")
@@ -496,10 +496,10 @@ def main(
     loaded = load_creds(creds)
     store = VaultStore(loaded, verbose=verbose)
     if do_recreate_bookmarks:
-        store.recreate_bookmarks(verbose=verbose)
+        store.recreate_bookmarks()
         return
     if do_create_bookmarks:
-        store.create_bookmarks(verbose=verbose)
+        store.create_bookmarks()
         return
     if do_part_count:
         store.rebuild_part_count(verbose=verbose)
