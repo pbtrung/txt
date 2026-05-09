@@ -88,17 +88,7 @@ export default function DataScreen({ masterKey, onDisconnect }) {
         'd-flex align-items-center' +
         ' justify-content-between mb-3'
       }>
-        <div className="d-flex align-items-center gap-2">
-          <span className="fw-bold">txt_vault</span>
-          {loading && (
-            <span
-              className={
-                'spinner-border spinner-border-sm' +
-                ' text-secondary'
-              }
-            />
-          )}
-        </div>
+        <span className="fw-bold">Text Reader</span>
         <button
           className="btn btn-sm btn-outline-secondary"
           onClick={onDisconnect}
@@ -134,15 +124,24 @@ export default function DataScreen({ masterKey, onDisconnect }) {
           className="card-body overflow-auto p-3"
           style={{ flex: '1 1 0', minHeight: 0 }}
         >
-          {!hasTxt && (
+          {loading ? (
+            <div className={
+              'd-flex justify-content-center' +
+              ' align-items-center py-4'
+            }>
+              <span
+                className="spinner-border text-secondary"
+              />
+            </div>
+          ) : !hasTxt ? (
             <p className="text-muted small mb-0">
               Select a file to view its content.
             </p>
-          )}
-          {hasTxt && content === null && !loading && (
-            <p className="text-muted small mb-0">Loading…</p>
-          )}
-          {content !== null && (
+          ) : content === null ? (
+            <p className="text-muted small mb-0">
+              Loading…
+            </p>
+          ) : (
             <pre className="mb-0" style={{
               whiteSpace: 'pre-wrap',
               wordBreak: 'break-word',

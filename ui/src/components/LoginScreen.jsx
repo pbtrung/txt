@@ -83,7 +83,7 @@ export default function LoginScreen({ onConnect }) {
         style={{ maxWidth: 440, width: '100%', margin: '1rem' }}
       >
         <div className="card-body p-4">
-          <h4 className="mb-1 fw-bold">txt_vault</h4>
+          <h4 className="mb-1 fw-bold">Text Reader</h4>
           <p className="text-muted mb-4 small">
             Upload a credentials JSON file to connect
             to your Turso database.
