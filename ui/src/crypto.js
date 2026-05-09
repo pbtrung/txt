@@ -202,8 +202,8 @@ export function decryptPart(blob, masterKey) {
   return new TextDecoder().decode(plain);
 }
 
-export function encryptPreview(text, masterKey) {
-  const plain      = new TextEncoder().encode(text);
+export function encryptBookmark(obj, masterKey) {
+  const plain      = new TextEncoder().encode(JSON.stringify(obj));
   const compressed = brotli.compress(plain);
   const salt       = globalThis.crypto.getRandomValues(new Uint8Array(SALT_LEN));
   const { key, iv } = _derivePart(masterKey, salt);
@@ -214,12 +214,12 @@ export function encryptPreview(text, masterKey) {
   return out;
 }
 
-export function decryptPreview(blob, masterKey) {
+export function decryptBookmark(blob, masterKey) {
   const b    = blob instanceof Uint8Array ? blob : new Uint8Array(blob);
   const salt = b.slice(0, SALT_LEN);
   const { key, iv } = _derivePart(masterKey, salt);
   const compressed = _aeadDecrypt(key, iv, b.slice(SALT_LEN), salt);
-  return new TextDecoder().decode(brotli.decompress(compressed));
+  return JSON.parse(new TextDecoder().decode(brotli.decompress(compressed)));
 }
 
 export function parseMasterKey(b64) {

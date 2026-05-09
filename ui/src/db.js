@@ -100,20 +100,15 @@ export async function fetchPartByOffset(txtId, offset) {
 
 export async function fetchBookmarks(txtId) {
   return toRows(await execute(
-    `SELECT b.id, b.txt_part_id, b.part_num, b.line, b.txt_preview
-     FROM bookmarks b
-     JOIN txt_parts tp ON b.txt_part_id = tp.id
-     WHERE tp.txt_id = ?
-     ORDER BY b.part_num, b.line`,
+    'SELECT id, bookmark FROM bookmarks WHERE txt_id = ? ORDER BY id',
     [txtId],
   ));
 }
 
-export async function insertBookmark(txtPartId, partNum, line, txtPreview) {
+export async function insertBookmark(txtId, bookmarkBlob) {
   const result = await execute(
-    'INSERT INTO bookmarks (txt_part_id, part_num, line, txt_preview)' +
-    ' VALUES (?, ?, ?, ?)',
-    [txtPartId, partNum, line, txtPreview ?? null],
+    'INSERT INTO bookmarks (txt_id, bookmark) VALUES (?, ?)',
+    [txtId, bookmarkBlob],
   );
   return parseInt(result.last_insert_rowid, 10);
 }

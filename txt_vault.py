@@ -120,28 +120,19 @@ CREATE TABLE IF NOT EXISTS part_count (
 _BOOKMARKS_STMTS = [
     """
     CREATE TABLE IF NOT EXISTS bookmarks (
-        id          INTEGER PRIMARY KEY AUTOINCREMENT,
-        txt_part_id INTEGER NOT NULL REFERENCES txt_parts(id) ON DELETE CASCADE,
-        part_num    INTEGER NOT NULL,
-        line        INTEGER NOT NULL,
-        txt_preview BLOB,
-        UNIQUE (txt_part_id, line)
+        id       INTEGER PRIMARY KEY AUTOINCREMENT,
+        txt_id   INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
+        bookmark BLOB NOT NULL
     )
     """,
     """
-    CREATE INDEX IF NOT EXISTS idx_bookmarks_txt_part_id
-        ON bookmarks(txt_part_id)
+    CREATE INDEX IF NOT EXISTS idx_bookmarks_txt_id
+        ON bookmarks(txt_id)
     """,
     """
     CREATE TRIGGER IF NOT EXISTS trg_limit_bookmarks_per_file
     BEFORE INSERT ON bookmarks
-    WHEN (
-        SELECT COUNT(*) FROM bookmarks b
-        JOIN txt_parts tp ON b.txt_part_id = tp.id
-        WHERE tp.txt_id = (
-            SELECT txt_id FROM txt_parts WHERE id = NEW.txt_part_id
-        )
-    ) >= 12
+    WHEN (SELECT COUNT(*) FROM bookmarks WHERE txt_id = NEW.txt_id) >= 12
     BEGIN
         SELECT RAISE(ABORT, 'max 12 bookmarks per file');
     END
