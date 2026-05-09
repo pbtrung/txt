@@ -116,6 +116,36 @@ CREATE TABLE IF NOT EXISTS part_count (
 );
 """
 
+# Stored as a list to avoid splitting the trigger body on semicolons.
+_BOOKMARKS_STMTS = [
+    """
+    CREATE TABLE IF NOT EXISTS bookmarks (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        txt_part_id INTEGER NOT NULL REFERENCES txt_parts(id) ON DELETE CASCADE,
+        line        INTEGER NOT NULL,
+        UNIQUE (txt_part_id, line)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_bookmarks_txt_part_id
+        ON bookmarks(txt_part_id)
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS trg_limit_bookmarks_per_file
+    BEFORE INSERT ON bookmarks
+    WHEN (
+        SELECT COUNT(*) FROM bookmarks b
+        JOIN txt_parts tp ON b.txt_part_id = tp.id
+        WHERE tp.txt_id = (
+            SELECT txt_id FROM txt_parts WHERE id = NEW.txt_part_id
+        )
+    ) >= 12
+    BEGIN
+        SELECT RAISE(ABORT, 'max 12 bookmarks per file');
+    END
+    """,
+]
+
 # ===== Utilities =====
 
 
@@ -347,6 +377,13 @@ class VaultStore:
         if verbose:
             click.echo("  committed")
 
+    def create_bookmarks(self, verbose: bool = False):
+        for stmt in _BOOKMARKS_STMTS:
+            self._conn.execute(stmt.strip())
+        self._conn.commit()
+        if verbose:
+            click.echo("Bookmarks table, index, and trigger created")
+
     def rebuild_part_count(self, verbose: bool = False):
         self._conn.execute("DELETE FROM part_count")
         self._conn.execute("""
@@ -409,16 +446,20 @@ def _cmd_ingest(store: VaultStore, crypto: Crypto, src: str, verbose: bool, forc
 @click.option("--force", is_flag=True, help="Overwrite existing entries when using --src")
 @click.option("--creds", default="creds.json", show_default=True)
 @click.option("--part-count", "do_part_count", is_flag=True)
+@click.option("--create-bookmarks", "do_create_bookmarks", is_flag=True)
 @click.option("--gen-master-key", "gen_key_path", metavar="PATH")
 @click.option("--read-part", "read_part_id", type=int)
 @click.option("--out")
 @click.option("--verbose", "-v", is_flag=True)
-def main(src, force, creds, do_part_count, gen_key_path, read_part_id, out, verbose):
+def main(src, force, creds, do_part_count, do_create_bookmarks, gen_key_path, read_part_id, out, verbose):
     if gen_key_path:
         _cmd_gen_master_key(gen_key_path)
         return
     loaded = load_creds(creds)
     store = VaultStore(loaded, verbose=verbose)
+    if do_create_bookmarks:
+        store.create_bookmarks(verbose=verbose)
+        return
     if do_part_count:
         store.rebuild_part_count(verbose=verbose)
         return

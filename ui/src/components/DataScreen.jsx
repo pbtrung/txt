@@ -6,6 +6,9 @@ import {
   fetchTxts,
   fetchPartCount,
   fetchPartByOffset,
+  fetchBookmarks,
+  insertBookmark,
+  deleteBookmark,
 } from '../db.js';
 import FileDropdown from './FileDropdown.jsx';
 import PartFooter from './PartFooter.jsx';
@@ -20,9 +23,10 @@ export default function DataScreen({ masterKey, onDisconnect }) {
   const [loading, setLoading]         = useState(false);
   const [error, setError]             = useState(null);
   const [fontSize, setFontSize]       = useState(16);
-  const [bookmarks, setBookmarks]     = useState(new Map());
+  const [bookmarks, setBookmarks]         = useState(new Map());
   const [showBookmarks, setShowBookmarks] = useState(false);
   const [pendingScrollLine, setPendingScrollLine] = useState(null);
+  const [currentTxtPartId, setCurrentTxtPartId] = useState(null);
   const loadedPartRef      = useRef(null);
   const lineRefs           = useRef({});
   const scrollContainerRef = useRef(null);
@@ -70,9 +74,11 @@ export default function DataScreen({ masterKey, onDisconnect }) {
     loadedPartRef.current = { txtId: txt.id, partNum: clamped };
     setCurrentPartNum(clamped);
     setContent(null);
+    setCurrentTxtPartId(null);
     wrap(async () => {
-      const blob = await fetchPartByOffset(txt.id, clamped - 1);
-      setContent(blob ? decryptPart(blob, masterKey) : '');
+      const part = await fetchPartByOffset(txt.id, clamped - 1);
+      setCurrentTxtPartId(part?.id ?? null);
+      setContent(part ? decryptPart(part.content, masterKey) : '');
     });
   }
 
@@ -81,41 +87,66 @@ export default function DataScreen({ masterKey, onDisconnect }) {
     setCurrentPartNum(1);
     setTotalParts(0);
     setContent(null);
+    setCurrentTxtPartId(null);
     setPendingScrollLine(null);
     setShowBookmarks(false);
+    setBookmarks(new Map());
     loadedPartRef.current = null;
     wrap(async () => {
-      const total = await fetchPartCount(txt.id);
+      const [total, bmarks] = await Promise.all([
+        fetchPartCount(txt.id),
+        fetchBookmarks(txt.id),
+      ]);
       setTotalParts(total);
-      if (total > 0) {
-        loadedPartRef.current = { txtId: txt.id, partNum: 1 };
-        const blob = await fetchPartByOffset(txt.id, 0);
-        setContent(blob ? decryptPart(blob, masterKey) : '');
-      }
-    });
-  }
-
-  function bKey(txtId, partNum, lineIdx) {
-    return `${txtId}:${partNum}:${lineIdx}`;
-  }
-
-  function toggleBookmark(lineIdx, preview) {
-    const key = bKey(selectedTxt.id, currentPartNum, lineIdx);
-    setBookmarks(prev => {
-      const next = new Map(prev);
-      if (next.has(key)) {
-        next.delete(key);
-      } else {
-        next.set(key, {
+      const bMap = new Map();
+      for (const b of bmarks) {
+        const key = `${b.txt_part_id}:${b.line}`;
+        bMap.set(key, {
           key,
-          txtId: selectedTxt.id,
-          partNum: currentPartNum,
-          lineIndex: lineIdx,
-          preview,
+          dbId: b.id,
+          txtId: txt.id,
+          txtPartId: b.txt_part_id,
+          partNum: b.part_num,
+          lineIndex: b.line,
+          preview: '',
         });
       }
-      return next;
+      setBookmarks(bMap);
+      if (total > 0) {
+        loadedPartRef.current = { txtId: txt.id, partNum: 1 };
+        const part = await fetchPartByOffset(txt.id, 0);
+        setCurrentTxtPartId(part?.id ?? null);
+        setContent(part ? decryptPart(part.content, masterKey) : '');
+      }
     });
+  }
+
+  async function toggleBookmark(lineIdx, preview) {
+    if (!currentTxtPartId) return;
+    const key = `${currentTxtPartId}:${lineIdx}`;
+    if (bookmarks.has(key)) {
+      const { dbId } = bookmarks.get(key);
+      try {
+        await deleteBookmark(dbId);
+        setBookmarks(prev => { const n = new Map(prev); n.delete(key); return n; });
+      } catch (e) { setError(e.message); }
+    } else {
+      try {
+        const dbId = await insertBookmark(currentTxtPartId, lineIdx);
+        setBookmarks(prev => {
+          const n = new Map(prev);
+          n.set(key, {
+            key, dbId,
+            txtId: selectedTxt.id,
+            txtPartId: currentTxtPartId,
+            partNum: currentPartNum,
+            lineIndex: lineIdx,
+            preview,
+          });
+          return n;
+        });
+      } catch (e) { setError(e.message); }
+    }
   }
 
   function navigateToBookmark({ partNum, lineIndex }) {
@@ -128,20 +159,19 @@ export default function DataScreen({ masterKey, onDisconnect }) {
     }
   }
 
-  function removeBookmark(key) {
-    setBookmarks(prev => {
-      const next = new Map(prev);
-      next.delete(key);
-      return next;
-    });
+  async function removeBookmark(key) {
+    const bm = bookmarks.get(key);
+    if (!bm) return;
+    try {
+      await deleteBookmark(bm.dbId);
+      setBookmarks(prev => { const n = new Map(prev); n.delete(key); return n; });
+    } catch (e) { setError(e.message); }
   }
 
   const hasTxt   = !!selectedTxt;
   const hasParts = totalParts > 0;
 
-  const fileBookmarkCount = selectedTxt
-    ? [...bookmarks.values()].filter(b => b.txtId === selectedTxt.id).length
-    : 0;
+  const fileBookmarkCount = bookmarks.size;
 
   return (
     <div
@@ -253,7 +283,7 @@ export default function DataScreen({ masterKey, onDisconnect }) {
               maxWidth: '70ch',
             }}>
               {content.split('\n').map((line, i) => {
-                const key = bKey(selectedTxt.id, currentPartNum, i);
+                const key = `${currentTxtPartId}:${i}`;
                 const isBookmarked = bookmarks.has(key);
                 return (
                   <div
