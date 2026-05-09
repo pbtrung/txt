@@ -95,21 +95,19 @@ export async function fetchPartByOffset(txtId, offset) {
 
 export async function fetchBookmarks(txtId) {
   return toRows(await execute(
-    `SELECT b.id, b.txt_part_id, b.line,
-       (SELECT COUNT(*) FROM txt_parts t2
-        WHERE t2.txt_id = tp.txt_id AND t2.id <= tp.id) AS part_num
+    `SELECT b.id, b.txt_part_id, b.part_num, b.line
      FROM bookmarks b
      JOIN txt_parts tp ON b.txt_part_id = tp.id
      WHERE tp.txt_id = ?
-     ORDER BY part_num, b.line`,
+     ORDER BY b.part_num, b.line`,
     [txtId],
   ));
 }
 
-export async function insertBookmark(txtPartId, line) {
+export async function insertBookmark(txtPartId, partNum, line) {
   const result = await execute(
-    'INSERT INTO bookmarks (txt_part_id, line) VALUES (?, ?)',
-    [txtPartId, line],
+    'INSERT INTO bookmarks (txt_part_id, part_num, line) VALUES (?, ?, ?)',
+    [txtPartId, partNum, line],
   );
   return parseInt(result.last_insert_rowid, 10);
 }

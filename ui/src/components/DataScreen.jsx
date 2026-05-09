@@ -149,7 +149,7 @@ export default function DataScreen({ masterKey, onDisconnect }) {
       } catch (e) { setError(e.message); }
     } else {
       try {
-        const dbId = await insertBookmark(currentTxtPartId, lineIdx);
+        const dbId = await insertBookmark(currentTxtPartId, currentPartNum, lineIdx);
         setBookmarks(prev => {
           const n = new Map(prev);
           n.set(key, {

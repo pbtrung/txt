@@ -122,6 +122,7 @@ _BOOKMARKS_STMTS = [
     CREATE TABLE IF NOT EXISTS bookmarks (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         txt_part_id INTEGER NOT NULL REFERENCES txt_parts(id) ON DELETE CASCADE,
+        part_num    INTEGER NOT NULL,
         line        INTEGER NOT NULL,
         UNIQUE (txt_part_id, line)
     )
@@ -344,7 +345,11 @@ class VaultStore:
             )
 
     def ingest_file(
-        self, crypto: Crypto, filepath: Path, stored_name: str, verbose: bool,
+        self,
+        crypto: Crypto,
+        filepath: Path,
+        stored_name: str,
+        verbose: bool,
         force: bool = False,
     ):
         content = filepath.read_bytes()
@@ -352,7 +357,9 @@ class VaultStore:
         txt_id = crypto.find_txt_id(self._conn, stored_name)
         if txt_id is not None and not force:
             if verbose:
-                click.echo(f"  [skip] {stored_name} already exists (use --force to overwrite)")
+                click.echo(
+                    f"  [skip] {stored_name} already exists (use --force to overwrite)"
+                )
             return
         if txt_id is None:
             name_blob, name_mac = crypto.encrypt_name(stored_name)
@@ -384,6 +391,16 @@ class VaultStore:
         if verbose:
             click.echo("Bookmarks table, index, and trigger created")
 
+    def recreate_bookmarks(self, verbose: bool = False):
+        # DROP TABLE cascades to the index and trigger in SQLite/libSQL.
+        self._conn.execute("DROP TABLE IF EXISTS bookmarks")
+        self._conn.commit()
+        if verbose:
+            click.echo(
+                "Dropped bookmarks table (index and trigger dropped automatically)"
+            )
+        self.create_bookmarks(verbose=verbose)
+
     def rebuild_part_count(self, verbose: bool = False):
         self._conn.execute("DELETE FROM part_count")
         self._conn.execute("""
@@ -395,7 +412,9 @@ class VaultStore:
             n = self._conn.execute("SELECT COUNT(*) FROM part_count").fetchone()[0]
             click.echo(f"Rebuilt part_count for {n} txt row(s)")
 
-    def read_part(self, crypto: Crypto, part_id: int, out_path: str, verbose: bool = False):
+    def read_part(
+        self, crypto: Crypto, part_id: int, out_path: str, verbose: bool = False
+    ):
         cur = self._conn.execute(
             "SELECT content FROM txt_parts WHERE id = ?", (part_id,)
         )
@@ -406,7 +425,9 @@ class VaultStore:
         data = crypto.decrypt_part(blob)
         Path(out_path).write_bytes(data)
         if verbose:
-            click.echo(f"Part {part_id}: {len(blob):,}B blob → {len(data):,}B plain → {out_path}")
+            click.echo(
+                f"Part {part_id}: {len(blob):,}B blob → {len(data):,}B plain → {out_path}"
+            )
 
 
 # ===== CLI =====
@@ -426,7 +447,9 @@ def _cmd_gen_master_key(path: str):
     click.echo(f"master_key written to {path}")
 
 
-def _cmd_ingest(store: VaultStore, crypto: Crypto, src: str, verbose: bool, force: bool):
+def _cmd_ingest(
+    store: VaultStore, crypto: Crypto, src: str, verbose: bool, force: bool
+):
     src_path = Path(src)
     files = sorted(p for p in src_path.rglob("*") if p.suffix.lower() == ".txt")
     if verbose:
@@ -443,20 +466,37 @@ def _cmd_ingest(store: VaultStore, crypto: Crypto, src: str, verbose: bool, forc
 
 @click.command()
 @click.option("--src", type=click.Path(exists=True))
-@click.option("--force", is_flag=True, help="Overwrite existing entries when using --src")
+@click.option(
+    "--force", is_flag=True, help="Overwrite existing entries when using --src"
+)
 @click.option("--creds", default="creds.json", show_default=True)
 @click.option("--part-count", "do_part_count", is_flag=True)
 @click.option("--create-bookmarks", "do_create_bookmarks", is_flag=True)
+@click.option("--recreate-bookmarks", "do_recreate_bookmarks", is_flag=True)
 @click.option("--gen-master-key", "gen_key_path", metavar="PATH")
 @click.option("--read-part", "read_part_id", type=int)
 @click.option("--out")
 @click.option("--verbose", "-v", is_flag=True)
-def main(src, force, creds, do_part_count, do_create_bookmarks, gen_key_path, read_part_id, out, verbose):
+def main(
+    src,
+    force,
+    creds,
+    do_part_count,
+    do_create_bookmarks,
+    do_recreate_bookmarks,
+    gen_key_path,
+    read_part_id,
+    out,
+    verbose,
+):
     if gen_key_path:
         _cmd_gen_master_key(gen_key_path)
         return
     loaded = load_creds(creds)
     store = VaultStore(loaded, verbose=verbose)
+    if do_recreate_bookmarks:
+        store.recreate_bookmarks(verbose=verbose)
+        return
     if do_create_bookmarks:
         store.create_bookmarks(verbose=verbose)
         return
