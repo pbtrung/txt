@@ -75,6 +75,44 @@ function _hmac(key, data) {
   }
 }
 
+function _aeadEncrypt(key, iv, pt, aad) {
+  const ctxSlot = lc._malloc(4);
+  let ctx = 0;
+  try {
+    const ok = lc._lc_ak_alloc_taglen(sha3_512ptr(), TAG_LEN, ctxSlot);
+    if (ok !== 0) throw new Error('lc_ak_alloc_taglen failed');
+    ctx = lc.HEAP32[ctxSlot >> 2];
+
+    const keyPtr = alloc(key);
+    const ivPtr  = alloc(iv);
+    const r = lc._lc_aead_setkey(ctx, keyPtr, key.length, ivPtr, iv.length);
+    lc._free(keyPtr);
+    lc._free(ivPtr);
+    if (r !== 0) throw new Error('lc_aead_setkey failed');
+
+    const ptPtr  = alloc(pt);
+    const ctPtr  = lc._malloc(pt.length);
+    const aadPtr = alloc(aad);
+    const tagPtr = lc._malloc(TAG_LEN);
+    const enc = lc._lc_aead_encrypt(
+      ctx, ptPtr, ctPtr, pt.length,
+      aadPtr, aad.length, tagPtr, TAG_LEN,
+    );
+    const ctBytes  = lc.HEAPU8.slice(ctPtr,  ctPtr  + pt.length);
+    const tagBytes = lc.HEAPU8.slice(tagPtr, tagPtr + TAG_LEN);
+    lc._free(ptPtr); lc._free(ctPtr); lc._free(aadPtr); lc._free(tagPtr);
+    if (enc !== 0) throw new Error('lc_aead_encrypt failed');
+
+    const out = new Uint8Array(ctBytes.length + TAG_LEN);
+    out.set(ctBytes);
+    out.set(tagBytes, ctBytes.length);
+    return out;
+  } finally {
+    if (ctx) lc._lc_aead_zero_free(ctx);
+    lc._free(ctxSlot);
+  }
+}
+
 function _aeadDecrypt(key, iv, ctTag, aad) {
   const ctxSlot = lc._malloc(4);
   let ctx = 0;
@@ -162,6 +200,26 @@ export function decryptPart(blob, masterKey) {
     ` → ${plain.length}B plain`,
   );
   return new TextDecoder().decode(plain);
+}
+
+export function encryptPreview(text, masterKey) {
+  const plain      = new TextEncoder().encode(text);
+  const compressed = brotli.compress(plain);
+  const salt       = globalThis.crypto.getRandomValues(new Uint8Array(SALT_LEN));
+  const { key, iv } = _derivePart(masterKey, salt);
+  const ctTag = _aeadEncrypt(key, iv, compressed, salt);
+  const out = new Uint8Array(SALT_LEN + ctTag.length);
+  out.set(salt);
+  out.set(ctTag, SALT_LEN);
+  return out;
+}
+
+export function decryptPreview(blob, masterKey) {
+  const b    = blob instanceof Uint8Array ? blob : new Uint8Array(blob);
+  const salt = b.slice(0, SALT_LEN);
+  const { key, iv } = _derivePart(masterKey, salt);
+  const compressed = _aeadDecrypt(key, iv, b.slice(SALT_LEN), salt);
+  return new TextDecoder().decode(brotli.decompress(compressed));
 }
 
 export function parseMasterKey(b64) {

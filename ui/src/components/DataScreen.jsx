@@ -1,7 +1,7 @@
 import React, {
   useState, useEffect, useCallback, useRef,
 } from 'react';
-import { decryptName, decryptPart } from '../crypto.js';
+import { decryptName, decryptPart, encryptPreview, decryptPreview } from '../crypto.js';
 import {
   fetchTxts,
   fetchPartCount,
@@ -117,10 +117,15 @@ export default function DataScreen({ masterKey, onDisconnect }) {
       const bMap = new Map();
       for (const b of bmarks) {
         const key = `${b.txt_part_id}:${b.line}`;
+        let preview = '';
+        if (b.txt_preview) {
+          try { preview = decryptPreview(b.txt_preview, masterKey); }
+          catch { preview = ''; }
+        }
         bMap.set(key, {
           key, dbId: b.id, txtId: txt.id,
           txtPartId: b.txt_part_id, partNum: b.part_num,
-          lineIndex: b.line, preview: '',
+          lineIndex: b.line, preview,
         });
       }
       if (total > 0) {
@@ -138,7 +143,7 @@ export default function DataScreen({ masterKey, onDisconnect }) {
     });
   }
 
-  async function toggleBookmark(lineIdx, preview) {
+  async function toggleBookmark(lineIdx, previewText) {
     if (!currentTxtPartId) return;
     const key = `${currentTxtPartId}:${lineIdx}`;
     if (bookmarks.has(key)) {
@@ -149,7 +154,8 @@ export default function DataScreen({ masterKey, onDisconnect }) {
       } catch (e) { setError(e.message); }
     } else {
       try {
-        const dbId = await insertBookmark(currentTxtPartId, currentPartNum, lineIdx);
+        const encBlob = previewText ? encryptPreview(previewText, masterKey) : null;
+        const dbId = await insertBookmark(currentTxtPartId, currentPartNum, lineIdx, encBlob);
         setBookmarks(prev => {
           const n = new Map(prev);
           n.set(key, {
@@ -158,7 +164,7 @@ export default function DataScreen({ masterKey, onDisconnect }) {
             txtPartId: currentTxtPartId,
             partNum: currentPartNum,
             lineIndex: lineIdx,
-            preview,
+            preview: previewText,
           });
           return n;
         });

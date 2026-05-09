@@ -39,6 +39,11 @@ function toWireValue(v) {
   if (typeof v === 'number')
     return { type: 'integer', value: String(v) };
   if (typeof v === 'string') return { type: 'text', value: v };
+  if (v instanceof Uint8Array) {
+    let s = '';
+    for (const b of v) s += String.fromCharCode(b);
+    return { type: 'blob', base64: btoa(s) };
+  }
   return { type: 'null' };
 }
 
@@ -95,7 +100,7 @@ export async function fetchPartByOffset(txtId, offset) {
 
 export async function fetchBookmarks(txtId) {
   return toRows(await execute(
-    `SELECT b.id, b.txt_part_id, b.part_num, b.line
+    `SELECT b.id, b.txt_part_id, b.part_num, b.line, b.txt_preview
      FROM bookmarks b
      JOIN txt_parts tp ON b.txt_part_id = tp.id
      WHERE tp.txt_id = ?
@@ -104,10 +109,11 @@ export async function fetchBookmarks(txtId) {
   ));
 }
 
-export async function insertBookmark(txtPartId, partNum, line) {
+export async function insertBookmark(txtPartId, partNum, line, txtPreview) {
   const result = await execute(
-    'INSERT INTO bookmarks (txt_part_id, part_num, line) VALUES (?, ?, ?)',
-    [txtPartId, partNum, line],
+    'INSERT INTO bookmarks (txt_part_id, part_num, line, txt_preview)' +
+    ' VALUES (?, ?, ?, ?)',
+    [txtPartId, partNum, line, txtPreview ?? null],
   );
   return parseInt(result.last_insert_rowid, 10);
 }

@@ -124,6 +124,7 @@ _BOOKMARKS_STMTS = [
         txt_part_id INTEGER NOT NULL REFERENCES txt_parts(id) ON DELETE CASCADE,
         part_num    INTEGER NOT NULL,
         line        INTEGER NOT NULL,
+        txt_preview BLOB,
         UNIQUE (txt_part_id, line)
     )
     """,
