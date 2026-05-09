@@ -66,6 +66,19 @@ export default function DataScreen({ masterKey, onDisconnect }) {
     setPendingScrollLine(null);
   }, [content, loading, pendingScrollLine]);
 
+  function applyPreviews(bMap, partId, content) {
+    const lines = content.split('\n');
+    let changed = false;
+    const next = new Map(bMap);
+    for (const [key, bm] of next) {
+      if (bm.txtPartId === partId && !bm.preview) {
+        const preview = lines[bm.lineIndex]?.trim().slice(0, 60) ?? '';
+        if (preview) { next.set(key, { ...bm, preview }); changed = true; }
+      }
+    }
+    return changed ? next : bMap;
+  }
+
   async function loadPart(txt, partNum, total = totalParts) {
     const clamped = Math.max(1, Math.min(partNum, total || 1));
     const lp = loadedPartRef.current;
@@ -77,8 +90,11 @@ export default function DataScreen({ masterKey, onDisconnect }) {
     setCurrentTxtPartId(null);
     wrap(async () => {
       const part = await fetchPartByOffset(txt.id, clamped - 1);
+      const decrypted = part ? decryptPart(part.content, masterKey) : '';
       setCurrentTxtPartId(part?.id ?? null);
-      setContent(part ? decryptPart(part.content, masterKey) : '');
+      setContent(decrypted);
+      if (part?.id && decrypted)
+        setBookmarks(prev => applyPreviews(prev, part.id, decrypted));
     });
   }
 
@@ -102,21 +118,22 @@ export default function DataScreen({ masterKey, onDisconnect }) {
       for (const b of bmarks) {
         const key = `${b.txt_part_id}:${b.line}`;
         bMap.set(key, {
-          key,
-          dbId: b.id,
-          txtId: txt.id,
-          txtPartId: b.txt_part_id,
-          partNum: b.part_num,
-          lineIndex: b.line,
-          preview: '',
+          key, dbId: b.id, txtId: txt.id,
+          txtPartId: b.txt_part_id, partNum: b.part_num,
+          lineIndex: b.line, preview: '',
         });
       }
-      setBookmarks(bMap);
       if (total > 0) {
         loadedPartRef.current = { txtId: txt.id, partNum: 1 };
         const part = await fetchPartByOffset(txt.id, 0);
+        const decrypted = part ? decryptPart(part.content, masterKey) : '';
         setCurrentTxtPartId(part?.id ?? null);
-        setContent(part ? decryptPart(part.content, masterKey) : '');
+        setContent(decrypted);
+        setBookmarks(
+          part?.id && decrypted ? applyPreviews(bMap, part.id, decrypted) : bMap
+        );
+      } else {
+        setBookmarks(bMap);
       }
     });
   }
