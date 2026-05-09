@@ -9,6 +9,7 @@ import {
 } from '../db.js';
 import FileDropdown from './FileDropdown.jsx';
 import PartFooter from './PartFooter.jsx';
+import BookmarkPanel from './BookmarkPanel.jsx';
 
 export default function DataScreen({ masterKey, onDisconnect }) {
   const [txts, setTxts]               = useState([]);
@@ -19,7 +20,12 @@ export default function DataScreen({ masterKey, onDisconnect }) {
   const [loading, setLoading]         = useState(false);
   const [error, setError]             = useState(null);
   const [fontSize, setFontSize]       = useState(16);
-  const loadedPartRef = useRef(null);
+  const [bookmarks, setBookmarks]     = useState(new Map());
+  const [showBookmarks, setShowBookmarks] = useState(false);
+  const [pendingScrollLine, setPendingScrollLine] = useState(null);
+  const loadedPartRef      = useRef(null);
+  const lineRefs           = useRef({});
+  const scrollContainerRef = useRef(null);
 
   const wrap = useCallback(async (fn) => {
     setLoading(true);
@@ -40,6 +46,22 @@ export default function DataScreen({ masterKey, onDisconnect }) {
     });
   }, [masterKey, wrap]);
 
+  function scrollLineToTop(idx) {
+    const el = lineRefs.current[idx];
+    const container = scrollContainerRef.current;
+    if (!el || !container) return;
+    const paddingTop = parseFloat(getComputedStyle(container).paddingTop) || 0;
+    container.scrollTop += el.getBoundingClientRect().top
+      - container.getBoundingClientRect().top
+      - paddingTop;
+  }
+
+  useEffect(() => {
+    if (pendingScrollLine === null || loading || content === null) return;
+    scrollLineToTop(pendingScrollLine);
+    setPendingScrollLine(null);
+  }, [content, loading, pendingScrollLine]);
+
   async function loadPart(txt, partNum, total = totalParts) {
     const clamped = Math.max(1, Math.min(partNum, total || 1));
     const lp = loadedPartRef.current;
@@ -59,6 +81,8 @@ export default function DataScreen({ masterKey, onDisconnect }) {
     setCurrentPartNum(1);
     setTotalParts(0);
     setContent(null);
+    setPendingScrollLine(null);
+    setShowBookmarks(false);
     loadedPartRef.current = null;
     wrap(async () => {
       const total = await fetchPartCount(txt.id);
@@ -71,8 +95,53 @@ export default function DataScreen({ masterKey, onDisconnect }) {
     });
   }
 
+  function bKey(txtId, partNum, lineIdx) {
+    return `${txtId}:${partNum}:${lineIdx}`;
+  }
+
+  function toggleBookmark(lineIdx, preview) {
+    const key = bKey(selectedTxt.id, currentPartNum, lineIdx);
+    setBookmarks(prev => {
+      const next = new Map(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.set(key, {
+          key,
+          txtId: selectedTxt.id,
+          partNum: currentPartNum,
+          lineIndex: lineIdx,
+          preview,
+        });
+      }
+      return next;
+    });
+  }
+
+  function navigateToBookmark({ partNum, lineIndex }) {
+    setShowBookmarks(false);
+    if (partNum !== currentPartNum) {
+      setPendingScrollLine(lineIndex);
+      loadPart(selectedTxt, partNum);
+    } else {
+      scrollLineToTop(lineIndex);
+    }
+  }
+
+  function removeBookmark(key) {
+    setBookmarks(prev => {
+      const next = new Map(prev);
+      next.delete(key);
+      return next;
+    });
+  }
+
   const hasTxt   = !!selectedTxt;
   const hasParts = totalParts > 0;
+
+  const fileBookmarkCount = selectedTxt
+    ? [...bookmarks.values()].filter(b => b.txtId === selectedTxt.id).length
+    : 0;
 
   return (
     <div
@@ -84,17 +153,52 @@ export default function DataScreen({ masterKey, onDisconnect }) {
     >
 
       {/* Top bar */}
-      <div className={
-        'd-flex align-items-center' +
-        ' justify-content-between mb-3'
-      }>
+      <div
+        className="d-flex align-items-center justify-content-between mb-3"
+        style={{ position: 'relative' }}
+      >
         <span className="fw-bold">Text Reader</span>
-        <button
-          className="btn btn-sm btn-outline-secondary"
-          onClick={onDisconnect}
-        >
-          Disconnect
-        </button>
+        <div className="d-flex align-items-center gap-2">
+          <div>
+            <button
+              className={
+                'btn btn-sm' +
+                (showBookmarks
+                  ? ' btn-secondary'
+                  : ' btn-outline-secondary')
+              }
+              disabled={!hasTxt}
+              onClick={() => setShowBookmarks(v => !v)}
+            >
+              Bookmarks
+              {fileBookmarkCount > 0 && (
+                <span className="ms-1 badge bg-primary rounded-pill" style={{ fontSize: '0.65rem' }}>
+                  {fileBookmarkCount}
+                </span>
+              )}
+            </button>
+            {showBookmarks && (
+              <>
+                <div
+                  style={{ position: 'fixed', inset: 0, zIndex: 199 }}
+                  onClick={() => setShowBookmarks(false)}
+                />
+                <BookmarkPanel
+                  bookmarks={bookmarks}
+                  selectedTxt={selectedTxt}
+                  onNavigate={navigateToBookmark}
+                  onRemove={removeBookmark}
+                />
+              </>
+            )}
+          </div>
+          <button
+            className="btn btn-sm btn-outline-secondary"
+            onClick={onDisconnect}
+          >
+            Disconnect
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -121,8 +225,9 @@ export default function DataScreen({ masterKey, onDisconnect }) {
         </div>
 
         <div
-          className="card-body overflow-auto p-3"
-          style={{ flex: '1 1 0', minHeight: 0 }}
+          ref={scrollContainerRef}
+          className="overflow-auto"
+          style={{ flex: '1 1 0', minHeight: 0, padding: '1rem 1rem 1rem 0' }}
         >
           {loading ? (
             <div className={
@@ -134,7 +239,7 @@ export default function DataScreen({ masterKey, onDisconnect }) {
               />
             </div>
           ) : !hasTxt ? (
-            <p className="text-muted small mb-0">
+            <p className="text-muted small mb-0" style={{ paddingLeft: '1rem' }}>
               Select a file to view its content.
             </p>
           ) : content === null ? (
@@ -142,15 +247,36 @@ export default function DataScreen({ masterKey, onDisconnect }) {
               Loading…
             </p>
           ) : (
-            <pre className="mb-0" style={{
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-word',
+            <div style={{
+              fontFamily: "'Literata', serif",
               fontSize,
               maxWidth: '70ch',
-              fontFamily: "'Literata', serif",
             }}>
-              {content}
-            </pre>
+              {content.split('\n').map((line, i) => {
+                const key = bKey(selectedTxt.id, currentPartNum, i);
+                const isBookmarked = bookmarks.has(key);
+                return (
+                  <div
+                    key={i}
+                    ref={el => { lineRefs.current[i] = el; }}
+                    className={`reader-line${isBookmarked ? ' bookmarked-line' : ''}`}
+                  >
+                    <button
+                      className="line-bar"
+                      onClick={() => toggleBookmark(i, line.trim().slice(0, 60))}
+                      title={isBookmarked ? 'Remove bookmark' : 'Add bookmark'}
+                    />
+                    <span style={{
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-word',
+                      flex: 1,
+                    }}>
+                      {line || ' '}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
           )}
         </div>
 

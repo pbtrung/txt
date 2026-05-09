@@ -3,3 +3,36 @@
     max-width: 50% !important;
   }
 }
+
+.reader-line {
+  display: flex;
+}
+
+.line-bar {
+  width: calc(3px + 1rem);
+  flex-shrink: 0;
+  position: relative;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  background: transparent;
+}
+
+.line-bar::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background-color: transparent;
+  transition: background-color 0.1s;
+}
+
+.reader-line:hover .line-bar::before {
+  background-color: rgba(108, 117, 125, 0.25);
+}
+
+.reader-line.bookmarked-line .line-bar::before {
+  background-color: var(--bs-primary, #0d6efd);
+}
