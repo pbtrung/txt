@@ -41,42 +41,70 @@ def _cmd_ingest(
 
 
 def _dispatch_admin(
-    store: VaultStore, do_recreate_bookmarks: bool, do_create_bookmarks: bool,
-    upload_db_path: str | None, do_part_count: bool, verbose: bool,
+    store: VaultStore,
+    do_recreate_bookmarks: bool,
+    do_create_bookmarks: bool,
+    upload_db_path: str | None,
+    do_part_count: bool,
+    verbose: bool,
 ) -> bool:
     if do_recreate_bookmarks:
-        store.recreate_bookmarks(verbose=verbose); return True
+        store.recreate_bookmarks(verbose=verbose)
+        return True
     if do_create_bookmarks:
-        store.create_bookmarks(verbose=verbose); return True
+        store.create_bookmarks(verbose=verbose)
+        return True
     if upload_db_path:
-        store.upload_db(upload_db_path, verbose=verbose); return True
+        store.upload_db(upload_db_path, verbose=verbose)
+        return True
     if do_part_count:
-        store.rebuild_part_count(verbose=verbose); return True
+        store.rebuild_part_count(verbose=verbose)
+        return True
     return False
 
 
 @click.command()
 @click.option("--src", type=click.Path(exists=True))
-@click.option("--force", is_flag=True, help="Overwrite existing entries when using --src")
+@click.option(
+    "--force", is_flag=True, help="Overwrite existing entries when using --src"
+)
 @click.option("--creds", default="creds.json", show_default=True)
 @click.option("--part-count", "do_part_count", is_flag=True)
 @click.option("--create-bookmarks", "do_create_bookmarks", is_flag=True)
 @click.option("--recreate-bookmarks", "do_recreate_bookmarks", is_flag=True)
-@click.option("--upload-db", "upload_db_path", type=click.Path(exists=True), metavar="FILE")
+@click.option(
+    "--upload-db", "upload_db_path", type=click.Path(exists=True), metavar="FILE"
+)
 @click.option("--gen-master-key", "gen_key_path", metavar="PATH")
 @click.option("--read-part", "read_part_id", type=int)
 @click.option("--out")
 @click.option("--verbose", "-v", is_flag=True)
 def main(
-    src, force, creds, do_part_count, do_create_bookmarks, do_recreate_bookmarks,
-    upload_db_path, gen_key_path, read_part_id, out, verbose,
+    src,
+    force,
+    creds,
+    do_part_count,
+    do_create_bookmarks,
+    do_recreate_bookmarks,
+    upload_db_path,
+    gen_key_path,
+    read_part_id,
+    out,
+    verbose,
 ):
     if gen_key_path:
-        _cmd_gen_master_key(gen_key_path); return
+        _cmd_gen_master_key(gen_key_path)
+        return
     loaded = load_creds(creds)
     store = VaultStore(loaded, verbose=verbose)
-    if _dispatch_admin(store, do_recreate_bookmarks, do_create_bookmarks,
-                       upload_db_path, do_part_count, verbose):
+    if _dispatch_admin(
+        store,
+        do_recreate_bookmarks,
+        do_create_bookmarks,
+        upload_db_path,
+        do_part_count,
+        verbose,
+    ):
         return
     crypto = Crypto(get_master_key(loaded))
     if read_part_id is not None:

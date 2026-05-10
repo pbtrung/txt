@@ -41,11 +41,16 @@ class VaultStore:
                 "INSERT INTO txt_parts (txt_id, part_num, content) VALUES (?, ?, ?)",
                 (txt_id, i + 1, blob),
             )
-            total_plain += len(part); total_blob += len(blob)
+            total_plain += len(part)
+            total_blob += len(blob)
             if verbose:
-                click.echo(f"  part {i+1}/{len(parts)}: {len(part):,}B → {len(blob):,}B")
+                click.echo(
+                    f"  part {i+1}/{len(parts)}: {len(part):,}B → {len(blob):,}B"
+                )
         if verbose and len(parts) > 1:
-            click.echo(f"  total: {total_plain:,}B → {total_blob:,}B ({total_plain/total_blob:.2f}x)")
+            click.echo(
+                f"  total: {total_plain:,}B → {total_blob:,}B ({total_plain/total_blob:.2f}x)"
+            )
 
     def _resolve_txt_id(
         self, crypto: Crypto, stored_name: str, force: bool, verbose: bool
@@ -53,7 +58,9 @@ class VaultStore:
         txt_id = crypto.find_txt_id(self._conn, stored_name)
         if txt_id is not None and not force:
             if verbose:
-                click.echo(f"  [skip] {stored_name} already exists (use --force to overwrite)")
+                click.echo(
+                    f"  [skip] {stored_name} already exists (use --force to overwrite)"
+                )
             return None, None
         if txt_id is None:
             name_blob, name_mac = crypto.encrypt_name(stored_name)
@@ -65,8 +72,12 @@ class VaultStore:
         return txt_id, "update"
 
     def ingest_file(
-        self, crypto: Crypto, filepath: Path, stored_name: str,
-        verbose: bool, force: bool = False,
+        self,
+        crypto: Crypto,
+        filepath: Path,
+        stored_name: str,
+        verbose: bool,
+        force: bool = False,
     ):
         content = filepath.read_bytes()
         parts = split_parts(content)
@@ -74,7 +85,9 @@ class VaultStore:
         if txt_id is None:
             return
         if verbose:
-            click.echo(f"  [{action}] txt_id={txt_id}, {len(content):,}B, {len(parts)} part(s)")
+            click.echo(
+                f"  [{action}] txt_id={txt_id}, {len(content):,}B, {len(parts)} part(s)"
+            )
         self._insert_parts(crypto, txt_id, parts, verbose)
         self._conn.execute(
             "INSERT OR REPLACE INTO part_count (txt_id, count) VALUES (?, ?)",
@@ -117,16 +130,19 @@ class VaultStore:
             click.echo(f"Rebuilt part_count for {n} txt row(s)")
 
     def _table_names(self, conn) -> set[str]:
-        return {r[0] for r in conn.execute(
-            "SELECT name FROM sqlite_master"
-            " WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-        ).fetchall()}
+        return {
+            r[0]
+            for r in conn.execute(
+                "SELECT name FROM sqlite_master"
+                " WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            ).fetchall()
+        }
 
     def _ensure_upload_schema(self, local_t: set, turso_t: set, verbose: bool):
         if verbose:
             click.echo(f"local : {', '.join(sorted(local_t))}")
             click.echo(f"turso : {', '.join(sorted(turso_t)) or '(empty)'}")
-        if 'bookmarks' in local_t and 'bookmarks' not in turso_t:
+        if "bookmarks" in local_t and "bookmarks" not in turso_t:
             if verbose:
                 click.echo("bookmarks missing on Turso — creating:")
             self.create_bookmarks(verbose=verbose)
@@ -156,8 +172,10 @@ class VaultStore:
                 click.echo(f"  {table:<16}:  0 rows, skipped")
             return
         cols = rows[0].keys()
-        sql = (f"INSERT INTO {table} ({', '.join(cols)})"
-               f" VALUES ({', '.join('?' * len(cols))})")
+        sql = (
+            f"INSERT INTO {table} ({', '.join(cols)})"
+            f" VALUES ({', '.join('?' * len(cols))})"
+        )
         self._upload_rows(rows, sql, verbose, table)
 
     def upload_db(self, local_path: str, verbose: bool = False):
@@ -167,7 +185,7 @@ class VaultStore:
         turso_t = self._table_names(self._conn)
         self._ensure_upload_schema(local_t, turso_t, verbose)
         self._check_turso_empty()
-        for table in ['txt', 'txt_parts', 'part_count', 'txt_access', 'bookmarks']:
+        for table in ["txt", "txt_parts", "part_count", "txt_access", "bookmarks"]:
             if table not in local_t:
                 if verbose:
                     click.echo(f"  {table:<16}: not in local db, skipped")
@@ -187,4 +205,6 @@ class VaultStore:
         data = crypto.decrypt_part(blob)
         Path(out_path).write_bytes(data)
         if verbose:
-            click.echo(f"Part {part_id}: {len(blob):,}B blob → {len(data):,}B plain → {out_path}")
+            click.echo(
+                f"Part {part_id}: {len(blob):,}B blob → {len(data):,}B plain → {out_path}"
+            )
