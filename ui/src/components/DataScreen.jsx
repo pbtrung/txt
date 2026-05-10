@@ -277,7 +277,10 @@ export default function DataScreen({ masterKey, onDisconnect }) {
             </p>
           ) : showBookmarkChooser ? (
             <div style={{ paddingLeft: '1rem' }}>
-              <p className="text-muted small mb-2">Pick up where you left off:</p>
+              {bookmarks.size === 0
+                ? <p className="text-muted small mb-0">No bookmarks left. Use the part controls below to navigate.</p>
+                : <p className="text-muted small mb-2">Pick up where you left off:</p>
+              }
               <ul className="list-group list-group-flush mb-3">
                 {[...bookmarks.values()]
                   .sort((a, b) => a.partNum - b.partNum || a.lineIndex - b.lineIndex)

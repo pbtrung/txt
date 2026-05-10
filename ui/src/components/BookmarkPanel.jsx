@@ -30,7 +30,7 @@ export default function BookmarkPanel({
       </div>
       {items.length === 0 ? (
         <div className="card-body py-2 small text-muted">
-          No bookmarks yet. Click the dot beside a line to add one.
+          No bookmarks yet. Click the bar to the left of a line to add one.
         </div>
       ) : (
         <ul className="list-group list-group-flush">
