@@ -40,6 +40,12 @@ Install leancrypto via your package manager or build from source, then run `ldco
    python3 txt_vault.py --gen-master-key creds.json
    ```
 
+4. **Create the bookmarks table** (one-time setup, after the main schema exists):
+
+   ```bash
+   python3 txt_vault.py --create-bookmarks --creds creds.json
+   ```
+
 ---
 
 ## Usage
@@ -66,6 +72,22 @@ python3 txt_vault.py --part-count --creds creds.json
 
 Queries `txt_parts` and upserts the total part count for every `txt_id` into the `part_count` table. Does not decrypt anything — only the Turso credentials from `--creds` are needed.
 
+### Create the bookmarks table
+
+```bash
+python3 txt_vault.py --create-bookmarks --creds creds.json
+```
+
+Creates the `bookmarks` table, index, and the per-file limit trigger. Prints progress for each step. Safe to run once after initial schema setup — uses `CREATE … IF NOT EXISTS` so it is idempotent.
+
+### Recreate the bookmarks table
+
+```bash
+python3 txt_vault.py --recreate-bookmarks --creds creds.json
+```
+
+Drops the existing `bookmarks` table (cascading the index and trigger), then recreates it from scratch. Use this when the bookmark schema changes. **All existing bookmarks are lost.**
+
 ### Generate a new master key
 
 ```bash
@@ -84,6 +106,8 @@ Adds or updates only the `master_key` field in `creds.json`. If the field alread
 | `--force` | With `--src`: overwrite existing entries instead of skipping |
 | `--creds <path>` | Credentials file with Turso URL/token and master key (default: `creds.json`) |
 | `--part-count` | Rebuild `part_count` table from existing `txt_parts` rows and exit |
+| `--create-bookmarks` | Create bookmarks table, index, and trigger; print per-step progress |
+| `--recreate-bookmarks` | Drop and recreate bookmarks table (all bookmarks lost); print per-step progress |
 | `--gen-master-key <path>` | Add/update `master_key` in the credentials file and exit |
 | `--read-part <id>` | Decrypt and write a single part by its `txt_parts.id` |
 | `--out <path>` | Output file path for `--read-part` |
@@ -116,6 +140,15 @@ npm run build
 
 Output goes to `ui/dist/`. Serve it with any static file server.
 
+### Bookmarks
+
+The reader supports per-line bookmarks, stored encrypted in the database (max 12 per file enforced by a DB trigger).
+
+- **Add / remove:** click the thin bar to the left of any line to toggle a bookmark. The bar turns blue when the line is bookmarked.
+- **Bookmark panel:** click the **Bookmarks** button in the top bar to open a dropdown listing all bookmarks for the current file. Click any entry to jump to it; click **×** to delete it.
+- **Chooser on open:** when a file is selected and it already has bookmarks, the content area shows a sorted bookmark list instead of auto-loading part 1. Click an entry to jump directly to that position, or press **+** in the part counter to start from the beginning. Bookmarks can also be deleted from this view.
+- **Encryption:** each bookmark is stored as a brotli-compressed, AEAD-encrypted JSON blob `{"part_num":…,"line":…,"txt_preview":…}` using the same key-derivation and cipher as `txt_parts`. The database never sees plaintext positions or previews.
+
 ---
 
 ## Security notes
@@ -123,4 +156,5 @@ Output goes to `ui/dist/`. Serve it with any static file server.
 - The master key is a 128-byte random secret — the single root of all encryption. Store `creds.json` outside version control (add it to `.gitignore`).
 - Each part uses a unique 64-byte random salt. HKDF-SHA3-512 derives a 64-byte key and 64-byte IV from that salt; the salt is also passed as AAD so any tampering with it fails authentication.
 - Filenames are encrypted independently with their own random salt; a co-derived HMAC-SHA3-256 key enables lookup without exposing the plaintext name.
+- Bookmark blobs use the same encrypt-then-MAC scheme with a fresh random salt per bookmark; the `txt_id` foreign key is the only plaintext metadata stored.
 - Brotli compression is applied *before* encryption to avoid compression-oracle attacks.
