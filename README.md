@@ -142,7 +142,7 @@ Output goes to `ui/dist/`. Serve it with any static file server.
 
 ### Bookmarks
 
-The reader supports per-line bookmarks, stored encrypted in the database (max 12 per file enforced by a DB trigger).
+The reader supports per-line bookmarks, stored encrypted in the database. A DB trigger enforces a rolling window of 12 per file: when a 13th bookmark is added the oldest one (by insertion order) is automatically evicted.
 
 - **Add / remove:** click the thin bar to the left of any line to toggle a bookmark. The bar turns blue when the line is bookmarked.
 - **Bookmark panel:** click the **Bookmarks** button in the top bar to open a dropdown listing all bookmarks for the current file. Click any entry to jump to it; click **×** to delete it.

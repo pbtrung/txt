@@ -111,7 +111,12 @@ CREATE TRIGGER IF NOT EXISTS trg_limit_bookmarks_per_file
 BEFORE INSERT ON bookmarks
 WHEN (SELECT COUNT(*) FROM bookmarks WHERE txt_id = NEW.txt_id) >= 12
 BEGIN
-    SELECT RAISE(ABORT, 'max 12 bookmarks per file');
+    DELETE FROM bookmarks
+    WHERE id = (
+        SELECT id FROM bookmarks
+        WHERE txt_id = NEW.txt_id
+        ORDER BY id ASC LIMIT 1
+    );
 END;
 ```
 
@@ -225,7 +230,7 @@ Decryption is the symmetric reverse. The FK `txt_id` is the only plaintext metad
 | Filename lookup | HMAC-SHA3-256 under `hmac_key` co-derived with encryption key |
 | Key isolation per part | HKDF with unique random salt per part |
 | Bookmark confidentiality | Bookmark JSON encrypted with per-bookmark random salt |
-| Bookmark per-file cap | DB trigger raises ABORT when count ≥ 12 |
+| Bookmark per-file cap | DB trigger evicts oldest bookmark (FIFO) when count ≥ 12 |
 | Compression oracle mitigation | Compress before encrypt; no adaptive queries |
 
 ---
