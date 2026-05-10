@@ -89,11 +89,10 @@ export async function fetchPartCount(txtId) {
   return rows[0]?.count ?? 0;
 }
 
-export async function fetchPartByOffset(txtId, offset) {
+export async function fetchPartByNum(txtId, partNum) {
   const rows = toRows(await execute(
-    'SELECT id, content FROM txt_parts' +
-    ' WHERE txt_id = ? ORDER BY id LIMIT 1 OFFSET ?',
-    [txtId, offset],
+    'SELECT id, content FROM txt_parts WHERE txt_id = ? AND part_num = ?',
+    [txtId, partNum],
   ));
   return rows[0] ?? null;
 }
@@ -119,24 +118,13 @@ export async function deleteBookmark(id) {
 
 export async function fetchRecentAccess() {
   return toRows(await execute(
-    `SELECT t.id AS txt_id, t.name, t.last_accessed,
-       (SELECT COUNT(*) FROM txt_parts
-        WHERE txt_id = t.id
-        AND id <= (
-          SELECT id FROM txt_parts
-          WHERE txt_id = t.id AND last_accessed IS NOT NULL
-          ORDER BY last_accessed DESC LIMIT 1
-        )
-       ) AS last_part_num
-     FROM txt t
-     WHERE t.last_accessed IS NOT NULL
-     ORDER BY t.last_accessed DESC
-     LIMIT 7`,
+    'SELECT txt_id, last_part_num FROM txt_access ORDER BY last_accessed DESC LIMIT 7',
   ));
 }
 
-export async function upsertAccess(txtId, txtPartId) {
-  const now = Date.now();
-  await execute('UPDATE txt SET last_accessed = ? WHERE id = ?', [now, txtId]);
-  await execute('UPDATE txt_parts SET last_accessed = ? WHERE id = ?', [now, txtPartId]);
+export async function upsertAccess(txtId, partNum) {
+  await execute(
+    'INSERT OR REPLACE INTO txt_access (txt_id, last_part_num, last_accessed) VALUES (?, ?, ?)',
+    [txtId, partNum, Date.now()],
+  );
 }

@@ -5,7 +5,7 @@ import { decryptName, decryptPart, encryptBookmark, decryptBookmark } from '../c
 import {
   fetchTxts,
   fetchPartCount,
-  fetchPartByOffset,
+  fetchPartByNum,
   fetchBookmarks,
   insertBookmark,
   deleteBookmark,
@@ -88,9 +88,9 @@ export default function DataScreen({ masterKey, onDisconnect }) {
     setCurrentPartNum(clamped);
     setContent(null);
     wrap(async () => {
-      const part = await fetchPartByOffset(txt.id, clamped - 1);
+      const part = await fetchPartByNum(txt.id, clamped);
       setContent(part ? decryptPart(part.content, masterKey) : '');
-      if (part) upsertAccess(txt.id, part.id);
+      if (part) upsertAccess(txt.id, clamped);
     });
   }
 
@@ -128,9 +128,9 @@ export default function DataScreen({ masterKey, onDisconnect }) {
         const clamped = Math.max(1, Math.min(initialPartNum, total));
         loadedPartRef.current = { txtId: txt.id, partNum: clamped };
         setCurrentPartNum(clamped);
-        const part = await fetchPartByOffset(txt.id, clamped - 1);
+        const part = await fetchPartByNum(txt.id, clamped);
         setContent(part ? decryptPart(part.content, masterKey) : '');
-        if (part) upsertAccess(txt.id, part.id);
+        if (part) upsertAccess(txt.id, clamped);
       }
     });
   }

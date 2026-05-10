@@ -101,20 +101,24 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS txt (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
     name      BLOB NOT NULL,
-    name_hmac BLOB NOT NULL,
-    last_accessed INTEGER
+    name_hmac BLOB NOT NULL
 );
 CREATE TABLE IF NOT EXISTS txt_parts (
-    id      INTEGER PRIMARY KEY AUTOINCREMENT,
-    txt_id  INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
-    content BLOB NOT NULL,
-    last_accessed INTEGER
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    txt_id   INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
+    part_num INTEGER NOT NULL,
+    content  BLOB NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_txt_parts_txt_id ON txt_parts(txt_id);
+CREATE INDEX IF NOT EXISTS idx_txt_parts_txt_id_part_num ON txt_parts(txt_id, part_num);
 CREATE TABLE IF NOT EXISTS part_count (
     id     INTEGER PRIMARY KEY AUTOINCREMENT,
     txt_id INTEGER NOT NULL UNIQUE REFERENCES txt(id) ON DELETE CASCADE,
     count  INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS txt_access (
+    txt_id        INTEGER PRIMARY KEY REFERENCES txt(id) ON DELETE CASCADE,
+    last_part_num INTEGER NOT NULL DEFAULT 1,
+    last_accessed INTEGER NOT NULL
 );
 """
 
@@ -330,7 +334,8 @@ class VaultStore:
         for i, part in enumerate(parts):
             blob = crypto.encrypt_part(part)
             self._conn.execute(
-                "INSERT INTO txt_parts (txt_id, content) VALUES (?, ?)", (txt_id, blob)
+                "INSERT INTO txt_parts (txt_id, part_num, content) VALUES (?, ?, ?)",
+                (txt_id, i + 1, blob),
             )
             total_plain += len(part)
             total_blob += len(blob)
