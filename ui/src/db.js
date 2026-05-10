@@ -10,28 +10,24 @@ export function initDb(url, authToken) {
   };
 }
 
+function _parseResult(data) {
+  const r = data.results[0];
+  if (r.type === 'error') throw new Error(r.error.message);
+  return r.response.result;
+}
+
 async function execute(sql, args = []) {
-  const stmt = args.length
-    ? { sql, args: args.map(toWireValue) }
-    : { sql };
+  const stmt = args.length ? { sql, args: args.map(toWireValue) } : { sql };
   console.debug('[db]', sql, ...(args.length ? [args] : []));
   const t0 = performance.now();
   const res = await fetch(endpoint, {
     method: 'POST',
     headers,
-    body: JSON.stringify({
-      requests: [{ type: 'execute', stmt }],
-    }),
+    body: JSON.stringify({ requests: [{ type: 'execute', stmt }] }),
   });
-  if (!res.ok)
-    throw new Error(`HTTP ${res.status} ${res.statusText}`);
-  const data = await res.json();
-  const r = data.results[0];
-  if (r.type === 'error') throw new Error(r.error.message);
-  const result = r.response.result;
-  const ms = (performance.now() - t0).toFixed(1);
-  const n = result.rows.length;
-  console.debug(`[db] ${ms}ms, ${n} row(s)`);
+  if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+  const result = _parseResult(await res.json());
+  console.debug(`[db] ${(performance.now() - t0).toFixed(1)}ms, ${result.rows.length} row(s)`);
   return result;
 }
 

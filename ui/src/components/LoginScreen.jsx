@@ -6,6 +6,26 @@ import {
 } from '../crypto.js';
 import { initDb, fetchOneTxt } from '../db.js';
 
+function _parseCredentials(json) {
+  const { turso_database_url: url, turso_auth_token: token, master_key } = json;
+  if (!url || !token || !master_key)
+    throw new Error('Missing required fields: turso_database_url, turso_auth_token, master_key');
+  return { url, token, master_key };
+}
+
+async function _verifyConnection() {
+  try { return await fetchOneTxt(); }
+  catch (e) { throw new Error(`Turso connection failed: ${e.message}`); }
+}
+
+function _verifyMasterKey(row, masterKey) {
+  if (!row) { console.debug('[login] skipping key check — database is empty'); return; }
+  console.debug('[login] verifying master_key…');
+  try { decryptName(row.name, masterKey); }
+  catch { throw new Error('master_key is incorrect: failed to decrypt a stored filename'); }
+  console.debug('[login] master_key OK');
+}
+
 export default function LoginScreen({ onConnect }) {
   const [cryptoReady, setCryptoReady] = useState(false);
   const [verifying, setVerifying] = useState(false);
@@ -18,51 +38,14 @@ export default function LoginScreen({ onConnect }) {
   async function handleFile(file) {
     setError(null);
     try {
-      const json = JSON.parse(await file.text());
-      const {
-        turso_database_url: url,
-        turso_auth_token: token,
-        master_key,
-      } = json;
-      if (!url || !token || !master_key)
-        throw new Error(
-          'Missing required fields:' +
-          ' turso_database_url, turso_auth_token, master_key',
-        );
-
+      const { url, token, master_key } = _parseCredentials(JSON.parse(await file.text()));
       initDb(url, token);
       const masterKey = parseMasterKey(master_key);
-
       setVerifying(true);
       console.debug('[login] verifying Turso connection…');
-      let row;
-      try {
-        row = await fetchOneTxt();
-      } catch (e) {
-        throw new Error(`Turso connection failed: ${e.message}`);
-      }
-      console.debug(
-        '[login] connection OK, row:',
-        row ? `id=${row.id}` : 'none (empty db)',
-      );
-
-      if (row) {
-        console.debug('[login] verifying master_key…');
-        try {
-          decryptName(row.name, masterKey);
-        } catch {
-          throw new Error(
-            'master_key is incorrect:' +
-            ' failed to decrypt a stored filename',
-          );
-        }
-        console.debug('[login] master_key OK');
-      } else {
-        console.debug(
-          '[login] skipping key check — database is empty',
-        );
-      }
-
+      const row = await _verifyConnection();
+      console.debug('[login] connection OK, row:', row ? `id=${row.id}` : 'none (empty db)');
+      _verifyMasterKey(row, masterKey);
       onConnect({ masterKey });
     } catch (e) {
       setError(e.message);
