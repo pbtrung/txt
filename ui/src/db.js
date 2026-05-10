@@ -131,7 +131,7 @@ export async function fetchRecentAccess() {
      FROM txt t
      WHERE t.last_accessed IS NOT NULL
      ORDER BY t.last_accessed DESC
-     LIMIT 5`,
+     LIMIT 7`,
   ));
 }
 
