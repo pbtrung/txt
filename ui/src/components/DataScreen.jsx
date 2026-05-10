@@ -94,7 +94,7 @@ export default function DataScreen({ masterKey, onDisconnect }) {
     });
   }
 
-  async function selectTxt(txt) {
+  async function selectTxt(txt, initialPartNum = 1) {
     setSelectedTxt(txt);
     setCurrentPartNum(1);
     setTotalParts(0);
@@ -125,8 +125,10 @@ export default function DataScreen({ masterKey, onDisconnect }) {
       if (bMap.size > 0) {
         setShowBookmarkChooser(true);
       } else if (total > 0) {
-        loadedPartRef.current = { txtId: txt.id, partNum: 1 };
-        const part = await fetchPartByOffset(txt.id, 0);
+        const clamped = Math.max(1, Math.min(initialPartNum, total));
+        loadedPartRef.current = { txtId: txt.id, partNum: clamped };
+        setCurrentPartNum(clamped);
+        const part = await fetchPartByOffset(txt.id, clamped - 1);
         setContent(part ? decryptPart(part.content, masterKey) : '');
         if (part) upsertAccess(txt.id, part.id);
       }
@@ -297,7 +299,7 @@ export default function DataScreen({ masterKey, onDisconnect }) {
                         key={item.txtId}
                         className="list-group-item list-group-item-action py-2 px-2"
                         style={{ cursor: 'pointer' }}
-                        onClick={() => selectTxt({ id: item.txtId, name: item.name })}
+                        onClick={() => selectTxt({ id: item.txtId, name: item.name }, item.lastPartNum)}
                       >
                         <div className="small fw-medium" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {item.name}
