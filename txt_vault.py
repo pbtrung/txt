@@ -134,7 +134,13 @@ _BOOKMARKS_STMTS = [
     BEFORE INSERT ON bookmarks
     WHEN (SELECT COUNT(*) FROM bookmarks WHERE txt_id = NEW.txt_id) >= 12
     BEGIN
-        SELECT RAISE(ABORT, 'max 12 bookmarks per file');
+        DELETE FROM bookmarks
+        WHERE id = (
+            SELECT id FROM bookmarks
+            WHERE txt_id = NEW.txt_id
+            ORDER BY id ASC
+            LIMIT 1
+        );
     END
     """,
 ]

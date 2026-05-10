@@ -134,6 +134,10 @@ export default function DataScreen({ masterKey, onDisconnect }) {
         const dbId = await insertBookmark(selectedTxt.id, blob);
         setBookmarks(prev => {
           const n = new Map(prev);
+          if (n.size >= 12) {
+            const oldest = [...n.values()].reduce((a, b) => a.dbId < b.dbId ? a : b);
+            n.delete(oldest.key);
+          }
           n.set(key, {
             key, dbId,
             txtId: selectedTxt.id,
