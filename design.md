@@ -1,6 +1,6 @@
-# Design: txt_vault.py
+# Design: txt_vault
 
-A single-file CLI tool that ingests `.txt` files, splits them into compressed and encrypted parts, and stores them in a Turso cloud libSQL database.
+A CLI tool that ingests `.txt` files, splits them into compressed and encrypted parts, and stores them in a Turso cloud libSQL database. `txt_vault.py` is a 4-line entry point; all logic lives in the `txt_vault/` package.
 
 ---
 
@@ -9,6 +9,7 @@ A single-file CLI tool that ingests `.txt` files, splits them into compressed an
 ```
 python3 txt_vault.py --src <folder_path> --creds creds.json
 python3 txt_vault.py --src <folder_path> --force --creds creds.json
+python3 txt_vault.py --upload-db <file.db> --creds creds.json
 python3 txt_vault.py --part-count --creds creds.json
 python3 txt_vault.py --create-bookmarks --creds creds.json
 python3 txt_vault.py --recreate-bookmarks --creds creds.json
@@ -22,13 +23,14 @@ python3 txt_vault.py --gen-master-key creds.json
 | `--src <folder_path>` | Directory to scan for `.txt` files (case-insensitive); skips files already in the database unless `--force` is set |
 | `--force` | With `--src`: overwrite existing entries instead of skipping them |
 | `--creds <path>` | Credentials JSON file with Turso URL/token and master key (default: `creds.json`) |
+| `--upload-db <file>` | Upload all rows from a local SQLite db to Turso; Turso `txt` must be empty |
 | `--part-count` | Rebuild `part_count` table from existing `txt_parts` rows, then exit |
-| `--create-bookmarks` | Create bookmarks table, index, and trigger; print per-step progress; exit |
-| `--recreate-bookmarks` | Drop and recreate bookmarks table (all bookmarks lost); print per-step progress; exit |
+| `--create-bookmarks` | Create bookmarks table, index, and trigger and exit; progress shown with `-v` |
+| `--recreate-bookmarks` | Drop and recreate bookmarks table (all bookmarks lost) and exit; progress shown with `-v` |
 | `--gen-master-key <path>` | Add/update `master_key` in the credentials file, then exit |
 | `--read-part <id>` | Decrypt a single part by `txt_parts.id` and write to `--out` |
 | `--out <path>` | Output path for `--read-part` |
-| `--verbose`, `-v` | Enable debug logging (per-part progress, DB URL, schema setup) |
+| `--verbose`, `-v` | Enable debug logging (per-part progress, DB URL, schema setup, upload progress) |
 
 ### Credentials JSON Format
 
@@ -56,12 +58,12 @@ for each .txt file (case-insensitive) in --src:
      - Match + no --force → skip this file entirely.
      - Match + --force → reuse txt_id and DELETE existing parts.
   3. Split content into parts at paragraph boundaries, targeting ~200 KB per part
-  4. For each part:
+  4. For each part (1-based index i):
      a. Compress with Brotli (quality 11)
      b. Generate 64-byte random salt
      c. Derive 64-byte key and 64-byte IV via HKDF-SHA3-512(master_key, salt)
      d. Encrypt compressed bytes with Ascon-Keccak AEAD; pass salt as AAD
-     e. Store salt || ciphertext+tag as a single BLOB in txt_parts.content
+     e. Store (txt_id, part_num=i, salt || ciphertext+tag) in txt_parts
   5. Upsert total part count into part_count (txt_id, count)
   6. Commit to Turso
 ```
@@ -82,21 +84,30 @@ CREATE TABLE IF NOT EXISTS txt (
 );
 
 CREATE TABLE IF NOT EXISTS txt_parts (
-    id      INTEGER PRIMARY KEY AUTOINCREMENT,
-    txt_id  INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
-    content BLOB    NOT NULL     -- 64-byte salt || Ascon-Keccak(brotli(plaintext)); salt is AAD
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    txt_id   INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
+    part_num INTEGER NOT NULL,       -- 1-based part index, set at ingest time
+    content  BLOB    NOT NULL        -- 64-byte salt || Ascon-Keccak(brotli(plaintext)); salt is AAD
 );
 
-CREATE INDEX IF NOT EXISTS idx_txt_parts_txt_id ON txt_parts(txt_id);
+CREATE INDEX IF NOT EXISTS idx_txt_parts_txt_id_part_num ON txt_parts(txt_id, part_num);
 
 CREATE TABLE IF NOT EXISTS part_count (
     id     INTEGER PRIMARY KEY AUTOINCREMENT,
     txt_id INTEGER NOT NULL UNIQUE REFERENCES txt(id) ON DELETE CASCADE,
-    count  INTEGER NOT NULL      -- total number of parts for this txt entry
+    count  INTEGER NOT NULL          -- total number of parts for this txt entry
+);
+
+CREATE TABLE IF NOT EXISTS txt_access (
+    txt_id        INTEGER PRIMARY KEY REFERENCES txt(id) ON DELETE CASCADE,
+    last_part_num INTEGER NOT NULL DEFAULT 1,  -- last part the user read
+    last_accessed INTEGER NOT NULL             -- Unix timestamp in milliseconds
 );
 ```
 
 `part_count` is kept in sync automatically: `ingest_file` upserts the count after committing each file's parts. The `--part-count` flag can backfill it for data ingested before this table existed.
+
+`txt_access` has at most one row per file ever opened. `upsertAccess` writes a single `INSERT OR REPLACE` from the browser whenever a part is loaded. `fetchRecentAccess` reads at most 7 rows ordered by `last_accessed DESC` — no joins, no scans.
 
 ```sql
 CREATE TABLE IF NOT EXISTS bookmarks (
@@ -128,7 +139,7 @@ The `bookmark` blob is an AEAD-encrypted, brotli-compressed JSON object:
 
 Key derivation and wire format are identical to `txt_parts.content` (64-byte random salt prefix, same HKDF call, same AEAD cipher). The database stores only the FK `txt_id` as plaintext — part number, line index, and preview are all inside the ciphertext.
 
-The `--create-bookmarks` flag creates the table, index, and trigger (idempotent: `IF NOT EXISTS`). The `--recreate-bookmarks` flag drops the table first (cascading the index and trigger) then recreates it; all existing bookmarks are lost. Both flags print per-step progress unconditionally.
+The `--create-bookmarks` flag creates the table, index, and trigger (idempotent: `IF NOT EXISTS`). The `--recreate-bookmarks` flag drops the table first (cascading the index and trigger) then recreates it; all existing bookmarks are lost. Both flags print per-step progress when `-v` is set.
 
 All queries execute directly against the Turso cloud database over HTTPS — there is no local replica. The URL and auth token are read first from environment variables (`TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`); if not set, they fall back to the `turso_database_url` and `turso_auth_token` fields in `creds.json`.
 
@@ -237,7 +248,17 @@ Decryption is the symmetric reverse. The FK `txt_id` is the only plaintext metad
 
 ## Code Structure
 
-`txt_vault.py` is organised into two classes plus thin module-level helpers.
+`txt_vault.py` is a 4-line entry point. All logic lives in the `txt_vault/` package:
+
+| Module | Contents |
+|--------|----------|
+| `constants.py` | All numeric constants (`SALT_LEN`, `TAG_LEN`, `KEY_LEN`, `IV_LEN`, `HMAC_LEN`, `MASTER_KEY_LEN`, `PART_TARGET`, `BOOKMARK_LIMIT`, `BATCH`) |
+| `leancrypto.py` | ctypes binding helpers and module-level singletons (`library_name`, `lib`, `sha3_512`, `sha3_256`) |
+| `schema.py` | `_SCHEMA` DDL string and `_BOOKMARKS_STMTS` list (trigger interpolates `BOOKMARK_LIMIT`) |
+| `utils.py` | `split_parts`, `load_creds`, `get_master_key` |
+| `crypto.py` | `Crypto` class |
+| `store.py` | `VaultStore` class |
+| `cli.py` | Click command definitions, `_cmd_gen_master_key`, `_cmd_ingest`, `_dispatch_admin`, `main` |
 
 ### `Crypto`
 
@@ -257,25 +278,23 @@ Owns the master key and all cryptographic logic. Constructed once per run with t
 
 ### `VaultStore`
 
-Owns the libSQL connection. Constructed once per run; establishes the direct Turso connection and creates schema in `__init__`.
+Owns the libSQL connection. Constructed once per run; establishes the direct Turso connection and applies the schema in `__init__`.
 
 | Method | Role |
 |--------|------|
-| `_insert_parts` | Encrypt and insert all parts for a `txt_id` |
+| `_apply_schema` | Execute `_SCHEMA` DDL statements on the connection |
+| `_resolve_txt_id` | Look up an existing entry by filename; INSERT new row or DELETE old parts on force |
+| `_insert_parts` | Encrypt and insert all parts for a `txt_id`, with 1-based `part_num` |
 | `ingest_file` | Full ingest pipeline for one file; skips if name exists and `force=False`, overwrites if `force=True` |
-| `create_bookmarks` | Create bookmarks table, index, and trigger; print per-step progress |
+| `create_bookmarks` | Create bookmarks table, index, and trigger; progress with `-v` |
 | `recreate_bookmarks` | Drop bookmarks table then call `create_bookmarks`; all bookmarks lost |
 | `rebuild_part_count` | Backfill `part_count` from `txt_parts` |
+| `_table_names` | Return set of non-sqlite table names from a connection |
+| `_ensure_upload_schema` | Compare local and Turso tables; create bookmarks on Turso if needed |
+| `_check_turso_empty` | Abort if Turso `txt` already has rows |
+| `_upload_rows` / `_upload_table` | Upload one table in `BATCH`-row commits |
+| `upload_db` | Orchestrate full local-SQLite-to-Turso upload |
 | `read_part` | Fetch and decrypt a single part by id |
-
-### Module-level helpers
-
-| Name | Role |
-|------|------|
-| `split_parts` | Split raw bytes at paragraph boundaries |
-| `load_creds` | Load and validate credentials (file + env var override) |
-| `get_master_key` | Decode and validate the 128-byte master key |
-| `_bind_hkdf_hmac`, `_bind_aead`, `_load_leancrypto` | ctypes bindings, run once at import |
 
 ---
 
@@ -311,3 +330,4 @@ Owns the libSQL connection. Constructed once per run; establishes the direct Tur
 - If `--src` contains a file that cannot be read (permissions, encoding), log a warning and skip it; do not abort the run.
 - If a database write fails, the entire transaction for that file is rolled back. Partial ingestion of a single file is not allowed.
 - If `--gen-master-key` target file already contains a `master_key` field, prompt the user to confirm before overwriting it; abort on refusal. Other fields are never modified.
+- If `--upload-db` is run and the Turso `txt` table already has rows, the command aborts immediately with an error to prevent duplicate data.
