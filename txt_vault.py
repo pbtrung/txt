@@ -19,7 +19,10 @@ TAG_LEN = 64
 KEY_LEN = 64
 IV_LEN = 64
 HMAC_LEN = 32
+MASTER_KEY_LEN = 128
 PART_TARGET = 200 * 1024
+BOOKMARK_LIMIT = 12
+BATCH = 10
 
 # ===== leancrypto loading =====
 
@@ -101,10 +104,10 @@ _BOOKMARKS_STMTS = [
     CREATE INDEX IF NOT EXISTS idx_bookmarks_txt_id
         ON bookmarks(txt_id)
     """,
-    """
+    f"""
     CREATE TRIGGER IF NOT EXISTS trg_limit_bookmarks_per_file
     BEFORE INSERT ON bookmarks
-    WHEN (SELECT COUNT(*) FROM bookmarks WHERE txt_id = NEW.txt_id) >= 12
+    WHEN (SELECT COUNT(*) FROM bookmarks WHERE txt_id = NEW.txt_id) >= {BOOKMARK_LIMIT}
     BEGIN
         DELETE FROM bookmarks
         WHERE id = (
@@ -152,8 +155,8 @@ def get_master_key(creds: dict) -> bytes:
     if not raw:
         raise ValueError("No master_key in credentials; run --gen-master-key first")
     key = base64.b64decode(raw)
-    if len(key) != 128:
-        raise ValueError(f"master_key must be 128 bytes, got {len(key)}")
+    if len(key) != MASTER_KEY_LEN:
+        raise ValueError(f"master_key must be {MASTER_KEY_LEN} bytes, got {len(key)}")
     return key
 
 
@@ -299,11 +302,16 @@ class VaultStore:
                 "INSERT INTO txt_parts (txt_id, part_num, content) VALUES (?, ?, ?)",
                 (txt_id, i + 1, blob),
             )
-            total_plain += len(part); total_blob += len(blob)
+            total_plain += len(part)
+            total_blob += len(blob)
             if verbose:
-                click.echo(f"  part {i+1}/{len(parts)}: {len(part):,}B → {len(blob):,}B")
+                click.echo(
+                    f"  part {i+1}/{len(parts)}: {len(part):,}B → {len(blob):,}B"
+                )
         if verbose and len(parts) > 1:
-            click.echo(f"  total: {total_plain:,}B → {total_blob:,}B ({total_plain/total_blob:.2f}x)")
+            click.echo(
+                f"  total: {total_plain:,}B → {total_blob:,}B ({total_plain/total_blob:.2f}x)"
+            )
 
     def _resolve_txt_id(
         self, crypto: Crypto, stored_name: str, force: bool, verbose: bool
@@ -311,7 +319,9 @@ class VaultStore:
         txt_id = crypto.find_txt_id(self._conn, stored_name)
         if txt_id is not None and not force:
             if verbose:
-                click.echo(f"  [skip] {stored_name} already exists (use --force to overwrite)")
+                click.echo(
+                    f"  [skip] {stored_name} already exists (use --force to overwrite)"
+                )
             return None, None
         if txt_id is None:
             name_blob, name_mac = crypto.encrypt_name(stored_name)
@@ -323,8 +333,12 @@ class VaultStore:
         return txt_id, "update"
 
     def ingest_file(
-        self, crypto: Crypto, filepath: Path, stored_name: str,
-        verbose: bool, force: bool = False,
+        self,
+        crypto: Crypto,
+        filepath: Path,
+        stored_name: str,
+        verbose: bool,
+        force: bool = False,
     ):
         content = filepath.read_bytes()
         parts = split_parts(content)
@@ -332,7 +346,9 @@ class VaultStore:
         if txt_id is None:
             return
         if verbose:
-            click.echo(f"  [{action}] txt_id={txt_id}, {len(content):,}B, {len(parts)} part(s)")
+            click.echo(
+                f"  [{action}] txt_id={txt_id}, {len(content):,}B, {len(parts)} part(s)"
+            )
         self._insert_parts(crypto, txt_id, parts, verbose)
         self._conn.execute(
             "INSERT OR REPLACE INTO part_count (txt_id, count) VALUES (?, ?)",
@@ -375,16 +391,19 @@ class VaultStore:
             click.echo(f"Rebuilt part_count for {n} txt row(s)")
 
     def _table_names(self, conn) -> set[str]:
-        return {r[0] for r in conn.execute(
-            "SELECT name FROM sqlite_master"
-            " WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-        ).fetchall()}
+        return {
+            r[0]
+            for r in conn.execute(
+                "SELECT name FROM sqlite_master"
+                " WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            ).fetchall()
+        }
 
     def _ensure_upload_schema(self, local_t: set, turso_t: set, verbose: bool):
         if verbose:
             click.echo(f"local : {', '.join(sorted(local_t))}")
             click.echo(f"turso : {', '.join(sorted(turso_t)) or '(empty)'}")
-        if 'bookmarks' in local_t and 'bookmarks' not in turso_t:
+        if "bookmarks" in local_t and "bookmarks" not in turso_t:
             if verbose:
                 click.echo("bookmarks missing on Turso — creating:")
             self.create_bookmarks(verbose=verbose)
@@ -403,13 +422,15 @@ class VaultStore:
                 click.echo(f"  {table:<16}:  0 rows, skipped")
             return
         cols = rows[0].keys()
-        sql = (f"INSERT INTO {table} ({', '.join(cols)})"
-               f" VALUES ({', '.join('?' * len(cols))})")
+        sql = (
+            f"INSERT INTO {table} ({', '.join(cols)})"
+            f" VALUES ({', '.join('?' * len(cols))})"
+        )
         if verbose:
             click.echo(f"  {table:<16}: {len(rows):>5} row(s)...", nl=False)
         for i, row in enumerate(rows):
             self._conn.execute(sql, tuple(row))
-            if (i + 1) % 10 == 0:
+            if (i + 1) % BATCH == 0:
                 self._conn.commit()
         self._conn.commit()
         if verbose:
@@ -417,13 +438,14 @@ class VaultStore:
 
     def upload_db(self, local_path: str, verbose: bool = False):
         import sqlite3 as _sqlite3
+
         local = _sqlite3.connect(local_path)
         local.row_factory = _sqlite3.Row
         local_t = self._table_names(local)
         turso_t = self._table_names(self._conn)
         self._ensure_upload_schema(local_t, turso_t, verbose)
         self._check_turso_empty()
-        for table in ['txt', 'txt_parts', 'part_count', 'txt_access', 'bookmarks']:
+        for table in ["txt", "txt_parts", "part_count", "txt_access", "bookmarks"]:
             if table not in local_t:
                 if verbose:
                     click.echo(f"  {table:<16}: not in local db, skipped")
@@ -443,7 +465,9 @@ class VaultStore:
         data = crypto.decrypt_part(blob)
         Path(out_path).write_bytes(data)
         if verbose:
-            click.echo(f"Part {part_id}: {len(blob):,}B blob → {len(data):,}B plain → {out_path}")
+            click.echo(
+                f"Part {part_id}: {len(blob):,}B blob → {len(data):,}B plain → {out_path}"
+            )
 
 
 # ===== CLI =====
@@ -457,7 +481,7 @@ def _cmd_gen_master_key(path: str):
         data = {}
     if "master_key" in data:
         click.confirm("master_key already exists. Overwrite?", abort=True)
-    data["master_key"] = base64.b64encode(os.urandom(128)).decode()
+    data["master_key"] = base64.b64encode(os.urandom(MASTER_KEY_LEN)).decode()
     with open(path, "w") as f:
         json.dump(data, f, indent=2)
     click.echo(f"master_key written to {path}")
@@ -481,17 +505,25 @@ def _cmd_ingest(
 
 
 def _dispatch_admin(
-    store: VaultStore, do_recreate_bookmarks: bool, do_create_bookmarks: bool,
-    upload_db_path: str | None, do_part_count: bool, verbose: bool,
+    store: VaultStore,
+    do_recreate_bookmarks: bool,
+    do_create_bookmarks: bool,
+    upload_db_path: str | None,
+    do_part_count: bool,
+    verbose: bool,
 ) -> bool:
     if do_recreate_bookmarks:
-        store.recreate_bookmarks(verbose=verbose); return True
+        store.recreate_bookmarks(verbose=verbose)
+        return True
     if do_create_bookmarks:
-        store.create_bookmarks(verbose=verbose); return True
+        store.create_bookmarks(verbose=verbose)
+        return True
     if upload_db_path:
-        store.upload_db(upload_db_path, verbose=verbose); return True
+        store.upload_db(upload_db_path, verbose=verbose)
+        return True
     if do_part_count:
-        store.rebuild_part_count(verbose=verbose); return True
+        store.rebuild_part_count(verbose=verbose)
+        return True
     return False
 
 
@@ -504,21 +536,39 @@ def _dispatch_admin(
 @click.option("--part-count", "do_part_count", is_flag=True)
 @click.option("--create-bookmarks", "do_create_bookmarks", is_flag=True)
 @click.option("--recreate-bookmarks", "do_recreate_bookmarks", is_flag=True)
-@click.option("--upload-db", "upload_db_path", type=click.Path(exists=True), metavar="FILE")
+@click.option(
+    "--upload-db", "upload_db_path", type=click.Path(exists=True), metavar="FILE"
+)
 @click.option("--gen-master-key", "gen_key_path", metavar="PATH")
 @click.option("--read-part", "read_part_id", type=int)
 @click.option("--out")
 @click.option("--verbose", "-v", is_flag=True)
 def main(
-    src, force, creds, do_part_count, do_create_bookmarks, do_recreate_bookmarks,
-    upload_db_path, gen_key_path, read_part_id, out, verbose,
+    src,
+    force,
+    creds,
+    do_part_count,
+    do_create_bookmarks,
+    do_recreate_bookmarks,
+    upload_db_path,
+    gen_key_path,
+    read_part_id,
+    out,
+    verbose,
 ):
     if gen_key_path:
-        _cmd_gen_master_key(gen_key_path); return
+        _cmd_gen_master_key(gen_key_path)
+        return
     loaded = load_creds(creds)
     store = VaultStore(loaded, verbose=verbose)
-    if _dispatch_admin(store, do_recreate_bookmarks, do_create_bookmarks,
-                       upload_db_path, do_part_count, verbose):
+    if _dispatch_admin(
+        store,
+        do_recreate_bookmarks,
+        do_create_bookmarks,
+        upload_db_path,
+        do_part_count,
+        verbose,
+    ):
         return
     crypto = Crypto(get_master_key(loaded))
     if read_part_id is not None:
