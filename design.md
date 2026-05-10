@@ -10,6 +10,8 @@ A single-file CLI tool that ingests `.txt` files, splits them into compressed an
 python3 txt_vault.py --src <folder_path> --creds creds.json
 python3 txt_vault.py --src <folder_path> --force --creds creds.json
 python3 txt_vault.py --part-count --creds creds.json
+python3 txt_vault.py --create-bookmarks --creds creds.json
+python3 txt_vault.py --recreate-bookmarks --creds creds.json
 python3 txt_vault.py --gen-master-key creds.json
 ```
 
@@ -21,6 +23,8 @@ python3 txt_vault.py --gen-master-key creds.json
 | `--force` | With `--src`: overwrite existing entries instead of skipping them |
 | `--creds <path>` | Credentials JSON file with Turso URL/token and master key (default: `creds.json`) |
 | `--part-count` | Rebuild `part_count` table from existing `txt_parts` rows, then exit |
+| `--create-bookmarks` | Create bookmarks table, index, and trigger; print per-step progress; exit |
+| `--recreate-bookmarks` | Drop and recreate bookmarks table (all bookmarks lost); print per-step progress; exit |
 | `--gen-master-key <path>` | Add/update `master_key` in the credentials file, then exit |
 | `--read-part <id>` | Decrypt a single part by `txt_parts.id` and write to `--out` |
 | `--out <path>` | Output path for `--read-part` |
@@ -32,7 +36,7 @@ python3 txt_vault.py --gen-master-key creds.json
 {
   "turso_database_url": "libsql://your-db.turso.io",
   "turso_auth_token": "your-token-here",
-  "master_key": "<base64-encoded 64-byte random key>"
+  "master_key": "<base64-encoded 128-byte random key>"
 }
 ```
 
@@ -93,6 +97,33 @@ CREATE TABLE IF NOT EXISTS part_count (
 ```
 
 `part_count` is kept in sync automatically: `ingest_file` upserts the count after committing each file's parts. The `--part-count` flag can backfill it for data ingested before this table existed.
+
+```sql
+CREATE TABLE IF NOT EXISTS bookmarks (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    txt_id   INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
+    bookmark BLOB NOT NULL   -- brotli(JSON) encrypted with same scheme as txt_parts
+);
+
+CREATE INDEX IF NOT EXISTS idx_bookmarks_txt_id ON bookmarks(txt_id);
+
+CREATE TRIGGER IF NOT EXISTS trg_limit_bookmarks_per_file
+BEFORE INSERT ON bookmarks
+WHEN (SELECT COUNT(*) FROM bookmarks WHERE txt_id = NEW.txt_id) >= 12
+BEGIN
+    SELECT RAISE(ABORT, 'max 12 bookmarks per file');
+END;
+```
+
+The `bookmark` blob is an AEAD-encrypted, brotli-compressed JSON object:
+
+```json
+{"part_num": 3, "line": 42, "txt_preview": "First sixty characters of the line…"}
+```
+
+Key derivation and wire format are identical to `txt_parts.content` (64-byte random salt prefix, same HKDF call, same AEAD cipher). The database stores only the FK `txt_id` as plaintext — part number, line index, and preview are all inside the ciphertext.
+
+The `--create-bookmarks` flag creates the table, index, and trigger (idempotent: `IF NOT EXISTS`). The `--recreate-bookmarks` flag drops the table first (cascading the index and trigger) then recreates it; all existing bookmarks are lost. Both flags print per-step progress unconditionally.
 
 All queries execute directly against the Turso cloud database over HTTPS — there is no local replica. The URL and auth token are read first from environment variables (`TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`); if not set, they fall back to the `turso_database_url` and `turso_auth_token` fields in `creds.json`.
 
@@ -168,6 +199,21 @@ compressed = Ascon-Keccak-decrypt(ct_tag, key, iv, aad=salt)
 plaintext  = brotli.decompress(compressed)
 ```
 
+### Bookmark Encryption
+
+Bookmarks use the same encrypt-then-MAC format as `txt_parts`:
+
+```
+plaintext  = JSON.stringify({part_num, line, txt_preview})
+compressed = brotli(plaintext)
+salt       = random(64 bytes)
+key, iv    = HKDF-SHA3-512(master_key, salt, length=128)[:64], [64:]
+ct_tag     = Ascon-Keccak-encrypt(compressed, key, iv, aad=salt)
+blob       = salt || ct_tag          # stored in bookmarks.bookmark
+```
+
+Decryption is the symmetric reverse. The FK `txt_id` is the only plaintext metadata; part number, line index, and preview are never visible to the database.
+
 ### Security Properties
 
 | Property | Mechanism |
@@ -178,6 +224,8 @@ plaintext  = brotli.decompress(compressed)
 | Filename confidentiality | Filename encrypted with per-ingestion random salt |
 | Filename lookup | HMAC-SHA3-256 under `hmac_key` co-derived with encryption key |
 | Key isolation per part | HKDF with unique random salt per part |
+| Bookmark confidentiality | Bookmark JSON encrypted with per-bookmark random salt |
+| Bookmark per-file cap | DB trigger raises ABORT when count ≥ 12 |
 | Compression oracle mitigation | Compress before encrypt; no adaptive queries |
 
 ---
@@ -210,6 +258,8 @@ Owns the libSQL connection. Constructed once per run; establishes the direct Tur
 |--------|------|
 | `_insert_parts` | Encrypt and insert all parts for a `txt_id` |
 | `ingest_file` | Full ingest pipeline for one file; skips if name exists and `force=False`, overwrites if `force=True` |
+| `create_bookmarks` | Create bookmarks table, index, and trigger; print per-step progress |
+| `recreate_bookmarks` | Drop bookmarks table then call `create_bookmarks`; all bookmarks lost |
 | `rebuild_part_count` | Backfill `part_count` from `txt_parts` |
 | `read_part` | Fetch and decrypt a single part by id |
 
