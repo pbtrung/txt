@@ -116,3 +116,27 @@ export async function insertBookmark(txtId, bookmarkBlob) {
 export async function deleteBookmark(id) {
   await execute('DELETE FROM bookmarks WHERE id = ?', [id]);
 }
+
+export async function fetchRecentAccess() {
+  return toRows(await execute(
+    `SELECT t.id AS txt_id, t.name, t.last_accessed,
+       (SELECT COUNT(*) FROM txt_parts
+        WHERE txt_id = t.id
+        AND id <= (
+          SELECT id FROM txt_parts
+          WHERE txt_id = t.id AND last_accessed IS NOT NULL
+          ORDER BY last_accessed DESC LIMIT 1
+        )
+       ) AS last_part_num
+     FROM txt t
+     WHERE t.last_accessed IS NOT NULL
+     ORDER BY t.last_accessed DESC
+     LIMIT 5`,
+  ));
+}
+
+export async function upsertAccess(txtId, txtPartId) {
+  const now = Date.now();
+  await execute('UPDATE txt SET last_accessed = ? WHERE id = ?', [now, txtId]);
+  await execute('UPDATE txt_parts SET last_accessed = ? WHERE id = ?', [now, txtPartId]);
+}

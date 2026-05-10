@@ -101,12 +101,14 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS txt (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
     name      BLOB NOT NULL,
-    name_hmac BLOB NOT NULL
+    name_hmac BLOB NOT NULL,
+    last_accessed INTEGER
 );
 CREATE TABLE IF NOT EXISTS txt_parts (
     id      INTEGER PRIMARY KEY AUTOINCREMENT,
     txt_id  INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
-    content BLOB NOT NULL
+    content BLOB NOT NULL,
+    last_accessed INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_txt_parts_txt_id ON txt_parts(txt_id);
 CREATE TABLE IF NOT EXISTS part_count (

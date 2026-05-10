@@ -9,6 +9,8 @@ import {
   fetchBookmarks,
   insertBookmark,
   deleteBookmark,
+  fetchRecentAccess,
+  upsertAccess,
 } from '../db.js';
 import FileDropdown from './FileDropdown.jsx';
 import PartFooter from './PartFooter.jsx';
@@ -23,6 +25,7 @@ export default function DataScreen({ masterKey, onDisconnect }) {
   const [loading, setLoading]         = useState(false);
   const [error, setError]             = useState(null);
   const [fontSize, setFontSize]       = useState(16);
+  const [recentAccess, setRecentAccess]       = useState([]);
   const [bookmarks, setBookmarks]             = useState(new Map());
   const [showBookmarks, setShowBookmarks]     = useState(false);
   const [showBookmarkChooser, setShowBookmarkChooser] = useState(false);
@@ -40,13 +43,23 @@ export default function DataScreen({ masterKey, onDisconnect }) {
 
   useEffect(() => {
     wrap(async () => {
-      const rows = await fetchTxts();
-      setTxts(rows.map(r => {
+      const [rows, recent] = await Promise.all([fetchTxts(), fetchRecentAccess()]);
+      const decrypted = rows.map(r => {
         let name;
         try { name = decryptName(r.name, masterKey); }
         catch { name = `<id ${r.id}>`; }
         return { id: r.id, name };
-      }));
+      });
+      setTxts(decrypted);
+      const nameMap = new Map(decrypted.map(t => [t.id, t.name]));
+      setRecentAccess(recent
+        .filter(r => nameMap.has(r.txt_id))
+        .map(r => ({
+          txtId: r.txt_id,
+          name: nameMap.get(r.txt_id),
+          lastPartNum: r.last_part_num,
+        }))
+      );
     });
   }, [masterKey, wrap]);
 
@@ -77,6 +90,7 @@ export default function DataScreen({ masterKey, onDisconnect }) {
     wrap(async () => {
       const part = await fetchPartByOffset(txt.id, clamped - 1);
       setContent(part ? decryptPart(part.content, masterKey) : '');
+      if (part) upsertAccess(txt.id, part.id);
     });
   }
 
@@ -114,6 +128,7 @@ export default function DataScreen({ masterKey, onDisconnect }) {
         loadedPartRef.current = { txtId: txt.id, partNum: 1 };
         const part = await fetchPartByOffset(txt.id, 0);
         setContent(part ? decryptPart(part.content, masterKey) : '');
+        if (part) upsertAccess(txt.id, part.id);
       }
     });
   }
@@ -272,9 +287,32 @@ export default function DataScreen({ masterKey, onDisconnect }) {
               />
             </div>
           ) : !hasTxt ? (
-            <p className="text-muted small mb-0" style={{ paddingLeft: '1rem' }}>
-              Select a file to view its content.
-            </p>
+            <div style={{ paddingLeft: '1rem' }}>
+              {recentAccess.length > 0 ? (
+                <>
+                  <p className="text-muted small mb-2">Recently accessed:</p>
+                  <ul className="list-group list-group-flush">
+                    {recentAccess.map(item => (
+                      <li
+                        key={item.txtId}
+                        className="list-group-item list-group-item-action py-2 px-2"
+                        style={{ cursor: 'pointer' }}
+                        onClick={() => selectTxt({ id: item.txtId, name: item.name })}
+                      >
+                        <div className="small fw-medium" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {item.name}
+                        </div>
+                        <div className="text-muted" style={{ fontSize: '0.7rem' }}>
+                          Part {item.lastPartNum}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              ) : (
+                <p className="text-muted small mb-0">Select a file to view its content.</p>
+              )}
+            </div>
           ) : showBookmarkChooser ? (
             <div style={{ paddingLeft: '1rem' }}>
               {bookmarks.size === 0
