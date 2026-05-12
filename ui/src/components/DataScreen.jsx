@@ -44,7 +44,7 @@ function addBookmarkToMap(prev, entry) {
   return n;
 }
 
-export default function DataScreen({ masterKey, onDisconnect }) {
+export default function DataScreen({ masterKey, onDisconnect, theme, onThemeCycle }) {
   const [txts, setTxts]               = useState([]);
   const [selectedTxt, setSelectedTxt] = useState(null);
   const [totalParts, setTotalParts]   = useState(0);
@@ -63,6 +63,8 @@ export default function DataScreen({ masterKey, onDisconnect }) {
   const loadedPartRef      = useRef(null);
   const lineRefs           = useRef({});
   const scrollContainerRef = useRef(null);
+  const kbRef              = useRef({});
+  const fnRef              = useRef({});
 
   const wrap = useCallback(async (fn) => {
     setLoading(true);
@@ -120,11 +122,50 @@ export default function DataScreen({ masterKey, onDisconnect }) {
       - paddingTop;
   }
 
+  function getFirstVisibleLineIndex() {
+    const container = scrollContainerRef.current;
+    if (!container) return null;
+    const top = container.getBoundingClientRect().top
+      + (parseFloat(getComputedStyle(container).paddingTop) || 0);
+    let bestIdx = null;
+    let bestDist = Infinity;
+    for (const [i, el] of Object.entries(lineRefs.current)) {
+      if (!el) continue;
+      const dist = Math.abs(el.getBoundingClientRect().top - top);
+      if (dist < bestDist) { bestDist = dist; bestIdx = parseInt(i, 10); }
+    }
+    return bestIdx;
+  }
+
   useEffect(() => {
     if (pendingScrollLine === null || loading || content === null) return;
     scrollLineToTop(pendingScrollLine);
     setPendingScrollLine(null);
   }, [content, loading, pendingScrollLine]);
+
+  useEffect(() => {
+    function handleArrow(e, s, fn) {
+      if (e.key === 'ArrowLeft' && s.currentPartNum > 1) {
+        e.preventDefault(); fn.loadPart(s.selectedTxt, s.currentPartNum - 1, s.totalParts);
+      } else if (e.key === 'ArrowRight' && s.currentPartNum < s.totalParts) {
+        e.preventDefault(); fn.loadPart(s.selectedTxt, s.currentPartNum + 1, s.totalParts);
+      }
+    }
+    function handleB(fn) {
+      const idx = getFirstVisibleLineIndex();
+      if (idx === null) return;
+      fn.toggleBookmark(idx, lineRefs.current[idx]?.textContent?.trim().slice(0, 60) ?? '');
+    }
+    function onKey(e) {
+      const s = kbRef.current; const fn = fnRef.current;
+      if (!s.hasTxt || !s.hasParts || s.showBookmarkChooser || s.content === null) return;
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') handleArrow(e, s, fn);
+      else if (e.key === 'b') handleB(fn);
+    }
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
 
   function resetForTxt(txt) {
     setSelectedTxt(txt); setCurrentPartNum(1); setTotalParts(0);
@@ -255,6 +296,27 @@ export default function DataScreen({ masterKey, onDisconnect }) {
   const hasTxt   = !!selectedTxt;
   const hasParts = totalParts > 0;
 
+  kbRef.current = { hasTxt, hasParts, showBookmarkChooser, content, selectedTxt, currentPartNum, totalParts };
+  fnRef.current = { loadPart, toggleBookmark };
+
+  async function autoSavePosition() {
+    const idx = getFirstVisibleLineIndex();
+    if (idx === null || bookmarks.has(`${currentPartNum}:${idx}`)) return;
+    const preview = lineRefs.current[idx]?.textContent?.trim().slice(0, 60) ?? '';
+    try {
+      await insertBookmark(
+        selectedTxt.id,
+        encryptBookmark({ part_num: currentPartNum, line: idx, txt_preview: preview }, masterKey),
+      );
+    } catch { /* don't block navigation */ }
+  }
+
+  async function handleHome() {
+    if (hasTxt && content !== null && !showBookmarkChooser) await autoSavePosition();
+    resetForTxt(null);
+    setRefreshLanding(n => n + 1);
+  }
+
   return (
     <div className="container py-3 vault-container d-flex flex-column" style={{ minHeight: '100vh' }}>
 
@@ -266,8 +328,10 @@ export default function DataScreen({ masterKey, onDisconnect }) {
         selectedTxt={selectedTxt}
         onNavigate={navigateToBookmark}
         onRemove={removeBookmark}
-        onHome={() => { resetForTxt(null); setRefreshLanding(n => n + 1); }}
+        onHome={handleHome}
         onDisconnect={onDisconnect}
+        theme={theme}
+        onThemeCycle={onThemeCycle}
       />
 
       {error && (
