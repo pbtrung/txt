@@ -15,7 +15,10 @@ import {
 } from '../db.js';
 import FileDropdown from './FileDropdown.jsx';
 import PartFooter from './PartFooter.jsx';
-import BookmarkPanel from './BookmarkPanel.jsx';
+import TopBar from './TopBar.jsx';
+import LandingView from './LandingView.jsx';
+import BookmarkChooser from './BookmarkChooser.jsx';
+import ReaderView from './ReaderView.jsx';
 
 const BOOKMARK_LIMIT = 12;
 
@@ -140,8 +143,7 @@ export default function DataScreen({ masterKey, onDisconnect }) {
   async function loadPart(txt, partNum, total = totalParts) {
     const clamped = Math.max(1, Math.min(partNum, total || 1));
     const lp = loadedPartRef.current;
-    if (lp && lp.txtId === txt.id && lp.partNum === clamped)
-      return;
+    if (lp && lp.txtId === txt.id && lp.partNum === clamped) return;
     loadedPartRef.current = { txtId: txt.id, partNum: clamped };
     setCurrentPartNum(clamped);
     setContent(null);
@@ -212,87 +214,30 @@ export default function DataScreen({ masterKey, onDisconnect }) {
   const hasTxt   = !!selectedTxt;
   const hasParts = totalParts > 0;
 
-  const fileBookmarkCount = bookmarks.size;
-
   return (
-    <div
-      className={
-        'container py-3 vault-container' +
-        ' d-flex flex-column'
-      }
-      style={{ minHeight: '100vh' }}
-    >
+    <div className="container py-3 vault-container d-flex flex-column" style={{ minHeight: '100vh' }}>
 
-      {/* Top bar */}
-      <div
-        className="d-flex align-items-center justify-content-between mb-3"
-        style={{ position: 'relative' }}
-      >
-        <span className="fw-bold">Text Reader</span>
-        <div className="d-flex align-items-center gap-2">
-          <div>
-            <button
-              className={
-                'btn btn-sm' +
-                (showBookmarks
-                  ? ' btn-secondary'
-                  : ' btn-outline-secondary')
-              }
-              disabled={!hasTxt}
-              onClick={() => setShowBookmarks(v => !v)}
-            >
-              Bookmarks
-              {fileBookmarkCount > 0 && (
-                <span className="ms-1 badge bg-primary rounded-pill" style={{ fontSize: '0.65rem' }}>
-                  {fileBookmarkCount}
-                </span>
-              )}
-            </button>
-            {showBookmarks && (
-              <>
-                <div
-                  style={{ position: 'fixed', inset: 0, zIndex: 199 }}
-                  onClick={() => setShowBookmarks(false)}
-                />
-                <BookmarkPanel
-                  bookmarks={bookmarks}
-                  selectedTxt={selectedTxt}
-                  onNavigate={navigateToBookmark}
-                  onRemove={removeBookmark}
-                />
-              </>
-            )}
-          </div>
-          <button
-            className="btn btn-sm btn-outline-secondary"
-            onClick={onDisconnect}
-          >
-            Disconnect
-          </button>
-        </div>
-      </div>
+      <TopBar
+        hasTxt={hasTxt}
+        showBookmarks={showBookmarks}
+        setShowBookmarks={setShowBookmarks}
+        bookmarks={bookmarks}
+        selectedTxt={selectedTxt}
+        onNavigate={navigateToBookmark}
+        onRemove={removeBookmark}
+        onDisconnect={onDisconnect}
+      />
 
       {error && (
-        <div
-          className="alert alert-danger py-2 small mb-3"
-          role="alert"
-        >
+        <div className="alert alert-danger py-2 small mb-3" role="alert">
           {error}
         </div>
       )}
 
-      {/* Card fills remaining height */}
-      <div
-        className="card d-flex flex-column"
-        style={{ flex: '1 1 0', minHeight: 0 }}
-      >
+      <div className="card d-flex flex-column" style={{ flex: '1 1 0', minHeight: 0 }}>
 
         <div className="card-header py-2">
-          <FileDropdown
-            txts={txts}
-            selectedTxt={selectedTxt}
-            onSelect={selectTxt}
-          />
+          <FileDropdown txts={txts} selectedTxt={selectedTxt} onSelect={selectTxt} />
         </div>
 
         <div
@@ -301,142 +246,32 @@ export default function DataScreen({ masterKey, onDisconnect }) {
           style={{ flex: '1 1 0', minHeight: 0, padding: '1rem 1rem 1rem 0' }}
         >
           {loading ? (
-            <div className={
-              'd-flex justify-content-center' +
-              ' align-items-center py-4'
-            }>
-              <span
-                className="spinner-border text-secondary"
-              />
+            <div className="d-flex justify-content-center align-items-center py-4">
+              <span className="spinner-border text-secondary" />
             </div>
           ) : !hasTxt ? (
-            <div style={{ paddingLeft: '1rem' }}>
-              {recentAccess.length > 0 ? (
-                <>
-                  <p className="text-muted small mb-2">Recently opened:</p>
-                  <ul className="list-group list-group-flush mb-3">
-                    {recentAccess.map(item => (
-                      <li
-                        key={item.txtId}
-                        className="list-group-item list-group-item-action py-2 px-2"
-                        style={{ cursor: 'pointer' }}
-                        onClick={() => selectTxt({ id: item.txtId, name: item.name }, item.lastPartNum)}
-                      >
-                        <div className="small fw-medium" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {item.name}
-                        </div>
-                        <div className="text-muted" style={{ fontSize: '0.7rem' }}>
-                          Part {item.lastPartNum}
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              ) : (
-                <p className="text-muted small mb-0">Select a file to view its content.</p>
-              )}
-              {recentBookmarks.length > 0 && (
-                <>
-                  <p className="text-muted small mb-2">Recent bookmarks:</p>
-                  <ul className="list-group list-group-flush">
-                    {recentBookmarks.map(bm => (
-                      <li
-                        key={bm.dbId}
-                        className="list-group-item list-group-item-action py-2 px-2"
-                        style={{ cursor: 'pointer' }}
-                        onClick={() => selectTxt(
-                          { id: bm.txtId, name: bm.txtName },
-                          bm.partNum,
-                          { partNum: bm.partNum, lineIndex: bm.lineIndex },
-                        )}
-                      >
-                        <div className="small fw-medium" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {bm.txtName}
-                        </div>
-                        <div className="text-muted" style={{ fontSize: '0.7rem' }}>
-                          Part {bm.partNum} &middot; Line {bm.lineIndex + 1}
-                          {bm.preview && ` · ${bm.preview}`}
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              )}
-            </div>
+            <LandingView
+              recentAccess={recentAccess}
+              recentBookmarks={recentBookmarks}
+              onSelectTxt={selectTxt}
+            />
           ) : showBookmarkChooser ? (
-            <div style={{ paddingLeft: '1rem' }}>
-              {bookmarks.size === 0
-                ? <p className="text-muted small mb-0">No bookmarks left. Use the part controls below to navigate.</p>
-                : <p className="text-muted small mb-2">Pick up where you left off:</p>
-              }
-              <ul className="list-group list-group-flush mb-3">
-                {[...bookmarks.values()]
-                  .sort((a, b) => a.partNum - b.partNum || a.lineIndex - b.lineIndex)
-                  .map(bm => (
-                    <li
-                      key={bm.key}
-                      className="list-group-item list-group-item-action py-2 px-2 d-flex align-items-start gap-2"
-                      style={{ cursor: 'pointer' }}
-                      onClick={() => navigateToBookmark({ partNum: bm.partNum, lineIndex: bm.lineIndex })}
-                    >
-                      <div className="flex-grow-1" style={{ minWidth: 0 }}>
-                        <div className="text-muted" style={{ fontSize: '0.7rem' }}>
-                          Part {bm.partNum} &middot; Line {bm.lineIndex + 1}
-                        </div>
-                        <div className="small" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {bm.preview
-                            ? `${bm.preview}…`
-                            : <em className="text-muted">empty line</em>}
-                        </div>
-                      </div>
-                      <button
-                        className="btn btn-sm btn-link text-muted p-0 flex-shrink-0"
-                        style={{ fontSize: '1rem', lineHeight: 1 }}
-                        title="Remove bookmark"
-                        onClick={e => { e.stopPropagation(); removeBookmark(bm.key); }}
-                      >
-                        &times;
-                      </button>
-                    </li>
-                  ))
-                }
-              </ul>
-            </div>
+            <BookmarkChooser
+              bookmarks={bookmarks}
+              onNavigate={navigateToBookmark}
+              onRemove={removeBookmark}
+            />
           ) : content === null ? (
-            <p className="text-muted small mb-0" style={{ paddingLeft: '1rem' }}>
-              Loading…
-            </p>
+            <p className="text-muted small mb-0" style={{ paddingLeft: '1rem' }}>Loading…</p>
           ) : (
-            <div style={{
-              fontFamily: "'Literata', serif",
-              fontSize,
-              maxWidth: '70ch',
-            }}>
-              {content.split('\n').map((line, i) => {
-                const key = `${currentPartNum}:${i}`;
-                const isBookmarked = bookmarks.has(key);
-                return (
-                  <div
-                    key={i}
-                    ref={el => { lineRefs.current[i] = el; }}
-                    className={`reader-line${isBookmarked ? ' bookmarked-line' : ''}`}
-                  >
-                    <button
-                      className="line-bar"
-                      onClick={() => toggleBookmark(i, line.trim().slice(0, 60))}
-                      title={isBookmarked ? 'Remove bookmark' : 'Add bookmark'}
-                    />
-                    <span style={{
-                      whiteSpace: 'pre-wrap',
-                      wordBreak: 'break-word',
-                      flex: 1,
-                    }}>
-                      {line || ' '}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
+            <ReaderView
+              content={content}
+              currentPartNum={currentPartNum}
+              bookmarks={bookmarks}
+              lineRefs={lineRefs}
+              onToggleBookmark={toggleBookmark}
+              fontSize={fontSize}
+            />
           )}
         </div>
 
