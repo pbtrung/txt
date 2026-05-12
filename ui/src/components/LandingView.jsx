@@ -3,7 +3,10 @@ import React from 'react';
 export default function LandingView({ recentAccess, recentBookmarks, onSelectTxt, onRemoveAccess, onRemoveBookmark }) {
   return (
     <div style={{ paddingLeft: '1rem' }}>
-      {recentAccess.length > 0 ? (
+      {recentAccess.length === 0 && recentBookmarks.length === 0 && (
+        <p className="text-muted small mb-0">Select a file to view its content.</p>
+      )}
+      {recentAccess.length > 0 && (
         <>
           <p className="text-muted small mb-2">Recently opened:</p>
           <ul className="list-group list-group-flush mb-3">
@@ -38,8 +41,6 @@ export default function LandingView({ recentAccess, recentBookmarks, onSelectTxt
             ))}
           </ul>
         </>
-      ) : (
-        <p className="text-muted small mb-0">Select a file to view its content.</p>
       )}
       {recentBookmarks.length > 0 && (
         <>

@@ -207,14 +207,39 @@ export default function DataScreen({ masterKey, onDisconnect }) {
   async function removeRecentAccess(txtId) {
     try {
       await deleteAccess(txtId);
-      setRecentAccess(prev => prev.filter(r => r.txtId !== txtId));
+      const nameMap = new Map(txts.map(t => [t.id, t.name]));
+      const recent = await fetchRecentAccess();
+      setRecentAccess(recent
+        .filter(r => nameMap.has(r.txt_id))
+        .map(r => ({
+          txtId: r.txt_id,
+          name: nameMap.get(r.txt_id),
+          lastPartNum: r.last_part_num,
+        }))
+      );
     } catch (e) { setError(e.message); }
   }
 
   async function removeRecentBookmark(dbId) {
     try {
       await deleteBookmark(dbId);
-      setRecentBookmarks(prev => prev.filter(b => b.dbId !== dbId));
+      const nameMap = new Map(txts.map(t => [t.id, t.name]));
+      const rawBmarks = await fetchRecentBookmarks();
+      const decoded = [];
+      for (const b of rawBmarks) {
+        if (!nameMap.has(b.txt_id)) continue;
+        let obj;
+        try { obj = decryptBookmark(b.bookmark, masterKey); } catch { continue; }
+        decoded.push({
+          dbId: b.id,
+          txtId: b.txt_id,
+          txtName: nameMap.get(b.txt_id),
+          partNum: obj.part_num,
+          lineIndex: obj.line,
+          preview: obj.txt_preview ?? '',
+        });
+      }
+      setRecentBookmarks(decoded);
     } catch (e) { setError(e.message); }
   }
 
