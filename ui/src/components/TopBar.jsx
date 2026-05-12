@@ -1,11 +1,11 @@
 import React from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faPowerOff, faBookmark } from '@fortawesome/free-solid-svg-icons';
+import { faPowerOff, faBookmark, faHouse } from '@fortawesome/free-solid-svg-icons';
 import BookmarkPanel from './BookmarkPanel.jsx';
 
 export default function TopBar({
   hasTxt, showBookmarks, setShowBookmarks,
-  bookmarks, selectedTxt, onNavigate, onRemove, onDisconnect,
+  bookmarks, selectedTxt, onNavigate, onRemove, onHome, onDisconnect,
 }) {
   const count = bookmarks.size;
   return (
@@ -17,7 +17,7 @@ export default function TopBar({
       <div className="d-flex align-items-center gap-2">
         <div>
           <button
-            className={'btn btn-sm' + (showBookmarks ? ' btn-secondary' : ' btn-outline-secondary')}
+            className={'btn btn-sm' + (showBookmarks ? ' btn-primary' : ' btn-outline-primary')}
             disabled={!hasTxt}
             onClick={() => setShowBookmarks(v => !v)}
           >
@@ -44,7 +44,15 @@ export default function TopBar({
           )}
         </div>
         <button
-          className="btn btn-sm btn-outline-secondary"
+          className="btn btn-sm btn-outline-primary"
+          disabled={!hasTxt}
+          onClick={onHome}
+          title="Home"
+        >
+          <FontAwesomeIcon icon={faHouse} />
+        </button>
+        <button
+          className="btn btn-sm btn-outline-danger"
           onClick={onDisconnect}
           title="Disconnect"
         >

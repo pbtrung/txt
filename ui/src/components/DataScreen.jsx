@@ -225,6 +225,7 @@ export default function DataScreen({ masterKey, onDisconnect }) {
         selectedTxt={selectedTxt}
         onNavigate={navigateToBookmark}
         onRemove={removeBookmark}
+        onHome={() => resetForTxt(null)}
         onDisconnect={onDisconnect}
       />
 
