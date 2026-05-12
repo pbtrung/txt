@@ -151,16 +151,27 @@ npm run build
 
 Output goes to `ui/dist/`. Serve it with any static file server.
 
-### Recently accessed
+### Landing view
 
-Before selecting a file, the content area shows the 7 most recently accessed files. Each entry displays the file name and the last-read part number; clicking it opens that file and resumes at the saved part.
+After login, before selecting a file, the content area shows two lists:
+
+- **Recently opened** — up to 5 files ordered by last access time. Each entry shows the file name and last-read part number; clicking it resumes from that part.
+- **Recent bookmarks** — up to 5 bookmarks ordered by insertion time, across all files. Each entry shows the file name, part number, line number, and a preview snippet. Clicking one opens the file and scrolls directly to the bookmarked line, bypassing the bookmark chooser.
+
+### Navigation
+
+The top bar contains three icon buttons:
+
+- **Bookmark** (flag icon) — opens a dropdown panel listing all bookmarks for the current file. Disabled when no file is open.
+- **Home** (house icon) — returns to the landing view from any file or state. Disabled when no file is open.
+- **Disconnect** (power icon) — ends the session and returns to the login screen.
 
 ### Bookmarks
 
 The reader supports per-line bookmarks, stored encrypted in the database. A DB trigger enforces a rolling window of 12 per file: when a 13th bookmark is added the oldest one (by insertion order) is automatically evicted.
 
 - **Add / remove:** click the thin bar to the left of any line to toggle a bookmark. The bar turns blue when the line is bookmarked.
-- **Bookmark panel:** click the **Bookmarks** button in the top bar to open a dropdown listing all bookmarks for the current file. Click any entry to jump to it; click **×** to delete it.
+- **Bookmark panel:** click the bookmark icon in the top bar to open a dropdown listing all bookmarks for the current file. Click any entry to jump to it; click **×** to delete it.
 - **Chooser on open:** when a file is selected and it already has bookmarks, the content area shows a sorted bookmark list instead of auto-loading part 1. Click an entry to jump directly to that position, or use the part controls to start from the beginning. Bookmarks can also be deleted from this view.
 - **Encryption:** each bookmark is stored as a brotli-compressed, AEAD-encrypted JSON blob `{"part_num":…,"line":…,"txt_preview":…}` using the same key-derivation and cipher as `txt_parts`. The database never sees plaintext positions or previews.
 

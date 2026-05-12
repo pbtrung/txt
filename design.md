@@ -107,7 +107,9 @@ CREATE TABLE IF NOT EXISTS txt_access (
 
 `part_count` is kept in sync automatically: `ingest_file` upserts the count after committing each file's parts. The `--part-count` flag can backfill it for data ingested before this table existed.
 
-`txt_access` has at most one row per file ever opened. `upsertAccess` writes a single `INSERT OR REPLACE` from the browser whenever a part is loaded. `fetchRecentAccess` reads at most 7 rows ordered by `last_accessed DESC` — no joins, no scans.
+`txt_access` has at most one row per file ever opened. `upsertAccess` writes a single `INSERT OR REPLACE` from the browser whenever a part is loaded. `fetchRecentAccess` reads at most 5 rows ordered by `last_accessed DESC` — no joins, no scans.
+
+`fetchRecentBookmarks` reads at most 5 rows ordered by `id DESC` (most recently inserted first), across all files: `SELECT id, txt_id, bookmark FROM bookmarks ORDER BY id DESC LIMIT 5`. The browser decrypts each blob and resolves the `txt_id` against the already-fetched file list; entries whose file no longer exists are silently dropped.
 
 ```sql
 CREATE TABLE IF NOT EXISTS bookmarks (
@@ -311,6 +313,44 @@ Owns the libSQL connection. Constructed once per run; establishes the direct Tur
 | `lc_aead_encrypt` | function | Authenticated encryption |
 | `lc_aead_decrypt` | function | Authenticated decryption |
 | `lc_aead_zero_free` | function | AEAD context teardown |
+
+---
+
+## Browser UI
+
+A React + Bootstrap SPA in `ui/`. All decryption runs client-side in the browser using leancrypto compiled to WebAssembly (`leancrypto.wasm`). The Turso database is accessed directly over the libSQL HTTP pipeline API — no backend server is involved.
+
+### Component Structure
+
+| Component | File | Responsibility |
+|-----------|------|----------------|
+| `App` | `App.jsx` | Toggles between `LoginScreen` and `DataScreen` based on credential state |
+| `LoginScreen` | `LoginScreen.jsx` | Collects Turso URL, auth token, and master key; calls `initDb` then passes credentials up |
+| `DataScreen` | `DataScreen.jsx` | Owns all reader state and business logic; renders layout skeleton and delegates views to sub-components |
+| `TopBar` | `TopBar.jsx` | Title, bookmark toggle (flag icon), home button (house icon), disconnect button (power icon); bookmark and home buttons are disabled when no file is open |
+| `LandingView` | `LandingView.jsx` | No-file-selected state: "Recently opened" list (up to 5) and "Recent bookmarks" list (up to 5 cross-file) |
+| `BookmarkChooser` | `BookmarkChooser.jsx` | "Pick up where you left off" list shown after opening a file that has existing bookmarks |
+| `ReaderView` | `ReaderView.jsx` | Line-by-line reader; each line has a clickable bar on the left to toggle a bookmark |
+| `BookmarkPanel` | `BookmarkPanel.jsx` | Dropdown panel listing all bookmarks for the current file with jump and delete actions |
+| `FileDropdown` | `FileDropdown.jsx` | Searchable file selector in the card header |
+| `PartFooter` | `PartFooter.jsx` | Part navigation controls and font-size adjuster |
+
+### Data Flow on Mount
+
+On mount `DataScreen` issues a single `Promise.all` with three queries: `fetchTxts`, `fetchRecentAccess`, and `fetchRecentBookmarks`. The results are merged in the browser: file names are decrypted against `masterKey`, recent-access rows are filtered to files that still exist, and bookmark blobs are decrypted and joined to file names. All three lists are ready before the first render.
+
+### State Transitions
+
+```
+Login → LandingView (no file selected)
+  ↓ select recent file / bookmark / dropdown
+DataScreen loads parts + file bookmarks
+  ├─ file has bookmarks → BookmarkChooser
+  │     ↓ click entry or use part controls
+  └─ no bookmarks (or jumpTo supplied) → ReaderView
+        ↓ Home button
+      LandingView
+```
 
 ---
 
