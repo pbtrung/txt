@@ -114,7 +114,13 @@ export async function deleteBookmark(id) {
 
 export async function fetchRecentAccess() {
   return toRows(await execute(
-    'SELECT txt_id, last_part_num FROM txt_access ORDER BY last_accessed DESC LIMIT 7',
+    'SELECT txt_id, last_part_num FROM txt_access ORDER BY last_accessed DESC LIMIT 5',
+  ));
+}
+
+export async function fetchRecentBookmarks() {
+  return toRows(await execute(
+    'SELECT id, txt_id, bookmark FROM bookmarks ORDER BY id DESC LIMIT 5',
   ));
 }
 

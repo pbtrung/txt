@@ -10,6 +10,7 @@ import {
   insertBookmark,
   deleteBookmark,
   fetchRecentAccess,
+  fetchRecentBookmarks,
   upsertAccess,
 } from '../db.js';
 import FileDropdown from './FileDropdown.jsx';
@@ -49,6 +50,7 @@ export default function DataScreen({ masterKey, onDisconnect }) {
   const [error, setError]             = useState(null);
   const [fontSize, setFontSize]       = useState(16);
   const [recentAccess, setRecentAccess]       = useState([]);
+  const [recentBookmarks, setRecentBookmarks] = useState([]);
   const [bookmarks, setBookmarks]             = useState(new Map());
   const [showBookmarks, setShowBookmarks]     = useState(false);
   const [showBookmarkChooser, setShowBookmarkChooser] = useState(false);
@@ -66,7 +68,9 @@ export default function DataScreen({ masterKey, onDisconnect }) {
 
   useEffect(() => {
     wrap(async () => {
-      const [rows, recent] = await Promise.all([fetchTxts(), fetchRecentAccess()]);
+      const [rows, recent, rawBmarks] = await Promise.all([
+        fetchTxts(), fetchRecentAccess(), fetchRecentBookmarks(),
+      ]);
       const decrypted = rows.map(r => {
         let name;
         try { name = decryptName(r.name, masterKey); }
@@ -83,6 +87,21 @@ export default function DataScreen({ masterKey, onDisconnect }) {
           lastPartNum: r.last_part_num,
         }))
       );
+      const decoded = [];
+      for (const b of rawBmarks) {
+        if (!nameMap.has(b.txt_id)) continue;
+        let obj;
+        try { obj = decryptBookmark(b.bookmark, masterKey); } catch { continue; }
+        decoded.push({
+          dbId: b.id,
+          txtId: b.txt_id,
+          txtName: nameMap.get(b.txt_id),
+          partNum: obj.part_num,
+          lineIndex: obj.line,
+          preview: obj.txt_preview ?? '',
+        });
+      }
+      setRecentBookmarks(decoded);
     });
   }, [masterKey, wrap]);
 
@@ -133,7 +152,7 @@ export default function DataScreen({ masterKey, onDisconnect }) {
     });
   }
 
-  async function selectTxt(txt, initialPartNum = 1) {
+  async function selectTxt(txt, initialPartNum = 1, jumpTo = null) {
     resetForTxt(txt);
     wrap(async () => {
       const [total, bmarks] = await Promise.all([
@@ -142,6 +161,13 @@ export default function DataScreen({ masterKey, onDisconnect }) {
       setTotalParts(total);
       const bMap = decodeBookmarks(bmarks, txt.id, masterKey);
       setBookmarks(bMap);
+      if (jumpTo) {
+        if (total > 0) {
+          setPendingScrollLine(jumpTo.lineIndex);
+          await loadFirstPart(txt, jumpTo.partNum, total);
+        }
+        return;
+      }
       if (bMap.size > 0) { setShowBookmarkChooser(true); return; }
       if (total > 0) await loadFirstPart(txt, initialPartNum, total);
     });
@@ -287,8 +313,8 @@ export default function DataScreen({ masterKey, onDisconnect }) {
             <div style={{ paddingLeft: '1rem' }}>
               {recentAccess.length > 0 ? (
                 <>
-                  <p className="text-muted small mb-2">Recently accessed:</p>
-                  <ul className="list-group list-group-flush">
+                  <p className="text-muted small mb-2">Recently opened:</p>
+                  <ul className="list-group list-group-flush mb-3">
                     {recentAccess.map(item => (
                       <li
                         key={item.txtId}
@@ -308,6 +334,33 @@ export default function DataScreen({ masterKey, onDisconnect }) {
                 </>
               ) : (
                 <p className="text-muted small mb-0">Select a file to view its content.</p>
+              )}
+              {recentBookmarks.length > 0 && (
+                <>
+                  <p className="text-muted small mb-2">Recent bookmarks:</p>
+                  <ul className="list-group list-group-flush">
+                    {recentBookmarks.map(bm => (
+                      <li
+                        key={bm.dbId}
+                        className="list-group-item list-group-item-action py-2 px-2"
+                        style={{ cursor: 'pointer' }}
+                        onClick={() => selectTxt(
+                          { id: bm.txtId, name: bm.txtName },
+                          bm.partNum,
+                          { partNum: bm.partNum, lineIndex: bm.lineIndex },
+                        )}
+                      >
+                        <div className="small fw-medium" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {bm.txtName}
+                        </div>
+                        <div className="text-muted" style={{ fontSize: '0.7rem' }}>
+                          Part {bm.partNum} &middot; Line {bm.lineIndex + 1}
+                          {bm.preview && ` · ${bm.preview}`}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </>
               )}
             </div>
           ) : showBookmarkChooser ? (
