@@ -44,7 +44,7 @@ function addBookmarkToMap(prev, entry) {
   return n;
 }
 
-export default function DataScreen({ masterKey, onDisconnect, theme, onThemeCycle }) {
+export default function DataScreen({ masterKey, onDisconnect }) {
   const [txts, setTxts]               = useState([]);
   const [selectedTxt, setSelectedTxt] = useState(null);
   const [totalParts, setTotalParts]   = useState(0);
@@ -330,8 +330,6 @@ export default function DataScreen({ masterKey, onDisconnect, theme, onThemeCycl
         onRemove={removeBookmark}
         onHome={handleHome}
         onDisconnect={onDisconnect}
-        theme={theme}
-        onThemeCycle={onThemeCycle}
       />
 
       {error && (

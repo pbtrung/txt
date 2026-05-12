@@ -1,14 +1,11 @@
 import React from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faPowerOff, faBookmark, faHouse, faSun, faMoon, faBook } from '@fortawesome/free-solid-svg-icons';
+import { faPowerOff, faBookmark, faHouse } from '@fortawesome/free-solid-svg-icons';
 import BookmarkPanel from './BookmarkPanel.jsx';
-
-const THEME_ICONS = { light: faSun, dark: faMoon, sepia: faBook };
 
 export default function TopBar({
   hasTxt, showBookmarks, setShowBookmarks,
   bookmarks, selectedTxt, onNavigate, onRemove, onHome, onDisconnect,
-  theme, onThemeCycle,
 }) {
   const count = bookmarks.size;
   return (
@@ -53,13 +50,6 @@ export default function TopBar({
           title="Home"
         >
           <FontAwesomeIcon icon={faHouse} />
-        </button>
-        <button
-          className="btn btn-sm btn-outline-secondary"
-          onClick={onThemeCycle}
-          title={`Theme: ${theme}`}
-        >
-          <FontAwesomeIcon icon={THEME_ICONS[theme] ?? faSun} />
         </button>
         <button
           className="btn btn-sm btn-outline-danger"
