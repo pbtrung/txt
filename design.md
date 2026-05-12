@@ -343,14 +343,21 @@ On mount `DataScreen` issues a single `Promise.all` with three queries: `fetchTx
 
 ```
 Login → LandingView (no file selected)
-  ↓ select recent file / bookmark / dropdown
-DataScreen loads parts + file bookmarks
-  ├─ file has bookmarks → BookmarkChooser
-  │     ↓ click entry or use part controls
-  └─ no bookmarks (or jumpTo supplied) → ReaderView
-        ↓ Home button
-      LandingView
+  ↓ click recently opened entry        ↓ click recent bookmark entry   ↓ dropdown
+  jumpTo={partNum, lineIndex:null}      jumpTo={partNum, lineIndex}      no jumpTo
+  (skips BookmarkChooser)               (skips BookmarkChooser)
+        └──────────────────────────────────────┬───────────────────────────┘
+                                               ↓
+                               DataScreen loads parts + file bookmarks
+                                 ├─ jumpTo supplied → ReaderView (scroll if lineIndex ≠ null)
+                                 ├─ file has bookmarks → BookmarkChooser
+                                 │       ↓ click entry or use part controls
+                                 └─ no bookmarks → ReaderView
+                                         ↓ Home button
+                                       LandingView (lists refreshed)
 ```
+
+Pressing Home calls `resetForTxt(null)` (clears all file state) and increments `refreshLanding`, which triggers the landing `useEffect` to re-fetch `fetchRecentAccess` and `fetchRecentBookmarks` so the lists reflect the just-closed session.
 
 ---
 

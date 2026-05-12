@@ -12,6 +12,7 @@ import {
   fetchRecentAccess,
   fetchRecentBookmarks,
   upsertAccess,
+  deleteAccess,
 } from '../db.js';
 import FileDropdown from './FileDropdown.jsx';
 import PartFooter from './PartFooter.jsx';
@@ -54,6 +55,7 @@ export default function DataScreen({ masterKey, onDisconnect }) {
   const [fontSize, setFontSize]       = useState(16);
   const [recentAccess, setRecentAccess]       = useState([]);
   const [recentBookmarks, setRecentBookmarks] = useState([]);
+  const [refreshLanding, setRefreshLanding]   = useState(0);
   const [bookmarks, setBookmarks]             = useState(new Map());
   const [showBookmarks, setShowBookmarks]     = useState(false);
   const [showBookmarkChooser, setShowBookmarkChooser] = useState(false);
@@ -106,7 +108,7 @@ export default function DataScreen({ masterKey, onDisconnect }) {
       }
       setRecentBookmarks(decoded);
     });
-  }, [masterKey, wrap]);
+  }, [masterKey, wrap, refreshLanding]);
 
   function scrollLineToTop(idx) {
     const el = lineRefs.current[idx];
@@ -202,6 +204,20 @@ export default function DataScreen({ masterKey, onDisconnect }) {
     }
   }
 
+  async function removeRecentAccess(txtId) {
+    try {
+      await deleteAccess(txtId);
+      setRecentAccess(prev => prev.filter(r => r.txtId !== txtId));
+    } catch (e) { setError(e.message); }
+  }
+
+  async function removeRecentBookmark(dbId) {
+    try {
+      await deleteBookmark(dbId);
+      setRecentBookmarks(prev => prev.filter(b => b.dbId !== dbId));
+    } catch (e) { setError(e.message); }
+  }
+
   async function removeBookmark(key) {
     const bm = bookmarks.get(key);
     if (!bm) return;
@@ -225,7 +241,7 @@ export default function DataScreen({ masterKey, onDisconnect }) {
         selectedTxt={selectedTxt}
         onNavigate={navigateToBookmark}
         onRemove={removeBookmark}
-        onHome={() => resetForTxt(null)}
+        onHome={() => { resetForTxt(null); setRefreshLanding(n => n + 1); }}
         onDisconnect={onDisconnect}
       />
 
@@ -255,6 +271,8 @@ export default function DataScreen({ masterKey, onDisconnect }) {
               recentAccess={recentAccess}
               recentBookmarks={recentBookmarks}
               onSelectTxt={selectTxt}
+              onRemoveAccess={removeRecentAccess}
+              onRemoveBookmark={removeRecentBookmark}
             />
           ) : showBookmarkChooser ? (
             <BookmarkChooser

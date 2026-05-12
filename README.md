@@ -155,8 +155,10 @@ Output goes to `ui/dist/`. Serve it with any static file server.
 
 After login, before selecting a file, the content area shows two lists:
 
-- **Recently opened** — up to 5 files ordered by last access time. Each entry shows the file name and last-read part number; clicking it resumes from that part.
+- **Recently opened** — up to 5 files ordered by last access time. Each entry shows the file name and last-read part number; clicking it resumes from that part, skipping the bookmark chooser.
 - **Recent bookmarks** — up to 5 bookmarks ordered by insertion time, across all files. Each entry shows the file name, part number, line number, and a preview snippet. Clicking one opens the file and scrolls directly to the bookmarked line, bypassing the bookmark chooser.
+
+Both lists are refreshed automatically when the Home button is pressed, so they always reflect the most recent session.
 
 ### Navigation
 

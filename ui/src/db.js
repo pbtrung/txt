@@ -112,6 +112,10 @@ export async function deleteBookmark(id) {
   await execute('DELETE FROM bookmarks WHERE id = ?', [id]);
 }
 
+export async function deleteAccess(txtId) {
+  await execute('DELETE FROM txt_access WHERE txt_id = ?', [txtId]);
+}
+
 export async function fetchRecentAccess() {
   return toRows(await execute(
     'SELECT txt_id, last_part_num FROM txt_access ORDER BY last_accessed DESC LIMIT 5',
