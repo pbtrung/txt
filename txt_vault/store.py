@@ -228,18 +228,19 @@ class Downloader:
         ).fetchall()
         return [bytes(r[0]) for r in rows]
 
-    def _assemble(self, blobs: list[bytes], crypto: Crypto) -> bytes:
-        parts = []
-        for blob in blobs:
-            plain = preprocess_text(crypto.decrypt_part(blob))
-            parts.append(plain.rstrip(b"\n"))
-        return b"\n\n".join(parts) + b"\n"
-
-    def _write_file(self, dest: Path, data: bytes, name: str, n: int, verbose: bool):
+    def _write_parts(self, dest: Path, blobs: list[bytes], crypto: Crypto, name: str, verbose: bool):
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(data)
+        total = 0
+        with dest.open("wb") as f:
+            for i, blob in enumerate(blobs):
+                plain = preprocess_text(crypto.decrypt_part(blob)).rstrip(b"\n")
+                if i > 0:
+                    f.write(b"\n\n")
+                f.write(plain)
+                total += len(plain)
+            f.write(b"\n")
         if verbose:
-            click.echo(f"  {name}: {n} part(s) → {len(data):,}B")
+            click.echo(f"  {name}: {len(blobs)} part(s) → {total:,}B")
 
     def download_all(self, crypto: Crypto, out_dir: str, verbose: bool = False):
         out = Path(out_dir)
@@ -251,7 +252,6 @@ class Downloader:
                 blobs = self._fetch_part_blobs(txt_id)
                 if not blobs:
                     continue
-                data = self._assemble(blobs, crypto)
-                self._write_file(out / name, data, name, len(blobs), verbose)
+                self._write_parts(out / name, blobs, crypto, name, verbose)
             except Exception as e:
                 click.echo(f"Warning: skipping id={txt_id}: {e}", err=True)
