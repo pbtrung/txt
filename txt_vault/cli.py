@@ -6,7 +6,7 @@ from pathlib import Path
 from .constants import MASTER_KEY_LEN
 from .utils import load_creds, get_master_key
 from .crypto import Crypto
-from .store import VaultStore
+from .store import VaultStore, Downloader
 
 
 def _cmd_gen_master_key(path: str):
@@ -64,6 +64,7 @@ def _dispatch_admin(
 
 
 @click.command()
+@click.option("--download", "do_download", is_flag=True, help="Download all files to --out directory")
 @click.option("--src", type=click.Path(exists=True))
 @click.option(
     "--force", is_flag=True, help="Overwrite existing entries when using --src"
@@ -80,6 +81,7 @@ def _dispatch_admin(
 @click.option("--out")
 @click.option("--verbose", "-v", is_flag=True)
 def main(
+    do_download,
     src,
     force,
     creds,
@@ -107,7 +109,11 @@ def main(
     ):
         return
     crypto = Crypto(get_master_key(loaded))
-    if read_part_id is not None:
+    if do_download:
+        if not out:
+            raise click.UsageError("--out is required with --download")
+        Downloader(loaded).download_all(crypto, out, verbose=verbose)
+    elif read_part_id is not None:
         if not out:
             raise click.UsageError("--out is required with --read-part")
         store.read_part(crypto, read_part_id, out, verbose=verbose)

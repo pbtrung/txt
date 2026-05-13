@@ -93,6 +93,11 @@ class Crypto:
         blob = salt + self._aead_encrypt(key, iv, name_b, salt)
         return blob, self._hmac(hmac_key, name_b)
 
+    def decrypt_name(self, blob: bytes) -> str:
+        salt, ct_tag = blob[:SALT_LEN], blob[SALT_LEN:]
+        key, iv, _ = self._derive_name(salt)
+        return self._aead_decrypt(key, iv, ct_tag, salt).decode()
+
     def find_txt_id(self, conn, name: str) -> int | None:
         name_b = name.encode()
         for row_id, name_blob, stored_mac in conn.execute(

@@ -9,6 +9,7 @@ from .crypto import Crypto
 from .utils import split_parts, preprocess_text
 
 
+
 class VaultStore:
     """Database connection and all storage operations."""
 
@@ -208,3 +209,49 @@ class VaultStore:
             click.echo(
                 f"Part {part_id}: {len(blob):,}B blob → {len(data):,}B plain → {out_path}"
             )
+
+
+class Downloader:
+    def __init__(self, creds: dict):
+        self._conn = libsql.connect(
+            creds["turso_database_url"],
+            auth_token=creds["turso_auth_token"],
+        )
+
+    def _all_txts(self):
+        return self._conn.execute("SELECT id, name FROM txt").fetchall()
+
+    def _fetch_part_blobs(self, txt_id: int) -> list[bytes]:
+        rows = self._conn.execute(
+            "SELECT content FROM txt_parts WHERE txt_id = ? ORDER BY part_num",
+            (txt_id,),
+        ).fetchall()
+        return [bytes(r[0]) for r in rows]
+
+    def _assemble(self, blobs: list[bytes], crypto: Crypto) -> bytes:
+        parts = []
+        for blob in blobs:
+            plain = preprocess_text(crypto.decrypt_part(blob))
+            parts.append(plain.rstrip(b"\n"))
+        return b"\n\n".join(parts) + b"\n"
+
+    def _write_file(self, dest: Path, data: bytes, name: str, n: int, verbose: bool):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(data)
+        if verbose:
+            click.echo(f"  {name}: {n} part(s) → {len(data):,}B")
+
+    def download_all(self, crypto: Crypto, out_dir: str, verbose: bool = False):
+        out = Path(out_dir)
+        out.mkdir(parents=True, exist_ok=True)
+        for row in self._all_txts():
+            txt_id, name_blob = row[0], bytes(row[1])
+            try:
+                name = crypto.decrypt_name(name_blob)
+                blobs = self._fetch_part_blobs(txt_id)
+                if not blobs:
+                    continue
+                data = self._assemble(blobs, crypto)
+                self._write_file(out / name, data, name, len(blobs), verbose)
+            except Exception as e:
+                click.echo(f"Warning: skipping id={txt_id}: {e}", err=True)
