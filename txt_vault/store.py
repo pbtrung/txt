@@ -6,7 +6,7 @@ from .constants import BATCH
 from .leancrypto import library_name as _lc_name
 from .schema import _SCHEMA, _BOOKMARKS_STMTS
 from .crypto import Crypto
-from .utils import split_parts
+from .utils import split_parts, preprocess_text
 
 
 class VaultStore:
@@ -79,7 +79,7 @@ class VaultStore:
         verbose: bool,
         force: bool = False,
     ):
-        content = filepath.read_bytes()
+        content = preprocess_text(filepath.read_bytes())
         parts = split_parts(content)
         txt_id, action = self._resolve_txt_id(crypto, stored_name, force, verbose)
         if txt_id is None:

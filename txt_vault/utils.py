@@ -5,6 +5,20 @@ import base64
 from .constants import MASTER_KEY_LEN, PART_TARGET
 
 
+def preprocess_text(content: bytes) -> bytes:
+    lines = content.decode("utf-8", errors="replace").splitlines()
+    out: list[str] = []
+    for line in lines:
+        if line.strip():
+            if out and out[-1] != "":
+                out.append("")
+            out.append(line)
+        else:
+            if out and out[-1] != "":
+                out.append("")
+    return "\n".join(out).encode("utf-8")
+
+
 def split_parts(content: bytes, target: int = PART_TARGET) -> list[bytes]:
     paras = re.split(rb"\r?\n\r?\n", content)
     parts, cur = [], b""
