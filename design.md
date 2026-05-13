@@ -292,7 +292,8 @@ Decryption is the symmetric reverse. The FK `txt_id` is the only plaintext metad
 | `schema.py` | `_SCHEMA` DDL string and `_BOOKMARKS_STMTS` list (trigger interpolates `BOOKMARK_LIMIT`) |
 | `utils.py` | `preprocess_text`, `split_parts`, `load_creds`, `get_master_key` |
 | `crypto.py` | `Crypto` class |
-| `store.py` | `VaultStore` class, `Downloader` class |
+| `store.py` | `VaultStore` class |
+| `downloader.py` | `Downloader` class |
 | `cli.py` | Click command definitions, `_cmd_gen_master_key`, `_cmd_ingest`, `_dispatch_admin`, `main` |
 
 ### `Crypto`
