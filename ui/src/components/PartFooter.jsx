@@ -21,32 +21,34 @@ export default function PartFooter({
           onClick={() => onLoadPart(currentPartNum - 1)}
         >−</button>
         {hasTxt ? (
-          <input
-            type="text"
-            inputMode="numeric"
-            pattern="[0-9]*"
-            className="form-control form-control-sm text-center"
-            style={{ width: '6ch' }}
-            value={currentPartNum}
-            disabled={!hasParts}
-            onChange={e =>
-              onPartNumChange(Number(e.target.value))
-            }
-            onBlur={() => onLoadPart(currentPartNum)}
-            onKeyDown={e => {
-              if (e.key === 'Enter') onLoadPart(currentPartNum);
-            }}
-          />
+          <>
+            <input
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              className="form-control form-control-sm text-center"
+              style={{ width: '6ch' }}
+              value={currentPartNum}
+              disabled={!hasParts}
+              onChange={e =>
+                onPartNumChange(Number(e.target.value))
+              }
+              onBlur={() => onLoadPart(currentPartNum)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') onLoadPart(currentPartNum);
+              }}
+            />
+            <span
+              className="text-muted flex-shrink-0"
+              style={{ fontSize: '0.875rem' }}
+            >
+              {'/ '}
+              {hasParts ? totalParts : '—'}
+            </span>
+          </>
         ) : (
-          <span className="text-muted px-2">&mdash;</span>
+          <span className="text-muted px-2">&mdash;{' / '}&mdash;</span>
         )}
-        <span
-          className="text-muted flex-shrink-0"
-          style={{ fontSize: '0.875rem' }}
-        >
-          /{' '}
-          {hasTxt && hasParts ? totalParts : '—'}
-        </span>
         <button
           className="btn btn-sm btn-outline-secondary px-2 py-0"
           disabled={!hasParts || currentPartNum >= totalParts}
