@@ -65,7 +65,12 @@ def _dispatch_admin(
 
 
 @click.command()
-@click.option("--download", "do_download", is_flag=True, help="Download all files to --out directory")
+@click.option(
+    "--download",
+    "do_download",
+    is_flag=True,
+    help="Download all files to --out directory",
+)
 @click.option("--src", type=click.Path(exists=True))
 @click.option(
     "--force", is_flag=True, help="Overwrite existing entries when using --src"

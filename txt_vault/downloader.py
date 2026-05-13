@@ -22,7 +22,9 @@ class Downloader:
         ).fetchall()
         return [bytes(r[0]) for r in rows]
 
-    def _write_parts(self, dest: Path, blobs: list[bytes], crypto: Crypto, name: str, verbose: bool):
+    def _write_parts(
+        self, dest: Path, blobs: list[bytes], crypto: Crypto, name: str, verbose: bool
+    ):
         dest.parent.mkdir(parents=True, exist_ok=True)
         total = 0
         with dest.open("wb") as f:

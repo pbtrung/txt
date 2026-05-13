@@ -333,7 +333,7 @@ Owns the libSQL connection. Constructed once per run; establishes the direct Tur
 | `upload_db` | Orchestrate full local-SQLite-to-Turso upload |
 | `read_part` | Fetch and decrypt a single part by id |
 
-### `Downloader`
+### `Downloader` (`downloader.py`)
 
 Opens its own Turso connection (read-only use; no schema application). Constructed once per `--download` run.
 
