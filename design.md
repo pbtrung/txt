@@ -94,16 +94,17 @@ Parts are split on blank-line boundaries (`\n\n` or `\r\n\r\n`). The splitter ac
 ```
 for each row in txt:
   1. Decrypt the stored name blob → filename string
-  2. Fetch all txt_parts rows for this txt_id, ordered by part_num
-  3. For each part blob:
+  2. Open the destination file for writing; create parent directories as needed
+  3. Stream txt_parts rows for this txt_id one at a time (ordered by part_num):
      a. Decrypt with Ascon-Keccak AEAD → brotli-decompress → plaintext bytes
      b. Run preprocess_text() on the plaintext
      c. Strip trailing newlines
-  4. Join parts with b"\n\n" (one blank line between parts)
-  5. Write to out_dir/<filename>; create intermediate directories as needed
+     d. Write b"\n\n" separator before each part after the first, then write the part
+  4. Append a final b"\n" after the last part
+  5. If no parts were written, unlink the empty destination file
 ```
 
-Files with no stored parts are skipped silently. Per-file errors are printed as warnings and do not abort the rest of the download.
+Parts are fetched and written one at a time so memory is bounded to a single decrypted part. Files with no stored parts are removed silently. Per-file errors are printed as warnings and do not abort the rest of the download. With `-v`, each file prints `name: downloading...` (no newline) before writing, then appends ` N part(s) → X,XXXB` on the same line once done, or ` skipped (empty)` if no parts exist.
 
 ---
 
@@ -340,10 +341,10 @@ Opens its own Turso connection (read-only use; no schema application). Construct
 | Method | Role |
 |--------|------|
 | `_all_txts` | Fetch all `(id, name)` rows from the `txt` table |
-| `_fetch_part_blobs` | Fetch all encrypted part blobs for a `txt_id`, ordered by `part_num` |
-| `_assemble` | Decrypt + preprocess each part, strip trailing newlines, join with `b"\n\n"` |
-| `_write_file` | Create parent directories and write assembled bytes to destination |
-| `download_all` | Iterate all txt rows; decrypt filename, assemble parts, write file; skip empties, warn on errors |
+| `_fetch_part_blobs` | Generator that yields encrypted part blobs for a `txt_id` one at a time, ordered by `part_num` |
+| `_write_blobs` | Decrypt each blob, preprocess, and write to an open file handle; returns `(count, total_bytes)` |
+| `_write_parts` | Create parent dirs, log inline progress, call `_write_blobs`, unlink destination on empty result |
+| `download_all` | Iterate all txt rows; decrypt filename, stream parts to file, warn on errors |
 
 ---
 

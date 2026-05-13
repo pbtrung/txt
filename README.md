@@ -72,8 +72,7 @@ python3 txt_vault.py --src ./documents --force --creds creds.json
 python3 txt_vault.py --download --out ./documents --creds creds.json
 ```
 
-Decrypts every entry in the database and writes each file to `./documents/<stored-name>`. Each part is preprocessed (paragraph spacing normalised) and parts are joined with a single blank line separator. Subdirectories are created automatically if the stored name contains path components. Files with no stored parts are silently skipped; per-file errors are printed as warnings without aborting the run. Pass `-v` to see per-file part count and byte size.
-
+Decrypts every entry in the database and writes each file to `./documents/<stored-name>`. Parts are fetched and written one at a time to bound memory; each part is preprocessed (paragraph spacing normalised) and separated by a single blank line. Subdirectories are created automatically if the stored name contains path components. Files with no stored parts are silently skipped; per-file errors are printed as warnings without aborting the run.
 ### Upload a local SQLite database
 
 ```bash

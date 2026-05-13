@@ -24,7 +24,9 @@ class Downloader:
         for row in cursor:
             yield bytes(row[0])
 
-    def _write_blobs(self, f, blobs: Iterator[bytes], crypto: Crypto) -> tuple[int, int]:
+    def _write_blobs(
+        self, f, blobs: Iterator[bytes], crypto: Crypto
+    ) -> tuple[int, int]:
         count, total = 0, 0
         for blob in blobs:
             plain = preprocess_text(crypto.decrypt_part(blob)).rstrip(b"\n")
@@ -38,7 +40,12 @@ class Downloader:
         return count, total
 
     def _write_parts(
-        self, dest: Path, blobs: Iterator[bytes], crypto: Crypto, name: str, verbose: bool
+        self,
+        dest: Path,
+        blobs: Iterator[bytes],
+        crypto: Crypto,
+        name: str,
+        verbose: bool,
     ):
         dest.parent.mkdir(parents=True, exist_ok=True)
         if verbose:
@@ -60,6 +67,8 @@ class Downloader:
             txt_id, name_blob = row[0], bytes(row[1])
             try:
                 name = crypto.decrypt_name(name_blob)
-                self._write_parts(out / name, self._fetch_part_blobs(txt_id), crypto, name, verbose)
+                self._write_parts(
+                    out / name, self._fetch_part_blobs(txt_id), crypto, name, verbose
+                )
             except Exception as e:
                 click.echo(f"Warning: skipping id={txt_id}: {e}", err=True)
