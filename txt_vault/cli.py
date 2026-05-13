@@ -6,7 +6,8 @@ from pathlib import Path
 from .constants import MASTER_KEY_LEN
 from .utils import load_creds, get_master_key
 from .crypto import Crypto
-from .store import VaultStore, Downloader
+from .store import VaultStore
+from .downloader import Downloader
 
 
 def _cmd_gen_master_key(path: str):
