@@ -299,20 +299,7 @@ export default function DataScreen({ masterKey, onDisconnect }) {
   kbRef.current = { hasTxt, hasParts, showBookmarkChooser, content, selectedTxt, currentPartNum, totalParts };
   fnRef.current = { loadPart, toggleBookmark };
 
-  async function autoSavePosition() {
-    const idx = getFirstVisibleLineIndex();
-    if (idx === null || bookmarks.has(`${currentPartNum}:${idx}`)) return;
-    const preview = lineRefs.current[idx]?.textContent?.trim().slice(0, 60) ?? '';
-    try {
-      await insertBookmark(
-        selectedTxt.id,
-        encryptBookmark({ part_num: currentPartNum, line: idx, txt_preview: preview }, masterKey),
-      );
-    } catch { /* don't block navigation */ }
-  }
-
-  async function handleHome() {
-    if (hasTxt && content !== null && !showBookmarkChooser) await autoSavePosition();
+  function handleHome() {
     resetForTxt(null);
     setRefreshLanding(n => n + 1);
   }

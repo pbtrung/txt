@@ -47,7 +47,7 @@ export default function PartFooter({
             </span>
           </>
         ) : (
-          <span className="text-muted px-2">&mdash;{' / '}&mdash;</span>
+          <span className="text-muted">&mdash;{' / '}&mdash;</span>
         )}
         <button
           className="btn btn-sm btn-outline-secondary px-2 py-0"
