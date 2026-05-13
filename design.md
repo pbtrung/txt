@@ -9,6 +9,7 @@ A CLI tool that ingests `.txt` files, splits them into compressed and encrypted 
 ```
 python3 txt_vault.py --src <folder_path> --creds creds.json
 python3 txt_vault.py --src <folder_path> --force --creds creds.json
+python3 txt_vault.py --download --out <out_dir> --creds creds.json
 python3 txt_vault.py --upload-db <file.db> --creds creds.json
 python3 txt_vault.py --part-count --creds creds.json
 python3 txt_vault.py --create-bookmarks --creds creds.json
@@ -22,6 +23,7 @@ python3 txt_vault.py --gen-master-key creds.json
 |------|-------------|
 | `--src <folder_path>` | Directory to scan for `.txt` files (case-insensitive); skips files already in the database unless `--force` is set |
 | `--force` | With `--src`: overwrite existing entries instead of skipping them |
+| `--download` | Decrypt and export all stored files to the `--out` directory |
 | `--creds <path>` | Credentials JSON file with Turso URL/token and master key (default: `creds.json`) |
 | `--upload-db <file>` | Upload all rows from a local SQLite db to Turso; Turso `txt` must be empty |
 | `--part-count` | Rebuild `part_count` table from existing `txt_parts` rows, then exit |
@@ -29,7 +31,7 @@ python3 txt_vault.py --gen-master-key creds.json
 | `--recreate-bookmarks` | Drop and recreate bookmarks table (all bookmarks lost) and exit; progress shown with `-v` |
 | `--gen-master-key <path>` | Add/update `master_key` in the credentials file, then exit |
 | `--read-part <id>` | Decrypt a single part by `txt_parts.id` and write to `--out` |
-| `--out <path>` | Output path for `--read-part` |
+| `--out <path>` | Output path: file for `--read-part`, directory for `--download` |
 | `--verbose`, `-v` | Enable debug logging (per-part progress, DB URL, schema setup, upload progress) |
 
 ### Credentials JSON Format
@@ -57,20 +59,51 @@ for each .txt file (case-insensitive) in --src:
      - No match → encrypt filename and INSERT a new txt row.
      - Match + no --force → skip this file entirely.
      - Match + --force → reuse txt_id and DELETE existing parts.
-  3. Split content into parts at paragraph boundaries, targeting ~200 KB per part
-  4. For each part (1-based index i):
+  3. Preprocess: normalise paragraph spacing via preprocess_text()
+     - Insert a blank line between any two consecutive non-blank lines.
+     - Collapse multiple consecutive blank lines to one.
+  4. Split preprocessed content into parts at paragraph boundaries,
+     targeting ~200 KB per part
+  5. For each part (1-based index i):
      a. Compress with Brotli (quality 11)
      b. Generate 64-byte random salt
      c. Derive 64-byte key and 64-byte IV via HKDF-SHA3-512(master_key, salt)
      d. Encrypt compressed bytes with Ascon-Keccak AEAD; pass salt as AAD
      e. Store (txt_id, part_num=i, salt || ciphertext+tag) in txt_parts
-  5. Upsert total part count into part_count (txt_id, count)
-  6. Commit to Turso
+  6. Upsert total part count into part_count (txt_id, count)
+  7. Commit to Turso
 ```
+
+### Text Preprocessing
+
+`preprocess_text()` (in `utils.py`) normalises paragraph spacing before splitting or reassembling:
+
+- Any two consecutive non-blank lines get a blank line inserted between them.
+- Multiple consecutive blank lines are collapsed to one.
+
+This runs on every file at ingest time and on every part at download time, ensuring the on-disk representation is consistent regardless of the source file's original whitespace style.
 
 ### Paragraph Splitting
 
 Parts are split on blank-line boundaries (`\n\n` or `\r\n\r\n`). The splitter accumulates paragraphs until adding the next paragraph would push the UTF-8 byte count past 200 KB (204 800 bytes), then starts a new part. A single paragraph larger than 200 KB becomes its own part unchanged.
+
+### Download Pipeline
+
+`Downloader.download_all()` is the inverse of ingest:
+
+```
+for each row in txt:
+  1. Decrypt the stored name blob → filename string
+  2. Fetch all txt_parts rows for this txt_id, ordered by part_num
+  3. For each part blob:
+     a. Decrypt with Ascon-Keccak AEAD → brotli-decompress → plaintext bytes
+     b. Run preprocess_text() on the plaintext
+     c. Strip trailing newlines
+  4. Join parts with b"\n\n" (one blank line between parts)
+  5. Write to out_dir/<filename>; create intermediate directories as needed
+```
+
+Files with no stored parts are skipped silently. Per-file errors are printed as warnings and do not abort the rest of the download.
 
 ---
 
@@ -257,9 +290,9 @@ Decryption is the symmetric reverse. The FK `txt_id` is the only plaintext metad
 | `constants.py` | All numeric constants (`SALT_LEN`, `TAG_LEN`, `KEY_LEN`, `IV_LEN`, `HMAC_LEN`, `MASTER_KEY_LEN`, `PART_TARGET`, `BOOKMARK_LIMIT`, `BATCH`) |
 | `leancrypto.py` | ctypes binding helpers and module-level singletons (`library_name`, `lib`, `sha3_512`, `sha3_256`) |
 | `schema.py` | `_SCHEMA` DDL string and `_BOOKMARKS_STMTS` list (trigger interpolates `BOOKMARK_LIMIT`) |
-| `utils.py` | `split_parts`, `load_creds`, `get_master_key` |
+| `utils.py` | `preprocess_text`, `split_parts`, `load_creds`, `get_master_key` |
 | `crypto.py` | `Crypto` class |
-| `store.py` | `VaultStore` class |
+| `store.py` | `VaultStore` class, `Downloader` class |
 | `cli.py` | Click command definitions, `_cmd_gen_master_key`, `_cmd_ingest`, `_dispatch_admin`, `main` |
 
 ### `Crypto`
@@ -275,8 +308,9 @@ Owns the master key and all cryptographic logic. Constructed once per run with t
 | `_derive_part` | Derive (key, IV) for a part from its salt |
 | `_derive_name` | Derive (key, IV, hmac\_key) for a filename from its salt |
 | `encrypt_part` / `decrypt_part` | Compress + encrypt / decrypt + decompress a part blob |
-| `encrypt_name` / `decrypt_name` | Encrypt / decrypt a filename blob |
-| `find_txt_id` | Scan `txt` rows to find an existing entry by filename |
+| `encrypt_name` | Encrypt a filename blob with a fresh random salt; returns `(blob, hmac)` |
+| `decrypt_name` | Recover the plaintext filename from a stored name blob |
+| `find_txt_id` | Scan `txt` rows to find an existing entry by filename via HMAC comparison |
 
 ### `VaultStore`
 
@@ -297,6 +331,18 @@ Owns the libSQL connection. Constructed once per run; establishes the direct Tur
 | `_upload_rows` / `_upload_table` | Upload one table in `BATCH`-row commits |
 | `upload_db` | Orchestrate full local-SQLite-to-Turso upload |
 | `read_part` | Fetch and decrypt a single part by id |
+
+### `Downloader`
+
+Opens its own Turso connection (read-only use; no schema application). Constructed once per `--download` run.
+
+| Method | Role |
+|--------|------|
+| `_all_txts` | Fetch all `(id, name)` rows from the `txt` table |
+| `_fetch_part_blobs` | Fetch all encrypted part blobs for a `txt_id`, ordered by `part_num` |
+| `_assemble` | Decrypt + preprocess each part, strip trailing newlines, join with `b"\n\n"` |
+| `_write_file` | Create parent directories and write assembled bytes to destination |
+| `download_all` | Iterate all txt rows; decrypt filename, assemble parts, write file; skip empties, warn on errors |
 
 ---
 
@@ -357,7 +403,7 @@ Login → LandingView (no file selected)
                                        LandingView (lists refreshed)
 ```
 
-Pressing Home calls `resetForTxt(null)` (clears all file state) and increments `refreshLanding`, which triggers the landing `useEffect` to re-fetch `fetchRecentAccess` and `fetchRecentBookmarks` so the lists reflect the just-closed session.
+Pressing Home calls `resetForTxt(null)` (clears all file state) and increments `refreshLanding`, which triggers the landing `useEffect` to re-fetch `fetchRecentAccess` and `fetchRecentBookmarks` so the lists reflect the just-closed session. No automatic bookmark is created on Home — bookmarks are only added by explicit user action (line-bar click or `b` key).
 
 ---
 

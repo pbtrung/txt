@@ -58,13 +58,21 @@ Install leancrypto via your package manager or build from source, then run `ldco
 python3 txt_vault.py --src ./documents --creds creds.json
 ```
 
-All `.txt` files (case-insensitive: `.txt`, `.TXT`, etc.) under `./documents` are split, compressed, encrypted, and stored in the Turso database. Files whose name already exists in the database are **skipped**. The `part_count` table is updated automatically after each file is committed.
+All `.txt` files (case-insensitive: `.txt`, `.TXT`, etc.) under `./documents` are preprocessed (paragraph spacing is normalised), split, compressed, encrypted, and stored in the Turso database. Files whose name already exists in the database are **skipped**. The `part_count` table is updated automatically after each file is committed.
 
 To overwrite existing entries:
 
 ```bash
 python3 txt_vault.py --src ./documents --force --creds creds.json
 ```
+
+### Download all files
+
+```bash
+python3 txt_vault.py --download --out ./documents --creds creds.json
+```
+
+Decrypts every entry in the database and writes each file to `./documents/<stored-name>`. Each part is preprocessed (paragraph spacing normalised) and parts are joined with a single blank line separator. Subdirectories are created automatically if the stored name contains path components. Files with no stored parts are silently skipped; per-file errors are printed as warnings without aborting the run. Pass `-v` to see per-file part count and byte size.
 
 ### Upload a local SQLite database
 
@@ -114,6 +122,7 @@ Adds or updates only the `master_key` field in `creds.json`. If the field alread
 |------|-------------|
 | `--src <path>` | Folder containing `.txt` files to ingest; skips files already in the database |
 | `--force` | With `--src`: overwrite existing entries instead of skipping |
+| `--download` | Decrypt and export all stored files to the `--out` directory |
 | `--creds <path>` | Credentials file with Turso URL/token and master key (default: `creds.json`) |
 | `--part-count` | Rebuild `part_count` table from existing `txt_parts` rows and exit |
 | `--create-bookmarks` | Create bookmarks table, index, and trigger and exit; progress shown with `-v` |
@@ -121,7 +130,7 @@ Adds or updates only the `master_key` field in `creds.json`. If the field alread
 | `--upload-db <file>` | Upload all rows from a local SQLite db to Turso; Turso `txt` must be empty |
 | `--gen-master-key <path>` | Add/update `master_key` in the credentials file and exit |
 | `--read-part <id>` | Decrypt and write a single part by its `txt_parts.id` |
-| `--out <path>` | Output file path for `--read-part` |
+| `--out <path>` | Output path: file for `--read-part`, directory for `--download` |
 | `--verbose`, `-v` | Enable debug logging (per-part progress, DB URL, schema setup, upload progress) |
 
 ---
@@ -172,7 +181,7 @@ The top bar contains three icon buttons:
 
 The reader supports per-line bookmarks, stored encrypted in the database. A DB trigger enforces a rolling window of 12 per file: when a 13th bookmark is added the oldest one (by insertion order) is automatically evicted.
 
-- **Add / remove:** click the thin bar to the left of any line to toggle a bookmark. The bar turns blue when the line is bookmarked.
+- **Add / remove:** click the thin bar to the left of any line to toggle a bookmark. The bar turns blue when the line is bookmarked. Press `b` to toggle a bookmark on the first visible line.
 - **Bookmark panel:** click the bookmark icon in the top bar to open a dropdown listing all bookmarks for the current file. Click any entry to jump to it; click **×** to delete it.
 - **Chooser on open:** when a file is selected and it already has bookmarks, the content area shows a sorted bookmark list instead of auto-loading part 1. Click an entry to jump directly to that position, or use the part controls to start from the beginning. Bookmarks can also be deleted from this view.
 - **Encryption:** each bookmark is stored as a brotli-compressed, AEAD-encrypted JSON blob `{"part_num":…,"line":…,"txt_preview":…}` using the same key-derivation and cipher as `txt_parts`. The database never sees plaintext positions or previews.
