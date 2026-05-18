@@ -1,3 +1,5 @@
+import '@fontsource-variable/literata/opsz.css';
+import '@fontsource-variable/literata/opsz-italic.css';
 import React, { useEffect, useRef, useState } from 'react';
 import LoginScreen from './components/LoginScreen.jsx';
 import DataScreen from './components/DataScreen.jsx';

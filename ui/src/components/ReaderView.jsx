@@ -37,7 +37,7 @@ function ReaderLine({ line, index, currentPartNum, bookmarks, lineRefs, onToggle
 export default function ReaderView({
   content, currentPartNum, bookmarks, lineRefs, onToggleBookmark, fontSize,
 }) {
-  const style = { fontFamily: "'Literata', serif", fontSize, maxWidth: '70ch' };
+  const style = { fontFamily: "'Literata Variable', serif", fontSize, maxWidth: '70ch' };
   return (
     <div style={style}>
       {content.split('\n').map((line, index) => (
