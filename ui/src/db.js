@@ -10,6 +10,11 @@ export function initDb(url, authToken) {
   };
 }
 
+export function resetDb() {
+  endpoint = null;
+  headers = null;
+}
+
 function _parseResult(data) {
   const r = data.results[0];
   if (r.type === 'error') throw new Error(r.error.message);
@@ -17,9 +22,9 @@ function _parseResult(data) {
 }
 
 async function execute(sql, args = []) {
+  if (!endpoint || !headers)
+    throw new Error('Database is not connected');
   const stmt = args.length ? { sql, args: args.map(toWireValue) } : { sql };
-  console.debug('[db]', sql, ...(args.length ? [args] : []));
-  const t0 = performance.now();
   const res = await fetch(endpoint, {
     method: 'POST',
     headers,
@@ -27,7 +32,6 @@ async function execute(sql, args = []) {
   });
   if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
   const result = _parseResult(await res.json());
-  console.debug(`[db] ${(performance.now() - t0).toFixed(1)}ms, ${result.rows.length} row(s)`);
   return result;
 }
 

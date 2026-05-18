@@ -1,18 +1,11 @@
 import React, {
-  useState, useEffect, useCallback, useRef,
+  useState, useEffect, useCallback, useMemo, useRef,
 } from 'react';
 import { decryptName, decryptPart, encryptBookmark, decryptBookmark } from '../crypto.js';
 import {
-  fetchTxts,
-  fetchPartCount,
-  fetchPartByNum,
-  fetchBookmarks,
-  insertBookmark,
-  deleteBookmark,
-  fetchRecentAccess,
-  fetchRecentBookmarks,
-  upsertAccess,
-  deleteAccess,
+  fetchTxts, fetchPartCount, fetchPartByNum, fetchBookmarks,
+  insertBookmark, deleteBookmark, fetchRecentAccess, fetchRecentBookmarks,
+  upsertAccess, deleteAccess,
 } from '../db.js';
 import FileDropdown from './FileDropdown.jsx';
 import PartFooter from './PartFooter.jsx';
@@ -23,363 +16,589 @@ import ReaderView from './ReaderView.jsx';
 
 const BOOKMARK_LIMIT = 12;
 
-function decodeBookmarks(bmarks, txtId, masterKey) {
-  const bMap = new Map();
-  for (const b of bmarks) {
-    let obj;
-    try { obj = decryptBookmark(b.bookmark, masterKey); } catch { continue; }
-    const key = `${obj.part_num}:${obj.line}`;
-    bMap.set(key, { key, dbId: b.id, txtId, partNum: obj.part_num, lineIndex: obj.line, preview: obj.txt_preview ?? '' });
+const INITIAL_STATE = {
+  txts: [], selectedTxt: null, totalParts: 0, currentPartNum: 1,
+  content: null, loading: false, error: null, fontSize: 16,
+  recentAccess: [], recentBookmarks: [], refreshLanding: 0,
+  bookmarks: new Map(), showBookmarks: false,
+  showBookmarkChooser: false, pendingScrollLine: null,
+};
+
+function resolvePatch(update, prev) {
+  return typeof update === 'function' ? update(prev) : update;
+}
+
+function usePatchState(initialState) {
+  const [state, setState] = useState(initialState);
+  const patch = useCallback(update => {
+    setState(prev => ({ ...prev, ...resolvePatch(update, prev) }));
+  }, []);
+  return [state, patch];
+}
+
+function useScreenRefs() {
+  const loadedPartRef = useRef(null);
+  const lineRefs = useRef({});
+  const scrollContainerRef = useRef(null);
+  const kbRef = useRef({});
+  const fnRef = useRef({});
+  return useMemo(() => ({
+    loadedPartRef, lineRefs, scrollContainerRef, kbRef, fnRef,
+  }), []);
+}
+
+function useWrap(patch) {
+  return useCallback(async fn => {
+    patch({ loading: true, error: null });
+    try { await fn(); } catch (e) { patch({ error: e.message }); }
+    patch({ loading: false });
+  }, [patch]);
+}
+
+function decryptTxtRow(row, masterKey) {
+  try {
+    return { id: row.id, name: decryptName(row.name, masterKey) };
+  } catch {
+    return { id: row.id, name: `<id ${row.id}>` };
   }
-  return bMap;
+}
+
+function decryptTxtRows(rows, masterKey) {
+  return rows.map(row => decryptTxtRow(row, masterKey));
+}
+
+function toNameMap(txts) {
+  return new Map(txts.map(txt => [txt.id, txt.name]));
+}
+
+function toRecentAccessRow(row, nameMap) {
+  return {
+    txtId: row.txt_id,
+    name: nameMap.get(row.txt_id),
+    lastPartNum: row.last_part_num,
+  };
+}
+
+function formatRecentAccess(recent, nameMap) {
+  return recent
+    .filter(row => nameMap.has(row.txt_id))
+    .map(row => toRecentAccessRow(row, nameMap));
+}
+
+function decodeRecentBookmark(row, nameMap, masterKey) {
+  if (!nameMap.has(row.txt_id)) return null;
+  try {
+    const obj = decryptBookmark(row.bookmark, masterKey);
+    return makeRecentBookmark(row, obj, nameMap);
+  } catch {
+    return null;
+  }
+}
+
+function makeRecentBookmark(row, obj, nameMap) {
+  return {
+    dbId: row.id, txtId: row.txt_id, txtName: nameMap.get(row.txt_id),
+    partNum: obj.part_num, lineIndex: obj.line,
+    preview: obj.txt_preview ?? '',
+  };
+}
+
+function decodeRecentBookmarks(raw, nameMap, masterKey) {
+  return raw
+    .map(row => decodeRecentBookmark(row, nameMap, masterKey))
+    .filter(Boolean);
+}
+
+async function loadLanding(patch, masterKey) {
+  const [rows, recent, rawBmarks] = await Promise.all([
+    fetchTxts(), fetchRecentAccess(), fetchRecentBookmarks(),
+  ]);
+  const txts = decryptTxtRows(rows, masterKey);
+  const nameMap = toNameMap(txts);
+  patch({
+    txts, recentAccess: formatRecentAccess(recent, nameMap),
+    recentBookmarks: decodeRecentBookmarks(rawBmarks, nameMap, masterKey),
+  });
+}
+
+function useLandingData(refreshLanding, patch, wrap, masterKey) {
+  useEffect(() => {
+    wrap(() => loadLanding(patch, masterKey));
+  }, [masterKey, patch, refreshLanding, wrap]);
+}
+
+function bookmarkKey(partNum, lineIndex) {
+  return `${partNum}:${lineIndex}`;
+}
+
+function makeBookmarkEntry(obj, dbId, txtId) {
+  const key = bookmarkKey(obj.part_num, obj.line);
+  return {
+    key, dbId, txtId,
+    partNum: obj.part_num,
+    lineIndex: obj.line,
+    preview: obj.txt_preview ?? '',
+  };
+}
+
+function decodeBookmarkEntry(row, txtId, masterKey) {
+  try {
+    const obj = decryptBookmark(row.bookmark, masterKey);
+    return [bookmarkKey(obj.part_num, obj.line), makeBookmarkEntry(obj, row.id, txtId)];
+  } catch {
+    return null;
+  }
+}
+
+function decodeBookmarks(rows, txtId, masterKey) {
+  return new Map(
+    rows.map(row => decodeBookmarkEntry(row, txtId, masterKey)).filter(Boolean),
+  );
 }
 
 function addBookmarkToMap(prev, entry) {
-  const n = new Map(prev);
-  if (n.size >= BOOKMARK_LIMIT) {
-    const oldest = [...n.values()].reduce((a, b) => a.dbId < b.dbId ? a : b);
-    n.delete(oldest.key);
+  const next = new Map(prev);
+  if (next.size >= BOOKMARK_LIMIT) {
+    const oldest = [...next.values()].reduce((a, b) => a.dbId < b.dbId ? a : b);
+    next.delete(oldest.key);
   }
-  n.set(entry.key, entry);
-  return n;
+  next.set(entry.key, entry);
+  return next;
+}
+
+function removeBookmarkFromMap(prev, key) {
+  const next = new Map(prev);
+  next.delete(key);
+  return next;
+}
+
+function clampPart(partNum, total) {
+  return Math.max(1, Math.min(partNum, total || 1));
+}
+
+function setLoadedPart(refs, txt, partNum) {
+  refs.loadedPartRef.current = { txtId: txt.id, partNum };
+}
+
+function isLoadedPart(refs, txt, partNum) {
+  const loaded = refs.loadedPartRef.current;
+  return loaded && loaded.txtId === txt.id && loaded.partNum === partNum;
+}
+
+async function fetchPartContent(txt, partNum, masterKey) {
+  const part = await fetchPartByNum(txt.id, partNum);
+  if (part) upsertAccess(txt.id, partNum);
+  return part ? decryptPart(part.content, masterKey) : '';
+}
+
+async function loadFirstPart(ctx, txt, initialPartNum, total) {
+  const partNum = clampPart(initialPartNum, total);
+  setLoadedPart(ctx.refs, txt, partNum);
+  ctx.patch({ currentPartNum: partNum });
+  const content = await fetchPartContent(txt, partNum, ctx.masterKey);
+  ctx.patch({ content });
+}
+
+function loadPart(ctx, txt, partNum, total = ctx.state.totalParts) {
+  if (!txt) return;
+  const clamped = clampPart(partNum, total);
+  if (isLoadedPart(ctx.refs, txt, clamped)) return;
+  setLoadedPart(ctx.refs, txt, clamped);
+  ctx.patch({ currentPartNum: clamped, content: null });
+  ctx.wrap(async () => {
+    const content = await fetchPartContent(txt, clamped, ctx.masterKey);
+    ctx.patch({ content });
+  });
+}
+
+function resetForTxt(ctx, txt) {
+  ctx.refs.loadedPartRef.current = null;
+  ctx.patch({
+    selectedTxt: txt, currentPartNum: 1, totalParts: 0, content: null,
+    pendingScrollLine: null, showBookmarks: false,
+    showBookmarkChooser: false, bookmarks: new Map(),
+  });
+}
+
+async function selectTxtData(ctx, txt, initialPartNum, jumpTo) {
+  const [total, rows] = await Promise.all([
+    fetchPartCount(txt.id), fetchBookmarks(txt.id),
+  ]);
+  const bookmarks = decodeBookmarks(rows, txt.id, ctx.masterKey);
+  ctx.patch({ totalParts: total, bookmarks });
+  if (jumpTo) return jumpToPart(ctx, txt, total, jumpTo);
+  if (bookmarks.size > 0) return ctx.patch({ showBookmarkChooser: true });
+  if (total > 0) await loadFirstPart(ctx, txt, initialPartNum, total);
+}
+
+function selectTxt(ctx, txt, initialPartNum = 1, jumpTo = null) {
+  resetForTxt(ctx, txt);
+  ctx.wrap(() => selectTxtData(ctx, txt, initialPartNum, jumpTo));
+}
+
+async function jumpToPart(ctx, txt, total, jumpTo) {
+  if (total <= 0) return;
+  ctx.patch({ pendingScrollLine: jumpTo.lineIndex });
+  await loadFirstPart(ctx, txt, jumpTo.partNum, total);
+}
+
+async function runWithError(ctx, fn) {
+  try { await fn(); }
+  catch (e) { ctx.patch({ error: e.message }); }
+}
+
+async function toggleBookmark(ctx, lineIdx, previewText) {
+  if (!ctx.state.selectedTxt) return;
+  await runWithError(ctx, () => toggleBookmarkUnsafe(ctx, lineIdx, previewText));
+}
+
+async function toggleBookmarkUnsafe(ctx, lineIdx, previewText) {
+  const key = bookmarkKey(ctx.state.currentPartNum, lineIdx);
+  if (ctx.state.bookmarks.has(key))
+    return removeBookmarkKey(ctx, key);
+  await addBookmarkKey(ctx, key, lineIdx, previewText);
+}
+
+async function removeBookmarkKey(ctx, key) {
+  await deleteBookmark(ctx.state.bookmarks.get(key).dbId);
+  ctx.patch(prev => ({ bookmarks: removeBookmarkFromMap(prev.bookmarks, key) }));
+}
+
+async function addBookmarkKey(ctx, key, lineIdx, previewText) {
+  const obj = {
+    part_num: ctx.state.currentPartNum,
+    line: lineIdx,
+    txt_preview: previewText ?? '',
+  };
+  const blob = encryptBookmark(obj, ctx.masterKey);
+  const dbId = await insertBookmark(ctx.state.selectedTxt.id, blob);
+  const entry = makeBookmarkEntry(obj, dbId, ctx.state.selectedTxt.id);
+  ctx.patch(prev => ({ bookmarks: addBookmarkToMap(prev.bookmarks, { ...entry, key }) }));
+}
+
+function navigateToBookmark(ctx, { partNum, lineIndex }) {
+  ctx.patch({ showBookmarks: false, showBookmarkChooser: false });
+  if (partNum === ctx.state.currentPartNum)
+    return scrollLineToTop(ctx.refs, lineIndex);
+  ctx.patch({ pendingScrollLine: lineIndex });
+  loadPart(ctx, ctx.state.selectedTxt, partNum);
+}
+
+async function refreshRecentAccess(ctx) {
+  const nameMap = toNameMap(ctx.state.txts);
+  const recent = await fetchRecentAccess();
+  ctx.patch({ recentAccess: formatRecentAccess(recent, nameMap) });
+}
+
+async function removeRecentAccess(ctx, txtId) {
+  await runWithError(ctx, async () => {
+    await deleteAccess(txtId);
+    await refreshRecentAccess(ctx);
+  });
+}
+
+async function refreshRecentBookmarks(ctx) {
+  const nameMap = toNameMap(ctx.state.txts);
+  const raw = await fetchRecentBookmarks();
+  const recentBookmarks = decodeRecentBookmarks(raw, nameMap, ctx.masterKey);
+  ctx.patch({ recentBookmarks });
+}
+
+async function removeRecentBookmark(ctx, dbId) {
+  await runWithError(ctx, async () => {
+    await deleteBookmark(dbId);
+    await refreshRecentBookmarks(ctx);
+  });
+}
+
+async function removeBookmark(ctx, key) {
+  if (!ctx.state.bookmarks.has(key)) return;
+  await runWithError(ctx, () => removeBookmarkKey(ctx, key));
+}
+
+function handleHome(ctx) {
+  resetForTxt(ctx, null);
+  ctx.patch(prev => ({ refreshLanding: prev.refreshLanding + 1 }));
+}
+
+function loadFooterPart(ctx, partNum) {
+  ctx.patch({ showBookmarkChooser: false });
+  loadPart(ctx, ctx.state.selectedTxt, partNum);
+}
+
+function resolveUpdate(value, current) {
+  return typeof value === 'function' ? value(current) : value;
+}
+
+function patchKey(ctx, key, value) {
+  ctx.patch(prev => ({ [key]: resolveUpdate(value, prev[key]) }));
+}
+
+function navigationActions(ctx) {
+  return {
+    selectTxt: (...args) => selectTxt(ctx, ...args),
+    loadPart: (...args) => loadPart(ctx, ...args),
+    navigateToBookmark: mark => navigateToBookmark(ctx, mark),
+    handleHome: () => handleHome(ctx),
+    loadFooterPart: partNum => loadFooterPart(ctx, partNum),
+  };
+}
+
+function bookmarkActions(ctx) {
+  return {
+    toggleBookmark: (...args) => toggleBookmark(ctx, ...args),
+    removeRecentAccess: id => removeRecentAccess(ctx, id),
+    removeRecentBookmark: id => removeRecentBookmark(ctx, id),
+    removeBookmark: key => removeBookmark(ctx, key),
+  };
+}
+
+function setterActions(ctx) {
+  return {
+    setShowBookmarks: value => patchKey(ctx, 'showBookmarks', value),
+    setCurrentPartNum: value => patchKey(ctx, 'currentPartNum', value),
+    setFontSize: value => patchKey(ctx, 'fontSize', value),
+  };
+}
+
+function useActions(ctx) {
+  return {
+    ...navigationActions(ctx),
+    ...bookmarkActions(ctx),
+    ...setterActions(ctx),
+  };
+}
+
+function containerTop(container) {
+  return container.getBoundingClientRect().top
+    + (parseFloat(getComputedStyle(container).paddingTop) || 0);
+}
+
+function scrollLineToTop(refs, idx) {
+  const el = refs.lineRefs.current[idx];
+  const container = refs.scrollContainerRef.current;
+  if (!el || !container) return;
+  const top = containerTop(container);
+  container.scrollTop += el.getBoundingClientRect().top - top;
+}
+
+function visibleLineScore(entry, top) {
+  const [idx, el] = entry;
+  if (!el) return null;
+  return { idx: parseInt(idx, 10), dist: Math.abs(el.getBoundingClientRect().top - top) };
+}
+
+function closerLine(best, score) {
+  if (!score) return best;
+  return score.dist < best.dist ? score : best;
+}
+
+function getFirstVisibleLineIndex(refs) {
+  const container = refs.scrollContainerRef.current;
+  if (!container) return null;
+  const scores = Object.entries(refs.lineRefs.current);
+  return scores
+    .map(entry => visibleLineScore(entry, containerTop(container)))
+    .reduce(closerLine, { idx: null, dist: Infinity }).idx;
+}
+
+function usePendingScroll(state, patch, refs) {
+  useEffect(() => {
+    if (state.pendingScrollLine === null || state.loading || state.content === null) return;
+    scrollLineToTop(refs, state.pendingScrollLine);
+    patch({ pendingScrollLine: null });
+  }, [state.content, state.loading, state.pendingScrollLine, patch, refs]);
+}
+
+function handleArrow(e, state, actions) {
+  if (e.key === 'ArrowLeft' && state.currentPartNum > 1) {
+    e.preventDefault();
+    actions.loadPart(state.selectedTxt, state.currentPartNum - 1, state.totalParts);
+  } else if (e.key === 'ArrowRight' && state.currentPartNum < state.totalParts) {
+    e.preventDefault();
+    actions.loadPart(state.selectedTxt, state.currentPartNum + 1, state.totalParts);
+  }
+}
+
+function handleBookmarkKey(refs, actions) {
+  const idx = getFirstVisibleLineIndex(refs);
+  if (idx === null) return;
+  const preview = refs.lineRefs.current[idx]?.textContent?.trim().slice(0, 60) ?? '';
+  actions.toggleBookmark(idx, preview);
+}
+
+function ignoreKey(e, state) {
+  if (!state.hasTxt || !state.hasParts || state.showBookmarkChooser) return true;
+  if (state.content === null) return true;
+  return e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT';
+}
+
+function handleKey(e, refs) {
+  const state = refs.kbRef.current;
+  const actions = refs.fnRef.current;
+  if (ignoreKey(e, state)) return;
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight')
+    handleArrow(e, state, actions);
+  else if (e.key === 'b')
+    handleBookmarkKey(refs, actions);
+}
+
+function useKeyboardNavigation(refs) {
+  useEffect(() => {
+    const onKey = e => handleKey(e, refs);
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [refs]);
+}
+
+function getStatus(state) {
+  return { hasTxt: !!state.selectedTxt, hasParts: state.totalParts > 0 };
+}
+
+function syncRuntimeRefs(state, refs, actions) {
+  const status = getStatus(state);
+  refs.kbRef.current = { ...status, ...state };
+  refs.fnRef.current = actions;
+  return status;
+}
+
+function useScreenModel(masterKey, onDisconnect) {
+  const [state, patch] = usePatchState(INITIAL_STATE);
+  const refs = useScreenRefs();
+  const wrap = useWrap(patch);
+  const ctx = { state, patch, refs, wrap, masterKey };
+  const actions = useActions(ctx);
+  const status = syncRuntimeRefs(state, refs, actions);
+  useLandingData(state.refreshLanding, patch, wrap, masterKey);
+  usePendingScroll(state, patch, refs);
+  useKeyboardNavigation(refs);
+  return { state, refs, actions, status, onDisconnect };
+}
+
+function topBarProps(model) {
+  return {
+    hasTxt: model.status.hasTxt,
+    showBookmarks: model.state.showBookmarks,
+    setShowBookmarks: model.actions.setShowBookmarks,
+    bookmarks: model.state.bookmarks,
+    selectedTxt: model.state.selectedTxt,
+    onNavigate: model.actions.navigateToBookmark,
+    onRemove: model.actions.removeBookmark,
+    onHome: model.actions.handleHome,
+    onDisconnect: model.onDisconnect,
+  };
+}
+
+function ScreenTop({ model }) {
+  return <TopBar {...topBarProps(model)} />;
+}
+
+function ErrorAlert({ error }) {
+  return error
+    ? <div className="alert alert-danger py-2 small mb-3" role="alert">{error}</div>
+    : null;
+}
+
+function FileHeader({ model }) {
+  return (
+    <div className="card-header py-2">
+      <FileDropdown txts={model.state.txts} selectedTxt={model.state.selectedTxt} onSelect={model.actions.selectTxt} />
+    </div>
+  );
+}
+
+function LoadingSpinner() {
+  return (
+    <div className="d-flex justify-content-center align-items-center py-4">
+      <span className="spinner-border text-secondary" />
+    </div>
+  );
+}
+
+function LoadingText() {
+  return <p className="text-muted small mb-0" style={{ paddingLeft: '1rem' }}>Loading…</p>;
+}
+
+function LandingContent({ model }) {
+  return (
+    <LandingView
+      recentAccess={model.state.recentAccess}
+      recentBookmarks={model.state.recentBookmarks}
+      onSelectTxt={model.actions.selectTxt}
+      onRemoveAccess={model.actions.removeRecentAccess}
+      onRemoveBookmark={model.actions.removeRecentBookmark}
+    />
+  );
+}
+
+function ContentView({ model }) {
+  const { state, status, actions } = model;
+  if (state.loading) return <LoadingSpinner />;
+  if (!status.hasTxt) return <LandingContent model={model} />;
+  if (state.showBookmarkChooser)
+    return <BookmarkChooser bookmarks={state.bookmarks} onNavigate={actions.navigateToBookmark} onRemove={actions.removeBookmark} />;
+  if (state.content === null) return <LoadingText />;
+  return <ReaderContent model={model} />;
+}
+
+function ReaderContent({ model }) {
+  return (
+    <ReaderView
+      content={model.state.content}
+      currentPartNum={model.state.currentPartNum}
+      bookmarks={model.state.bookmarks}
+      lineRefs={model.refs.lineRefs}
+      onToggleBookmark={model.actions.toggleBookmark}
+      fontSize={model.state.fontSize}
+    />
+  );
+}
+
+function ScrollPane({ model }) {
+  const style = { flex: '1 1 0', minHeight: 0, padding: '1rem 1rem 1rem 0' };
+  return (
+    <div ref={model.refs.scrollContainerRef} className="overflow-auto" style={style}>
+      <ContentView model={model} />
+    </div>
+  );
+}
+
+function Footer({ model }) {
+  const { state, status, actions } = model;
+  return (
+    <PartFooter
+      hasTxt={status.hasTxt} hasParts={status.hasParts}
+      currentPartNum={state.showBookmarkChooser ? 0 : state.currentPartNum}
+      totalParts={state.totalParts} onPartNumChange={actions.setCurrentPartNum}
+      onLoadPart={actions.loadFooterPart}
+      fontSize={state.fontSize} setFontSize={actions.setFontSize}
+    />
+  );
+}
+
+function ReaderCard({ model }) {
+  const style = { flex: '1 1 0', minHeight: 0 };
+  return (
+    <div className="card d-flex flex-column" style={style}>
+      <FileHeader model={model} />
+      <ScrollPane model={model} />
+      <Footer model={model} />
+    </div>
+  );
+}
+
+function DataScreenView({ model }) {
+  const style = { minHeight: '100vh' };
+  return (
+    <div className="container py-3 vault-container d-flex flex-column" style={style}>
+      <ScreenTop model={model} />
+      <ErrorAlert error={model.state.error} />
+      <ReaderCard model={model} />
+    </div>
+  );
 }
 
 export default function DataScreen({ masterKey, onDisconnect }) {
-  const [txts, setTxts]               = useState([]);
-  const [selectedTxt, setSelectedTxt] = useState(null);
-  const [totalParts, setTotalParts]   = useState(0);
-  const [currentPartNum, setCurrentPartNum] = useState(1);
-  const [content, setContent]         = useState(null);
-  const [loading, setLoading]         = useState(false);
-  const [error, setError]             = useState(null);
-  const [fontSize, setFontSize]       = useState(16);
-  const [recentAccess, setRecentAccess]       = useState([]);
-  const [recentBookmarks, setRecentBookmarks] = useState([]);
-  const [refreshLanding, setRefreshLanding]   = useState(0);
-  const [bookmarks, setBookmarks]             = useState(new Map());
-  const [showBookmarks, setShowBookmarks]     = useState(false);
-  const [showBookmarkChooser, setShowBookmarkChooser] = useState(false);
-  const [pendingScrollLine, setPendingScrollLine]     = useState(null);
-  const loadedPartRef      = useRef(null);
-  const lineRefs           = useRef({});
-  const scrollContainerRef = useRef(null);
-  const kbRef              = useRef({});
-  const fnRef              = useRef({});
-
-  const wrap = useCallback(async (fn) => {
-    setLoading(true);
-    setError(null);
-    try { await fn(); } catch (e) { setError(e.message); }
-    setLoading(false);
-  }, []);
-
-  useEffect(() => {
-    wrap(async () => {
-      const [rows, recent, rawBmarks] = await Promise.all([
-        fetchTxts(), fetchRecentAccess(), fetchRecentBookmarks(),
-      ]);
-      const decrypted = rows.map(r => {
-        let name;
-        try { name = decryptName(r.name, masterKey); }
-        catch { name = `<id ${r.id}>`; }
-        return { id: r.id, name };
-      });
-      setTxts(decrypted);
-      const nameMap = new Map(decrypted.map(t => [t.id, t.name]));
-      setRecentAccess(recent
-        .filter(r => nameMap.has(r.txt_id))
-        .map(r => ({
-          txtId: r.txt_id,
-          name: nameMap.get(r.txt_id),
-          lastPartNum: r.last_part_num,
-        }))
-      );
-      const decoded = [];
-      for (const b of rawBmarks) {
-        if (!nameMap.has(b.txt_id)) continue;
-        let obj;
-        try { obj = decryptBookmark(b.bookmark, masterKey); } catch { continue; }
-        decoded.push({
-          dbId: b.id,
-          txtId: b.txt_id,
-          txtName: nameMap.get(b.txt_id),
-          partNum: obj.part_num,
-          lineIndex: obj.line,
-          preview: obj.txt_preview ?? '',
-        });
-      }
-      setRecentBookmarks(decoded);
-    });
-  }, [masterKey, wrap, refreshLanding]);
-
-  function scrollLineToTop(idx) {
-    const el = lineRefs.current[idx];
-    const container = scrollContainerRef.current;
-    if (!el || !container) return;
-    const paddingTop = parseFloat(getComputedStyle(container).paddingTop) || 0;
-    container.scrollTop += el.getBoundingClientRect().top
-      - container.getBoundingClientRect().top
-      - paddingTop;
-  }
-
-  function getFirstVisibleLineIndex() {
-    const container = scrollContainerRef.current;
-    if (!container) return null;
-    const top = container.getBoundingClientRect().top
-      + (parseFloat(getComputedStyle(container).paddingTop) || 0);
-    let bestIdx = null;
-    let bestDist = Infinity;
-    for (const [i, el] of Object.entries(lineRefs.current)) {
-      if (!el) continue;
-      const dist = Math.abs(el.getBoundingClientRect().top - top);
-      if (dist < bestDist) { bestDist = dist; bestIdx = parseInt(i, 10); }
-    }
-    return bestIdx;
-  }
-
-  useEffect(() => {
-    if (pendingScrollLine === null || loading || content === null) return;
-    scrollLineToTop(pendingScrollLine);
-    setPendingScrollLine(null);
-  }, [content, loading, pendingScrollLine]);
-
-  useEffect(() => {
-    function handleArrow(e, s, fn) {
-      if (e.key === 'ArrowLeft' && s.currentPartNum > 1) {
-        e.preventDefault(); fn.loadPart(s.selectedTxt, s.currentPartNum - 1, s.totalParts);
-      } else if (e.key === 'ArrowRight' && s.currentPartNum < s.totalParts) {
-        e.preventDefault(); fn.loadPart(s.selectedTxt, s.currentPartNum + 1, s.totalParts);
-      }
-    }
-    function handleB(fn) {
-      const idx = getFirstVisibleLineIndex();
-      if (idx === null) return;
-      fn.toggleBookmark(idx, lineRefs.current[idx]?.textContent?.trim().slice(0, 60) ?? '');
-    }
-    function onKey(e) {
-      const s = kbRef.current; const fn = fnRef.current;
-      if (!s.hasTxt || !s.hasParts || s.showBookmarkChooser || s.content === null) return;
-      if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
-      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') handleArrow(e, s, fn);
-      else if (e.key === 'b') handleB(fn);
-    }
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, []);
-
-  function resetForTxt(txt) {
-    setSelectedTxt(txt); setCurrentPartNum(1); setTotalParts(0);
-    setContent(null); setPendingScrollLine(null);
-    setShowBookmarks(false); setShowBookmarkChooser(false);
-    setBookmarks(new Map()); loadedPartRef.current = null;
-  }
-
-  async function loadFirstPart(txt, initialPartNum, total) {
-    const clamped = Math.max(1, Math.min(initialPartNum, total));
-    loadedPartRef.current = { txtId: txt.id, partNum: clamped };
-    setCurrentPartNum(clamped);
-    const part = await fetchPartByNum(txt.id, clamped);
-    setContent(part ? decryptPart(part.content, masterKey) : '');
-    if (part) upsertAccess(txt.id, clamped);
-  }
-
-  async function loadPart(txt, partNum, total = totalParts) {
-    const clamped = Math.max(1, Math.min(partNum, total || 1));
-    const lp = loadedPartRef.current;
-    if (lp && lp.txtId === txt.id && lp.partNum === clamped) return;
-    loadedPartRef.current = { txtId: txt.id, partNum: clamped };
-    setCurrentPartNum(clamped);
-    setContent(null);
-    wrap(async () => {
-      const part = await fetchPartByNum(txt.id, clamped);
-      setContent(part ? decryptPart(part.content, masterKey) : '');
-      if (part) upsertAccess(txt.id, clamped);
-    });
-  }
-
-  async function selectTxt(txt, initialPartNum = 1, jumpTo = null) {
-    resetForTxt(txt);
-    wrap(async () => {
-      const [total, bmarks] = await Promise.all([
-        fetchPartCount(txt.id), fetchBookmarks(txt.id),
-      ]);
-      setTotalParts(total);
-      const bMap = decodeBookmarks(bmarks, txt.id, masterKey);
-      setBookmarks(bMap);
-      if (jumpTo) {
-        if (total > 0) {
-          setPendingScrollLine(jumpTo.lineIndex);
-          await loadFirstPart(txt, jumpTo.partNum, total);
-        }
-        return;
-      }
-      if (bMap.size > 0) { setShowBookmarkChooser(true); return; }
-      if (total > 0) await loadFirstPart(txt, initialPartNum, total);
-    });
-  }
-
-  async function toggleBookmark(lineIdx, previewText) {
-    if (!selectedTxt) return;
-    const key = `${currentPartNum}:${lineIdx}`;
-    try {
-      if (bookmarks.has(key)) {
-        await deleteBookmark(bookmarks.get(key).dbId);
-        setBookmarks(prev => { const n = new Map(prev); n.delete(key); return n; });
-      } else {
-        const obj = { part_num: currentPartNum, line: lineIdx, txt_preview: previewText ?? '' };
-        const dbId = await insertBookmark(selectedTxt.id, encryptBookmark(obj, masterKey));
-        const entry = { key, dbId, txtId: selectedTxt.id, partNum: currentPartNum, lineIndex: lineIdx, preview: previewText ?? '' };
-        setBookmarks(prev => addBookmarkToMap(prev, entry));
-      }
-    } catch (e) { setError(e.message); }
-  }
-
-  function navigateToBookmark({ partNum, lineIndex }) {
-    setShowBookmarks(false);
-    setShowBookmarkChooser(false);
-    if (partNum !== currentPartNum) {
-      setPendingScrollLine(lineIndex);
-      loadPart(selectedTxt, partNum);
-    } else {
-      scrollLineToTop(lineIndex);
-    }
-  }
-
-  async function removeRecentAccess(txtId) {
-    try {
-      await deleteAccess(txtId);
-      const nameMap = new Map(txts.map(t => [t.id, t.name]));
-      const recent = await fetchRecentAccess();
-      setRecentAccess(recent
-        .filter(r => nameMap.has(r.txt_id))
-        .map(r => ({
-          txtId: r.txt_id,
-          name: nameMap.get(r.txt_id),
-          lastPartNum: r.last_part_num,
-        }))
-      );
-    } catch (e) { setError(e.message); }
-  }
-
-  async function removeRecentBookmark(dbId) {
-    try {
-      await deleteBookmark(dbId);
-      const nameMap = new Map(txts.map(t => [t.id, t.name]));
-      const rawBmarks = await fetchRecentBookmarks();
-      const decoded = [];
-      for (const b of rawBmarks) {
-        if (!nameMap.has(b.txt_id)) continue;
-        let obj;
-        try { obj = decryptBookmark(b.bookmark, masterKey); } catch { continue; }
-        decoded.push({
-          dbId: b.id,
-          txtId: b.txt_id,
-          txtName: nameMap.get(b.txt_id),
-          partNum: obj.part_num,
-          lineIndex: obj.line,
-          preview: obj.txt_preview ?? '',
-        });
-      }
-      setRecentBookmarks(decoded);
-    } catch (e) { setError(e.message); }
-  }
-
-  async function removeBookmark(key) {
-    const bm = bookmarks.get(key);
-    if (!bm) return;
-    try {
-      await deleteBookmark(bm.dbId);
-      setBookmarks(prev => { const n = new Map(prev); n.delete(key); return n; });
-    } catch (e) { setError(e.message); }
-  }
-
-  const hasTxt   = !!selectedTxt;
-  const hasParts = totalParts > 0;
-
-  kbRef.current = { hasTxt, hasParts, showBookmarkChooser, content, selectedTxt, currentPartNum, totalParts };
-  fnRef.current = { loadPart, toggleBookmark };
-
-  function handleHome() {
-    resetForTxt(null);
-    setRefreshLanding(n => n + 1);
-  }
-
-  return (
-    <div className="container py-3 vault-container d-flex flex-column" style={{ minHeight: '100vh' }}>
-
-      <TopBar
-        hasTxt={hasTxt}
-        showBookmarks={showBookmarks}
-        setShowBookmarks={setShowBookmarks}
-        bookmarks={bookmarks}
-        selectedTxt={selectedTxt}
-        onNavigate={navigateToBookmark}
-        onRemove={removeBookmark}
-        onHome={handleHome}
-        onDisconnect={onDisconnect}
-      />
-
-      {error && (
-        <div className="alert alert-danger py-2 small mb-3" role="alert">
-          {error}
-        </div>
-      )}
-
-      <div className="card d-flex flex-column" style={{ flex: '1 1 0', minHeight: 0 }}>
-
-        <div className="card-header py-2">
-          <FileDropdown txts={txts} selectedTxt={selectedTxt} onSelect={selectTxt} />
-        </div>
-
-        <div
-          ref={scrollContainerRef}
-          className="overflow-auto"
-          style={{ flex: '1 1 0', minHeight: 0, padding: '1rem 1rem 1rem 0' }}
-        >
-          {loading ? (
-            <div className="d-flex justify-content-center align-items-center py-4">
-              <span className="spinner-border text-secondary" />
-            </div>
-          ) : !hasTxt ? (
-            <LandingView
-              recentAccess={recentAccess}
-              recentBookmarks={recentBookmarks}
-              onSelectTxt={selectTxt}
-              onRemoveAccess={removeRecentAccess}
-              onRemoveBookmark={removeRecentBookmark}
-            />
-          ) : showBookmarkChooser ? (
-            <BookmarkChooser
-              bookmarks={bookmarks}
-              onNavigate={navigateToBookmark}
-              onRemove={removeBookmark}
-            />
-          ) : content === null ? (
-            <p className="text-muted small mb-0" style={{ paddingLeft: '1rem' }}>Loading…</p>
-          ) : (
-            <ReaderView
-              content={content}
-              currentPartNum={currentPartNum}
-              bookmarks={bookmarks}
-              lineRefs={lineRefs}
-              onToggleBookmark={toggleBookmark}
-              fontSize={fontSize}
-            />
-          )}
-        </div>
-
-        <PartFooter
-          hasTxt={hasTxt}
-          hasParts={hasParts}
-          currentPartNum={showBookmarkChooser ? 0 : currentPartNum}
-          totalParts={totalParts}
-          onPartNumChange={setCurrentPartNum}
-          onLoadPart={partNum => { setShowBookmarkChooser(false); loadPart(selectedTxt, partNum); }}
-          fontSize={fontSize}
-          setFontSize={setFontSize}
-        />
-
-      </div>
-    </div>
-  );
+  const model = useScreenModel(masterKey, onDisconnect);
+  return <DataScreenView model={model} />;
 }
