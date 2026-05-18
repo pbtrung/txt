@@ -77,13 +77,13 @@ function CryptoStatus({ busy, verifying }) {
 
 function VerifyStatus({ verifying }) {
   return verifying
-    ? <StatusLine text="Verifying connection and master key…" />
+    ? <StatusLine text="Verifying connection and master key…" className="mt-3" />
     : null;
 }
 
-function StatusLine({ text }) {
+function StatusLine({ text, className = '' }) {
   return (
-    <div className="d-flex align-items-center gap-2 mb-3 text-secondary small">
+    <div className={`d-flex align-items-center gap-2 mb-3 text-secondary small ${className}`}>
       <span className="spinner-border spinner-border-sm" />
       {text}
     </div>
