@@ -48,7 +48,7 @@ async function connectWithCredentials(file, onConnect, setVerifying) {
 function LoginCard({ busy, verifying, error, onFile }) {
   return (
     <div className="card shadow-sm" style={{ maxWidth: 440, width: '100%', margin: '1rem' }}>
-      <div className="card-body p-4">
+      <div className={`card-body p-4${verifying ? ' pb-2' : ''}`}>
         <LoginIntro />
         <CryptoStatus busy={busy} verifying={verifying} />
         <CredentialsInput busy={busy} onFile={onFile} />
@@ -77,7 +77,7 @@ function CryptoStatus({ busy, verifying }) {
 
 function VerifyStatus({ verifying }) {
   return verifying
-    ? <StatusLine text="Verifying connection and master key…" className="mt-3" />
+    ? <StatusLine text="Verifying connection and master key…" className="mt-3 mb-0" />
     : null;
 }
 
