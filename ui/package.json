@@ -15,8 +15,8 @@
     "@fortawesome/react-fontawesome": "^3.3.1",
     "bootstrap": "^5.3.8",
     "brotli-wasm": "^3.0.1",
-    "react": "^19.2.5",
-    "react-dom": "^19.2.5"
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^6.0.1",
