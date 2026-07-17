@@ -25,7 +25,10 @@ class Downloader:
             "SELECT content FROM txt_parts WHERE txt_id = ? ORDER BY part_num",
             (txt_id,),
         )
-        for row in cursor:
+        while True:
+            row = cursor.fetchone()
+            if row is None:
+                break
             yield bytes(row[0])
 
     def _write_blobs(
