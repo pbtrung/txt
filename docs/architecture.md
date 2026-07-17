@@ -2,13 +2,12 @@
 
 ## Overview
 
-`txt` is a fully client-side-encrypted text vault. One `.db` file, one writer, one read-only distribution point:
+`txt` is a fully client-side-encrypted text vault. There is one database — a Turso (libSQL) cloud database — and both components talk to it directly over HTTPS:
 
-- **CLI (`txt.py`, package `txt/`)** — the only writer. Local-only; ingests `.txt` files from disk, encrypts them, and writes them into a local SQLite `.db` file via stdlib `sqlite3`. Also handles download/export back to plaintext `.txt` files, and sharing (below).
-- **Sync to Cloudflare R2** — after a local write, the `.db` file is pushed wholesale to R2 (S3-compatible object storage). This is a distribution step, not a live write path — see [tech_stack.md](tech_stack.md) for whether it's CLI-driven or an external tool.
-- **Web UI (`ui/`)** — a browser app that reads the R2-hosted `.db` directly over paged HTTP range requests (SQLite-WASM + a custom HTTP VFS, no whole-file download, no application server — see [tech_stack.md](tech_stack.md)) and lets the user browse, search, and read files, with all decryption happening client-side.
+- **CLI (`txt.py`, package `txt/`)** — ingests `.txt` files from disk, encrypts them, and writes directly to Turso. Also handles download/export back to plaintext `.txt` files, and sharing (below).
+- **Web UI (`ui/`)** — a browser app that connects to the same Turso database directly (via its JS client) and lets the user browse, search, read, and bookmark files, with all encryption/decryption happening client-side. Turso only ever sees ciphertext.
 
-There's no application server and no custom backend logic, but there **is** a network dependency now: the web UI's read path goes over HTTP to R2. It cannot write back through that path at all — R2 doesn't support partial/byte-range writes, so the read-only-ness is structural, not a policy choice. See [tech_stack.md](tech_stack.md) for the open question this raises for browser-side writes (bookmarks, read position).
+There's no application server, no local `.db` file, and no separate storage tier — this mirrors the original pre-redesign shape of this app, with the crypto/data-model redesign (per-user key hierarchy, sharing, blob format) layered on top. See [tech_stack.md](tech_stack.md) for the credentials shape (a single full-access Turso token shared by both CLI and browser) and for two known client-library failure modes to guard against from the start.
 
 ## Components
 
@@ -16,7 +15,7 @@ There's no application server and no custom backend logic, but there **is** a ne
 txt.py                  entry point (thin, delegates to txt/ package)
 txt/
   cli.py                click command definitions
-  store.py              VaultStore: local sqlite3 connection, ingest/admin operations
+  store.py              VaultStore: Turso/libSQL connection, ingest/admin operations
   downloader.py         Downloader: decrypt + export to plaintext .txt files
   crypto.py             Crypto: all cryptographic operations (see crypto.md)
   schema.py             DDL (see data_model.md)
@@ -25,8 +24,8 @@ txt/
   leancrypto.py         ctypes bindings to the leancrypto shared library
 
 ui/
-  src/                  React app; SQLite-WASM + HTTP VFS (paged reads from R2) + leancrypto-wasm
-                        for client-side DB access and decryption
+  src/                  React app; Turso JS client + leancrypto-wasm for
+                        client-side DB access and decryption
 ```
 
 ## Ingest pipeline (CLI)
@@ -55,22 +54,21 @@ Filenames are resolved through a single decrypted index rather than a per-row sc
 ## Read pipeline (Web UI)
 
 ```
-1. UI opens the R2-hosted .db via the HTTP VFS — no download of the whole
-   file, just the SQLite header/schema pages needed to start querying.
-2. User logs in as a specific user; the app unwraps that user's `umk` from
-   `umk_store` (fetches just that row's page(s) over Range requests; see
-   crypto.md's Key Hierarchy).
+1. UI connects to Turso directly (its JS client, the shared full-access
+   token from creds.json).
+2. User logs in as a specific user; the app queries umk_store for that
+   user's row and unwraps their `umk` (see crypto.md's Key Hierarchy).
 3. UI decrypts the logged-in user's own txt_metadata row to get their
    id → name map (client-side) — inherently scoped to their own files.
 4. Opening a file: if it's in the logged-in user's own txt_metadata as an
    owned file, unwrap its txt_key via txt.txt_key; if it's there as a
    shared file, unwrap via that user's txt_shares row instead (see
-   crypto.md's Key Hierarchy). Either way, stream its txt_parts rows —
-   each fetched over Range requests as needed — decrypting one part at a
-   time with that txt_key (same AEAD scheme as ingest).
-5. Bookmarks / txt_access reads are the same paged fetch. Writes cannot go
-   through this path at all (R2 is read-only over this VFS); see
-   tech_stack.md's open question on where browser-side writes go instead.
+   crypto.md's Key Hierarchy). Either way, query its txt_parts rows,
+   decrypting one part at a time with that txt_key (same AEAD scheme as
+   ingest).
+5. Bookmarks / txt_access reads and writes go directly against Turso —
+   an INSERT/UPDATE is just another query over the same connection, no
+   separate mechanism needed for browser-side writes.
 ```
 
 ## Share pipeline (CLI)
@@ -101,7 +99,7 @@ Revoke:
 
 Both operations require `root_master_key` (same trust tier as `--src`/`--download`) — sharing is CLI-mediated, not something a browser session can do with only its own `umk`. See [crypto.md](crypto.md)'s Sharing section and [security.md](security.md) for why, and for what revocation does and does not guarantee (no forward secrecy over already-retrieved plaintext).
 
-Like ingest, a grant/revoke only takes effect for readers once the updated local `.db` is synced to R2 (see [tech_stack.md](tech_stack.md)) — there's a window between a local grant/revoke and it being visible to the web UI.
+Since both the CLI and the web UI write directly to the same Turso database, a grant/revoke is visible to readers immediately — no sync step or propagation delay.
 
 ## Multi-user model
 

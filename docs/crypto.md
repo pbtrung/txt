@@ -31,12 +31,14 @@ The JSON credentials file (`creds.json`) holds:
 
 ```json
 {
-  "root_master_key": "<base64, 256 random bytes>",
-  "username_salt":   "<base64, 32 random bytes>"
+  "turso_database_url": "libsql://your-db.turso.io",
+  "turso_auth_token":   "<full-access Turso token>",
+  "root_master_key":    "<base64, 256 random bytes>",
+  "username_salt":      "<base64, 32 random bytes>"
 }
 ```
 
-`username_salt` is a single, vault-wide value (not per-user) — it's the HKDF salt for deriving `username_lookup_key` below. It doesn't need to be secret on its own (the derivation's security rests on `root_master_key`, not the salt — see the discussion this settled), but it lives alongside `root_master_key` for convenience since both are needed together to compute or verify `username_hash`.
+`turso_database_url`/`turso_auth_token` are the same single, full-access credential pair for both the CLI and the browser — there's no separate scoped token for the browser session (see [security.md](security.md) for what that implies). `username_salt` is a single, vault-wide value (not per-user) — it's the HKDF salt for deriving `username_lookup_key` below. It doesn't need to be secret on its own (the derivation's security rests on `root_master_key`, not the salt — see the discussion this settled), but it lives alongside `root_master_key` for convenience since both are needed together to compute or verify `username_hash`.
 
 ## User Lookup and Password Verification
 
