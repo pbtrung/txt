@@ -8,9 +8,13 @@ from .utils import preprocess_text
 
 class Downloader:
     def __init__(self, creds: dict):
+        self._creds = creds
+        self._connect()
+
+    def _connect(self):
         self._conn = libsql.connect(
-            creds["turso_database_url"],
-            auth_token=creds["turso_auth_token"],
+            self._creds["turso_database_url"],
+            auth_token=self._creds["turso_auth_token"],
         )
 
     def _all_txts(self):
@@ -65,10 +69,20 @@ class Downloader:
         out.mkdir(parents=True, exist_ok=True)
         for row in self._all_txts():
             txt_id, name_blob = row[0], bytes(row[1])
-            try:
-                name = crypto.decrypt_name(name_blob)
-                self._write_parts(
-                    out / name, self._fetch_part_blobs(txt_id), crypto, name, verbose
-                )
-            except Exception as e:
-                click.echo(f"Warning: skipping id={txt_id}: {e}", err=True)
+            for attempt in range(2):
+                try:
+                    name = crypto.decrypt_name(name_blob)
+                    self._write_parts(
+                        out / name,
+                        self._fetch_part_blobs(txt_id),
+                        crypto,
+                        name,
+                        verbose,
+                    )
+                    break
+                except Exception as e:
+                    if attempt == 0 and "stream not found" in str(e):
+                        self._connect()
+                        continue
+                    click.echo(f"Warning: skipping id={txt_id}: {e}", err=True)
+                    break
