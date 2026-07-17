@@ -34,5 +34,6 @@ coverage/
 .idea/
 
 # Project data / secrets
+.claude/
 *.json
 *.txt
