@@ -1,6 +1,6 @@
 # txt
 
-A fully client-side-encrypted text vault. A CLI (`txt.py`, package `txt/`) ingests `.txt` files into a local SQLite database; a browser-based web UI (`ui/`) loads that same database file and lets users browse, search, and read files, with all decryption happening client-side. No server component, no network dependency at rest.
+A fully client-side-encrypted text vault. A CLI (`txt.py`, package `txt/`) is the only writer — it ingests `.txt` files into a local SQLite database file. That file is then synced to Cloudflare R2, where it's read-only: a browser-based web UI (`ui/`) reads it directly over paged HTTP range requests (no whole-file download, no application server) and lets users browse, search, and read files, with all decryption happening client-side.
 
 ## Documentation
 
