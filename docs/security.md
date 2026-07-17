@@ -10,10 +10,17 @@
 
 Per the key hierarchy in [crypto.md](crypto.md), each user's files are wrapped under that user's own `umk`, and each `umk` is itself wrapped under `root_master_key`. Concretely:
 
-- Holding one user's `umk` unwraps that user's `txt_key`s and `txt_metadata` (their file content *and* their filenames) but **not** another user's `umk`, files, or filenames. This is real per-user envelope encryption, not an application-layer label.
+- Holding one user's `umk` unwraps that user's `txt_key`s and `txt_metadata` (their file content *and* their filenames) but **not** another user's `umk`, files, or filenames — unless a file has been explicitly shared with them via `txt_shares` (see below). This is real per-user envelope encryption, not an application-layer label.
 - Holding `root_master_key` unwraps every user's `umk`, and therefore every file and filename — it remains the single point of total compromise. Anyone with the credentials file has this.
 
-So: per-user isolation holds for both file content and filenames against anything short of `root_master_key`.
+So: per-user isolation holds for both file content and filenames against anything short of `root_master_key`, except for files a user has explicitly been granted via sharing.
+
+## Sharing narrows isolation deliberately, and only for granted files
+
+Per [crypto.md](crypto.md)'s Sharing section, granting access re-wraps a file's `txt_key` under the recipient's own `umk` — it never exposes the owner's `umk`, so nothing else the owner has is affected by a share. Two things worth being explicit about:
+
+- **Sharing requires `root_master_key`.** The grant/revoke operation unwraps both the owner's and the recipient's `umk`, which only something holding `root_master_key` can do. In practice this means sharing is a CLI/admin action (same trust tier as ingest), not something a logged-in browser session can do unilaterally with only its own `umk`. Anyone who can run `--share` can grant themselves — or anyone — access to any file, since they necessarily hold `root_master_key` to do it at all; this isn't a new capability sharing introduces, just a routine exercise of a capability `root_master_key` already had.
+- **Revocation has no forward secrecy.** Deleting a `txt_shares` row stops *future* decryption through that grant. It does not invalidate a plaintext copy (or a cached raw `txt_key`) the recipient already obtained before revocation. If that matters, the only real fix is rotating the file's `txt_key` (re-encrypting `txt_parts`/`bookmarks` under a new key and re-granting remaining recipients) — not implemented here, since it's a meaningfully larger operation than a `DELETE`.
 
 ## Filename confidentiality changed shape
 
