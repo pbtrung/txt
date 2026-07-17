@@ -6,8 +6,8 @@ SQLite schema for the local `.db` file, shared by the CLI and the web UI.
 CREATE TABLE IF NOT EXISTS users (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     username_hash BLOB NOT NULL UNIQUE,  -- HMAC-SHA3-256(username_lookup_key, username); lookup only, see crypto.md
-    pw_salt       BLOB NOT NULL,         -- fresh random salt per user
-    pw_hash       BLOB NOT NULL          -- Argon2id(password, pw_salt); verification only, not a lookup key
+    pw_salt       BLOB NOT NULL,         -- 32 random bytes, fresh per user
+    pw_hash       BLOB NOT NULL          -- PBKDF2-HMAC-SHA3-256(password, pw_salt, 1000 iterations); verification only, not a lookup key
 );
 
 CREATE TABLE IF NOT EXISTS umk_store (
@@ -102,4 +102,4 @@ Each user has exactly one `txt_metadata` row (`user_id` is `UNIQUE`), holding a 
 
 ### `users` table splits lookup from password verification
 
-`username_hash` is a deterministic, directly-queryable lookup key (`SELECT id FROM users WHERE username_hash = ?`), computed with a key derived from `root_master_key` — not a plain unkeyed hash of the username, since that would let anyone holding just the `.db` file (no `creds.json`) dictionary-guess which usernames exist. `pw_salt`/`pw_hash` are a separate, per-user-salted slow password hash (Argon2id) used only to *verify* a password once the row's already been found by `username_hash` — never as a lookup key itself, since a slow KDF can't be recomputed cheaply enough to scan the whole table. See [crypto.md](crypto.md) for both formulas and where `root_master_key`/`username_salt` come from.
+`username_hash` is a deterministic, directly-queryable lookup key (`SELECT id FROM users WHERE username_hash = ?`), computed with a key derived from `root_master_key` — not a plain unkeyed hash of the username, since that would let anyone holding just the `.db` file (no `creds.json`) dictionary-guess which usernames exist. `pw_salt`/`pw_hash` are a separate, per-user-salted password hash (PBKDF2-HMAC-SHA3-256, 1000 iterations) used only to *verify* a password once the row's already been found by `username_hash` — never as a lookup key itself, since a KDF can't be recomputed cheaply enough to scan the whole table. See [crypto.md](crypto.md) for both formulas and where `root_master_key`/`username_salt` come from.

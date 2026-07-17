@@ -32,7 +32,7 @@ The JSON credentials file (`creds.json`) holds:
 ```json
 {
   "root_master_key": "<base64, 256 random bytes>",
-  "username_salt":   "<base64, random bytes>"
+  "username_salt":   "<base64, 32 random bytes>"
 }
 ```
 
@@ -50,11 +50,11 @@ username_hash        = HMAC-SHA3-256(username_lookup_key, username)
 Once the row is found, the password is verified separately — never as a lookup key, since a slow KDF can't be scanned over:
 
 ```
-pw_hash_computed = Argon2id(password, salt=users.pw_salt)
-valid = constant_time_compare(pw_hash_computed, users.pw_hash)
+pw_hash_computed = PBKDF2-HMAC-SHA3-256(password, salt=users.pw_salt, iterations=1000)
+valid            = constant_time_compare(pw_hash_computed, users.pw_hash)
 ```
 
-`pw_salt` is fresh random bytes generated once per user at creation time. `Argon2id` needs confirming against `leancrypto`'s actual API surface — the primitives used elsewhere in this document (Ascon-Keccak, HKDF-SHA3-512, HMAC-SHA3-256) are all already in use for content encryption, but a memory-hard password KDF is a different kind of primitive and hasn't been verified as available.
+`pw_salt` is 32 fresh random bytes generated once per user at creation time. `pw_hash` verification is reachable at all only via `username_hash`, which itself requires `root_master_key` (see above) — so this sits behind the same credentials-file boundary as everything else in this scheme, not as an independent line of defense.
 
 ## Primitives
 
@@ -63,7 +63,7 @@ valid = constant_time_compare(pw_hash_computed, users.pw_hash)
 | AEAD | Ascon-Keccak (`lc_ak_alloc_taglen`) | 64-byte key, 64-byte IV, 64-byte tag |
 | KDF | HKDF-SHA3-512 (`lc_hkdf_*`) | produces 128 or 160 bytes of OKM |
 | MAC | HMAC-SHA3-256 (`lc_hmac_*`) | 32-byte digest |
-| Password KDF | Argon2id (availability in `leancrypto` unconfirmed) | memory-hard, salted |
+| Password KDF | PBKDF2-HMAC-SHA3-256 (`lc_pbkdf2_*`; exact symbol TBD from leancrypto headers) | 1000 iterations, 32-byte salt |
 
 ## Blob Format
 
