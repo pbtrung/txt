@@ -2,7 +2,7 @@
 
 ## Threat model
 
-- The `.db` file is the only thing that leaves the trust boundary of the machine running the CLI or the browser tab — it's a local file, not a server, so there's no separate access-control layer like an account/token model to lean on. Anyone who obtains the `.db` file gets exactly the ciphertext it contains; confidentiality rests on the key hierarchy rooted at `root_master_key` (see [crypto.md](crypto.md)).
+- The `.db` file — the whole file, wholesale — is what leaves the trust boundary: the CLI writes it locally, then it's pushed to Cloudflare R2 for the web UI to read. There's no application server enforcing access on the read path, so whoever can reach the R2 object gets exactly the ciphertext it contains, page by page over HTTP; confidentiality rests entirely on the key hierarchy rooted at `root_master_key` (see [crypto.md](crypto.md)), not on R2 access being restricted.
 - The credentials file (containing the base64 `root_master_key`) must be kept secret and out of version control, same as before. Anyone who has it can unwrap every user's `umk` and therefore every file, regardless of owner.
 - Compression happens before encryption, everywhere, to avoid compression-oracle attacks.
 
@@ -29,9 +29,8 @@ Previously, each filename had its own salt and an HMAC-based blind index for O(r
 - Upside: filenames are now per-user isolated (see above), and within a user's own blob, individual name lengths are hidden inside one aggregate ciphertext rather than each having its own row/size.
 - Downside: there is no more blind-index lookup; any dedup check requires decrypting that user's whole `txt_metadata` row (the CLI already holds the keys needed to do this for the user it's ingesting as, so this is not a new capability being granted, just a different code path — see [crypto.md](crypto.md)/[data_model.md](data_model.md)).
 
-## Local-file distribution caveats
-
-Since this is a local file rather than a hosted database:
+## R2 distribution caveats
 
 - There is no server enforcing "only decrypt what this session's token allows" — whatever key material (a user's `umk`, or `root_master_key`) the browser/CLI holds determines what it can decrypt, per the hierarchy above. All access control is client-side and trust-dependent on which key(s) that session actually has.
-- If the file is synced via some external mechanism (USB drive, shared folder, etc.) that is outside this app's control and outside this document's scope.
+- **Whether the R2 object itself needs access control (signed URLs, a bucket policy, etc.) is an open decision, not yet made.** Ciphertext confidentiality doesn't depend on R2 being private — the content stays encrypted either way — but if the object is fully public, anyone can download the whole `.db` (or fetch arbitrary ranges of it) without ever needing `root_master_key`. That's not a break of content confidentiality, but it is a meaningfully different exposure than "an attacker needs to find the file on someone's disk."
+- **Paged HTTP reads can leak access patterns that a single local file wouldn't.** Every query becomes one or more `Range` GET requests against R2; anyone who can observe that traffic (R2's own access logs, a network intermediary, a CDN in front of it) sees the byte ranges and timing of requests, even though the payload itself is ciphertext. Ranges roughly correspond to which SQLite pages — and therefore which rows/tables — are being touched, so coarse query patterns (e.g. "this session is repeatedly hitting the same file's `txt_parts` rows" vs. "this session just fetched `umk_store` once at login") are visible to whoever can see that traffic, even without decrypting anything. This is a real, if minor, form of metadata leakage the previous local-file-only design didn't have.

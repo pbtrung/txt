@@ -2,12 +2,13 @@
 
 ## Overview
 
-`txt` is a fully client-side-encrypted text vault. Two independent components share one local SQLite database file:
+`txt` is a fully client-side-encrypted text vault. One `.db` file, one writer, one read-only distribution point:
 
-- **CLI (`txt.py`, package `txt/`)** — local-only; ingests `.txt` files from disk, encrypts them, and writes them into a local SQLite `.db` file via stdlib `sqlite3`. Also handles download/export back to plaintext `.txt` files.
-- **Web UI (`ui/`)** — a browser app that loads the same `.db` file directly (via `sql.js`, see [tech_stack.md](tech_stack.md)) and lets the user browse, search, and read files, with all decryption happening client-side.
+- **CLI (`txt.py`, package `txt/`)** — the only writer. Local-only; ingests `.txt` files from disk, encrypts them, and writes them into a local SQLite `.db` file via stdlib `sqlite3`. Also handles download/export back to plaintext `.txt` files, and sharing (below).
+- **Sync to Cloudflare R2** — after a local write, the `.db` file is pushed wholesale to R2 (S3-compatible object storage). This is a distribution step, not a live write path — see [tech_stack.md](tech_stack.md) for whether it's CLI-driven or an external tool.
+- **Web UI (`ui/`)** — a browser app that reads the R2-hosted `.db` directly over paged HTTP range requests (SQLite-WASM + a custom HTTP VFS, no whole-file download, no application server — see [tech_stack.md](tech_stack.md)) and lets the user browse, search, and read files, with all decryption happening client-side.
 
-There is no server component and no network dependency anywhere in this app. See [tech_stack.md](tech_stack.md) for the open question on how browser-side writes (bookmarks, read position) get persisted back to that file.
+There's no application server and no custom backend logic, but there **is** a network dependency now: the web UI's read path goes over HTTP to R2. It cannot write back through that path at all — R2 doesn't support partial/byte-range writes, so the read-only-ness is structural, not a policy choice. See [tech_stack.md](tech_stack.md) for the open question this raises for browser-side writes (bookmarks, read position).
 
 ## Components
 
@@ -24,7 +25,8 @@ txt/
   leancrypto.py         ctypes bindings to the leancrypto shared library
 
 ui/
-  src/                  React app; sql.js + leancrypto-wasm for client-side DB access and decryption
+  src/                  React app; SQLite-WASM + HTTP VFS (paged reads from R2) + leancrypto-wasm
+                        for client-side DB access and decryption
 ```
 
 ## Ingest pipeline (CLI)
@@ -53,21 +55,22 @@ Filenames are resolved through a single decrypted index rather than a per-row sc
 ## Read pipeline (Web UI)
 
 ```
-1. User selects the local .db file.
-2. sql.js loads it into an in-memory SQLite instance.
-3. User logs in as a specific user; the app unwraps that user's `umk` from
-   `umk_store` (see crypto.md's Key Hierarchy).
-4. UI decrypts the logged-in user's own txt_metadata row to get their
+1. UI opens the R2-hosted .db via the HTTP VFS — no download of the whole
+   file, just the SQLite header/schema pages needed to start querying.
+2. User logs in as a specific user; the app unwraps that user's `umk` from
+   `umk_store` (fetches just that row's page(s) over Range requests; see
+   crypto.md's Key Hierarchy).
+3. UI decrypts the logged-in user's own txt_metadata row to get their
    id → name map (client-side) — inherently scoped to their own files.
-5. Opening a file: if it's in the logged-in user's own txt_metadata as an
+4. Opening a file: if it's in the logged-in user's own txt_metadata as an
    owned file, unwrap its txt_key via txt.txt_key; if it's there as a
    shared file, unwrap via that user's txt_shares row instead (see
-   crypto.md's Key Hierarchy). Either way, stream its txt_parts rows,
-   decrypting one part at a time with that txt_key (same AEAD scheme as
-   ingest) — the content path doesn't branch further once txt_key is unwrapped.
-6. Bookmarks / txt_access reads and writes go through the same in-memory
-   sql.js database, keyed by (txt_id, user_id) now that a file can have more
-   than one reader; see tech_stack.md for how writes get persisted back to disk.
+   crypto.md's Key Hierarchy). Either way, stream its txt_parts rows —
+   each fetched over Range requests as needed — decrypting one part at a
+   time with that txt_key (same AEAD scheme as ingest).
+5. Bookmarks / txt_access reads are the same paged fetch. Writes cannot go
+   through this path at all (R2 is read-only over this VFS); see
+   tech_stack.md's open question on where browser-side writes go instead.
 ```
 
 ## Share pipeline (CLI)
@@ -97,6 +100,8 @@ Revoke:
 ```
 
 Both operations require `root_master_key` (same trust tier as `--src`/`--download`) — sharing is CLI-mediated, not something a browser session can do with only its own `umk`. See [crypto.md](crypto.md)'s Sharing section and [security.md](security.md) for why, and for what revocation does and does not guarantee (no forward secrecy over already-retrieved plaintext).
+
+Like ingest, a grant/revoke only takes effect for readers once the updated local `.db` is synced to R2 (see [tech_stack.md](tech_stack.md)) — there's a window between a local grant/revoke and it being visible to the web UI.
 
 ## Multi-user model
 
