@@ -4,8 +4,10 @@ SQLite schema for the local `.db` file, shared by the CLI and the web UI.
 
 ```sql
 CREATE TABLE IF NOT EXISTS users (
-    id   INTEGER PRIMARY KEY AUTOINCREMENT,
-    hash TEXT NOT NULL UNIQUE
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    username_hash BLOB NOT NULL UNIQUE,  -- HMAC-SHA3-256(username_lookup_key, username); lookup only, see crypto.md
+    pw_salt       BLOB NOT NULL,         -- fresh random salt per user
+    pw_hash       BLOB NOT NULL          -- Argon2id(password, pw_salt); verification only, not a lookup key
 );
 
 CREATE TABLE IF NOT EXISTS umk_store (
@@ -98,6 +100,6 @@ These were briefly simplified to key on `txt_id` alone under the assumption that
 
 Each user has exactly one `txt_metadata` row (`user_id` is `UNIQUE`), holding a JSON map of `txt_id → name` for every file they can open — their own plus anything shared to them — wrapped under a dedicated `txt_metadata_key` (itself wrapped under that user's `umk`, not used to encrypt `content` directly; see [crypto.md](crypto.md)). An ingest run for a given user decrypts that user's row once at the start, applies all of that run's name additions in memory, and writes it back once at the end — not once per file. A share operation does the same for the *recipient's* row, adding just the one shared entry. `--force` re-ingests don't touch it (the filename doesn't change, only `txt_id` is reused).
 
-### `users` table identifies users by `hash`, not a plaintext name
+### `users` table splits lookup from password verification
 
-`users.hash` implies some credential-based lookup (e.g. a password/passphrase hash) rather than a plain display name — but the hashing scheme itself (algorithm, salt/iteration handling) isn't specified yet, and neither is the login/session flow that would use it. [crypto.md](crypto.md) doesn't yet cover this hash, since it's a different kind of primitive than the AEAD/HKDF/HMAC scheme used for content — flagging both as open items rather than inventing a scheme unasked.
+`username_hash` is a deterministic, directly-queryable lookup key (`SELECT id FROM users WHERE username_hash = ?`), computed with a key derived from `root_master_key` — not a plain unkeyed hash of the username, since that would let anyone holding just the `.db` file (no `creds.json`) dictionary-guess which usernames exist. `pw_salt`/`pw_hash` are a separate, per-user-salted slow password hash (Argon2id) used only to *verify* a password once the row's already been found by `username_hash` — never as a lookup key itself, since a slow KDF can't be recomputed cheaply enough to scan the whole table. See [crypto.md](crypto.md) for both formulas and where `root_master_key`/`username_salt` come from.

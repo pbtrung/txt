@@ -25,6 +25,37 @@ Each arrow wraps a freshly generated random secret under a key derived from what
 
 Content encryption (`txt_parts`, `bookmarks`) is keyed off the file's `txt_key`, unwrapped via *either* `txt.txt_key` (if you're the owner) or `txt_shares.txt_key` (if you're a grantee) — both unwrap to identical bytes, so content encryption/decryption code doesn't need to know or care which. Possessing one user's `umk` only ever unwraps that user's own `txt.txt_key` rows, their own `txt_shares.txt_key` grants, and their own `txt_metadata_key` — never another user's `umk`, un-shared files, or another user's filenames. Only `root_master_key` can unwrap every `umk`.
 
+## Credentials File
+
+The JSON credentials file (`creds.json`) holds:
+
+```json
+{
+  "root_master_key": "<base64, 256 random bytes>",
+  "username_salt":   "<base64, random bytes>"
+}
+```
+
+`username_salt` is a single, vault-wide value (not per-user) — it's the HKDF salt for deriving `username_lookup_key` below. It doesn't need to be secret on its own (the derivation's security rests on `root_master_key`, not the salt — see the discussion this settled), but it lives alongside `root_master_key` for convenience since both are needed together to compute or verify `username_hash`.
+
+## User Lookup and Password Verification
+
+```
+username_lookup_key = HKDF-SHA3-512(ikm=root_master_key, salt=username_salt, info=b"username-lookup", length=32)
+username_hash        = HMAC-SHA3-256(username_lookup_key, username)
+```
+
+`username_hash` is looked up directly (`WHERE username_hash = ?`) to find a `users` row — it requires `root_master_key` (via `username_lookup_key`) to compute, so nothing without the credentials file can enumerate valid usernames from the `.db` file alone.
+
+Once the row is found, the password is verified separately — never as a lookup key, since a slow KDF can't be scanned over:
+
+```
+pw_hash_computed = Argon2id(password, salt=users.pw_salt)
+valid = constant_time_compare(pw_hash_computed, users.pw_hash)
+```
+
+`pw_salt` is fresh random bytes generated once per user at creation time. `Argon2id` needs confirming against `leancrypto`'s actual API surface — the primitives used elsewhere in this document (Ascon-Keccak, HKDF-SHA3-512, HMAC-SHA3-256) are all already in use for content encryption, but a memory-hard password KDF is a different kind of primitive and hasn't been verified as available.
+
 ## Primitives
 
 | Primitive | leancrypto API | Parameters |
@@ -32,6 +63,7 @@ Content encryption (`txt_parts`, `bookmarks`) is keyed off the file's `txt_key`,
 | AEAD | Ascon-Keccak (`lc_ak_alloc_taglen`) | 64-byte key, 64-byte IV, 64-byte tag |
 | KDF | HKDF-SHA3-512 (`lc_hkdf_*`) | produces 128 or 160 bytes of OKM |
 | MAC | HMAC-SHA3-256 (`lc_hmac_*`) | 32-byte digest |
+| Password KDF | Argon2id (availability in `leancrypto` unconfirmed) | memory-hard, salted |
 
 ## Blob Format
 
