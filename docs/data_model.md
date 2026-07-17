@@ -17,7 +17,15 @@ CREATE TABLE IF NOT EXISTS umk_store (
 CREATE TABLE IF NOT EXISTS txt (
     id      INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    txt_key BLOB    NOT NULL        -- magic||version||salt||Ascon-Keccak(txt_key bytes)||tag; see crypto.md Blob Format
+    txt_key BLOB    NOT NULL        -- magic||version||salt||Ascon-Keccak(txt_key bytes)||tag, wrapped under owner's umk; see crypto.md Blob Format
+);
+
+CREATE TABLE IF NOT EXISTS txt_shares (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    txt_id  INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    txt_key BLOB    NOT NULL,       -- same txt_key bytes as txt.txt_key, wrapped under this recipient's umk; see crypto.md
+    UNIQUE (txt_id, user_id)
 );
 
 CREATE TABLE IF NOT EXISTS txt_parts (
@@ -36,35 +44,39 @@ CREATE TABLE IF NOT EXISTS part_count (
 );
 
 CREATE TABLE IF NOT EXISTS txt_access (
-    txt_id        INTEGER PRIMARY KEY REFERENCES txt(id) ON DELETE CASCADE,
+    txt_id        INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
+    user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     last_part_num INTEGER NOT NULL DEFAULT 1,
-    last_accessed INTEGER NOT NULL       -- Unix timestamp in milliseconds
+    last_accessed INTEGER NOT NULL,      -- Unix timestamp in milliseconds
+    PRIMARY KEY (txt_id, user_id)
 );
 
 CREATE TABLE IF NOT EXISTS bookmarks (
     id      INTEGER PRIMARY KEY AUTOINCREMENT,
     txt_id  INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     bookmark BLOB NOT NULL   -- magic||version||salt||Ascon-Keccak(brotli(JSON))||tag; same scheme as txt_parts
 );
 
-CREATE INDEX IF NOT EXISTS idx_bookmarks_txt_id ON bookmarks(txt_id);
+CREATE INDEX IF NOT EXISTS idx_bookmarks_txt_id_user_id ON bookmarks(txt_id, user_id);
 
 CREATE TRIGGER IF NOT EXISTS trg_limit_bookmarks_per_file
 BEFORE INSERT ON bookmarks
-WHEN (SELECT COUNT(*) FROM bookmarks WHERE txt_id = NEW.txt_id) >= 12
+WHEN (SELECT COUNT(*) FROM bookmarks WHERE txt_id = NEW.txt_id AND user_id = NEW.user_id) >= 12
 BEGIN
     DELETE FROM bookmarks
     WHERE id = (
         SELECT id FROM bookmarks
-        WHERE txt_id = NEW.txt_id
+        WHERE txt_id = NEW.txt_id AND user_id = NEW.user_id
         ORDER BY id ASC LIMIT 1
     );
 END;
 
 CREATE TABLE IF NOT EXISTS txt_metadata (
-    id      INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
-    content BLOB NOT NULL   -- magic||version||salt||Ascon-Keccak(brotli(JSON {"<txt_id>": "<name>", ...}))||tag; this user's own txt_ids only
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id          INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+    txt_metadata_key BLOB    NOT NULL,   -- magic||version||salt||Ascon-Keccak(txt_metadata_key bytes)||tag, wrapped under this user's umk; see crypto.md
+    content          BLOB    NOT NULL    -- magic||version||salt||Ascon-Keccak(brotli(JSON {"<txt_id>": "<name>", ...}))||tag, keyed off txt_metadata_key (not umk directly); this user's own + shared-to-them txt_ids
 );
 ```
 
@@ -72,15 +84,19 @@ CREATE TABLE IF NOT EXISTS txt_metadata (
 
 ### `txt` is a bare id + ownership + key-envelope row
 
-Filenames no longer live on `txt` at all (no `name`/`name_hmac` columns). `txt` mints a stable, unique `id` (via `AUTOINCREMENT`), anchors `ON DELETE CASCADE` for `txt_parts`/`part_count`/`txt_access`/`bookmarks`, holds the owning `user_id`, and holds the file's encrypted `txt_key`. Every file belongs to exactly one user — there is no shared/multi-owner file. Filenames live in that owning user's `txt_metadata` row — see [crypto.md](crypto.md).
+Filenames no longer live on `txt` at all (no `name`/`name_hmac` columns). `txt` mints a stable, unique `id` (via `AUTOINCREMENT`), anchors `ON DELETE CASCADE` for `txt_parts`/`part_count`/`txt_access`/`bookmarks`, holds the owning `user_id`, and holds the file's encrypted `txt_key` (the *owner's* wrapped copy). Every file has exactly one owner — see `txt_shares` below for how other users get read access without becoming co-owners. Filenames live in the owner's (and each recipient's) `txt_metadata` row — see [crypto.md](crypto.md).
 
-### `txt_access` and `bookmarks` no longer carry `user_id`
+### `txt_shares` grants read access without exposing the owner's `umk`
 
-Since ownership is strictly 1:1 (a file's content can only be decrypted via its owning user's `umk`, per [crypto.md](crypto.md)'s key hierarchy), only that owning user could ever produce a meaningful read-position or bookmark for a given `txt_id` — no other user can decrypt the content to bookmark it in the first place. So `user_id` was dropped from both tables as redundant with `txt.user_id`: `txt_access` is now keyed by `txt_id` alone (`PRIMARY KEY`), and `bookmarks`'/its eviction trigger's scoping is by `txt_id` alone. Join through `txt.user_id` if you need the owner.
+Sharing a file re-wraps the *same* `txt.txt_key` bytes under a recipient's own `umk` and stores that as a new row here — one per `(txt_id, user_id)` grant, enforced `UNIQUE`. This means a recipient can decrypt exactly the files they've been granted, never the owner's `umk` itself (so no other files of the owner's are exposed). Revoking access is `DELETE FROM txt_shares WHERE txt_id=? AND user_id=?`; also clean up that user's `txt_access`/`bookmarks` rows for the `txt_id` and remove the entry from their `txt_metadata` at the same time, since they can no longer decrypt it. Revocation has no forward secrecy: it stops future decryption via this grant, it does not invalidate a plaintext copy the (former) recipient already retrieved before revocation. See [crypto.md](crypto.md) for the wrapping mechanics and the CLI-mediated share operation, and [security.md](security.md) for what revocation does and does not guarantee.
 
-### `txt_metadata` is one row per user, rewritten as a whole per ingest run
+### `txt_access` and `bookmarks` carry `user_id` again, because of sharing
 
-Each user has exactly one `txt_metadata` row (`user_id` is `UNIQUE`), holding a JSON map of only *that user's own* `txt_id → name` entries, wrapped under that user's `umk` (see [crypto.md](crypto.md)). An ingest run for a given user should decrypt that user's row once at the start, apply all of that run's name additions in memory, and write it back once at the end — not once per file. `--force` re-ingests don't touch it (the filename doesn't change, only `txt_id` is reused).
+These were briefly simplified to key on `txt_id` alone under the assumption that only a file's owner could ever decrypt it. `txt_shares` breaks that assumption — multiple users can now read the same file — so both tables (and the bookmark-eviction trigger) are keyed on `(txt_id, user_id)` again: each reader gets their own read position and their own 12-bookmark cap per file, independent of any other reader.
+
+### `txt_metadata` is one row per user, rewritten as a whole per ingest or share
+
+Each user has exactly one `txt_metadata` row (`user_id` is `UNIQUE`), holding a JSON map of `txt_id → name` for every file they can open — their own plus anything shared to them — wrapped under a dedicated `txt_metadata_key` (itself wrapped under that user's `umk`, not used to encrypt `content` directly; see [crypto.md](crypto.md)). An ingest run for a given user decrypts that user's row once at the start, applies all of that run's name additions in memory, and writes it back once at the end — not once per file. A share operation does the same for the *recipient's* row, adding just the one shared entry. `--force` re-ingests don't touch it (the filename doesn't change, only `txt_id` is reused).
 
 ### `users` table identifies users by `hash`, not a plaintext name
 
