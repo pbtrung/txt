@@ -18,11 +18,15 @@ class AdminInitializer:
         self.creds = creds
 
     def _insert_user(self, password: str) -> int:
-        username_hash = hmac_sha3_256(self.creds.username_lookup_key, self.creds.display_name.encode())
+        username_hash = hmac_sha3_256(
+            self.creds.username_lookup_key, self.creds.display_name.encode()
+        )
         if self.db.username_exists(username_hash):
             raise click.ClickException("A user with this display_name already exists")
         pw_salt = os.urandom(c.PW_SALT_LEN)
-        pw_hash = pbkdf2_sha3_256(password.encode(), pw_salt, c.PBKDF2_ITERATIONS, c.PW_HASH_LEN)
+        pw_hash = pbkdf2_sha3_256(
+            password.encode(), pw_salt, c.PBKDF2_ITERATIONS, c.PW_HASH_LEN
+        )
         cur = self.db.conn.execute(
             "INSERT INTO users (username_hash, pw_salt, pw_hash) VALUES (?, ?, ?)",
             (username_hash, pw_salt, pw_hash),
@@ -32,7 +36,9 @@ class AdminInitializer:
     def _insert_umk(self, user_id: int) -> bytes:
         umk = os.urandom(c.UMK_LEN)
         blob = Blob.encrypt(self.creds.user_root_key, umk)
-        self.db.conn.execute("INSERT INTO umk_store (user_id, umk) VALUES (?, ?)", (user_id, blob))
+        self.db.conn.execute(
+            "INSERT INTO umk_store (user_id, umk) VALUES (?, ?)", (user_id, blob)
+        )
         return umk
 
     def _insert_key_store(self, user_id: int, umk: bytes) -> None:
