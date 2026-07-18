@@ -10,7 +10,7 @@ Password verification is Firebase's responsibility entirely, not this app's.
 
 # Blob Format
 
-Every encrypted blob — the small wrapped-key columns (`umkStore.umkBlob`, `txt.txtKeyBlob`, `metadataStore.metadataKeyBlob`) and the bulk content stored as `$files` bytes (a `txt` row's content + history, its read-position, a bookmark's payload, the metadata index's content) — shares one wire format:
+Every encrypted blob — the small wrapped-key columns stored inline in InstantDB (`umkStore.umkBlob`, `txt.txtKeyBlob`, `metadataStore.metadataKeyBlob`) and the bulk content stored as R2 objects (each `txt` part's content, a `txt` row's read-position, a bookmark's payload, the metadata index's content) — shares one wire format:
 
 ```
 magic (2) || version (2) || salt (64) || ciphertext (var) || tag (64)
@@ -32,7 +32,7 @@ Minimum valid blob length: `2 + 2 + 64 + 0 + 64 = 132` bytes.
 |----------------|---------|
 | `0x01 0x00` | v1.0, current format |
 
-Bump minor for additive, backward-compatible changes (e.g. new optional fields in a plaintext JSON payload, a brotli parameter change) — an older decoder can still decode a newer-minor blob by ignoring unknown fields. Bump major for breaking changes (different cipher/KDF, different field sizes/ordering, different magic bytes) — a decoder must refuse a blob whose major version it doesn't recognize rather than attempt to decode it. InstantDB stores these blobs as opaque strings/file bytes, so old and new blob versions can coexist in the same app indefinitely without a coordinated rewrite.
+Bump minor for additive, backward-compatible changes (e.g. new optional fields in a plaintext JSON payload, a brotli parameter change) — an older decoder can still decode a newer-minor blob by ignoring unknown fields. Bump major for breaking changes (different cipher/KDF, different field sizes/ordering, different magic bytes) — a decoder must refuse a blob whose major version it doesn't recognize rather than attempt to decode it. R2 stores each object as opaque bytes at its path, so old and new blob versions can coexist across different objects indefinitely without a coordinated rewrite.
 
 ## Additional Data (AD)
 
@@ -63,10 +63,10 @@ Where `parent_secret` is:
 | `umkStore.umkBlob` | that user's `user_root_key` |
 | `txt.txtKeyBlob` | the owning user's decrypted `umk` |
 | `metadataStore.metadataKeyBlob` | that user's decrypted `umk` |
-| a `txt` row's content + history (`$files`, via `txtPartFile`) | that `txt` row's decrypted `txtKeyBlob` |
-| a `txt` row's read-position (`$files`, via `txtAccessFileEntry`, off `txtAccess`) | that `txt` row's decrypted `txtKeyBlob` |
-| a bookmark's content (`$files`, via `bookmarkFileEntry`, off `bookmarks`) | that bookmark's owning `txt` row's decrypted `txtKeyBlob` |
-| the metadata index's content (`$files`, via `txtMetadataFile`) | that user's decrypted `metadataKey` |
+| a part's content (R2 object at a `txtParts` row's `path`) | that `txtParts` row's owning `txt` row's decrypted `txtKeyBlob` |
+| read-position (R2 object at `txtAccess.path`) | that `txtAccess` row's owning `txt` row's decrypted `txtKeyBlob` |
+| a bookmark's content (R2 object at a `bookmarks` row's `path`) | that bookmark's owning `txt` row's decrypted `txtKeyBlob` |
+| the metadata index's content (R2 object at `metadataStore.path`) | that user's decrypted `metadataKey` |
 
 # Encrypt / Decrypt
 
@@ -75,8 +75,8 @@ Same Ascon-Keccak AEAD scheme and AD as Blob Format above; structured/textual pa
 ```
 plaintext  = raw bytes of the payload
              (umk, txtKeyBlob, metadataKey: raw, no compression;
-              a txt row's content + history, its read-position, a bookmark's
-              content, the metadata index's content: brotli-compressed)
+              a part's content, read-position, a bookmark's content, the
+              metadata index's content: brotli-compressed)
 salt       = os.urandom(64)
 version    = 0x01 0x00
 ad         = MAGIC || version || salt
