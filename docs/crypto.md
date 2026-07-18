@@ -4,13 +4,13 @@
 |-----------|---------------|------------|
 | AEAD | Ascon-Keccak (`lc_ak_alloc_taglen`) | 64-byte key, 64-byte IV, 64-byte tag |
 | KDF | HKDF-SHA3-512 (`lc_hkdf_*`) | produces 128 or 160 bytes of OKM |
-| MAC | HMAC-SHA3-256 (`lc_hmac_*`) | 32-byte digest (currently unused now that `username_hash` is gone; kept in case a future blind-index need reappears) |
+| MAC | HMAC-SHA3-256 (`lc_hmac_*`) | 32-byte digest (currently unused; kept in case a future blind-index lookup need arises) |
 
-Unchanged from before, minus the password KDF row (PBKDF2-HMAC-SHA3-256) — password verification is now Firebase's responsibility entirely, not this app's.
+Password verification is Firebase's responsibility entirely, not this app's.
 
 # Blob Format
 
-Every encrypted blob — the small wrapped-key columns (`umkStore.umkBlob`, `txt.txtKeyBlob`, `metadataStore.metadataKeyBlob`) and the bulk content stored as `$files` bytes (a `txt` row's content + history, its read-position, a bookmark's payload, the metadata index's content) — shares one wire format, unchanged from before:
+Every encrypted blob — the small wrapped-key columns (`umkStore.umkBlob`, `txt.txtKeyBlob`, `metadataStore.metadataKeyBlob`) and the bulk content stored as `$files` bytes (a `txt` row's content + history, its read-position, a bookmark's payload, the metadata index's content) — shares one wire format:
 
 ```
 magic (2) || version (2) || salt (64) || ciphertext (var) || tag (64)
@@ -32,7 +32,7 @@ Minimum valid blob length: `2 + 2 + 64 + 0 + 64 = 132` bytes.
 |----------------|---------|
 | `0x01 0x00` | v1.0, current format |
 
-Bump minor for additive, backward-compatible changes; bump major for breaking changes. Unchanged from before — see the Blob Format section's original rationale, which still applies verbatim since InstantDB stores these blobs as opaque strings/file bytes, the same way SQLite stored them as opaque `BLOB`s.
+Bump minor for additive, backward-compatible changes (e.g. new optional fields in a plaintext JSON payload, a brotli parameter change) — an older decoder can still decode a newer-minor blob by ignoring unknown fields. Bump major for breaking changes (different cipher/KDF, different field sizes/ordering, different magic bytes) — a decoder must refuse a blob whose major version it doesn't recognize rather than attempt to decode it. InstantDB stores these blobs as opaque strings/file bytes, so old and new blob versions can coexist in the same app indefinitely without a coordinated rewrite.
 
 ## Additional Data (AD)
 
@@ -40,11 +40,11 @@ Bump minor for additive, backward-compatible changes; bump major for breaking ch
 AD = magic (2) || version (2) || salt (64)   -> 68 bytes total
 ```
 
-Unchanged.
+The AEAD tag covers the blob header as well as the ciphertext: any single-bit modification to the magic, version, salt, ciphertext, or tag causes authentication failure before any plaintext is returned — this binds the blob's format identity and version to its authenticity, not just its salt.
 
 ## Upgrade handling
 
-Unchanged: a blob is re-encrypted to the current version lazily, on next write. An explicit "re-encrypt all" pass can upgrade eagerly if needed.
+A blob is re-encrypted to the current version lazily, on next write. An explicit "re-encrypt all" pass can upgrade eagerly if needed.
 
 # Key Derivation
 
@@ -70,7 +70,7 @@ Where `parent_secret` is:
 
 # Encrypt / Decrypt
 
-Both unchanged from before — same Ascon-Keccak AEAD scheme, same AD, same brotli-before-encrypt rule for structured/textual payloads (raw key material is never compressed):
+Same Ascon-Keccak AEAD scheme and AD as Blob Format above; structured/textual payloads are brotli-compressed before encryption, raw key material never is:
 
 ```
 plaintext  = raw bytes of the payload
