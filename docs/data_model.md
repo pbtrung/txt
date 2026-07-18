@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS key_store (
 CREATE TABLE IF NOT EXISTS txt (
     id      INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    txt_key BLOB    NOT NULL        -- magic||version||salt||Ascon-Keccak(txt_key bytes)||tag, wrapped under owner's umk
+    txt_key BLOB    NOT NULL        -- magic||version||salt||Ascon-Keccak(txt_key bytes)||tag, wrapped under owner's umk; txt_key itself is 64 random bytes
 );
 
 CREATE TABLE IF NOT EXISTS txt_parts (
@@ -88,7 +88,7 @@ END;
 CREATE TABLE IF NOT EXISTS txt_metadata (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id          INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
-    txt_metadata_key BLOB    NOT NULL,   -- magic||version||salt||Ascon-Keccak(txt_metadata_key bytes)||tag, wrapped under owner's umk
+    txt_metadata_key BLOB    NOT NULL,   -- magic||version||salt||Ascon-Keccak(txt_metadata_key bytes)||tag, wrapped under owner's umk; txt_metadata_key itself is 64 random bytes
     content          BLOB    NOT NULL    -- magic||version||salt||Ascon-Keccak(brotli(JSON))||tag
 );
 ```
@@ -114,11 +114,11 @@ user_root_key (per-user config secret, ≥256 random bytes, base64; not stored i
     ▼
 umk  (umk_store.umk — 64 random bytes, generated once per user)
     │  used directly as IKM for HKDF, wraps/unwraps —
-    ├──▶ txt_key            (txt.txt_key — per document)
+    ├──▶ txt_key            (txt.txt_key — 64 random bytes, per document)
     │        │  used directly as IKM —
     │        └──▶ txt_parts.content, bookmarks.bookmark  (per document's content and bookmarks)
     │
-    ├──▶ txt_metadata_key   (txt_metadata.txt_metadata_key — per user)
+    ├──▶ txt_metadata_key   (txt_metadata.txt_metadata_key — 64 random bytes, per user)
     │        │  used directly as IKM —
     │        └──▶ txt_metadata.content
     │
@@ -142,7 +142,7 @@ umk  (umk_store.umk — 64 random bytes, generated once per user)
 
 - `user_root_key` is a per-user secret (at least 256 random bytes, base64-encoded) held in config, not in Turso — each user has their own, not a value shared across the corpus. It is the IKM used to wrap and unwrap that user's `umk`.
 - `umk` is 64 random bytes generated once when a user's `umk_store` row is created. Unwrapped, it is used directly as HKDF IKM (no intermediate per-purpose derivation) to wrap and unwrap `txt.txt_key`, `txt_metadata.txt_metadata_key`, and `key_store.priv_key`.
-- `txt_key` and `txt_metadata_key` are themselves used directly as IKM to encrypt/decrypt the content columns they protect. `txt_key` — the document's own (unwrapped) key — is the IKM for both `txt_parts.content` and `bookmarks.bookmark`, since bookmarks are scoped per-`txt_id`. `txt_metadata_key` is the IKM for `txt_metadata.content`.
+- `txt_key` and `txt_metadata_key` are each 64 random bytes, same size as `umk`. Unwrapped, they're themselves used directly as IKM to encrypt/decrypt the content columns they protect. `txt_key` — the document's own (unwrapped) key — is the IKM for both `txt_parts.content` and `bookmarks.bookmark`, since bookmarks are scoped per-`txt_id`. `txt_metadata_key` is the IKM for `txt_metadata.content`.
 - `key_store` holds each user's composite ML-KEM-1024 + X448 keypair (see crypto.md's Composite KEM Key Sizes). Unlike every other secret in this hierarchy, `priv_key` is never used as IKM directly — it's only used to Decapsulate (crypto.md) a KEM ciphertext down to a shared secret, which then becomes the IKM for a standard Decrypt.
 - `txt_shares` lets a document owner grant another user access without either party learning the other's `umk`: the owner Encapsulates (crypto.md) the document's `txt_key` against the recipient's `key_store.pub_key`, storing the resulting `kem_ct`/`eph_x448_pub`/wrapped `txt_key` in the share row; the recipient later Decapsulates using `kem_ct` and `eph_x448_pub` together with their own `key_store.priv_key`.
 - Every wrapped-key and content blob uses the blob format, AEAD, and KDF mechanics from [crypto.md](crypto.md) uniformly — the same Encrypt/Decrypt procedure, just with a different IKM and payload at each layer. `key_store.priv_key`/`txt_shares.txt_key` add one more step in front (Encapsulate/Decapsulate) to derive that IKM asymmetrically instead of it being already held by both sides.
@@ -154,4 +154,3 @@ umk  (umk_store.umk — 64 random bytes, generated once per user)
 - **Per-user root key blast radius.** Since `user_root_key` (and `username_lookup_key`) are per-user rather than shared, compromising one user's config secret only exposes that user's `umk`/`txt_key`/`txt_metadata_key` chain, not the whole corpus.
 - **Where per-user config lives.** The per-user `user_root_key`/`username_lookup_key` pairs are held in a JSON config file, keyed per user.
 - **Composite KEM combiner binding.** The combiner is `HKDF-Extract(none, ss_kem || ss_x448)` → a 64-byte `PRK` (see crypto.md's Encapsulate/Decapsulate) — a standard robust combiner: the combined key stays secure as long as at least one of ML-KEM-1024 or X448 remains unbroken. It does not yet bind `kem_ct` or either party's public key into the derivation (only the two raw shared secrets). Hybrid-KEM designs like X-Wing additionally fold `kem_ct`, `eph_x448_pub`, and the recipient's static X448 `pub_key` into the derivation (as HKDF `info`) for domain separation and cross-protocol safety — worth adopting the same here rather than combining the two secrets alone.
-- **`txt_key`/`txt_metadata_key` raw byte length is unspecified.** `umk` (64 bytes) and the composite KEM keys (crypto.md) both have documented raw sizes, but `txt.txt_key` and `txt_metadata.txt_metadata_key` never state how many random bytes they are before wrapping — worth pinning down for consistency (64 bytes, matching `umk`, would be the natural choice given every other symmetric key/salt/tag in this system is 64 bytes).
