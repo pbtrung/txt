@@ -20,13 +20,12 @@ const rules = {
       update: "isOwner && !('umk' in request.modifiedFields)",
     },
   },
-  $files: {
-    bind: ['isOwnPath', "data.path.startsWith(auth.id + '/')"],
+  txtParts: {
+    bind: ['isOwner', "auth.id in data.ref('txt.umk.owner.id')"],
     allow: {
-      view: 'isOwnPath',
-      create: 'isOwnPath',
-      delete: 'isOwnPath',
-      update: 'false',
+      view: 'isOwner',
+      create: 'isOwner',
+      delete: 'isOwner',
     },
   },
   metadataStore: {

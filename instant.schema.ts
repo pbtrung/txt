@@ -2,24 +2,29 @@ import { i } from '@instantdb/react';
 
 const _schema = i.schema({
   entities: {
-    $files: i.entity({
-      path: i.string().unique().indexed(),
-      url: i.string().optional(),
-    }),
     $users: i.entity({
       type: i.string(),
     }),
     txt: i.entity({
       txtKeyBlob: i.string(),
     }),
-    txtAccess: i.entity({}),
+    txtParts: i.entity({
+      path: i.string().unique().indexed(),
+      partNum: i.number().indexed(),
+    }),
+    txtAccess: i.entity({
+      path: i.string().unique().indexed(),
+    }),
     umkStore: i.entity({
       umkBlob: i.string(),
     }),
     metadataStore: i.entity({
       metadataKeyBlob: i.string(),
+      path: i.string().unique().indexed(),
     }),
-    bookmarks: i.entity({}),
+    bookmarks: i.entity({
+      path: i.string().unique().indexed(),
+    }),
   },
   links: {
     $usersLinkedPrimaryUser: {
@@ -49,17 +54,18 @@ const _schema = i.schema({
         label: 'txt',
       },
     },
-    txtPartFile: {
+    txtTxtParts: {
       forward: {
-        on: '$files',
+        on: 'txtParts',
         has: 'one',
-        label: 'txtPart',
+        label: 'txt',
+        required: true,
         onDelete: 'cascade',
       },
       reverse: {
         on: 'txt',
-        has: 'one',
-        label: 'txtPart',
+        has: 'many',
+        label: 'txtParts',
       },
     },
     umkStoreOwner: {
@@ -103,19 +109,6 @@ const _schema = i.schema({
         label: 'bookmarks',
       },
     },
-    bookmarkFileEntry: {
-      forward: {
-        on: '$files',
-        has: 'one',
-        label: 'bookmark',
-        onDelete: 'cascade',
-      },
-      reverse: {
-        on: 'bookmarks',
-        has: 'one',
-        label: 'contentFile',
-      },
-    },
     txtAccessTxt: {
       forward: {
         on: 'txtAccess',
@@ -127,32 +120,6 @@ const _schema = i.schema({
         on: 'txt',
         has: 'one',
         label: 'txtAccess',
-      },
-    },
-    txtAccessFileEntry: {
-      forward: {
-        on: '$files',
-        has: 'one',
-        label: 'txtAccess',
-        onDelete: 'cascade',
-      },
-      reverse: {
-        on: 'txtAccess',
-        has: 'one',
-        label: 'contentFile',
-      },
-    },
-    txtMetadataFile: {
-      forward: {
-        on: '$files',
-        has: 'one',
-        label: 'txtMetadata',
-        onDelete: 'cascade',
-      },
-      reverse: {
-        on: 'metadataStore',
-        has: 'one',
-        label: 'contentFile',
       },
     },
   },
