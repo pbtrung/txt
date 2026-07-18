@@ -1,62 +1,97 @@
 # Crypto
 
-All cryptographic operations use **leancrypto**, loaded as a system shared library via ctypes (native) / compiled to WebAssembly (browser). No other crypto dependency is required.
+All cryptographic operations use **leancrypto**, loaded as a system shared library via ctypes (native) / compiled to WebAssembly (browser). No other crypto dependency is required. None of this changed in the InstantDB/R2/Firebase redesign — what changed is *what sits at the top of the key hierarchy* and *where each secret lives*, not the primitives, the blob format, or the encrypt/decrypt code path.
 
 ## Key Hierarchy
 
 ```
-root_master_key (config)
-  └── HKDF+AEAD → umk_store.umk (64 raw random bytes, one per user_id; enforced 1-to-1)
-        ├── HKDF+AEAD → txt.txt_key (64 raw random bytes, one per txt_id; owner's copy)
-        │       └── HKDF+AEAD → txt_parts.content, bookmarks.bookmark
-        ├── HKDF+AEAD → txt_shares.txt_key (same txt_key bytes as above, one wrapped copy
-        │                per (txt_id, recipient user_id) grant, under the recipient's own umk)
-        └── HKDF+AEAD → txt_metadata.txt_metadata_key (64 raw random bytes, one per user_id)
-                └── HKDF+AEAD → txt_metadata.content
+user_root_key (per user; see Provisioning below)
+  └── HKDF+AEAD → umkStore.umkBlob (64 raw random bytes, one per user; enforced 1-to-1, see data_model.md's Uniqueness note)
+        ├── HKDF+AEAD → txt.txtKeyBlob (64 raw random bytes, one per entry)
+        │       ├── HKDF+AEAD → the entry's $files content (current content + version history; see Entry Data File below)
+        │       └── HKDF+AEAD → a bookmark's $files content (one per bookmark on that entry; see Bookmark Encryption below)
+        └── HKDF+AEAD → metadataStore.metadataKeyBlob (64 raw random bytes, one per user)
+                └── HKDF+AEAD → the metadata index's $files content (see Filename Index below)
 ```
 
-Each arrow wraps a freshly generated random secret under a key derived from whatever's above it:
+Each arrow wraps a freshly generated random secret under a key derived from whatever's above it — this shape is unchanged from before. What's different:
 
-- **`root_master_key`** — a 256-byte random secret stored base64-encoded in the JSON credentials file. Root of the whole hierarchy.
-- **`umk_store.umk`** ("user master key") — for each user, 64 raw random bytes generated once and stored encrypted, wrapped under a key derived from `root_master_key`. `umk_store.user_id` is `UNIQUE`, enforcing exactly one `umk` per user (see [data_model.md](data_model.md)).
-- **`txt.txt_key`** — for each file, 64 raw random bytes generated at ingest and stored encrypted, wrapped under a key derived from the *owning user's* decrypted `umk`. This is the file's one and only content key — it never changes.
-- **`txt_shares.txt_key`** — the exact same `txt_key` bytes as the file's `txt.txt_key`, independently wrapped under a *recipient's* `umk`. One row per `(txt_id, user_id)` grant. This is how sharing works (see the Sharing section below): the content key is never re-derived or duplicated in meaning, only re-wrapped so a different `umk` can unwrap the same bytes.
-- **`txt_metadata.txt_metadata_key`** — for each user, 64 raw random bytes generated once, wrapped under that user's `umk`. `umk` never encrypts bulk data directly — it only ever wraps other keys (`txt.txt_key`, `txt_shares.txt_key`, `txt_metadata.txt_metadata_key`); actual content is always encrypted under one of those.
+- **`user_root_key`** replaces the old global `root_master_key`. It's a 256-byte random secret, generated **per user** by the admin CLI at account-creation time, and delivered to that user exactly once, out-of-band, as part of their provisioning bundle (see Provisioning below). It is never stored server-side in InstantDB — only `umkStore.umkBlob` (the thing it wraps) lives there. This is a strictly better isolation property than the old global `root_master_key`: compromising one user's `user_root_key` exposes only that user's `umk` and everything under it, not every user's. The admin CLI's local config holds a **keyring** of every user's `user_root_key` (see Credentials/Config below), since admin-mediated ingest still needs to unwrap a specific user's `umk` to wrap a fresh `txt.txtKeyBlob` under it.
+- **`umkStore.umkBlob`** ("user master key") — unchanged in shape from the old `umk_store.umk`: 64 raw random bytes generated once per user, wrapped under a key derived from that user's own `user_root_key` instead of a shared `root_master_key`.
+- **`txt.txtKeyBlob`** — for each entry, 64 raw random bytes generated at ingest time and stored encrypted, wrapped under a key derived from the owning user's decrypted `umk`. This is the entry's one and only content key, same role as the old `txt.txt_key` column — it never changes. There is no `txt_shares`-equivalent in this redesign: this key is never re-wrapped under any other user's `umk`, because sharing was dropped (see [architecture.md](architecture.md), [security.md](security.md)).
+- **`metadataStore.metadataKeyBlob`** — for each user, 64 raw random bytes generated once, wrapped under that user's `umk`. Renamed from `txt_metadata.txt_metadata_key`; same role. `umk` still never encrypts bulk data directly — it only ever wraps other keys (`txtKeyBlob`, `metadataKeyBlob`); actual content is always encrypted under one of those, and now always lives in a linked `$files` row rather than a DB column (see Entry Data File, Filename Index, and Bookmark Encryption below) — only the small wrapped-key blobs themselves stay inline.
 
-Content encryption (`txt_parts`, `bookmarks`) is keyed off the file's `txt_key`, unwrapped via *either* `txt.txt_key` (if you're the owner) or `txt_shares.txt_key` (if you're a grantee) — both unwrap to identical bytes, so content encryption/decryption code doesn't need to know or care which. Possessing one user's `umk` only ever unwraps that user's own `txt.txt_key` rows, their own `txt_shares.txt_key` grants, and their own `txt_metadata_key` — never another user's `umk`, un-shared files, or another user's filenames. Only `root_master_key` can unwrap every `umk`.
+Possessing one user's `umk` only ever unwraps that user's own `txtKeyBlob`s, their own bookmarks, and their own `metadataKeyBlob` — never another user's `umk` or any of another user's data. Only that specific user's `user_root_key` can unwrap their `umk` — and, unlike the old scheme, there is no longer any single secret that unwraps *every* user's `umk` at once. The admin CLI's keyring is functionally equivalent to holding all of them, but that is a property of the CLI's config file, not of the crypto scheme itself.
 
-## Credentials File
+## Credentials / Config (admin CLI)
 
-The JSON credentials file (`creds.json`) holds:
+The admin CLI's local config file holds:
 
 ```json
 {
-  "turso_database_url": "libsql://your-db.turso.io",
-  "turso_auth_token":   "<full-access Turso token>",
-  "root_master_key":    "<base64, 256 random bytes>",
-  "username_salt":      "<base64, 32 random bytes>"
+  "instant_app_id":         "<InstantDB app ID>",
+  "instant_admin_token":    "<InstantDB admin token -- bypasses instant.perms.ts entirely>",
+  "firebase_service_account": { "...": "..." },
+  "user_root_keys": {
+    "<user email>": "<base64, 256 random bytes>"
+  }
 }
 ```
 
-`turso_database_url`/`turso_auth_token` are the same single, full-access credential pair for both the CLI and the browser — there's no separate scoped token for the browser session (see [security.md](security.md) for what that implies). `username_salt` is a single, vault-wide value (not per-user) — it's the HKDF salt for deriving `username_lookup_key` below. It doesn't need to be secret on its own (the derivation's security rests on `root_master_key`, not the salt — see the discussion this settled), but it lives alongside `root_master_key` for convenience since both are needed together to compute or verify `username_hash`.
+This file is the new single point of total compromise, same trust tier `root_master_key`/`creds.json` occupied before: anyone holding it can mint an InstantDB admin session (full read/write over every row, bypassing every permission rule) and unwrap every user's `umk` via `user_root_keys`. It never leaves the machine the admin CLI runs on, and — unlike the old `creds.json` — it is never loaded into a browser session. See [security.md](security.md).
 
-## User Lookup and Password Verification
+## User Identity, Login, and Provisioning
 
-```
-username_lookup_key = HKDF-SHA3-512(ikm=root_master_key, salt=username_salt, info=b"username-lookup", length=32)
-username_hash        = HMAC-SHA3-256(username_lookup_key, username)
-```
+There is no `username_hash`/`pw_hash` scheme in this redesign — Firebase Auth replaces it for login, and (as in the old design) login credentials never fed the crypto hierarchy directly; they only gate *who gets handed which `user_root_key`*.
 
-`username_hash` is looked up directly (`WHERE username_hash = ?`) to find a `users` row — it requires `root_master_key` (via `username_lookup_key`) to compute, so nothing without the credentials file can enumerate valid usernames from the `.db` file alone.
-
-Once the row is found, the password is verified separately — never as a lookup key, since a slow KDF can't be scanned over:
+**Create user** (admin CLI):
 
 ```
-pw_hash_computed = PBKDF2-HMAC-SHA3-256(password, salt=users.pw_salt, iterations=1000)
-valid            = constant_time_compare(pw_hash_computed, users.pw_hash)
+1. Create a Firebase account for the user (via firebase-admin, using the
+   service account in the CLI's config).
+2. umk = random(64 bytes); user_root_key = random(256 bytes)
+3. umkBlob = encrypt(umk, ikm=user_root_key)                      # fresh salt
+   CREATE umkStore { umkBlob }, linked to a new $users row
+   { email, type: "user" } via umkStoreOwner, using the InstantDB
+   admin SDK (bypasses instant.perms.ts).
+4. metadataKey = random(64 bytes)
+   metadataKeyBlob = encrypt(metadataKey, ikm=umk)
+   emptyContent = encrypt(brotli('{}'), ikm=metadataKey)
+   db.storage.uploadFile(emptyContent) -> new $files row
+   CREATE metadataStore { metadataKeyBlob }, linked to that $files row via
+   metadataFileEntry and to umkStore via umkStoreMetadata
+5. instant_token = admin_auth.createToken(email)   # InstantDB admin API
+6. Store user_root_key in the CLI config's user_root_keys keyring.
+7. Bundle { instant_token, user_root_key } and deliver it to the user
+   exactly once, out-of-band (this bundle is never stored in InstantDB).
 ```
 
-`pw_salt` is 32 fresh random bytes generated once per user at creation time. `pw_hash` verification is reachable at all only via `username_hash`, which itself requires `root_master_key` (see above) — so this sits behind the same credentials-file boundary as everything else in this scheme, not as an independent line of defense.
+**User bootstrap** (web UI, once per browser/device):
+
+```
+1. User signs into Firebase (proves identity to the app).
+2. User imports the admin-delivered { instant_token, user_root_key } bundle
+   once (e.g. pastes/uploads it).
+3. UI calls db.auth.signInWithToken(instant_token) to establish an
+   InstantDB session, and persists both instant_token and user_root_key in
+   browser local storage.
+4. On every later visit: Firebase login is checked again (an app-level
+   "are you still you" gate), but the persisted instant_token/user_root_key
+   are what actually authorize InstantDB access from then on -- reusing them
+   does not re-derive anything from the Firebase session. See security.md
+   for why this is called out explicitly as a trade-off rather than glossed
+   over.
+```
+
+**Revoke/delete user** (admin CLI):
+
+```
+DELETE $users row for that user, via the admin SDK.
+```
+
+`onDelete: 'cascade'` on `umkStoreOwner` → `txtUmkStore`/`umkStoreMetadata` → `txtFileEntry`/`txtBookmarks`/`metadataFileEntry`/`bookmarkFileEntry` wipes that user's `umkStore` row, every `txt` row it owns, their `metadataStore` row, every bookmark on every one of their entries, and every linked `$files` row (entry content, the metadata index, bookmark payloads), in one operation. Whether InstantDB's admin SDK additionally offers a way to invalidate an already-issued `instant_token` short of deleting the user outright is not something this doc asserts one way or the other — treat it as TBD until confirmed against the actual SDK, the same way `crypto.md` has historically flagged an exact leancrypto symbol as TBD (see Primitives below) rather than guess.
+
+This replaces the old CLI-mediated Sharing flow entirely — see [architecture.md](architecture.md) and [security.md](security.md) for why sharing itself was dropped, not just re-plumbed.
 
 ## Primitives
 
@@ -64,12 +99,13 @@ valid            = constant_time_compare(pw_hash_computed, users.pw_hash)
 |-----------|---------------|------------|
 | AEAD | Ascon-Keccak (`lc_ak_alloc_taglen`) | 64-byte key, 64-byte IV, 64-byte tag |
 | KDF | HKDF-SHA3-512 (`lc_hkdf_*`) | produces 128 or 160 bytes of OKM |
-| MAC | HMAC-SHA3-256 (`lc_hmac_*`) | 32-byte digest |
-| Password KDF | PBKDF2-HMAC-SHA3-256 (`lc_pbkdf2_*`; exact symbol TBD from leancrypto headers) | 1000 iterations, 32-byte salt |
+| MAC | HMAC-SHA3-256 (`lc_hmac_*`) | 32-byte digest (currently unused now that `username_hash` is gone; kept in case a future blind-index need reappears) |
+
+Unchanged from before, minus the password KDF row (PBKDF2-HMAC-SHA3-256) — password verification is now Firebase's responsibility entirely, not this app's.
 
 ## Blob Format
 
-Every encrypted blob — `umk_store.umk`, `txt.txt_key`, `txt_shares.txt_key`, `txt_metadata.txt_metadata_key`, a `txt_parts` part, `txt_metadata.content`, a bookmark — shares one wire format:
+Every encrypted blob — the small wrapped-key columns (`umkStore.umkBlob`, `txt.txtKeyBlob`, `metadataStore.metadataKeyBlob`) and the bulk content stored as `$files` bytes (an entry's content + history, the metadata index's content, a bookmark's content) — shares one wire format, unchanged from before:
 
 ```
 magic (2) || version (2) || salt (64) || ciphertext (var) || tag (64)
@@ -87,33 +123,25 @@ Minimum valid blob length: `2 + 2 + 64 + 0 + 64 = 132` bytes.
 
 ### Version numbering
 
-Each byte encodes one component (major · minor):
-
 | Version bytes | Meaning |
 |----------------|---------|
 | `0x01 0x00` | v1.0, current format |
 
-Bump minor for additive, backward-compatible changes (e.g. new optional fields in a plaintext JSON payload, a brotli parameter change) — an older decoder can still decode a newer-minor blob by ignoring unknown fields. Bump major for breaking changes (different cipher/KDF, different field sizes/ordering, different magic bytes) — a decoder must refuse a blob whose major version it doesn't recognize rather than attempt to decode it.
-
-The decoder reads `version[0]` (major) and dispatches to the matching decode path before doing any crypto work. Old and new blob versions can coexist in the same database indefinitely; no coordinated rewrite is required at write time (see Upgrade Handling below).
+Bump minor for additive, backward-compatible changes; bump major for breaking changes. Unchanged from before — see the Blob Format section's original rationale, which still applies verbatim since InstantDB stores these blobs as opaque strings/file bytes, the same way SQLite stored them as opaque `BLOB`s.
 
 ### Additional Data (AD)
-
-The AEAD tag covers the blob header as well as the ciphertext:
 
 ```
 AD = magic (2) || version (2) || salt (64)   -> 68 bytes total
 ```
 
-Any single-bit modification to the magic, version, salt, ciphertext, or tag causes authentication failure before any plaintext is returned — this binds the blob's format identity and version to its authenticity, not just its salt.
+Unchanged.
 
 ### Upgrade handling
 
-Existing blobs remain valid at whatever version they were written with. A blob is only re-encrypted to the current version lazily, when something next writes it (e.g. a bookmark update, a re-ingested file). An explicit "re-encrypt all" operation can upgrade the whole vault eagerly if needed: for each row, decrypt with its own version's decoder and re-encrypt with the current version's encoder.
+Unchanged: a blob is re-encrypted to the current version lazily, on next write. An explicit "re-encrypt all" pass can upgrade eagerly if needed.
 
 ## Key Derivation
-
-Every blob's salt derives a fresh key/IV from whichever secret is its parent in the key hierarchy above:
 
 ```
 salt         = os.urandom(64)
@@ -127,19 +155,21 @@ Where `parent_secret` is:
 
 | Blob | `parent_secret` |
 |------|------------------|
-| `umk_store.umk` | `root_master_key` |
-| `txt.txt_key` | the owning user's decrypted `umk` |
-| `txt_shares.txt_key` | the recipient user's decrypted `umk` (not the owner's) |
-| `txt_metadata.txt_metadata_key` | that user's decrypted `umk` |
-| `txt_parts.content`, `bookmarks.bookmark` | the file's decrypted `txt_key` (from `txt.txt_key` or `txt_shares.txt_key`, whichever applies to the reader) |
-| `txt_metadata.content` | that user's decrypted `txt_metadata_key` |
+| `umkStore.umkBlob` | that user's `user_root_key` |
+| `txt.txtKeyBlob` | the owning user's decrypted `umk` |
+| `metadataStore.metadataKeyBlob` | that user's decrypted `umk` |
+| the entry data file's content (`$files`, via `txtFileEntry`) | that entry's decrypted `txtKeyBlob` |
+| a bookmark's content (`$files`, via `bookmarkFileEntry`) | that entry's decrypted `txtKeyBlob` |
+| the metadata index's content (`$files`, via `metadataFileEntry`) | that user's decrypted `metadataKey` |
 
-## Encrypt
+## Encrypt / Decrypt
+
+Both unchanged from before — same Ascon-Keccak AEAD scheme, same AD, same brotli-before-encrypt rule for structured/textual payloads (raw key material is never compressed):
 
 ```
 plaintext  = raw bytes of the payload
-             (umk bytes, a txt_key, a txt_metadata_key: raw, no compression;
-              a part, a txt_metadata JSON, a bookmark JSON: brotli-compressed)
+             (umk, txtKeyBlob, metadataKey: raw, no compression;
+              entry data file content, the metadata index's content, a bookmark's content: brotli-compressed)
 salt       = os.urandom(64)
 version    = 0x01 0x00
 ad         = MAGIC || version || salt
@@ -147,10 +177,6 @@ key, iv    = derive(parent_secret, salt)
 ct_tag     = Ascon-Keccak-encrypt(plaintext, key, iv, aad=ad)
 blob       = MAGIC || version || salt || ct_tag
 ```
-
-`umk_store.umk`, `txt.txt_key`/`txt_shares.txt_key`, and `txt_metadata.txt_metadata_key` are all raw random key material — brotli-compressing random bytes wastes cycles and cannot shrink them, so only the structured/textual payloads (`txt_parts.content`, `txt_metadata.content`, `bookmarks.bookmark`) are brotli-compressed before encryption. The 64-byte Ascon-Keccak authentication tag is appended by leancrypto and included in `ct_tag`. Passing `ad` (not just `salt`) binds the magic bytes and version to the ciphertext: tampering with any of them fails authentication on decrypt.
-
-## Decrypt
 
 ```
 magic, version, salt, ct_tag = blob[:2], blob[2:4], blob[4:68], blob[68:]
@@ -161,40 +187,35 @@ plaintext  = Ascon-Keccak-decrypt(ct_tag, key, iv, aad=ad)
 if blob type is a structured payload: plaintext = brotli.decompress(plaintext)
 ```
 
-Checking `magic` first allows fast rejection of anything that isn't one of this vault's blobs before any crypto work runs. `version[0]` (major) selects which decode path to use. This same encrypt/decrypt pair is used for every blob in the database, at every tier of the hierarchy — only `parent_secret` and whether brotli applies change.
+## Entry Data File
 
-## `txt_metadata` (filename index)
+Referenced from `txtFileEntry` in [data_model.md](data_model.md). An entry's content — and, new in this redesign, its full edit history — lives in exactly one file, uploaded via InstantDB Storage (`db.storage.uploadFile`, backed by Cloudflare R2) and linked to its `txt` row through `txtFileEntry`. This replaces the old `txt_parts`/`part_count` tables entirely: the old paragraph-chunking into ~200 KB rows existed only to work around SQLite BLOB row-size practicality, and object storage doesn't need that workaround, so a single blob per entry is both simpler and sufficient.
 
-Each user has one `txt_metadata` row: a JSON object `{"<txt_id>": "<name>", ...}` covering every file they can open — their own plus anything shared to them — encrypted with the scheme above under that user's own `txt_metadata_key` (itself wrapped under their `umk`, not used to encrypt content directly). The CLI decrypts a user's row to check for an existing filename by direct dictionary lookup, scoped to that user's own entries, at ingest time, and adds one entry to the recipient's row at share time. See [data_model.md](data_model.md).
+The blob's plaintext (after decrypt + brotli-decompress) is a JSON document:
 
-## Sharing
-
-Sharing grants another user read access to a file without ever exposing the owner's `umk`. It's a CLI-mediated operation (`txt.py --share <file> --to <user>`), run with `root_master_key` present — the same trust tier as ingest — not a self-service action a logged-in browser session can do on its own (that would require asymmetric crypto to let the owner target a recipient's key without holding root; not implemented here).
-
-**Grant** (`--share`):
-
-```
-owner_umk     = unwrap(umk_store row for the owner, ikm=root_master_key)
-txt_key       = unwrap(txt.txt_key for this file, ikm=owner_umk)
-recipient_umk = unwrap(umk_store row for the recipient, ikm=root_master_key)
-share_blob    = encrypt(txt_key, ikm=recipient_umk)          # fresh salt
-UPSERT txt_shares (txt_id, user_id=recipient, txt_key=share_blob)
-
-recipient_meta_key = unwrap(txt_metadata.txt_metadata_key for the recipient, ikm=recipient_umk)
-recipient_meta      = decrypt(txt_metadata.content for the recipient, ikm=recipient_meta_key)
-recipient_meta[txt_id] = <filename, read from the owner's txt_metadata>
-write back recipient_meta, re-encrypted under recipient_meta_key
+```json
+{ "name": "<filename>", "current": "<current text>", "history": [ { "at": <unix ms>, "content": "<prior text>" }, ... ] }
 ```
 
-**Revoke**:
+Ingest/edit appends the prior `current` value onto `history` before writing the new `current` — a capability the old design never had (`--force` re-ingest simply overwrote content with no retention). Swapping a new version in is a two-step, atomically-linked operation:
 
 ```
-DELETE FROM txt_shares WHERE txt_id = ? AND user_id = ?
--- also: remove txt_id from the recipient's txt_metadata, and delete their
--- txt_access/bookmarks rows for this txt_id, since they can no longer decrypt it
+1. db.storage.uploadFile(newContent) -> new $files row (unlinked so far)
+2. db.transact([
+     link the new $files row to this txt row via txtFileEntry,
+     unlink (and delete) the old $files row
+   ])
 ```
 
-Revocation is not forward-secure: it stops future decryption through this grant, but a plaintext copy the recipient already retrieved (or the still-valid `txt_key` bytes, if they cached them) is outside this system's control. See [security.md](security.md).
+Because step 2 is one atomic transaction, there is never an externally observable moment where an entry has zero or two linked files — only the brief moment between step 1 and step 2 where the *new* file exists but isn't linked to anything yet. That's exactly why `txtFileEntry` is safe as `has: 'one'`/`has: 'one'` without `required: true` — see [data_model.md](data_model.md)'s note on this link.
+
+## Filename Index
+
+Renamed from the old `txt_metadata`. Each user has one `metadataStore` row, holding only the wrapped `metadataKeyBlob` — the actual index (a JSON object `{"<entryId>": "<name>", ...}` covering every entry they own) lives in a linked `$files` row via `metadataFileEntry`, encrypted under that user's own `metadataKey` (itself wrapped under their `umk`), not an inline column. The admin CLI decrypts a user's index file to check for an existing filename by direct dictionary lookup at ingest time, and rewrites it once per ingest run (not once per file) — same rationale as before, just swapped in via the same atomic upload-then-relink `db.transact` described in Entry Data File above rather than an `UPDATE`. There is no shared-to-them case anymore, since sharing was dropped.
+
+## Provisioning
+
+Replaces the old Sharing section — there is no grant/revoke of read access between users in this redesign (see [architecture.md](architecture.md), [security.md](security.md) for why). What used to be "grant"/"revoke" is now "create user"/"delete user" — see User Identity, Login, and Provisioning above for both flows in full. The one property carried over unchanged: provisioning (like the old sharing) is admin-CLI-mediated and requires the admin's config (the new keyring), not something a logged-in browser session can do to itself or anyone else.
 
 ## Bookmark Encryption
 
@@ -202,7 +223,7 @@ Revocation is not forward-secure: it stops future decryption through this grant,
 plaintext = JSON.stringify({part_num, line, txt_preview})
 ```
 
-Encrypted with a fresh random salt per bookmark, keyed off the file's `txt_key` — unwrapped via `txt.txt_key` if you're the owner, or `txt_shares.txt_key` if you're a grantee (see the table above). The `txt_id`/`user_id` foreign keys are the only plaintext metadata stored; part number, line index, and preview are never visible to the database file.
+The `bookmarks` entity itself has no fields at all — this plaintext is encrypted, uploaded via `db.storage.uploadFile`, and linked to its `bookmarks` row through `bookmarkFileEntry`, the same one-file-per-row shape as Entry Data File above (see [data_model.md](data_model.md)'s note on why `has: 'one'`/`has: 'one'` without `required: true` is safe there). Encrypted with a fresh random salt per bookmark, keyed off that entry's `txtKeyBlob` — unchanged in mechanism from before, minus the owner-vs-grantee distinction (there's only ever an owner now). A bookmark's content file is never swapped/rewritten the way an entry's or the metadata index's is — it's created once (upload, then atomically link) and later deleted outright, never updated in place. The 12-per-entry cap is enforced client-side rather than by a DB trigger — see [data_model.md](data_model.md)'s `bookmarks` section and [security.md](security.md).
 
 ## Security Properties
 
@@ -210,12 +231,12 @@ Encrypted with a fresh random salt per bookmark, keyed off the file's `txt_key` 
 |----------|-----------|
 | Confidentiality | Ascon-Keccak (512-bit key+IV, 512-bit tag) |
 | Integrity / authenticity | 64-byte Ascon-Keccak tag |
-| Header integrity | Magic + version + salt passed as AD; tag covers all of it, not just salt — tampering with the format identity or version fails authentication, not just tampering with the salt |
-| Fast malformed-input rejection | Magic bytes checked before any crypto work; non-vault blobs are rejected immediately |
-| Format evolution without downtime | Every blob carries its own version; old and new versions coexist indefinitely, upgraded lazily on next write (see Blob Format above) |
-| Per-user key isolation | Each user's own files and filenames are wrapped under that user's own `umk`; possessing one user's `umk` does not unwrap another user's `umk`, un-shared files, or un-shared filenames |
-| Per-recipient share isolation | A share re-wraps a file's `txt_key` under one specific recipient's `umk` in `txt_shares`; it does not expose the owner's `umk` or any of the owner's other files |
-| No forward secrecy on revoke | Deleting a `txt_shares` grant stops future decryption through it, but doesn't invalidate a plaintext copy the (former) recipient already retrieved |
+| Header integrity | Magic + version + salt passed as AD; tag covers all of it, not just salt |
+| Fast malformed-input rejection | Magic bytes checked before any crypto work |
+| Format evolution without downtime | Every blob carries its own version; upgraded lazily on next write |
+| Per-user key isolation | Each user's own `umk` is wrapped under that user's own `user_root_key`, not a shared secret — compromising one user's `user_root_key` doesn't expose any other user's `umk` |
+| Per-row DB access control (new) | `instant.perms.ts`'s `isOwner` rules block a user's session from ever querying another user's rows at the database layer, independent of whether they could decrypt them — see [security.md](security.md) |
+| No sharing, no shared-secret blast radius | Every entry has exactly one owner; there is nothing analogous to the old `txt_shares` re-wrap, so there's nothing to revoke without forward secrecy either |
 | Key isolation per blob | HKDF with a unique random salt per blob, at every tier |
 | Compression oracle mitigation | Compress before encrypt; no adaptive queries |
 

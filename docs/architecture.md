@@ -2,105 +2,112 @@
 
 ## Overview
 
-`txt` is a fully client-side-encrypted text vault. There is one database — a Turso (libSQL) cloud database — and both components talk to it directly over HTTPS:
+`txt` is a fully client-side-encrypted text vault. There is one database — InstantDB — and one storage tier — Cloudflare R2, accessed exclusively through InstantDB's built-in Storage feature — but the two components that talk to them have very different privileges now:
 
-- **CLI (`txt.py`, package `txt/`)** — ingests `.txt` files from disk, encrypts them, and writes directly to Turso. Also handles download/export back to plaintext `.txt` files, and sharing (below).
-- **Web UI (`ui/`)** — a browser app that connects to the same Turso database directly (via its JS client) and lets the user browse, search, read, and bookmark files, with all encryption/decryption happening client-side. Turso only ever sees ciphertext.
+- **Admin CLI** — the only place administrative operations happen: create/list/delete users, and ingest/delete entries on any user's behalf. It authenticates against InstantDB with the **admin** SDK (`@instantdb/admin`), which bypasses `instant.perms.ts` entirely, and against Firebase with the Firebase Admin SDK. Regular users never run it and never see its config.
+- **Web UI (`ui/`)** — a browser app that connects to InstantDB directly (`@instantdb/react`), constrained entirely by `instant.perms.ts`'s owner-only rules. It lets a logged-in user browse, search, read, bookmark, and track read-position on their own entries — all encryption/decryption still happening client-side. InstantDB and R2 only ever see ciphertext.
 
-There's no application server, no local `.db` file, and no separate storage tier — this mirrors the original pre-redesign shape of this app, with the crypto/data-model redesign (per-user key hierarchy, sharing, blob format) layered on top. See [tech_stack.md](tech_stack.md) for the credentials shape (a single full-access Turso token shared by both CLI and browser) and for two known client-library failure modes to guard against from the start.
+There is still no bespoke application server mediating access — but "no server" now means something more precise than it used to: Firebase (identity) and InstantDB (data + permissions) are both managed third-party services the browser talks to directly, the same category of thing Turso was before; this project still doesn't run or host a server of its own. See [tech_stack.md](tech_stack.md) for the credentials/config shape and for what to watch for with InstantDB, and [security.md](security.md) for the resulting threat model — which is meaningfully different from before, since InstantDB's permission rules now provide real per-row access control at the database layer, not just at the crypto layer.
 
 ## Components
 
 ```
-txt.py                  entry point (thin, delegates to txt/ package)
-txt/
-  cli.py                click command definitions
-  store.py              VaultStore: Turso/libSQL connection, ingest/admin operations
-  downloader.py         Downloader: decrypt + export to plaintext .txt files
-  crypto.py             Crypto: all cryptographic operations (see crypto.md)
-  schema.py             DDL (see data_model.md)
-  utils.py              text preprocessing, file splitting, credentials loading
-  constants.py          shared numeric constants
-  leancrypto.py         ctypes bindings to the leancrypto shared library
+cli/                     admin CLI (Node/TypeScript)
+  index.ts               command definitions (users, entries)
+  instantAdmin.ts         @instantdb/admin client, all admin-privileged operations
+  firebaseAdmin.ts        firebase-admin client, account creation/lookup
+  crypto.ts               all cryptographic operations (see crypto.md)
+  keyring.ts              loads/writes the local config's user_root_keys keyring
+  downloader.ts           decrypt + export to plaintext .txt files
 
 ui/
-  src/                  React app; Turso JS client + leancrypto-wasm for
-                        client-side DB access and decryption
+  src/                    React app; @instantdb/react + Firebase client SDK +
+                          leancrypto-wasm for client-side DB access, auth, and
+                          decryption
 ```
 
-## Ingest pipeline (CLI)
+`txt.py`/`txt/` (Python) is retired along with Turso — InstantDB's admin SDK is JS/TS-only, so the CLI moves to Node/TypeScript. See [tech_stack.md](tech_stack.md).
+
+## Ingest pipeline (Admin CLI)
 
 ```
-for each .txt file under --src, ingesting as a given user:
-  1. Look up filename against that user's decrypted txt_metadata row (see
-     data_model.md) to check for an existing entry.
-  2. No match  → generate a fresh txt_key, wrap it under this user's umk,
-     INSERT a new txt row (id, user_id, txt_key), add name to this user's
-     txt_metadata entry.
+for each .txt file under --src, ingesting on behalf of a given user:
+  1. Look up that user's user_root_key in the CLI's local keyring; unwrap
+     their umk (see crypto.md's Key Hierarchy).
+  2. Fetch and decrypt that user's metadataStore content file to check for
+     an existing entry by filename (direct dictionary lookup, scoped to
+     that user's own entries -- there's no shared-to-them case anymore).
+  3. No match  → generate a fresh txtKeyBlob key, wrap it under this
+     user's umk, CREATE a new txt row (via the InstantDB admin SDK,
+     linked to their umkStore via txtUmkStore).
      Match, no --force → skip.
-     Match + --force   → reuse txt_id and its existing txt_key, DELETE existing parts.
-  3. Preprocess (normalise paragraph spacing).
-  4. Split into ~200 KB parts at paragraph boundaries.
-  5. Per part: brotli-compress, AEAD-encrypt (random salt per part, keyed off
-     this file's txt_key), store in txt_parts.
-  6. Upsert part_count.
-  7. Re-encrypt and write back this user's updated txt_metadata row once per
-     ingest run (not per file — see data_model.md).
-  8. Commit.
+     Match + --force   → reuse the existing txt row and its txtKeyBlob.
+  4. Preprocess (normalise paragraph spacing).
+  5. Brotli-compress + AEAD-encrypt the file's content, keyed off this
+     entry's txtKeyBlob; db.storage.uploadFile it, then atomically link it
+     via txtFileEntry (see crypto.md's Entry Data File section) -- on
+     --force, the prior content is appended to that file's history rather
+     than discarded.
+  6. Add/refresh this entry's name in the user's metadataStore content.
+  7. Re-encrypt the whole metadata index and swap it into the user's
+     metadataStore via metadataFileEntry once per ingest run (not once per
+     file — see data_model.md), the same atomic upload-then-relink
+     db.transact as step 5.
 ```
 
-Filenames are resolved through a single decrypted index rather than a per-row scan; see [data_model.md](data_model.md) and [crypto.md](crypto.md).
+Since the admin CLI uses the InstantDB admin SDK, every write above bypasses `instant.perms.ts` — it is trusted to only ever touch the user it's ingesting on behalf of, same trust assumption the old CLI had with `root_master_key`.
 
 ## Read pipeline (Web UI)
 
 ```
-1. UI connects to Turso directly (its JS client, the shared full-access
-   token from creds.json).
-2. User logs in as a specific user; the app queries umk_store for that
-   user's row and unwraps their `umk` (see crypto.md's Key Hierarchy).
-3. UI decrypts the logged-in user's own txt_metadata row to get their
-   id → name map (client-side) — inherently scoped to their own files.
-4. Opening a file: if it's in the logged-in user's own txt_metadata as an
-   owned file, unwrap its txt_key via txt.txt_key; if it's there as a
-   shared file, unwrap via that user's txt_shares row instead (see
-   crypto.md's Key Hierarchy). Either way, query its txt_parts rows,
-   decrypting one part at a time with that txt_key (same AEAD scheme as
-   ingest).
-5. Bookmarks / txt_access reads and writes go directly against Turso —
-   an INSERT/UPDATE is just another query over the same connection, no
-   separate mechanism needed for browser-side writes.
+1. User completes Firebase login, then (first time on this browser/device
+   only) imports the admin-delivered { instant_token, user_root_key }
+   bundle; see crypto.md's User Identity, Login, and Provisioning section.
+2. UI calls db.auth.signInWithToken(instant_token); from then on every
+   query/write is scoped by instant.perms.ts's isOwner rules -- the browser
+   physically cannot fetch another user's rows, regardless of what it can
+   decrypt.
+3. UI unwraps this user's umk (user_root_key, from local storage), then
+   fetches and decrypts their metadataStore's linked content file to get
+   their entryId → name map.
+4. Opening an entry: unwrap its txtKeyBlob via the owning umk, fetch its
+   linked $files row's content (an InstantDB Storage / R2-backed download),
+   decrypt + brotli-decompress to get { name, current, history }.
+5. Read-position (txt.lastPartNum/lastAccessed) and bookmarks are just
+   further InstantDB queries/transactions over the same reactive connection
+   -- no separate mechanism for browser-side writes, same as before.
 ```
 
-## Share pipeline (CLI)
+## Provisioning pipeline (Admin CLI)
+
+Replaces the old Share pipeline — this redesign drops cross-user sharing entirely (see Role model below and [security.md](security.md)); there is nothing to grant or revoke between two regular users anymore.
 
 ```
-txt.py --share <file> --to <user> --creds creds.json     # grant
-txt.py --unshare <file> --from <user> --creds creds.json # revoke
+txt-admin users create --email <user>     # provision a new user
+txt-admin users delete --email <user>     # deprovision
 ```
 
 ```
-Grant:
-  1. Unwrap the owner's umk (ikm=root_master_key), then the file's txt_key
-     (ikm=owner's umk).
-  2. Unwrap the recipient's umk (ikm=root_master_key).
-  3. Re-wrap the same txt_key under the recipient's umk (fresh salt);
-     UPSERT into txt_shares (txt_id, user_id=recipient, txt_key).
-  4. Read the filename from the owner's txt_metadata; decrypt the
-     recipient's txt_metadata, add the same txt_id → name entry, re-encrypt
-     and write it back.
+Create:
+  1. Create a Firebase account for the user.
+  2. Generate umk + user_root_key; CREATE umkStore + $users (type: "user")
+     + an empty metadataStore, via the InstantDB admin SDK.
+  3. Mint an InstantDB token (admin_auth.createToken(email)).
+  4. Add user_root_key to the CLI config's keyring.
+  5. Deliver { instant_token, user_root_key } to the user once, out-of-band.
 
-Revoke:
-  1. DELETE FROM txt_shares WHERE txt_id=? AND user_id=?.
-  2. Remove that txt_id from the recipient's txt_metadata; re-encrypt and
-     write it back.
-  3. DELETE that user's txt_access/bookmarks rows for this txt_id — they
-     can no longer decrypt the content those rows reference.
+Delete:
+  1. DELETE the $users row via the admin SDK.
+  2. onDelete: 'cascade' wipes umkStore -> txt/metadataStore -> $files/bookmarks
+     (and their own linked $files) in one operation.
+  3. Remove the user's entry from the CLI config's keyring.
 ```
 
-Both operations require `root_master_key` (same trust tier as `--src`/`--download`) — sharing is CLI-mediated, not something a browser session can do with only its own `umk`. See [crypto.md](crypto.md)'s Sharing section and [security.md](security.md) for why, and for what revocation does and does not guarantee (no forward secrecy over already-retrieved plaintext).
+See [crypto.md](crypto.md)'s User Identity, Login, and Provisioning section and [security.md](security.md) for what deleting a user does and does not guarantee (in particular: whether an already-issued `instant_token` can be invalidated short of deleting the user is currently unverified/TBD, not asserted here).
 
-Since both the CLI and the web UI write directly to the same Turso database, a grant/revoke is visible to readers immediately — no sync step or propagation delay.
+## Role model
 
-## Multi-user model
+- **admin** (`$users.type === "admin"`) — CLI-only. Never logs into the web UI, never holds an `instant_token`/`user_root_key` bundle the way a regular user does. Full CRUD over `$users` and `txt` via the InstantDB admin SDK, which bypasses `instant.perms.ts` entirely — same trust tier as holding `root_master_key` before, just relabeled and now scoped to whoever runs the CLI rather than whoever has `creds.json`.
+- **user** (`$users.type === "user"`) — web-UI-only, no CLI access at all. Every query and write goes through `instant.perms.ts`'s owner-only rules. Can read/search/decrypt their own entries, update their own read-position, and CRUD their own bookmarks — nothing else. This is a real, DB-enforced boundary, not just an application-layer filter: see [security.md](security.md)'s InstantDB access model section for why that's a genuine improvement over the old single-shared-Turso-token model.
 
-A `users` table, an `umk_store` table (each user's wrapped user-master-key), and a `user_id` + `txt_key` column on `txt` provide real per-user key isolation — not just visibility filtering. Every file has exactly one owner; `txt_shares` grants read access to others without making them co-owners or exposing the owner's `umk`. `txt_metadata` (filenames) is isolated the same way, one row per user, covering both owned and shared-to-them files. See [crypto.md](crypto.md)'s Key Hierarchy section for how `root_master_key → umk → txt_key`/`txt_metadata_key` wraps content and filenames, and [security.md](security.md) for what this does and does not protect against.
+There is no third role and no cross-user sharing in this redesign — an admin who wants to hand a user a specific file's content has no in-band mechanism to do so; they would have to ingest a fresh copy on that user's behalf via the Ingest pipeline above, same as any other file.

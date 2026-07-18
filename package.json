@@ -1,0 +1,18 @@
+{
+  "name": "txt",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "db:pull": "instant-cli pull schema && instant-cli pull perms",
+    "db:push": "instant-cli push schema && instant-cli push perms",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@instantdb/react": "^1.0.49"
+  },
+  "devDependencies": {
+    "instant-cli": "^1.0.49",
+    "vitest": "^4.1.10"
+  }
+}
