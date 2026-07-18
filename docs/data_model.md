@@ -90,7 +90,7 @@ CREATE TABLE IF NOT EXISTS txt_metadata (
 ## Key Hierarchy
 
 ```
-user_root_key (config secret, not stored in Turso)
+user_root_key (per-user config secret, ≥256 random bytes, base64; not stored in Turso)
     │  IKM for HKDF, wraps/unwraps —
     ▼
 umk  (umk_store.umk — 64 random bytes, generated once per user)
@@ -104,14 +104,14 @@ umk  (umk_store.umk — 64 random bytes, generated once per user)
              └──▶ txt_metadata.content
 ```
 
-- `user_root_key` is a single secret held in application config (an environment variable or secret store), not in the database. It is the IKM used to wrap and unwrap every user's `umk`.
+- `user_root_key` is a per-user secret (at least 256 random bytes, base64-encoded) held in config, not in Turso — each user has their own, not a value shared across the corpus. It is the IKM used to wrap and unwrap that user's `umk`.
 - `umk` is 64 random bytes generated once when a user's `umk_store` row is created. Unwrapped, it is used directly as HKDF IKM (no intermediate per-purpose derivation) to wrap and unwrap both `txt.txt_key` and `txt_metadata.txt_metadata_key`.
-- `txt_key` and `txt_metadata_key` are themselves used directly as IKM to encrypt/decrypt the content columns they protect (`txt_parts.content`/`bookmarks.bookmark`, and `txt_metadata.content`, respectively).
+- `txt_key` and `txt_metadata_key` are themselves used directly as IKM to encrypt/decrypt the content columns they protect. `txt_key` — the document's own (unwrapped) key — is the IKM for both `txt_parts.content` and `bookmarks.bookmark`, since bookmarks are scoped per-`txt_id`. `txt_metadata_key` is the IKM for `txt_metadata.content`.
 - Every wrapped-key and content blob uses the blob format, AEAD, and KDF mechanics from [crypto.md](crypto.md) uniformly — the same Encrypt/Decrypt procedure, just with a different IKM and payload at each layer.
+- `username_lookup_key` (referenced in the `username_hash` comment, not a table column) is also a per-user config secret: 32 random bytes, base64-encoded. Login computes `username_hash = HMAC-SHA3-256(username_lookup_key, username)` and looks the row up by that unique value.
+- Login flow: look up the user's row (via `username_hash`, using that user's `username_lookup_key`), then verify the supplied password by recomputing `PBKDF2-HMAC-SHA3-256(password, pw_salt)` and comparing to the stored `pw_hash` for that row's `user_id`. `pw_hash`/`pw_salt` exist purely for this verification step — they authenticate the user and resolve the correct `user_id`, and are never used as IKM anywhere in the key hierarchy above. A server that leaks only the `users` table cannot unwrap any `umk`.
 
 ## Design Notes / Open Questions
 
-- **Single shared root key.** `user_root_key` is one secret shared across all users. Compromise of that one config value unwraps every user's `umk` and therefore every `txt_key`/`txt_metadata_key` in the system — the blast radius is the whole corpus, not one account. Worth weighing against a per-user root key (e.g. derived from something user-specific) if that single-secret exposure is a concern.
-- **`txt_parts.content`/`bookmarks.bookmark` IKM.** The schema comments state `txt_key` and `txt_metadata_key` are "wrapped under owner's umk," but don't say explicitly what encrypts `txt_parts.content` and `bookmarks.bookmark`. This doc assumes the natural reading — the document's own (unwrapped) `txt_key` is used directly as IKM for both, since bookmarks are scoped per-`txt_id` — but that should be confirmed against the implementation.
-- **`username_lookup_key`.** Referenced in the `username_hash` comment but not shown as a table column — presumably another config-held secret alongside `user_root_key`. Worth documenting its provenance/rotation story once settled.
-- **Login vs. encryption separation.** `pw_hash`/`pw_salt` authenticate the user to the server; they are never used as IKM anywhere in the key hierarchy above. A server that only leaks the `users` table (not `user_root_key`) cannot unwrap any `umk`.
+- **Per-user root key blast radius.** Since `user_root_key` (and `username_lookup_key`) are per-user rather than shared, compromising one user's config secret only exposes that user's `umk`/`txt_key`/`txt_metadata_key` chain, not the whole corpus.
+- **Where per-user config lives.** The per-user `user_root_key`/`username_lookup_key` pairs are held in a JSON config file, keyed per user — not in Turso.
