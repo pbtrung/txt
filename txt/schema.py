@@ -86,4 +86,6 @@ END
 
 def statements() -> list[str]:
     """All DDL statements to apply, in order."""
-    return [s.strip() for s in _TABLES.strip().split(";") if s.strip()] + [_TRIGGER.strip()]
+    return [s.strip() for s in _TABLES.strip().split(";") if s.strip()] + [
+        _TRIGGER.strip()
+    ]

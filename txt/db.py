@@ -15,7 +15,9 @@ class Database:
         if verbose:
             click.echo(f"leancrypto: {library_name}")
             click.echo(f"Turso URL: {creds.turso_database_url}")
-        self.conn = libsql.connect(creds.turso_database_url, auth_token=creds.turso_auth_token)
+        self.conn = libsql.connect(
+            creds.turso_database_url, auth_token=creds.turso_auth_token
+        )
 
     def apply_schema(self, verbose: bool = False) -> None:
         stmts = statements()

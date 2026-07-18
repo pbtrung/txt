@@ -33,10 +33,14 @@ def hmac_sha3_256(key: bytes, data: bytes) -> bytes:
     return bytes(out)
 
 
-def pbkdf2_sha3_256(password: bytes, salt: bytes, iterations: int, keylen: int) -> bytes:
+def pbkdf2_sha3_256(
+    password: bytes, salt: bytes, iterations: int, keylen: int
+) -> bytes:
     """PBKDF2-HMAC-SHA3-256(password, salt, iterations) -> keylen bytes, used for pw_hash."""
     out = ctypes.create_string_buffer(keylen)
-    ret = _lib.lc_pbkdf2(_sha3_256, password, len(password), salt, len(salt), iterations, out, keylen)
+    ret = _lib.lc_pbkdf2(
+        _sha3_256, password, len(password), salt, len(salt), iterations, out, keylen
+    )
     _check(ret, "lc_pbkdf2")
     return bytes(out)
 
@@ -47,7 +51,10 @@ class Blob:
     @staticmethod
     def _aead_ctx(key: bytes, iv: bytes) -> ctypes.c_void_p:
         ctx = ctypes.c_void_p(None)
-        _check(_lib.lc_ak_alloc_taglen(_sha3_512, c.TAG_LEN, ctypes.byref(ctx)), "lc_ak_alloc_taglen")
+        _check(
+            _lib.lc_ak_alloc_taglen(_sha3_512, c.TAG_LEN, ctypes.byref(ctx)),
+            "lc_ak_alloc_taglen",
+        )
         _check(_lib.lc_aead_setkey(ctx, key, len(key), iv, len(iv)), "lc_aead_setkey")
         return ctx
 
@@ -65,7 +72,9 @@ class Blob:
         try:
             ct = ctypes.create_string_buffer(len(payload))
             tag = ctypes.create_string_buffer(c.TAG_LEN)
-            ret = _lib.lc_aead_encrypt(ctx, payload, ct, len(payload), ad, len(ad), tag, c.TAG_LEN)
+            ret = _lib.lc_aead_encrypt(
+                ctx, payload, ct, len(payload), ad, len(ad), tag, c.TAG_LEN
+            )
             _check(ret, "lc_aead_encrypt")
             return ad + bytes(ct) + bytes(tag)
         finally:
@@ -85,7 +94,10 @@ class Blob:
         ctx = cls._aead_ctx(key, iv)
         try:
             pt = ctypes.create_string_buffer(len(ct))
-            if _lib.lc_aead_decrypt(ctx, ct, pt, len(ct), ad, len(ad), tag, len(tag)) != 0:
+            if (
+                _lib.lc_aead_decrypt(ctx, ct, pt, len(ct), ad, len(ad), tag, len(tag))
+                != 0
+            ):
                 raise ValueError("AEAD tag verification failed")
             return bytes(pt)
         finally:
@@ -99,7 +111,9 @@ class Kem:
     def keypair() -> tuple[bytes, bytes]:
         pk = ctypes.create_string_buffer(c.KEM_PK_LEN)
         sk = ctypes.create_string_buffer(c.KEM_SK_LEN)
-        _check(_lib.lc_kyber_1024_x448_keypair(pk, sk, _rng), "lc_kyber_1024_x448_keypair")
+        _check(
+            _lib.lc_kyber_1024_x448_keypair(pk, sk, _rng), "lc_kyber_1024_x448_keypair"
+        )
         return bytes(pk), bytes(sk)
 
     @staticmethod
