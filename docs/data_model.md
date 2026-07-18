@@ -1,105 +1,59 @@
 # Data Model
 
-SQLite schema for the local `.db` file, shared by the CLI and the web UI.
+InstantDB schema — declarative, reactive, and permissioned, not SQL — shared by the admin CLI and the web UI. The actual schema and permission rules live in [`instant.schema.ts`](../instant.schema.ts) and [`instant.perms.ts`](../instant.perms.ts) at the repo root (both `cli/` and `ui/` import from there) — they are not duplicated in this doc. A duplicated copy drifting from what's actually pushed caused several real bugs earlier (see Uniqueness below), so this file describes the shape and the reasoning behind it rather than embedding the code itself.
 
-```sql
-CREATE TABLE IF NOT EXISTS users (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    username_hash BLOB NOT NULL UNIQUE,  -- HMAC-SHA3-256(username_lookup_key, username); lookup only, see crypto.md
-    pw_salt       BLOB NOT NULL,         -- 32 random bytes, fresh per user
-    pw_hash       BLOB NOT NULL          -- PBKDF2-HMAC-SHA3-256(password, pw_salt, 1000 iterations); verification only, not a lookup key
-);
+`$files`, `$users`, `txt`, `umkStore`, and their links (`txtUmkStore`, `txtFileEntry`, `umkStoreOwner`) are pulled from the deployed app (`npx instant-cli@latest pull schema`/`pull perms`), not hand-maintained. `metadataStore` and `bookmarks` (and their links, and the two new fields on `txt`) are marked **proposed** in both files — designed here, not yet pushed — see Additions below.
 
-CREATE TABLE IF NOT EXISTS umk_store (
-    id      INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
-    umk     BLOB    NOT NULL        -- magic||version||salt||Ascon-Keccak(umk bytes)||tag; see crypto.md Blob Format
-);
+Nothing in the old SQLite design's `txt_parts`/`part_count` survives the move to InstantDB: bulk content — an entry's text and its full edit history, the metadata index's JSON, a bookmark's payload — all live in a linked `$files` row now that object storage is available, instead of a DB column. Only small wrapped-key blobs (`umkBlob`, `txtKeyBlob`, `metadataKeyBlob`) stay inline as `i.string()` fields.
 
-CREATE TABLE IF NOT EXISTS txt (
-    id      INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    txt_key BLOB    NOT NULL        -- magic||version||salt||Ascon-Keccak(txt_key bytes)||tag, wrapped under owner's umk; see crypto.md Blob Format
-);
+## Entities and links
 
-CREATE TABLE IF NOT EXISTS txt_shares (
-    id      INTEGER PRIMARY KEY AUTOINCREMENT,
-    txt_id  INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    txt_key BLOB    NOT NULL,       -- same txt_key bytes as txt.txt_key, wrapped under this recipient's umk; see crypto.md
-    UNIQUE (txt_id, user_id)
-);
-
-CREATE TABLE IF NOT EXISTS txt_parts (
-    id       INTEGER PRIMARY KEY AUTOINCREMENT,
-    txt_id   INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
-    part_num INTEGER NOT NULL,
-    content  BLOB    NOT NULL        -- magic||version||salt||Ascon-Keccak(brotli(plaintext))||tag; see crypto.md Blob Format
-);
-
-CREATE INDEX IF NOT EXISTS idx_txt_parts_txt_id_part_num ON txt_parts(txt_id, part_num);
-
-CREATE TABLE IF NOT EXISTS part_count (
-    id     INTEGER PRIMARY KEY AUTOINCREMENT,
-    txt_id INTEGER NOT NULL UNIQUE REFERENCES txt(id) ON DELETE CASCADE,
-    count  INTEGER NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS txt_access (
-    txt_id        INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
-    user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    last_part_num INTEGER NOT NULL DEFAULT 1,
-    last_accessed INTEGER NOT NULL,      -- Unix timestamp in milliseconds
-    PRIMARY KEY (txt_id, user_id)
-);
-
-CREATE TABLE IF NOT EXISTS bookmarks (
-    id      INTEGER PRIMARY KEY AUTOINCREMENT,
-    txt_id  INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    bookmark BLOB NOT NULL   -- magic||version||salt||Ascon-Keccak(brotli(JSON))||tag; same scheme as txt_parts
-);
-
-CREATE INDEX IF NOT EXISTS idx_bookmarks_txt_id_user_id ON bookmarks(txt_id, user_id);
-
-CREATE TRIGGER IF NOT EXISTS trg_limit_bookmarks_per_file
-BEFORE INSERT ON bookmarks
-WHEN (SELECT COUNT(*) FROM bookmarks WHERE txt_id = NEW.txt_id AND user_id = NEW.user_id) >= 12
-BEGIN
-    DELETE FROM bookmarks
-    WHERE id = (
-        SELECT id FROM bookmarks
-        WHERE txt_id = NEW.txt_id AND user_id = NEW.user_id
-        ORDER BY id ASC LIMIT 1
-    );
-END;
-
-CREATE TABLE IF NOT EXISTS txt_metadata (
-    id               INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id          INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
-    txt_metadata_key BLOB    NOT NULL,   -- magic||version||salt||Ascon-Keccak(txt_metadata_key bytes)||tag, wrapped under this user's umk; see crypto.md
-    content          BLOB    NOT NULL    -- magic||version||salt||Ascon-Keccak(brotli(JSON {"<txt_id>": "<name>", ...}))||tag, keyed off txt_metadata_key (not umk directly); this user's own + shared-to-them txt_ids
-);
 ```
+$users
+  └─ umkStoreOwner (1:1) ─ umkStore
+       ├─ txtUmkStore (1:many) ─ txt
+       │     ├─ txtFileEntry (1:1) ─ $files                [content + history]
+       │     └─ txtBookmarks (1:many) ─ bookmarks (proposed)
+       │           └─ bookmarkFileEntry (1:1) ─ $files      [bookmark payload]
+       └─ umkStoreMetadata (1:1) ─ metadataStore (proposed)
+             └─ metadataFileEntry (1:1) ─ $files            [filename index]
+```
+
+- **`$users`** — InstantDB's built-in user entity. `email` is InstantDB's native field (populated at provisioning time, not separately declared/indexed here); the only field this app adds is `type` (required — every `$users` row has one, no InstantDB-default-user case to leave it unset for), this app's own role field (`"admin" | "user"`, see [architecture.md](architecture.md)'s Role model). Nothing in `instant.perms.ts` currently branches on `type` — only the admin CLI, via the InstantDB **admin** SDK (which bypasses `instant.perms.ts` entirely), acts on it.
+- **`umkStore`** — one row per user, holding that user's wrapped `umk` (`umkBlob`). `umkStoreOwner` is `has: 'one'` on both sides (see Uniqueness below for why that shape is a deliberate, previously-troublesome choice, not an oversight).
+- **`txt`** — one row per file, holding its wrapped content key (`txtKeyBlob`) and, proposed, its read-position (`lastPartNum`/`lastAccessed`). Links to exactly one `umkStore` via `txtUmkStore` (`required: true` — a `txt` row can't exist unowned). Ownership is transitive through this link, not a direct link to `$users`: `instant.perms.ts` checks `auth.id in data.ref('umk.owner.id')`, not a direct `data.ref('owner.id')`.
+- **`$files`** — InstantDB's Storage-backed file entity (backed by Cloudflare R2). Three different owners link to it, each atomically swapped the same way (see the note below): a `txt` row's content + history via `txtFileEntry`, a `metadataStore` row's index via `metadataFileEntry` (proposed), and a `bookmarks` row's payload via `bookmarkFileEntry` (proposed).
+- **`metadataStore`** (proposed) — one row per user, holding only the wrapped `metadataKeyBlob`; the actual filename index lives in its linked `$files` row via `metadataFileEntry`. Linked to `umkStore` via `umkStoreMetadata`.
+- **`bookmarks`** (proposed) — many per `txt` row, linked via `txtBookmarks`. No fields of its own at all — the bookmark payload lives in its linked `$files` row via `bookmarkFileEntry`, and it's keyed off the owning `txt` row's `txtKeyBlob` (see [crypto.md](crypto.md)'s Bookmark Encryption section), so there's no separate key blob to store here either.
+
+Neither `instant.schema.ts` nor `instant.perms.ts` grants the `admin`/`user` role distinction any special treatment — a regular user's browser session is bound by `instant.perms.ts`'s rules regardless of their `type` value, since the web UI never needs admin-shaped access to any row, including its own user's.
+
+## Additions on top of the live schema
+
+Three things this redesign needs aren't live yet: read-position tracking, bookmarks, and a filename index. They follow the same conventions as the live schema (owner-chain `bind`/`allow` rules, `onDelete: 'cascade'` anchored at the top of each chain) and are already written into `instant.schema.ts`/`instant.perms.ts`, marked `proposed`.
+
+### Read-position tracking is two new fields on `txt`, not a new table
+
+The old `txt_access` table was keyed on `(txt_id, user_id)` because a shared file could have multiple readers, each with their own position. This redesign drops sharing (see [architecture.md](architecture.md)) — every `txt` row has exactly one possible reader, its owner — so the composite key collapses to two new optional fields directly on `txt`, `lastPartNum` and `lastAccessed`. No new link or permission rule is needed: `txt.allow.update` already reads `"isOwner && !('umk' in request.modifiedFields)"` — the owner may already write any field except `umk`, and these two are exactly that kind of field.
+
+### `bookmarks`
+
+No `update` rule — bookmarks are write-once-then-delete, same as the old table (there was never an `UPDATE bookmarks` in the old design either). The old 12-bookmarks-per-file cap was a SQL `BEFORE INSERT` trigger; InstantDB has no server-side triggers, so the cap becomes a **client-enforced invariant** instead: before inserting, the client queries the current bookmark count for that `txt` row and, if at or over 12, bundles a delete of the oldest bookmark into the same `db.transact` as the insert. This is a real behavior change worth being explicit about — the cap is no longer guaranteed by the database, only by the app's own code path. The risk is low: a user who bypasses their own client only ever over-stuffs their own bookmarks, and `isOwner` still prevents them from touching anyone else's. See [security.md](security.md).
+
+### `metadataStore` — one aggregate filename index per user
+
+Same rationale as the old `txt_metadata` table: rendering a file listing shouldn't require downloading and decrypting every `txt` row's own `$files` blob just to show a name. One row per user, `has: 'one'` both sides (same convention as `umkStoreOwner`), rewritten as a whole whenever a name is added or a file is deleted — not per-file. See [crypto.md](crypto.md)'s Filename Index section.
 
 ## Notes
 
-### `txt` is a bare id + ownership + key-envelope row
+### Uniqueness
 
-Filenames no longer live on `txt` at all (no `name`/`name_hmac` columns). `txt` mints a stable, unique `id` (via `AUTOINCREMENT`), anchors `ON DELETE CASCADE` for `txt_parts`/`part_count`/`txt_access`/`bookmarks`, holds the owning `user_id`, and holds the file's encrypted `txt_key` (the *owner's* wrapped copy). Every file has exactly one owner — see `txt_shares` below for how other users get read access without becoming co-owners. Filenames live in the owner's (and each recipient's) `txt_metadata` row — see [crypto.md](crypto.md).
+`umkStoreOwner`'s current `has: 'one'`/`has: 'one'` shape (declared on both `umkStore`'s `owner` label and `$users`' reverse `umkStore` label) is a **deliberate retry** of a shape that previously produced a persistent "already exists" rejection on creating a `umkStore` row for a user — this happened even after confirming there were zero existing `umkStore` rows for that user, no leftover entities from earlier diagnostic renames of the link, and that the request was made with correct auth. The root cause was never conclusively identified. The fallback used at the time (and the one to reach for again if this rejection recurs) was to relax the reverse side to `has: 'many'` on `$users`, and add a client-side check in application code — `queryOwnUmkStoreRow` in `src/db.ts` — that treats getting back more than one row as a fatal error, since the schema itself no longer guarantees at most one. Under the current strict `has: 'one'`/`has: 'one'` shape, `queryOwnUmkStoreRow` gets a single row or `undefined` back, never an array, so that client-side "more than one is fatal" check has nothing left to do — the schema constraint is what's actually being trusted this time, not a fallback still quietly doing the work.
 
-### `txt_shares` grants read access without exposing the owner's `umk`
+### `txtFileEntry`'s `has: 'one'`/`has: 'one'` is safe despite a transient unlinked moment
 
-Sharing a file re-wraps the *same* `txt.txt_key` bytes under a recipient's own `umk` and stores that as a new row here — one per `(txt_id, user_id)` grant, enforced `UNIQUE`. This means a recipient can decrypt exactly the files they've been granted, never the owner's `umk` itself (so no other files of the owner's are exposed). Revoking access is `DELETE FROM txt_shares WHERE txt_id=? AND user_id=?`; also clean up that user's `txt_access`/`bookmarks` rows for the `txt_id` and remove the entry from their `txt_metadata` at the same time, since they can no longer decrypt it. Revocation has no forward secrecy: it stops future decryption via this grant, it does not invalidate a plaintext copy the (former) recipient already retrieved before revocation. See [crypto.md](crypto.md) for the wrapping mechanics and the CLI-mediated share operation, and [security.md](security.md) for what revocation does and does not guarantee.
+A `txt` row's `$files` row is created by a separate `db.storage.uploadFile` call *before* the `db.transact` that links it to that row — so for a moment after upload, before that transact runs, the file exists unlinked. `required: true` isn't set on `txtFileEntry` because it would reject that transient state. The link is still safe as `has: 'one'` on both sides because the eventual link (and the unlink of whatever file it's replacing, on an edit) happens inside one atomic `db.transact` — there is never an externally observable moment with zero or two files linked to a given `txt` row, only ever the single moment right after upload where a *new, not-yet-linked* file exists on its own. See [crypto.md](crypto.md)'s Entry Data File section for how this same atomicity is what makes version history safe to store this way. `bookmarkFileEntry` and `metadataFileEntry` (proposed) are the same shape for the same reason.
 
-### `txt_access` and `bookmarks` carry `user_id` again, because of sharing
+### `onDelete: 'cascade'`/`required: true` sit on the dependent side, not the anchor
 
-These were briefly simplified to key on `txt_id` alone under the assumption that only a file's owner could ever decrypt it. `txt_shares` breaks that assumption — multiple users can now read the same file — so both tables (and the bookmark-eviction trigger) are keyed on `(txt_id, user_id)` again: each reader gets their own read position and their own 12-bookmark cap per file, independent of any other reader.
-
-### `txt_metadata` is one row per user, rewritten as a whole per ingest or share
-
-Each user has exactly one `txt_metadata` row (`user_id` is `UNIQUE`), holding a JSON map of `txt_id → name` for every file they can open — their own plus anything shared to them — wrapped under a dedicated `txt_metadata_key` (itself wrapped under that user's `umk`, not used to encrypt `content` directly; see [crypto.md](crypto.md)). An ingest run for a given user decrypts that user's row once at the start, applies all of that run's name additions in memory, and writes it back once at the end — not once per file. A share operation does the same for the *recipient's* row, adding just the one shared entry. `--force` re-ingests don't touch it (the filename doesn't change, only `txt_id` is reused).
-
-### `users` table splits lookup from password verification
-
-`username_hash` is a deterministic, directly-queryable lookup key (`SELECT id FROM users WHERE username_hash = ?`), computed with a key derived from `root_master_key` — not a plain unkeyed hash of the username, since that would let anyone holding just the `.db` file (no `creds.json`) dictionary-guess which usernames exist. `pw_salt`/`pw_hash` are a separate, per-user-salted password hash (PBKDF2-HMAC-SHA3-256, 1000 iterations) used only to *verify* a password once the row's already been found by `username_hash` — never as a lookup key itself, since a KDF can't be recomputed cheaply enough to scan the whole table. See [crypto.md](crypto.md) for both formulas and where `root_master_key`/`username_salt` come from.
+Across every link in `instant.schema.ts`, the side that should disappear when the other side is deleted is the one carrying `onDelete: 'cascade'` (and, where the link can't exist meaningfully without its anchor, `required: true` too) — e.g. `txtUmkStore` puts both on `txt` (deleted when its `umkStore` is deleted), not on `umkStore`. The two proposed additions follow the same rule: `umkStoreMetadata` puts both on `metadataStore` (deleted when its `umkStore` is deleted), and `txtBookmarks` puts both on `bookmarks` (deleted when its `txt` row is deleted) — in each case the anchor side carries neither flag. Getting this backwards silently inverts which entity survives a deletion, so it's worth checking explicitly against an existing link rather than guessing when adding a new one.

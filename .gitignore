@@ -35,5 +35,5 @@ coverage/
 
 # Project data / secrets
 .claude/
-*.json
+creds.json
 *.txt
