@@ -3,12 +3,12 @@
 ## Threat model
 
 - The web UI connects to InstantDB as a specific signed-in user, constrained by `instant.perms.ts`'s owner-only rules. The admin CLI connects with the InstantDB **admin** SDK, which bypasses those rules entirely — it is the new single trust tier that can touch any row for any user, the role `root_master_key`/the shared Turso token used to occupy.
-- The admin CLI's local config (Firebase service-account credentials, the InstantDB admin token, and the `user_root_keys` keyring — see [crypto.md](crypto.md)) must be kept secret and out of version control. Anyone who has it can unwrap every user's `umk` (via the keyring) and, separately, read/write/delete any row via the InstantDB admin token, regardless of whose data it is. This is the same shape of risk `creds.json` was before, just renamed and now excluding the browser entirely.
+- The admin CLI's local config (Firebase service-account credentials, the InstantDB admin token, and the `user_root_keys` keyring) must be kept secret and out of version control. Anyone who has it can unwrap every user's `umk` (via the keyring) and, separately, read/write/delete any row via the InstantDB admin token, regardless of whose data it is. This is the same shape of risk `creds.json` was before, just renamed and now excluding the browser entirely.
 - Compression happens before encryption, everywhere, to avoid compression-oracle attacks — unchanged.
 
 ## `user_id` is a cryptographic boundary *and*, now, a real database boundary
 
-Per the key hierarchy in [crypto.md](crypto.md), each user's `umk` is wrapped under a `user_root_key` unique to that user — not a shared secret. Concretely:
+Per the key hierarchy in [data_model.md](data_model.md), each user's `umk` is wrapped under a `user_root_key` unique to that user — not a shared secret. Concretely:
 
 - Holding one user's `umk` unwraps that user's `txtKeyBlob`s, bookmarks, and `metadataStore` (their content *and* their filenames) but **not** another user's `umk` or anything of theirs. There is no sharing mechanism in this redesign, so there is no "unless explicitly shared with them" exception anymore either — see below.
 - Holding one user's `user_root_key` unwraps only that user's `umk`. There is no longer a single secret that unwraps every user's `umk` at once — the admin CLI's keyring is a collection of per-user secrets, and compromising it end-to-end is a strictly worse outcome (total compromise), but compromising any *one* entry in it is not.
@@ -20,15 +20,15 @@ The old design let an owner grant another user read access to a specific file (`
 
 ## Provisioning replaces sharing as the CLI-mediated trust boundary
 
-Creating or deleting a user is now the CLI-mediated, admin-trust-tier operation that sharing used to be (see [crypto.md](crypto.md)'s User Identity, Login, and Provisioning section):
+Creating or deleting a user is now the CLI-mediated, admin-trust-tier operation that sharing used to be (see [architecture.md](architecture.md)'s Provisioning pipeline):
 
 - **Creating** a user requires the admin CLI's config (to create the Firebase account and mint an InstantDB token) — same trust tier as ingest. Anyone who can run `txt-admin users create` can provision an account for anyone; this isn't a new capability, just how the CLI's existing trust tier gets exercised.
 - **Deleting** a user cascades through `onDelete: 'cascade'` and destroys their `umkStore`/`txt`/`$files` outright — there is no soft-delete or grace period documented here.
-- **Whether an already-delivered `{ instant_token, user_root_key }` bundle can be invalidated short of deleting the user is currently unverified against InstantDB's actual admin SDK.** This doc deliberately does not assert a specific revocation API exists — see [crypto.md](crypto.md)'s note on this, and treat "can we lock someone out without wiping their data" as an open question until it's checked against the real SDK, not a solved problem.
+- **Whether an already-delivered `{ instant_token, user_root_key }` bundle can be invalidated short of deleting the user is currently unverified against InstantDB's actual admin SDK.** This doc deliberately does not assert a specific revocation API exists — see [architecture.md](architecture.md)'s note on this, and treat "can we lock someone out without wiping their data" as an open question until it's checked against the real SDK, not a solved problem.
 
 ## Firebase login is not what authorizes ongoing access — call this out plainly
 
-After the one-time bootstrap (see [crypto.md](crypto.md)), the browser persists `{ instant_token, user_root_key }` in local storage and reuses them on every later visit. Firebase login is checked again each visit as an app-level "are you still you" gate, but it is **not** re-derived into anything that actually authorizes InstantDB access — the persisted token and key are what do that, independent of Firebase session state. Practically: someone who extracts those two values from browser storage (XSS, a compromised extension, physical access to an unlocked/unencrypted profile) has everything they need to impersonate that user's InstantDB session without ever touching Firebase again. This is the same category of trade-off the old design had with the Turso token living in browser storage — narrower now (scoped to one user instead of every user), but not eliminated. Firebase Auth's real value here is at *provisioning* time (proving identity before the admin hands out a bundle) and as a UI-level access gate, not as an ongoing cryptographic control.
+After the one-time bootstrap (see [architecture.md](architecture.md)'s Read pipeline), the browser persists `{ instant_token, user_root_key }` in local storage and reuses them on every later visit. Firebase login is checked again each visit as an app-level "are you still you" gate, but it is **not** re-derived into anything that actually authorizes InstantDB access — the persisted token and key are what do that, independent of Firebase session state. Practically: someone who extracts those two values from browser storage (XSS, a compromised extension, physical access to an unlocked/unencrypted profile) has everything they need to impersonate that user's InstantDB session without ever touching Firebase again. This is the same category of trade-off the old design had with the Turso token living in browser storage — narrower now (scoped to one user instead of every user), but not eliminated. Firebase Auth's real value here is at *provisioning* time (proving identity before the admin hands out a bundle) and as a UI-level access gate, not as an ongoing cryptographic control.
 
 ## Bookmark cap is client-enforced, not database-enforced
 

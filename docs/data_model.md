@@ -1,10 +1,33 @@
 # Data Model
 
-InstantDB schema — declarative, reactive, and permissioned, not SQL — shared by the admin CLI and the web UI. The actual schema and permission rules live in [`instant.schema.ts`](../instant.schema.ts) and [`instant.perms.ts`](../instant.perms.ts) at the repo root (both `cli/` and `ui/` import from there) — they are not duplicated in this doc. A duplicated copy drifting from what's actually pushed caused several real bugs earlier (see Uniqueness below), so this file describes the shape and the reasoning behind it rather than embedding the code itself.
+InstantDB schema — declarative, reactive, and permissioned, not SQL. The actual schema and permission rules live in [`instant.schema.ts`](../instant.schema.ts) and [`instant.perms.ts`](../instant.perms.ts) at the repo root (both the admin CLI and the web UI import from there) — this doc describes their shape and the reasoning behind it, it does not duplicate the code.
 
-`$files`, `$users`, `txt`, `umkStore`, and their links (`txtUmkStore`, `txtFileEntry`, `umkStoreOwner`) are pulled from the deployed app (`npx instant-cli@latest pull schema`/`pull perms`), not hand-maintained. `metadataStore` and `bookmarks` (and their links, and the two new fields on `txt`) are marked **proposed** in both files — designed here, not yet pushed — see Additions below.
+**Every file's content is a blob-encrypted payload, never plaintext.** Small wrapped-key columns (`umkStore.umkBlob`, `txt.txtKeyBlob`, `metadataStore.metadataKeyBlob`) live inline as `i.string()` fields; everything else — a `txt` row's content and edit history, its read-position, its bookmarks, and the per-user filename index — lives in a linked `$files` row instead of a DB column, uploaded via InstantDB Storage (backed by Cloudflare R2). `$files.path`/`$files.url` are the only plaintext fields anywhere in this schema: they're storage addressing (an object path, a download URL), not content. Every uploaded file's actual bytes are the same AEAD wire format described in [crypto.md](crypto.md) (`magic || version || salt || ciphertext || tag`) — nothing is ever stored as raw plaintext or a naked JSON string.
 
-Nothing in the old SQLite design's `txt_parts`/`part_count` survives the move to InstantDB: bulk content — an entry's text and its full edit history, the metadata index's JSON, a bookmark's payload — all live in a linked `$files` row now that object storage is available, instead of a DB column. Only small wrapped-key blobs (`umkBlob`, `txtKeyBlob`, `metadataKeyBlob`) stay inline as `i.string()` fields.
+## Key Hierarchy
+
+```
+user_root_key (per user; see architecture.md's Provisioning pipeline for how it's minted/delivered)
+  └── umk                (umkStore.umkBlob)
+        ├── txt_key       (txt.txtKeyBlob)                  — one per txt row
+        │     ├── txt content + history    ($files, via txtPartFile)
+        │     ├── read-position            ($files, via txtAccessFileEntry, off txtAccess)
+        │     └── each bookmark's payload  ($files, via bookmarkFileEntry, off bookmarks)
+        └── metadata_key  (metadataStore.metadataKeyBlob)   — one per user
+              └── filename index           ($files, via txtMetadataFile)
+```
+
+`user_root_key` wraps `umk`; `umk` wraps `txt_key` and `metadata_key`; `txt_key` and `metadata_key` each wrap the actual content that hangs off them — `umk` itself never encrypts bulk content directly, only these two second-tier keys. `txtAccess` and `bookmarks` have no key of their own: both live directly off a specific `txt` row, so their content is encrypted under that row's own `txt_key`, the same key that encrypts the row's own part content. Full derivation/blob-format mechanics (HKDF, Ascon-Keccak, salts, versioning) are in [crypto.md](crypto.md); this is just the map of which entity/field sits where in that chain.
+
+## Entities
+
+- **`$users`** — InstantDB's built-in user entity. `email` is InstantDB's native field (populated at provisioning time, not separately declared/indexed here); the only field this app adds is `type` (required — every `$users` row has one), this app's own role field (`"admin" | "user"`, see [architecture.md](architecture.md)'s Role model). Nothing in `instant.perms.ts` branches on `type` — only the admin CLI, via the InstantDB **admin** SDK (which bypasses `instant.perms.ts` entirely), acts on it.
+- **`umkStore`** — one row per user: `umkBlob`, that user's `umk` wrapped under their `user_root_key`. Linked to `$users` via `umkStoreOwner`, `has: 'one'` on both sides (see Uniqueness below for why that shape is a deliberate, previously-troublesome choice).
+- **`txt`** — one row per file: `txtKeyBlob`, that file's content key wrapped under the owning user's `umk`. No other fields — filename, content, history, read-position, and bookmarks all live off linked rows, never here. Linked to exactly one `umkStore` via `txtUmkStore` (`required: true` — a `txt` row can't exist unowned). Ownership is transitive through this link, not a direct link to `$users`: `instant.perms.ts` checks `auth.id in data.ref('umk.owner.id')`, not a direct `data.ref('owner.id')`.
+- **`txtAccess`** — one per `txt` row, linked via `txtAccessTxt`. No fields of its own: read-position (last part read, last-accessed timestamp) lives entirely in its linked `$files` row (`txtAccessFileEntry`), encrypted under the owning `txt` row's `txt_key`. Because there's no sharing in this design (see [architecture.md](architecture.md)), a `txt` row has at most one possible reader — its owner — so this never needs a composite key the way the old `txt_access` table did.
+- **`metadataStore`** — one row per user: `metadataKeyBlob`, wrapped under that user's `umk`. The actual filename index (a JSON map of every `txt` id this user owns → its name) lives in its linked `$files` row (`txtMetadataFile`), encrypted under `metadata_key`, not here. Linked to `umkStore` via `umkStoreMetadata`.
+- **`bookmarks`** — many per `txt` row, linked via `txtBookmarks`. No fields at all: the bookmark payload lives in its linked `$files` row (`bookmarkFileEntry`), encrypted under the owning `txt` row's `txt_key` — there's no separate bookmark key to wrap or store.
+- **`$files`** — InstantDB's Storage-backed file entity (backed by Cloudflare R2). Four different owners link to it, each following the same atomically-swapped shape (see Notes below): `txt` (content + history, via `txtPartFile`), `txtAccess` (read-position, via `txtAccessFileEntry`), `bookmarks` (payload, via `bookmarkFileEntry`), and `metadataStore` (filename index, via `txtMetadataFile`).
 
 ## Entities and links
 
@@ -12,37 +35,30 @@ Nothing in the old SQLite design's `txt_parts`/`part_count` survives the move to
 $users
   └─ umkStoreOwner (1:1) ─ umkStore
        ├─ txtUmkStore (1:many) ─ txt
-       │     ├─ txtFileEntry (1:1) ─ $files                [content + history]
-       │     └─ txtBookmarks (1:many) ─ bookmarks (proposed)
-       │           └─ bookmarkFileEntry (1:1) ─ $files      [bookmark payload]
-       └─ umkStoreMetadata (1:1) ─ metadataStore (proposed)
-             └─ metadataFileEntry (1:1) ─ $files            [filename index]
+       │     ├─ txtPartFile (1:1) ─ $files              [content + history, enc by txt_key]
+       │     ├─ txtAccessTxt (1:1) ─ txtAccess
+       │     │     └─ txtAccessFileEntry (1:1) ─ $files  [read-position, enc by txt_key]
+       │     └─ txtBookmarks (1:many) ─ bookmarks
+       │           └─ bookmarkFileEntry (1:1) ─ $files    [bookmark payload, enc by txt_key]
+       └─ umkStoreMetadata (1:1) ─ metadataStore
+             └─ txtMetadataFile (1:1) ─ $files            [filename index, enc by metadata_key]
 ```
 
-- **`$users`** — InstantDB's built-in user entity. `email` is InstantDB's native field (populated at provisioning time, not separately declared/indexed here); the only field this app adds is `type` (required — every `$users` row has one, no InstantDB-default-user case to leave it unset for), this app's own role field (`"admin" | "user"`, see [architecture.md](architecture.md)'s Role model). Nothing in `instant.perms.ts` currently branches on `type` — only the admin CLI, via the InstantDB **admin** SDK (which bypasses `instant.perms.ts` entirely), acts on it.
-- **`umkStore`** — one row per user, holding that user's wrapped `umk` (`umkBlob`). `umkStoreOwner` is `has: 'one'` on both sides (see Uniqueness below for why that shape is a deliberate, previously-troublesome choice, not an oversight).
-- **`txt`** — one row per file, holding its wrapped content key (`txtKeyBlob`) and, proposed, its read-position (`lastPartNum`/`lastAccessed`). Links to exactly one `umkStore` via `txtUmkStore` (`required: true` — a `txt` row can't exist unowned). Ownership is transitive through this link, not a direct link to `$users`: `instant.perms.ts` checks `auth.id in data.ref('umk.owner.id')`, not a direct `data.ref('owner.id')`.
-- **`$files`** — InstantDB's Storage-backed file entity (backed by Cloudflare R2). Three different owners link to it, each atomically swapped the same way (see the note below): a `txt` row's content + history via `txtFileEntry`, a `metadataStore` row's index via `metadataFileEntry` (proposed), and a `bookmarks` row's payload via `bookmarkFileEntry` (proposed).
-- **`metadataStore`** (proposed) — one row per user, holding only the wrapped `metadataKeyBlob`; the actual filename index lives in its linked `$files` row via `metadataFileEntry`. Linked to `umkStore` via `umkStoreMetadata`.
-- **`bookmarks`** (proposed) — many per `txt` row, linked via `txtBookmarks`. No fields of its own at all — the bookmark payload lives in its linked `$files` row via `bookmarkFileEntry`, and it's keyed off the owning `txt` row's `txtKeyBlob` (see [crypto.md](crypto.md)'s Bookmark Encryption section), so there's no separate key blob to store here either.
+## Permissions
 
-Neither `instant.schema.ts` nor `instant.perms.ts` grants the `admin`/`user` role distinction any special treatment — a regular user's browser session is bound by `instant.perms.ts`'s rules regardless of their `type` value, since the web UI never needs admin-shaped access to any row, including its own user's.
+Every non-`$files` entity uses the same `isOwner` shape: bind an `isOwner` predicate that walks the link chain up to `umkStore.owner` (=`$users`), then gate `view`/`create`/`delete` on it, plus `update` where the entity's own fields can legitimately change post-creation:
 
-## Additions on top of the live schema
+| Entity | `isOwner` bind | `update` allowed? |
+|--------|----------------|--------------------|
+| `umkStore` | `auth.id in data.ref('owner.id')` | yes, except the `owner` link itself |
+| `txt` | `auth.id in data.ref('umk.owner.id')` | yes, except the `umk` link itself |
+| `metadataStore` | `auth.id in data.ref('owner.owner.id')` | yes, except the `owner` link itself |
+| `bookmarks` | `auth.id in data.ref('txt.umk.owner.id')` | no — write-once, then delete only |
+| `txtAccess` | `auth.id in data.ref('txt.umk.owner.id')` | yes, except the `txt` link itself — read-position is swapped in place as the reader progresses |
 
-Three things this redesign needs aren't live yet: read-position tracking, bookmarks, and a filename index. They follow the same conventions as the live schema (owner-chain `bind`/`allow` rules, `onDelete: 'cascade'` anchored at the top of each chain) and are already written into `instant.schema.ts`/`instant.perms.ts`, marked `proposed`.
+`$files` uses a different, path-based rule instead of an owner-chain `bind`: `data.path.startsWith(auth.id + '/')`, so every upload this app makes must be written under a `${auth.id}/...` path for the permission to hold, regardless of which entity ends up linking to it.
 
-### Read-position tracking is two new fields on `txt`, not a new table
-
-The old `txt_access` table was keyed on `(txt_id, user_id)` because a shared file could have multiple readers, each with their own position. This redesign drops sharing (see [architecture.md](architecture.md)) — every `txt` row has exactly one possible reader, its owner — so the composite key collapses to two new optional fields directly on `txt`, `lastPartNum` and `lastAccessed`. No new link or permission rule is needed: `txt.allow.update` already reads `"isOwner && !('umk' in request.modifiedFields)"` — the owner may already write any field except `umk`, and these two are exactly that kind of field.
-
-### `bookmarks`
-
-No `update` rule — bookmarks are write-once-then-delete, same as the old table (there was never an `UPDATE bookmarks` in the old design either). The old 12-bookmarks-per-file cap was a SQL `BEFORE INSERT` trigger; InstantDB has no server-side triggers, so the cap becomes a **client-enforced invariant** instead: before inserting, the client queries the current bookmark count for that `txt` row and, if at or over 12, bundles a delete of the oldest bookmark into the same `db.transact` as the insert. This is a real behavior change worth being explicit about — the cap is no longer guaranteed by the database, only by the app's own code path. The risk is low: a user who bypasses their own client only ever over-stuffs their own bookmarks, and `isOwner` still prevents them from touching anyone else's. See [security.md](security.md).
-
-### `metadataStore` — one aggregate filename index per user
-
-Same rationale as the old `txt_metadata` table: rendering a file listing shouldn't require downloading and decrypting every `txt` row's own `$files` blob just to show a name. One row per user, `has: 'one'` both sides (same convention as `umkStoreOwner`), rewritten as a whole whenever a name is added or a file is deleted — not per-file. See [crypto.md](crypto.md)'s Filename Index section.
+None of this branches on `$users.type` — a regular user's session is bound by these rules regardless of role, since the web UI never needs admin-shaped access to any row, including its own user's. Only the admin CLI, via the InstantDB **admin** SDK, bypasses `instant.perms.ts` entirely.
 
 ## Notes
 
@@ -50,10 +66,12 @@ Same rationale as the old `txt_metadata` table: rendering a file listing shouldn
 
 `umkStoreOwner`'s current `has: 'one'`/`has: 'one'` shape (declared on both `umkStore`'s `owner` label and `$users`' reverse `umkStore` label) is a **deliberate retry** of a shape that previously produced a persistent "already exists" rejection on creating a `umkStore` row for a user — this happened even after confirming there were zero existing `umkStore` rows for that user, no leftover entities from earlier diagnostic renames of the link, and that the request was made with correct auth. The root cause was never conclusively identified. The fallback used at the time (and the one to reach for again if this rejection recurs) was to relax the reverse side to `has: 'many'` on `$users`, and add a client-side check in application code — `queryOwnUmkStoreRow` in `src/db.ts` — that treats getting back more than one row as a fatal error, since the schema itself no longer guarantees at most one. Under the current strict `has: 'one'`/`has: 'one'` shape, `queryOwnUmkStoreRow` gets a single row or `undefined` back, never an array, so that client-side "more than one is fatal" check has nothing left to do — the schema constraint is what's actually being trusted this time, not a fallback still quietly doing the work.
 
-### `txtFileEntry`'s `has: 'one'`/`has: 'one'` is safe despite a transient unlinked moment
-
-A `txt` row's `$files` row is created by a separate `db.storage.uploadFile` call *before* the `db.transact` that links it to that row — so for a moment after upload, before that transact runs, the file exists unlinked. `required: true` isn't set on `txtFileEntry` because it would reject that transient state. The link is still safe as `has: 'one'` on both sides because the eventual link (and the unlink of whatever file it's replacing, on an edit) happens inside one atomic `db.transact` — there is never an externally observable moment with zero or two files linked to a given `txt` row, only ever the single moment right after upload where a *new, not-yet-linked* file exists on its own. See [crypto.md](crypto.md)'s Entry Data File section for how this same atomicity is what makes version history safe to store this way. `bookmarkFileEntry` and `metadataFileEntry` (proposed) are the same shape for the same reason.
-
 ### `onDelete: 'cascade'`/`required: true` sit on the dependent side, not the anchor
 
-Across every link in `instant.schema.ts`, the side that should disappear when the other side is deleted is the one carrying `onDelete: 'cascade'` (and, where the link can't exist meaningfully without its anchor, `required: true` too) — e.g. `txtUmkStore` puts both on `txt` (deleted when its `umkStore` is deleted), not on `umkStore`. The two proposed additions follow the same rule: `umkStoreMetadata` puts both on `metadataStore` (deleted when its `umkStore` is deleted), and `txtBookmarks` puts both on `bookmarks` (deleted when its `txt` row is deleted) — in each case the anchor side carries neither flag. Getting this backwards silently inverts which entity survives a deletion, so it's worth checking explicitly against an existing link rather than guessing when adding a new one.
+Across every link in `instant.schema.ts`, the side that should disappear when the other side is deleted is the one carrying `onDelete: 'cascade'` (and, where the link can't exist meaningfully without its anchor, `required: true` too) — e.g. `txtUmkStore` puts both on `txt` (deleted when its `umkStore` is deleted), `umkStoreMetadata` puts both on `metadataStore`, and `txtBookmarks` puts both on `bookmarks` — in each case the anchor side carries neither flag. Getting this backwards silently inverts which entity survives a deletion, so it's worth checking explicitly against an existing link rather than guessing when adding a new one.
+
+`txtAccessTxt` is the one link that carries `onDelete: 'cascade'` (on `txtAccess`, correctly — a `txtAccess` row is deleted when its `txt` row is) but not `required: true`, unlike its otherwise-identical siblings `txtBookmarks`/`umkStoreMetadata`. Whether that's deliberate (read-position tracking is meant to be optional/lazy per `txt` row) or a gap worth closing hasn't been confirmed either way — flagged here rather than assumed.
+
+### Four links share one atomic-swap shape: upload first, link second
+
+`txtPartFile`, `txtAccessFileEntry`, `bookmarkFileEntry`, and `txtMetadataFile` are all `has: 'one'`/`has: 'one'` on `$files` without `required: true` on the `$files` side, for the same reason in every case: the `$files` row is created by a separate `db.storage.uploadFile` call *before* the `db.transact` that links it to its owner, so for a moment after upload the file exists unlinked — `required: true` would reject that transient state. Each link is still safe because the eventual link (and the unlink of whatever file it's replacing, on an update) happens inside one atomic `db.transact` — there is never an externally observable moment with zero or two files linked to a given row, only ever the single moment right after upload where a *new, not-yet-linked* file exists on its own. `txtPartFile`'s version is the one that actually matters most in practice, since it's the one that preserves edit history on every swap: the prior `current` value is appended onto a `history` array before the new content is uploaded and swapped in, rather than being discarded the way `--force` re-ingest used to work.
