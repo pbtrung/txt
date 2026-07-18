@@ -7,7 +7,8 @@ InstantDB schema — declarative, reactive, and permissioned, not SQL. The actua
 ## Key Hierarchy
 
 ```
-user_root_key (per user; see architecture.md's Provisioning pipeline for how it's minted/delivered)
+user_root_key (per user; minted by the admin CLI at account-creation time and
+                delivered to that user once, out-of-band -- never stored in InstantDB)
   └── umk                (umkStore.umkBlob)
         ├── txt_key       (txt.txtKeyBlob)                  — one per txt row
         │     ├── txt content + history    ($files, via txtPartFile)
@@ -21,10 +22,10 @@ user_root_key (per user; see architecture.md's Provisioning pipeline for how it'
 
 ## Entities
 
-- **`$users`** — InstantDB's built-in user entity. `email` is InstantDB's native field (populated at provisioning time, not separately declared/indexed here); the only field this app adds is `type` (required — every `$users` row has one), this app's own role field (`"admin" | "user"`, see [architecture.md](architecture.md)'s Role model). Nothing in `instant.perms.ts` branches on `type` — only the admin CLI, via the InstantDB **admin** SDK (which bypasses `instant.perms.ts` entirely), acts on it.
+- **`$users`** — InstantDB's built-in user entity. `email` is InstantDB's native field (populated at provisioning time, not separately declared/indexed here); the only field this app adds is `type` (required — every `$users` row has one), this app's own role field: `"admin"` acts only through the admin CLI (full CRUD via the InstantDB admin SDK, bypassing `instant.perms.ts`), `"user"` acts only through the web UI, bound by the rules below. Nothing in `instant.perms.ts` branches on `type` — only the admin CLI, via the InstantDB **admin** SDK (which bypasses `instant.perms.ts` entirely), acts on it.
 - **`umkStore`** — one row per user: `umkBlob`, that user's `umk` wrapped under their `user_root_key`. Linked to `$users` via `umkStoreOwner`, `has: 'one'` on both sides (see Uniqueness below for why that shape is a deliberate, previously-troublesome choice).
 - **`txt`** — one row per file: `txtKeyBlob`, that file's content key wrapped under the owning user's `umk`. No other fields — filename, content, history, read-position, and bookmarks all live off linked rows, never here. Linked to exactly one `umkStore` via `txtUmkStore` (`required: true` — a `txt` row can't exist unowned). Ownership is transitive through this link, not a direct link to `$users`: `instant.perms.ts` checks `auth.id in data.ref('umk.owner.id')`, not a direct `data.ref('owner.id')`.
-- **`txtAccess`** — one per `txt` row, linked via `txtAccessTxt`. No fields of its own: read-position (last part read, last-accessed timestamp) lives entirely in its linked `$files` row (`txtAccessFileEntry`), encrypted under the owning `txt` row's `txt_key`. Because there's no sharing in this design (see [architecture.md](architecture.md)), a `txt` row has at most one possible reader — its owner — so this never needs a composite key the way the old `txt_access` table did.
+- **`txtAccess`** — one per `txt` row, linked via `txtAccessTxt`. No fields of its own: read-position (last part read, last-accessed timestamp) lives entirely in its linked `$files` row (`txtAccessFileEntry`), encrypted under the owning `txt` row's `txt_key`. Because there's no cross-user sharing in this design (every `txt` row links to exactly one `umkStore`/owner, `has: 'one'` all the way down), a `txt` row has at most one possible reader, its owner — so this never needs a composite key the way the old `txt_access` table did.
 - **`metadataStore`** — one row per user: `metadataKeyBlob`, wrapped under that user's `umk`. The actual filename index (a JSON map of every `txt` id this user owns → its name) lives in its linked `$files` row (`txtMetadataFile`), encrypted under `metadata_key`, not here. Linked to `umkStore` via `umkStoreMetadata`.
 - **`bookmarks`** — many per `txt` row, linked via `txtBookmarks`. No fields at all: the bookmark payload lives in its linked `$files` row (`bookmarkFileEntry`), encrypted under the owning `txt` row's `txt_key` — there's no separate bookmark key to wrap or store.
 - **`$files`** — InstantDB's Storage-backed file entity (backed by Cloudflare R2). Four different owners link to it, each following the same atomically-swapped shape (see Notes below): `txt` (content + history, via `txtPartFile`), `txtAccess` (read-position, via `txtAccessFileEntry`), `bookmarks` (payload, via `bookmarkFileEntry`), and `metadataStore` (filename index, via `txtMetadataFile`).

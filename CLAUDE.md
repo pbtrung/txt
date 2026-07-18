@@ -4,10 +4,7 @@ A fully client-side-encrypted text vault. An admin CLI (`cli/`, Node/TypeScript)
 
 ## Documentation
 
-- [docs/architecture.md](docs/architecture.md) — components, ingest/read/provisioning pipelines, admin/user role model
-- [docs/tech_stack.md](docs/tech_stack.md) — languages, libraries, config shape, and InstantDB-specific things to guard against
-- [docs/data_model.md](docs/data_model.md) — the live `instant.schema.ts`/`instant.perms.ts`, plus additive entities (bookmarks, filename index) and design notes/open questions
-- [docs/crypto.md](docs/crypto.md) — encryption scheme (AEAD, KDF, key hierarchy), used identically for every blob type
-- [docs/security.md](docs/security.md) — threat model, what per-user isolation does and does not guarantee cryptographically *and* at the database-permission layer, and the risks of the admin CLI's config
+- [docs/data_model.md](docs/data_model.md) — the `instant.schema.ts`/`instant.perms.ts` schema, the key hierarchy, and design notes/open questions
+- [docs/crypto.md](docs/crypto.md) — encryption mechanics (AEAD primitives, blob wire format, key derivation), used identically for every blob type
 
-Read `docs/data_model.md` and `docs/security.md` before touching anything related to the `$users`/roles/multi-user model — per-user isolation is now both real cryptographic envelope encryption (see `data_model.md`'s Key Hierarchy) *and* a real database-enforced boundary (`instant.perms.ts`'s `isOwner` rules), a genuine improvement over the old single-shared-Turso-token design where only the crypto layer provided any isolation at all. There is no cross-user sharing in this redesign — see `security.md` for why that was dropped rather than carried over.
+Read `docs/data_model.md` before touching anything related to the `$users`/roles/multi-user model — per-user isolation is now both real cryptographic envelope encryption (see `data_model.md`'s Key Hierarchy) *and* a real database-enforced boundary (`instant.perms.ts`'s `isOwner` rules), a genuine improvement over the old single-shared-Turso-token design where only the crypto layer provided any isolation at all. There is no cross-user sharing in this redesign — every `txt` row links to exactly one `umkStore`/owner, `has: 'one'` all the way down.
