@@ -33,7 +33,7 @@ ui/
 ```
 for each .txt file under --src, ingesting on behalf of a given user:
   1. Look up that user's user_root_key in the CLI's local keyring; unwrap
-     their umk (see crypto.md's Key Hierarchy).
+     their umk (see data_model.md's Key Hierarchy).
   2. Fetch and decrypt that user's metadataStore content file to check for
      an existing entry by filename (direct dictionary lookup, scoped to
      that user's own entries -- there's no shared-to-them case anymore).
@@ -45,12 +45,12 @@ for each .txt file under --src, ingesting on behalf of a given user:
   4. Preprocess (normalise paragraph spacing).
   5. Brotli-compress + AEAD-encrypt the file's content, keyed off this
      entry's txtKeyBlob; db.storage.uploadFile it, then atomically link it
-     via txtFileEntry (see crypto.md's Entry Data File section) -- on
+     via txtPartFile (see data_model.md's note on this link) -- on
      --force, the prior content is appended to that file's history rather
      than discarded.
   6. Add/refresh this entry's name in the user's metadataStore content.
   7. Re-encrypt the whole metadata index and swap it into the user's
-     metadataStore via metadataFileEntry once per ingest run (not once per
+     metadataStore via txtMetadataFile once per ingest run (not once per
      file — see data_model.md), the same atomic upload-then-relink
      db.transact as step 5.
 ```
@@ -62,7 +62,7 @@ Since the admin CLI uses the InstantDB admin SDK, every write above bypasses `in
 ```
 1. User completes Firebase login, then (first time on this browser/device
    only) imports the admin-delivered { instant_token, user_root_key }
-   bundle; see crypto.md's User Identity, Login, and Provisioning section.
+   bundle; see the Provisioning pipeline below.
 2. UI calls db.auth.signInWithToken(instant_token); from then on every
    query/write is scoped by instant.perms.ts's isOwner rules -- the browser
    physically cannot fetch another user's rows, regardless of what it can
@@ -71,11 +71,16 @@ Since the admin CLI uses the InstantDB admin SDK, every write above bypasses `in
    fetches and decrypts their metadataStore's linked content file to get
    their entryId → name map.
 4. Opening an entry: unwrap its txtKeyBlob via the owning umk, fetch its
-   linked $files row's content (an InstantDB Storage / R2-backed download),
-   decrypt + brotli-decompress to get { name, current, history }.
-5. Read-position (txt.lastPartNum/lastAccessed) and bookmarks are just
-   further InstantDB queries/transactions over the same reactive connection
-   -- no separate mechanism for browser-side writes, same as before.
+   linked $files row's content (via txtPartFile), decrypt + brotli-decompress
+   to get { name, current, history }.
+5. Read-position: fetch that entry's linked txtAccess row (if any) and its
+   own linked $files content (via txtAccessFileEntry), decrypt it the same
+   way, keyed off the same txtKeyBlob. Advancing it is an upload-then-relink
+   db.transact, same shape as step 4 -- not a plain field write, since
+   read-position is blob-encrypted too, not a bare number on the txt row.
+6. Bookmarks are the same shape as read-position (a linked $files row off
+   the owning txt row via bookmarkFileEntry, keyed off txtKeyBlob) -- just
+   many per txt row instead of one.
 ```
 
 ## Provisioning pipeline (Admin CLI)
@@ -103,7 +108,7 @@ Delete:
   3. Remove the user's entry from the CLI config's keyring.
 ```
 
-See [crypto.md](crypto.md)'s User Identity, Login, and Provisioning section and [security.md](security.md) for what deleting a user does and does not guarantee (in particular: whether an already-issued `instant_token` can be invalidated short of deleting the user is currently unverified/TBD, not asserted here).
+See [security.md](security.md) for what deleting a user does and does not guarantee (in particular: whether an already-issued `instant_token` can be invalidated short of deleting the user is currently unverified/TBD, not asserted here).
 
 ## Role model
 

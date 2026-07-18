@@ -39,11 +39,20 @@ const rules = {
     },
   },
   bookmarks: {
-    bind: ['isOwner', "auth.id in data.ref('entry.umk.owner.id')"],
+    bind: ['isOwner', "auth.id in data.ref('txt.umk.owner.id')"],
     allow: {
       view: 'isOwner',
       create: 'isOwner',
       delete: 'isOwner',
+    },
+  },
+  txtAccess: {
+    bind: ['isOwner', "auth.id in data.ref('txt.umk.owner.id')"],
+    allow: {
+      view: 'isOwner',
+      create: 'isOwner',
+      delete: 'isOwner',
+      update: "isOwner && !('txt' in request.modifiedFields)",
     },
   },
 } satisfies InstantRules<AppSchema>;

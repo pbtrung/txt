@@ -19,8 +19,8 @@
 | Framework | React + Bootstrap | Unchanged. |
 | Build tool | Vite | Unchanged. |
 | DB access | `@instantdb/react`, connecting directly from the browser | No application server, no local file. Every query/write is scoped by `instant.perms.ts`'s owner-only rules — the browser can only ever see and touch its own signed-in user's rows, a real change from the old single-shared-full-access-token model (see security.md). |
-| Auth (identity) | Firebase client SDK, plus a one-time import of the admin-delivered `{ instant_token, user_root_key }` bundle | See crypto.md's User Identity, Login, and Provisioning section for the full bootstrap flow and why Firebase login isn't the thing that's actually authorizing ongoing InstantDB access. |
-| Storage | InstantDB Storage, backed by Cloudflare R2 | Entry content + history download as a single file per entry (see crypto.md's Entry Data File section) — no more per-part rows. |
+| Auth (identity) | Firebase client SDK, plus a one-time import of the admin-delivered `{ instant_token, user_root_key }` bundle | See architecture.md's Provisioning pipeline for the full bootstrap flow and security.md for why Firebase login isn't the thing that's actually authorizing ongoing InstantDB access. |
+| Storage | InstantDB Storage, backed by Cloudflare R2 | Entry content + history download as a single file per entry via `txtPartFile` (see data_model.md) — no more per-part rows. |
 | Crypto | `leancrypto` compiled to WebAssembly | Unchanged — decryption still happens entirely client-side. |
 
 ## Things to guard against with InstantDB — flagged proactively, not yet hit

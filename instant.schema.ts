@@ -49,17 +49,17 @@ const _schema = i.schema({
         label: 'txt',
       },
     },
-    txtFileEntry: {
+    txtPartFile: {
       forward: {
         on: '$files',
         has: 'one',
-        label: 'entry',
+        label: 'txtPart',
         onDelete: 'cascade',
       },
       reverse: {
         on: 'txt',
         has: 'one',
-        label: 'entryFile',
+        label: 'txtPart',
       },
     },
     umkStoreOwner: {
@@ -93,7 +93,7 @@ const _schema = i.schema({
       forward: {
         on: 'bookmarks',
         has: 'one',
-        label: 'entry',
+        label: 'txt',
         required: true,
         onDelete: 'cascade',
       },
@@ -142,11 +142,11 @@ const _schema = i.schema({
         label: 'contentFile',
       },
     },
-    metadataFileEntry: {
+    txtMetadataFile: {
       forward: {
         on: '$files',
         has: 'one',
-        label: 'metadataStore',
+        label: 'txtMetadata',
         onDelete: 'cascade',
       },
       reverse: {
