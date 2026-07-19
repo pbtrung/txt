@@ -56,6 +56,11 @@ def main(
         level=logging.DEBUG if verbose else logging.INFO,
         format="%(asctime)s %(levelname)-8s %(name)-10s %(message)s",
     )
+    # boto3/botocore/s3transfer/urllib3 are extremely chatty at DEBUG (full
+    # request/response dumps) -- keep them quiet even under --verbose, which
+    # is meant to surface *this* codebase's own steps, not the SDK's internals.
+    for noisy in ("boto3", "botocore", "s3transfer", "urllib3"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
     if do_init:
         _cmd_init(admin_creds)
         return
