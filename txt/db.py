@@ -3,7 +3,7 @@
 import click
 import libsql
 
-from .admin_creds import AdminCreds
+from .creds import Creds
 from .leancrypto import library_name
 from .schema import statements
 
@@ -11,7 +11,7 @@ from .schema import statements
 class Database:
     """A Turso connection with the vault schema applied."""
 
-    def __init__(self, creds: AdminCreds, verbose: bool = False) -> None:
+    def __init__(self, creds: Creds, verbose: bool = False) -> None:
         if verbose:
             click.echo(f"leancrypto: {library_name}")
             click.echo(f"Turso URL: {creds.turso_database_url}")

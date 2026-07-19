@@ -69,10 +69,10 @@ CREATE TABLE IF NOT EXISTS txt_access (
 );
 
 CREATE TABLE IF NOT EXISTS bookmarks (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
     txt_id   INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
     user_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    bookmark BLOB NOT NULL,   -- magic||version||salt||Ascon-Keccak(brotli(JSON))||tag
-    PRIMARY KEY (txt_id, user_id)
+    bookmark BLOB NOT NULL   -- magic||version||salt||Ascon-Keccak(brotli(JSON))||tag
 );
 
 CREATE INDEX IF NOT EXISTS idx_bookmarks_txt_id_user_id ON bookmarks(txt_id, user_id);
@@ -82,10 +82,10 @@ BEFORE INSERT ON bookmarks
 WHEN (SELECT COUNT(*) FROM bookmarks WHERE txt_id = NEW.txt_id AND user_id = NEW.user_id) >= 12
 BEGIN
     DELETE FROM bookmarks
-    WHERE rowid = (
-        SELECT rowid FROM bookmarks
+    WHERE id = (
+        SELECT id FROM bookmarks
         WHERE txt_id = NEW.txt_id AND user_id = NEW.user_id
-        ORDER BY rowid ASC LIMIT 1
+        ORDER BY id ASC LIMIT 1
     );
 END;
 
@@ -101,7 +101,7 @@ CREATE TABLE IF NOT EXISTS txt_metadata (
 
 - **`users`** — one row per account. `username_hash` is a keyed HMAC (not a general-purpose hash) so the username lookup key can be rotated independently of the password KDF; it's what the login query looks up by, never the plaintext username. `pw_salt`/`pw_hash` are login-verification material only — they authenticate the user to the server and are not part of the encryption key chain (see Key Hierarchy).
 - **`umk_store`** — one row per user, holding that user's master key (`umk`), itself encrypted at rest.
-- **`r2_config`** — one row per user: `config` (wrapped under the owner's `umk`, same pattern as `key_store.priv_key`) is a single encrypted JSON blob holding that user's R2 bucket/credentials configuration needed to read/write `txt_parts.path` objects.
+- **`r2_config`** — one row per user: `config` (wrapped under the owner's `umk`, same pattern as `key_store.priv_key`) is a single encrypted JSON blob holding that user's R2 bucket/credentials configuration needed to read/write `txt_parts.path` objects. Which R2 keys a given user's config may hold (read-only only, vs. read-write too) depends on their role — see [credentials.md](credentials.md).
 - **`key_store`** — one row per user, holding that user's `lc_kyber_1024_x448` composite keypair (`lc_kyber_keypair`, type `lc_kyber_1024_x448`; see crypto.md's Composite KEM Key Sizes). `pub_key` is stored raw (1624 bytes) since it isn't sensitive; `priv_key` is wrapped under the owner's `umk`, same pattern as `txt.txt_key`. This keypair exists so other users can share a document with this user without knowing their `umk` — see `txt_shares`.
 - **`txt`** — one row per document (a "txt"). `txt_key` is the document's own key material, wrapped under the owner's `umk`.
 - **`txt_parts`** — a document's content, chunked into ordered parts (`part_num`) so large documents aren't loaded/decrypted as a single blob. The actual content lives in R2 object storage, not Turso; `path` is the R2 object key, wrapped under the owning `txt`'s `txt_key`. `idx_txt_parts_txt_id_part_num` supports fetching a specific part or range in order.

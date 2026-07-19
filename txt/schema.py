@@ -20,6 +20,11 @@ CREATE TABLE IF NOT EXISTS key_store (
     pub_key  BLOB    NOT NULL,
     priv_key BLOB    NOT NULL
 );
+CREATE TABLE IF NOT EXISTS r2_config (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+    config  BLOB    NOT NULL
+);
 CREATE TABLE IF NOT EXISTS txt (
     id      INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -29,16 +34,15 @@ CREATE TABLE IF NOT EXISTS txt_parts (
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
     txt_id   INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
     part_num INTEGER NOT NULL,
-    content  BLOB    NOT NULL
+    path     BLOB    NOT NULL
 );
 CREATE TABLE IF NOT EXISTS txt_shares (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     txt_id        INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
-    user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    kem_ct        BLOB    NOT NULL,
-    eph_x448_pub  BLOB    NOT NULL,
+    to_user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    salt_kem_ct   BLOB    NOT NULL,
     txt_key       BLOB    NOT NULL,
-    UNIQUE (txt_id, user_id)
+    UNIQUE (txt_id, to_user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_txt_parts_txt_id_part_num ON txt_parts(txt_id, part_num);
 CREATE TABLE IF NOT EXISTS part_count (
@@ -47,10 +51,9 @@ CREATE TABLE IF NOT EXISTS part_count (
     count  INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS txt_access (
-    txt_id        INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
-    user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    last_part_num INTEGER NOT NULL DEFAULT 1,
-    last_accessed INTEGER NOT NULL,
+    txt_id  INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    access  BLOB NOT NULL,
     PRIMARY KEY (txt_id, user_id)
 );
 CREATE TABLE IF NOT EXISTS bookmarks (
