@@ -1,5 +1,6 @@
 """--add-txt: ingest .txt files from --src into the vault (see docs/data_model.md)."""
 
+import json
 import logging
 import os
 from pathlib import Path
@@ -74,6 +75,43 @@ class TxtIngester:
             (txt_id, part_num, path_blob),
         )
 
+    def _update_txt_metadata_entry(
+        self, user_id: int, umk: bytes, txt_id: int, name: str
+    ) -> None:
+        # txt_metadata is a single row per user (user_id is UNIQUE), provisioned
+        # by AdminInitializer/--init -- not ingest's job to create it. A single
+        # encrypted JSON blob {"<txt_id>": {"name": ...}, ...} indexed by
+        # txt_id, so a lookup is O(1) average-case once decrypted -- but every
+        # update here decrypts, mutates, and re-encrypts the *entire* blob
+        # (there's no partial-update path), so persisting one change costs
+        # O(blob size), not O(1). Fine for a per-user filename index, not a
+        # design meant to scale to huge per-user document counts.
+        row = self.db.conn.execute(
+            "SELECT txt_metadata_key, content FROM txt_metadata WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError(
+                f"no txt_metadata row for user_id={user_id}; run --init first"
+            )
+        key_blob, content_blob = row
+        txt_metadata_key = Blob.decrypt(umk, key_blob)
+        # content is NULL until this user's first txt is ingested (see
+        # docs/data_model.md's txt_metadata) -- nothing to decrypt yet then.
+        content = (
+            json.loads(Blob.decrypt(txt_metadata_key, content_blob, compressed=True))
+            if content_blob is not None
+            else {}
+        )
+        content[str(txt_id)] = {"name": name}
+        content_blob = Blob.encrypt(
+            txt_metadata_key, json.dumps(content).encode(), compressed=True
+        )
+        self.db.conn.execute(
+            "UPDATE txt_metadata SET content = ? WHERE user_id = ?",
+            (content_blob, user_id),
+        )
+
     def add_file(self, path: Path) -> int:
         user_id = self._owner_user_id()
         umk = self._owner_umk(user_id)
@@ -85,6 +123,7 @@ class TxtIngester:
             "INSERT INTO part_count (txt_id, count) VALUES (?, ?)",
             (txt_id, len(raw_parts)),
         )
+        self._update_txt_metadata_entry(user_id, umk, txt_id, path.name)
         self.db.conn.commit()
         logger.info(
             "Ingested %s as txt_id=%d (%d part(s))", path, txt_id, len(raw_parts)
