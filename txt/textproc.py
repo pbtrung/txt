@@ -11,9 +11,7 @@ _INVALID_CHARS_RE = re.compile(
     "\ufffd\ufeff\u200b-\u200f\u202a-\u202e\u2060-\u206f]"
 )
 # Tabs, NBSP, and other Unicode space variants; collapsed to one space.
-_SPACE_RUN_RE = re.compile(
-    "[ \t\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]+"
-)
+_SPACE_RUN_RE = re.compile("[ \t\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]+")
 
 
 def _clean_line(line: str) -> str:

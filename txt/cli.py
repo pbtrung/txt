@@ -36,7 +36,12 @@ def _cmd_add_txt(admin_creds_path: str, src: str) -> None:
 @click.option(
     "--add-txt", "do_add_txt", is_flag=True, help="Ingest .txt files from --src"
 )
-@click.option("--admin-creds", default="admin_creds.json", show_default=True)
+@click.option(
+    "--admin-creds",
+    default="admin_creds.json",
+    show_default=True,
+    help="Credential JSON file, required by --init and --add-txt",
+)
 @click.option(
     "--src",
     default="txt_src",
