@@ -6,6 +6,7 @@ Two roles load credentials from a per-user JSON config file — `admin_cred_temp
 
 - `turso_database_url` / `turso_auth_token` — this role's Turso connection info.
 - `username` — the login handle. `users.username_hash = HMAC-SHA3-256(username_lookup_key, username)` (see data_model.md) is looked up by this value, not by `display_name`, which is just a UI label.
+- `password` — this role's login password, read straight from the credential file rather than prompted for interactively. `AdminInitializer` runs it through `PBKDF2-HMAC-SHA3-256(password, pw_salt)` to produce `users.pw_hash` (see data_model.md's Login flow); it is never used as IKM anywhere in the key hierarchy.
 - `username_lookup_key`, `user_root_key` — per-user config secrets (see data_model.md's Key Hierarchy).
 - `r2_config` — Cloudflare R2 connection info for reading/writing `txt_parts.path` objects. Every role gets a read-only key pair (`read_only_access_key_id`/`read_only_secret_access_key`).
 
