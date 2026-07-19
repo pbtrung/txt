@@ -1,3 +1,5 @@
+txt_src/
+
 node_modules/
 *.db
 *creds.json
