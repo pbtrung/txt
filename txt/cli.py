@@ -8,6 +8,7 @@ import click
 from .admin import AdminInitializer
 from .creds import AdminCreds
 from .db import Database
+from .ingest import TxtIngester
 
 
 def _cmd_init(admin_creds_path: str) -> None:
@@ -21,13 +22,31 @@ def _cmd_init(admin_creds_path: str) -> None:
     )
 
 
+def _cmd_add_txt(admin_creds_path: str, src: str) -> None:
+    creds = AdminCreds.load(Path(admin_creds_path))
+    db = Database(creds)
+    txt_ids = TxtIngester(db, creds).add_dir(Path(src))
+    click.echo(f"Ingested {len(txt_ids)} file(s): txt_id(s) = {txt_ids}")
+
+
 @click.command()
 @click.option(
     "--init", "do_init", is_flag=True, help="Create schema and the admin user"
 )
+@click.option(
+    "--add-txt", "do_add_txt", is_flag=True, help="Ingest .txt files from --src"
+)
 @click.option("--admin-creds", default="admin_creds.json", show_default=True)
+@click.option(
+    "--src",
+    default="txt_src",
+    show_default=True,
+    help="Directory to scan for .txt files (case-insensitive), with --add-txt",
+)
 @click.option("--verbose", "-v", is_flag=True, help="Enable debug-level logging")
-def main(do_init: bool, admin_creds: str, verbose: bool) -> None:
+def main(
+    do_init: bool, do_add_txt: bool, admin_creds: str, src: str, verbose: bool
+) -> None:
     logging.basicConfig(
         level=logging.DEBUG if verbose else logging.INFO,
         format="%(asctime)s %(levelname)-8s %(name)-10s %(message)s",
@@ -35,4 +54,7 @@ def main(do_init: bool, admin_creds: str, verbose: bool) -> None:
     if do_init:
         _cmd_init(admin_creds)
         return
-    raise click.UsageError("No action specified. Use --init.")
+    if do_add_txt:
+        _cmd_add_txt(admin_creds, src)
+        return
+    raise click.UsageError("No action specified. Use --init or --add-txt.")

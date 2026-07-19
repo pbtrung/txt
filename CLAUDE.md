@@ -4,6 +4,8 @@ A fully client-side-encrypted text vault. Backend: Turso (libSQL/SQLite-compatib
 
 Each user has an account (`users`, looked up by a keyed-HMAC username hash, authenticated by a PBKDF2 password check), a master key (`umk`, wrapped under a per-user root key held outside Turso in per-user JSON config), and an `lc_kyber_1024_x448` composite keypair (`key_store`) used to receive documents shared by other users. A user's documents (`txt`) are chunked into parts (`txt_parts`), each part storing a wrapped R2 object path rather than inline content; each document has its own `txt_key` wrapped under the owner's `umk`. A document can also be shared with another user (`txt_shares`), which re-wraps that same `txt_key` under the recipient's public key instead of revealing the owner's `umk`.
 
+`txt.py --add-txt --src <dir>` ingests `.txt` files (case-insensitive) from a directory into the admin's own account: `txt/textproc.py` cleans and splits each file, `txt/ingest.py` derives each part's content-addressed R2 path and uploads it via `txt/r2.py`, and `txt.py --init` remains the one-time step that provisions the admin account this ingests into.
+
 ## Documentation
 
 - [docs/data_model.md](docs/data_model.md) — the Turso schema, the key hierarchy (root key → umk → txt_key/txt_metadata_key/key_store keypair → content), and design notes/open questions
