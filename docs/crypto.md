@@ -6,17 +6,17 @@
 |---|---|---|
 | AEAD | Ascon-Keccak (`lc_ak_alloc_taglen`) | 64-byte key, 64-byte IV, 64-byte tag |
 | KDF | HKDF-SHA3-512 (`lc_hkdf_*`) | produces 128 bytes of OKM (64-byte AEAD key + 64-byte IV) |
-| KEM | ML-KEM-1024 composite with X448 (Curve448) (`lc_kem_*`) | see Composite KEM Key Sizes below |
+| KEM | ML-KEM-1024 + X448 (Curve448) hybrid (`lc_kyber_1024_x448_keypair`/`_enc_kdf`/`_dec_kdf`) | see Composite KEM Key Sizes below |
 
 ### Composite KEM Key Sizes
 
-Each `key_store` keypair concatenates an ML-KEM-1024 keypair with an X448 keypair:
+Each `key_store` keypair is leancrypto's `lc_kyber_1024_x448` hybrid keypair — a single `lc_kyber_1024_x448_keypair` call, not something this codebase assembles by hand. Internally it combines an ML-KEM-1024 keypair with an X448 keypair:
 
 | Component | pub_key | priv_key |
 |---|---|---|
 | ML-KEM-1024 | 1568 bytes | 3168 bytes |
 | X448 | 56 bytes | 56 bytes |
-| **Composite (concatenated)** | **1624 bytes** | **3224 bytes** |
+| **Composite** | **1624 bytes** | **3224 bytes** |
 
 `key_store.pub_key` stores the raw 1624-byte composite public key. `key_store.priv_key` wraps the raw 3224-byte composite private key using the standard Encrypt procedure below (IKM = owner's `umk`), so the stored blob is 3224 + 132 = 3356 bytes.
 
@@ -86,17 +86,15 @@ Used wherever key material must be wrapped under a *recipient's* public key rath
 
 **Encapsulate** (sender, holding the recipient's composite `pub_key`):
 
-1. Run ML-KEM-1024 encapsulation against the ML-KEM component of `pub_key`, producing a KEM ciphertext (`kem_ct`, 1568 bytes) and a 32-byte KEM shared secret (`ss_kem`).
-2. Generate an ephemeral X448 keypair and perform an X448 exchange against the X448 component of `pub_key`, producing a 56-byte X448 shared secret (`ss_x448`). The ephemeral public key (`eph_x448_pub`, 56 bytes) is public and travels alongside `kem_ct`.
-3. Combine the two shared secrets into a combined key via HKDF-SHA3-512's Extract step alone: `PRK = HKDF-Extract(salt=none, IKM=ss_kem || ss_x448)`. HKDF-Extract's output length is fixed to the underlying hash's digest size regardless of input length, so `PRK` is always 64 bytes (SHA3-512's digest size) — unlike the 128-byte OKM the *full* HKDF-SHA3-512(IKM, salt) produces in Encrypt/Decrypt, which runs Extract-then-Expand.
-4. Run the standard Encrypt procedure using `PRK` as its IKM to wrap the key material being shared — that call performs its own fresh Extract-then-Expand with a new random salt, so `PRK` is combined with entropy the recipient doesn't need to separately transmit.
-5. The recipient needs `kem_ct` and `eph_x448_pub` (in addition to the resulting blob) to decapsulate — e.g. `txt_shares.kem_ct`/`txt_shares.eph_x448_pub` in data_model.md.
+1. Generate a random 64-byte `salt`.
+2. Run `lc_kyber_1024_x448_enc_kdf` against `pub_key`, producing a KEM ciphertext (`ct`, 1624 bytes) and a 64-byte shared secret (`ss`). The ML-KEM-1024/X448 combining happens inside leancrypto — the caller only ever sees the resulting opaque `ct`/`ss` pair, never separate ML-KEM and X448 shared secrets.
+3. Run the standard Encrypt procedure using `ss` as its IKM to wrap the key material being shared, but reuse the `salt` from step 1 instead of generating a fresh one — the one exception to Encrypt's normal step 1. This still derives a 128-byte OKM via `HKDF-SHA3-512(ss, salt)` and produces a standard blob (`magic||version||salt||ciphertext||tag`), whose embedded `salt` is therefore identical to the `salt` from step 1.
+4. Store `salt || ct` alongside the resulting blob — e.g. `txt_shares.salt_kem_ct`/`txt_shares.txt_key` in data_model.md. The recipient needs both to decapsulate and unwrap.
 
 **Decapsulate** (recipient, holding their composite `priv_key`):
 
-1. Run ML-KEM-1024 decapsulation on `kem_ct` using the ML-KEM component of `priv_key`, recovering `ss_kem`.
-2. Perform an X448 exchange between the X448 component of `priv_key` and `eph_x448_pub`, recovering `ss_x448`.
-3. Recompute `PRK = HKDF-Extract(salt=none, IKM=ss_kem || ss_x448)`, identical to Encapsulate step 3.
-4. Run the standard Decrypt procedure using `PRK` as its IKM to unwrap the key material.
+1. Split the stored value into `salt` and `ct`.
+2. Run `lc_kyber_1024_x448_dec_kdf` on `ct` using `priv_key`, recovering the same `ss`.
+3. Run the standard Decrypt procedure on the blob using `ss` as its IKM — Decrypt parses `salt` back out of the blob header itself (matching the `salt` from step 1), so it isn't passed separately.
 
-The combiner (step 3) is concatenate-then-Extract: `HKDF-Extract(none, ss_kem || ss_x448)`. This is a standard robust combiner — the combined key stays secure as long as at least one of ML-KEM-1024 or X448 remains unbroken — but it does not bind `kem_ct` or either party's public key into the derivation, only the two raw shared secrets. Hybrid-KEM designs such as X-Wing additionally fold `kem_ct`, `eph_x448_pub`, and the recipient's static X448 `pub_key` into the derivation (e.g. as HKDF `info`) for domain separation and cross-protocol safety; worth adopting the same refinement here.
+Unlike a hand-rolled hybrid combiner, there's no app-level combining step to reason about here: `lc_kyber_1024_x448` is leancrypto's own ML-KEM-1024 + X448 construction, and `ss` comes out already combined. Whether leancrypto's internal combiner binds `ct` or either party's public key into `ss` (the way X-Wing folds `ct`/public keys into its derivation for domain separation) is a leancrypto implementation detail, not something this wrapper controls or needs to replicate.
