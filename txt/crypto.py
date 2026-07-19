@@ -64,8 +64,8 @@ class Blob:
         return okm[: c.KEY_LEN], okm[c.KEY_LEN :]
 
     @classmethod
-    def encrypt(cls, ikm: bytes, payload: bytes) -> bytes:
-        salt = os.urandom(c.SALT_LEN)
+    def encrypt(cls, ikm: bytes, payload: bytes, salt: bytes | None = None) -> bytes:
+        salt = salt if salt is not None else os.urandom(c.SALT_LEN)
         key, iv = cls._derive(ikm, salt)
         ad = c.MAGIC + c.VERSION + salt
         ctx = cls._aead_ctx(key, iv)
@@ -105,7 +105,7 @@ class Blob:
 
 
 class Kem:
-    """Composite ML-KEM-1024 + X448 keypair, Encapsulate, and Decapsulate."""
+    """lc_kyber_1024_x448 composite keypair, Encapsulate, and Decapsulate (crypto.md)."""
 
     @staticmethod
     def keypair() -> tuple[bytes, bytes]:
@@ -130,3 +130,21 @@ class Kem:
         ret = _lib.lc_kyber_1024_x448_dec_kdf(ss, c.KEM_SS_LEN, ct, priv_key)
         _check(ret, "lc_kyber_1024_x448_dec_kdf")
         return bytes(ss)
+
+    @classmethod
+    def wrap(cls, pub_key: bytes, payload: bytes) -> tuple[bytes, bytes]:
+        """Encapsulate procedure (crypto.md): wraps payload for pub_key's owner.
+
+        Returns (salt_kem_ct, blob) — e.g. txt_shares.salt_kem_ct/txt_key.
+        """
+        salt = os.urandom(c.SALT_LEN)
+        ct, ss = cls.encapsulate(pub_key)
+        blob = Blob.encrypt(ss, payload, salt=salt)
+        return salt + ct, blob
+
+    @classmethod
+    def unwrap(cls, priv_key: bytes, salt_kem_ct: bytes, blob: bytes) -> bytes:
+        """Decapsulate procedure (crypto.md): recovers payload wrapped by wrap()."""
+        ct = salt_kem_ct[c.SALT_LEN :]
+        ss = cls.decapsulate(priv_key, ct)
+        return Blob.decrypt(ss, blob)

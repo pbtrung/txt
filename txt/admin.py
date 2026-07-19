@@ -5,7 +5,7 @@ import os
 import click
 
 from . import constants as c
-from .admin_creds import AdminCreds
+from .creds import AdminCreds
 from .crypto import Blob, Kem, hmac_sha3_256, pbkdf2_sha3_256
 from .db import Database
 
@@ -19,10 +19,10 @@ class AdminInitializer:
 
     def _insert_user(self, password: str) -> int:
         username_hash = hmac_sha3_256(
-            self.creds.username_lookup_key, self.creds.display_name.encode()
+            self.creds.username_lookup_key, self.creds.username.encode()
         )
         if self.db.username_exists(username_hash):
-            raise click.ClickException("A user with this display_name already exists")
+            raise click.ClickException("A user with this username already exists")
         pw_salt = os.urandom(c.PW_SALT_LEN)
         pw_hash = pbkdf2_sha3_256(
             password.encode(), pw_salt, c.PBKDF2_ITERATIONS, c.PW_HASH_LEN

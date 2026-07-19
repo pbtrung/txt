@@ -5,7 +5,7 @@ from pathlib import Path
 import click
 
 from .admin import AdminInitializer
-from .admin_creds import AdminCreds
+from .creds import AdminCreds
 from .db import Database
 
 
@@ -16,7 +16,8 @@ def _cmd_init(admin_creds_path: str, verbose: bool) -> None:
     password = click.prompt("Admin password", hide_input=True, confirmation_prompt=True)
     user_id = AdminInitializer(db, creds).run(password, verbose=verbose)
     click.echo(
-        f"Initialized schema and admin user (id={user_id}, display_name={creds.display_name!r})"
+        f"Initialized schema and admin user (id={user_id}, username={creds.username!r}, "
+        f"display_name={creds.display_name!r})"
     )
 
 
