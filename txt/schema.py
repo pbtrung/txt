@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS txt_metadata (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id          INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
     txt_metadata_key BLOB    NOT NULL,
-    content          BLOB    NOT NULL
+    content          BLOB
 );
 """
 

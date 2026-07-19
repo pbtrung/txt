@@ -29,9 +29,3 @@ class Database:
             self.conn.execute(stmt)
         self.conn.commit()
         logger.info("Applied %d schema statement(s)", len(stmts))
-
-    def username_exists(self, username_hash: bytes) -> bool:
-        row = self.conn.execute(
-            "SELECT 1 FROM users WHERE username_hash = ?", (username_hash,)
-        ).fetchone()
-        return row is not None
