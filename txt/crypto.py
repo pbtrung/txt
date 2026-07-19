@@ -3,6 +3,8 @@
 import os
 import ctypes
 
+import brotli
+
 from . import constants as c
 from .leancrypto import lib as _lib, sha3_512 as _sha3_512, sha3_256 as _sha3_256
 from .leancrypto import seeded_rng as _rng
@@ -64,8 +66,17 @@ class Blob:
         return okm[: c.KEY_LEN], okm[c.KEY_LEN :]
 
     @classmethod
-    def encrypt(cls, ikm: bytes, payload: bytes, salt: bytes | None = None) -> bytes:
+    def encrypt(
+        cls,
+        ikm: bytes,
+        payload: bytes,
+        salt: bytes | None = None,
+        compressed: bool = False,
+    ) -> bytes:
+        """compressed=True brotli-compresses payload first, for structured (e.g. JSON) payloads."""
         salt = salt if salt is not None else os.urandom(c.SALT_LEN)
+        if compressed:
+            payload = brotli.compress(payload)
         key, iv = cls._derive(ikm, salt)
         ad = c.MAGIC + c.VERSION + salt
         ctx = cls._aead_ctx(key, iv)
@@ -81,7 +92,8 @@ class Blob:
             _lib.lc_aead_zero_free(ctx)
 
     @classmethod
-    def decrypt(cls, ikm: bytes, blob: bytes) -> bytes:
+    def decrypt(cls, ikm: bytes, blob: bytes, compressed: bool = False) -> bytes:
+        """compressed=True must match the compressed= value used to encrypt this blob."""
         if len(blob) < c.BLOB_MIN_LEN:
             raise ValueError("blob shorter than minimum valid length")
         if blob[:2] != c.MAGIC:
@@ -99,7 +111,8 @@ class Blob:
                 != 0
             ):
                 raise ValueError("AEAD tag verification failed")
-            return bytes(pt)
+            plaintext = bytes(pt)
+            return brotli.decompress(plaintext) if compressed else plaintext
         finally:
             _lib.lc_aead_zero_free(ctx)
 
@@ -118,17 +131,23 @@ class Kem:
 
     @staticmethod
     def encapsulate(pub_key: bytes) -> tuple[bytes, bytes]:
+        """Raw (non-KDF) encapsulation: ss is Kyber-SS || X448-SS, uncombined.
+
+        Combining happens in Blob.encrypt's own HKDF-SHA3-512 (see crypto.md),
+        not inside leancrypto — deliberately not using lc_kyber_1024_x448_enc_kdf,
+        which would run its own separate KMAC256-based combiner instead.
+        """
         ct = ctypes.create_string_buffer(c.KEM_CT_LEN)
         ss = ctypes.create_string_buffer(c.KEM_SS_LEN)
-        ret = _lib.lc_kyber_1024_x448_enc_kdf(ct, ss, c.KEM_SS_LEN, pub_key)
-        _check(ret, "lc_kyber_1024_x448_enc_kdf")
+        ret = _lib.lc_kyber_1024_x448_enc(ct, ss, pub_key)
+        _check(ret, "lc_kyber_1024_x448_enc")
         return bytes(ct), bytes(ss)
 
     @staticmethod
     def decapsulate(priv_key: bytes, ct: bytes) -> bytes:
         ss = ctypes.create_string_buffer(c.KEM_SS_LEN)
-        ret = _lib.lc_kyber_1024_x448_dec_kdf(ss, c.KEM_SS_LEN, ct, priv_key)
-        _check(ret, "lc_kyber_1024_x448_dec_kdf")
+        ret = _lib.lc_kyber_1024_x448_dec(ss, ct, priv_key)
+        _check(ret, "lc_kyber_1024_x448_dec")
         return bytes(ss)
 
     @classmethod

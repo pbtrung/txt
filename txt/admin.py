@@ -1,5 +1,6 @@
-"""Creating the admin user's row, umk, and key_store keypair (see docs/data_model.md)."""
+"""Creating the admin user's row, umk, key_store keypair, and r2_config (see docs/data_model.md)."""
 
+import json
 import os
 
 import click
@@ -11,7 +12,7 @@ from .db import Database
 
 
 class AdminInitializer:
-    """Provisions the first (admin) user: users row, umk_store, key_store."""
+    """Provisions the first (admin) user: users row, umk_store, key_store, r2_config."""
 
     def __init__(self, db: Database, creds: AdminCreds) -> None:
         self.db = db
@@ -49,10 +50,30 @@ class AdminInitializer:
             (user_id, pub_key, priv_blob),
         )
 
+    def _insert_r2_config(self, user_id: int, umk: bytes) -> None:
+        # Only the read-only key pair is ever persisted to Turso, regardless of
+        # role — read_write_access_key_id/secret stay local to the admin's own
+        # credential file and are never written to a multi-user-readable table.
+        r2 = self.creds.r2_config
+        config = json.dumps(
+            {
+                "endpoint": r2.endpoint,
+                "read_only_access_key_id": r2.read_only_access_key_id,
+                "read_only_secret_access_key": r2.read_only_secret_access_key,
+                "region": r2.region,
+                "bucket": r2.bucket,
+            }
+        ).encode()
+        blob = Blob.encrypt(umk, config, compressed=True)
+        self.db.conn.execute(
+            "INSERT INTO r2_config (user_id, config) VALUES (?, ?)", (user_id, blob)
+        )
+
     def run(self, password: str, verbose: bool = False) -> int:
         user_id = self._insert_user(password)
         umk = self._insert_umk(user_id)
         self._insert_key_store(user_id, umk)
+        self._insert_r2_config(user_id, umk)
         self.db.conn.commit()
         if verbose:
             click.echo(f"Created admin user id={user_id}")

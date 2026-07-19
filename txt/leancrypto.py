@@ -36,10 +36,10 @@ def _bind_aead(lib: ctypes.CDLL) -> None:
 def _bind_kem(lib: ctypes.CDLL) -> None:
     lib.lc_kyber_1024_x448_keypair.restype = ctypes.c_int
     lib.lc_kyber_1024_x448_keypair.argtypes = [_CP, _CP, _VP]
-    lib.lc_kyber_1024_x448_enc_kdf.restype = ctypes.c_int
-    lib.lc_kyber_1024_x448_enc_kdf.argtypes = [_CP, _CP, _S, _CP]
-    lib.lc_kyber_1024_x448_dec_kdf.restype = ctypes.c_int
-    lib.lc_kyber_1024_x448_dec_kdf.argtypes = [_CP, _S, _CP, _CP]
+    lib.lc_kyber_1024_x448_enc.restype = ctypes.c_int
+    lib.lc_kyber_1024_x448_enc.argtypes = [_CP, _CP, _CP]
+    lib.lc_kyber_1024_x448_dec.restype = ctypes.c_int
+    lib.lc_kyber_1024_x448_dec.argtypes = [_CP, _CP, _CP]
 
 
 def _load_leancrypto() -> tuple[str, ctypes.CDLL, _VP, _VP, _VP]:
