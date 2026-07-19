@@ -66,9 +66,7 @@ class AdminInitializer:
             "SELECT 1 FROM key_store WHERE user_id = ?", (user_id,)
         ).fetchone()
         if row is not None:
-            logger.info(
-                "key_store row already exists (user_id=%d), skipping", user_id
-            )
+            logger.info("key_store row already exists (user_id=%d), skipping", user_id)
             return
         pub_key, priv_key = Kem.keypair()
         priv_blob = Blob.encrypt(umk, priv_key)
@@ -83,9 +81,7 @@ class AdminInitializer:
             "SELECT 1 FROM r2_config WHERE user_id = ?", (user_id,)
         ).fetchone()
         if row is not None:
-            logger.info(
-                "r2_config row already exists (user_id=%d), skipping", user_id
-            )
+            logger.info("r2_config row already exists (user_id=%d), skipping", user_id)
             return
         # Only the read-only key pair is ever persisted to Turso, regardless of
         # role — read_write_access_key_id/secret stay local to the admin's own
