@@ -41,13 +41,18 @@ class TxtIngester:
             raise ValueError(
                 f"no user found for username={self.creds.username!r}; run --init first"
             )
+        logger.debug(
+            "Resolved owner user_id=%d for username=%r", row[0], self.creds.username
+        )
         return row[0]
 
     def _owner_umk(self, user_id: int) -> bytes:
         row = self.db.conn.execute(
             "SELECT umk FROM umk_store WHERE user_id = ?", (user_id,)
         ).fetchone()
-        return Blob.decrypt(self.creds.user_root_key, row[0])
+        umk = Blob.decrypt(self.creds.user_root_key, row[0])
+        logger.debug("Unwrapped umk for user_id=%d", user_id)
+        return umk
 
     def _insert_txt(self, user_id: int, umk: bytes) -> tuple[int, bytes]:
         txt_key = os.urandom(c.TXT_KEY_LEN)
@@ -55,7 +60,9 @@ class TxtIngester:
         cur = self.db.conn.execute(
             "INSERT INTO txt (user_id, txt_key) VALUES (?, ?)", (user_id, blob)
         )
-        return cur.lastrowid, txt_key
+        txt_id = cur.lastrowid
+        logger.debug("Created txt row (txt_id=%d) for user_id=%d", txt_id, user_id)
+        return txt_id, txt_key
 
     @staticmethod
     def _part_path(txt_key: bytes, compressed: bytes) -> str:
@@ -68,12 +75,22 @@ class TxtIngester:
         cleaned = preprocess_text(raw_part)
         compressed = brotli.compress(cleaned)
         raw_path = self._part_path(txt_key, compressed)
+        logger.debug(
+            "txt_id=%d part %d: %d bytes raw -> %d cleaned -> %d compressed, path=%s",
+            txt_id,
+            part_num,
+            len(raw_part),
+            len(cleaned),
+            len(compressed),
+            raw_path,
+        )
         self.r2.put(raw_path, Blob.encrypt(txt_key, compressed))
         path_blob = Blob.encrypt(txt_key, raw_path.encode("ascii"))
         self.db.conn.execute(
             "INSERT INTO txt_parts (txt_id, part_num, path) VALUES (?, ?, ?)",
             (txt_id, part_num, path_blob),
         )
+        logger.debug("txt_id=%d part %d: inserted txt_parts row", txt_id, part_num)
 
     def _update_txt_metadata_entry(
         self, user_id: int, umk: bytes, txt_id: int, name: str
@@ -111,12 +128,19 @@ class TxtIngester:
             "UPDATE txt_metadata SET content = ? WHERE user_id = ?",
             (content_blob, user_id),
         )
+        logger.debug(
+            "Updated txt_metadata entry for txt_id=%d (user_id=%d)", txt_id, user_id
+        )
 
     def add_file(self, path: Path) -> int:
+        logger.info("Ingesting %s (%d bytes)", path, path.stat().st_size)
         user_id = self._owner_user_id()
         umk = self._owner_umk(user_id)
         txt_id, txt_key = self._insert_txt(user_id, umk)
         raw_parts = split_parts(path.read_bytes())
+        logger.info(
+            "%s (txt_id=%d): split into %d part(s)", path, txt_id, len(raw_parts)
+        )
         for part_num, raw_part in enumerate(raw_parts, start=1):
             self._insert_part(txt_id, part_num, txt_key, raw_part)
         self.db.conn.execute(
@@ -135,4 +159,11 @@ class TxtIngester:
             p for p in src.iterdir() if p.is_file() and p.suffix.lower() == ".txt"
         )
         logger.info("Found %d .txt file(s) in %s", len(files), src)
-        return [self.add_file(p) for p in files]
+        txt_ids = [self.add_file(p) for p in files]
+        logger.info(
+            "Finished ingesting %d file(s) from %s: txt_id(s) = %s",
+            len(txt_ids),
+            src,
+            txt_ids,
+        )
+        return txt_ids
