@@ -19,12 +19,6 @@ CREATE TABLE IF NOT EXISTS txt_parts (
 
 CREATE INDEX IF NOT EXISTS idx_txt_parts_txt_id_part_num ON txt_parts(txt_id, part_num);
 
-CREATE TABLE IF NOT EXISTS part_count (
-    id     INTEGER PRIMARY KEY AUTOINCREMENT,
-    txt_id INTEGER NOT NULL UNIQUE REFERENCES txt(id) ON DELETE CASCADE,
-    count  INTEGER NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS txt_access (
     txt_id        INTEGER PRIMARY KEY REFERENCES txt(id) ON DELETE CASCADE,
     last_part_num INTEGER NOT NULL DEFAULT 1,
@@ -52,8 +46,7 @@ BEGIN
 END;
 
 CREATE TABLE IF NOT EXISTS txt_metadata (
-    id      INTEGER PRIMARY KEY AUTOINCREMENT,
-    txt_id  INTEGER NOT NULL UNIQUE REFERENCES txt(id) ON DELETE CASCADE,
+    id      INTEGER PRIMARY KEY CHECK (id = 1),
     content BLOB    NOT NULL
 );
 ```
@@ -72,11 +65,6 @@ A document's body, chunked into ordered parts. `content` is the part's
 payload, brotli-compressed. `(txt_id, part_num)` is indexed to support
 fetching a specific part or a contiguous range without a table scan;
 `part_num` numbering and gaps are left to the application.
-
-### `part_count`
-
-A 1:1 cache of how many parts a document has (`UNIQUE txt_id`), so the total
-can be read without a `COUNT(*)` over `txt_parts`.
 
 ### `txt_access`
 
@@ -98,9 +86,9 @@ lands, i.e. FIFO — oldest bookmark dropped first.
 
 ### `txt_metadata`
 
-Metadata for a document: one row per `txt` (`UNIQUE txt_id`), `content` is
-brotli-compressed JSON describing that document (title, size, timestamps,
-whatever the application tracks).
+A singleton table: exactly one row, enforced by `CHECK (id = 1)`. `content`
+is brotli-compressed JSON metadata covering all `txt` documents (the JSON
+shape is not yet defined).
 
 ## Compression
 
@@ -121,19 +109,9 @@ visibility into the underlying text or JSON structure.
 
 ```
 txt (1) ──< txt_parts (N)
-txt (1) ──1 part_count
 txt (1) ──1 txt_access
 txt (1) ──< bookmarks (N, ≤20)
-txt (1) ──1 txt_metadata
 ```
 
-## Design notes / open questions
-
-- `part_count` is a derived cache of `txt_parts`; nothing in the schema
-  enforces that the two stay in sync — that's on the application to
-  maintain on every part insert/delete.
-- The bookmark cap (20) and its FIFO eviction policy are baked into a
-  trigger rather than enforced by the application, so it holds regardless
-  of which code path inserts a bookmark.
-- With no per-user dimension anywhere in the schema, `txt_access` and
-  `bookmarks` describe document-level state rather than per-viewer state.
+`txt_metadata` is not tied to any particular `txt` row — it's a single,
+standalone blob covering all documents.
