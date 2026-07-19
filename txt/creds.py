@@ -45,6 +45,7 @@ def _load_kwargs(path: Path) -> dict:
         turso_auth_token=data["turso_auth_token"],
         username=data["username"],
         username_lookup_key=base64.b64decode(data["username_lookup_key"]),
+        password=data["password"],
         display_name=data["display_name"],
         user_root_key=base64.b64decode(data["user_root_key"]),
         r2_config=R2Config.load(data["r2_config"]),
@@ -59,6 +60,7 @@ class Creds:
     turso_auth_token: str
     username: str
     username_lookup_key: bytes
+    password: str
     display_name: str
     user_root_key: bytes
     r2_config: R2Config
@@ -68,6 +70,8 @@ class Creds:
             raise ValueError("username is required")
         if len(self.username_lookup_key) < c.USERNAME_LOOKUP_KEY_MIN_LEN:
             raise ValueError("username_lookup_key too short")
+        if not self.password:
+            raise ValueError("password is required")
         if len(self.user_root_key) < c.USER_ROOT_KEY_MIN_LEN:
             raise ValueError("user_root_key too short")
         if not self.display_name:
