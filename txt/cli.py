@@ -30,7 +30,7 @@ def _cmd_init(admin_creds_path: str) -> None:
 def main(do_init: bool, admin_creds: str, verbose: bool) -> None:
     logging.basicConfig(
         level=logging.DEBUG if verbose else logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        format="%(asctime)s %(levelname)-8s %(name)-10s %(message)s",
     )
     if do_init:
         _cmd_init(admin_creds)
