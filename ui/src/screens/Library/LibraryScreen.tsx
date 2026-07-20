@@ -121,8 +121,18 @@ export function LibraryScreen() {
         </div>
       </div>
 
+      {/*
+        Flex items default to min-width:auto, meaning a child won't shrink
+        below its own content's intrinsic width even with overflow-hidden/
+        text-truncate on a descendant -- so a long title/author/subject
+        list in the right pane could otherwise demand more width than
+        available and squeeze this fixed-width nav out of the way. The
+        nav gets flexShrink:0 (never give up its width) and the right pane
+        gets minWidth:0 below (let its own long content actually truncate
+        instead of forcing extra width).
+      */}
       <div className="flex-grow-1 d-flex overflow-hidden">
-        <div className="border-end p-2" style={{ width: "16rem", overflowY: "auto" }}>
+        <div className="border-end p-2" style={{ width: "16rem", flexShrink: 0, overflowY: "auto" }}>
           <div className="list-group list-group-flush">
             <NavItem active={view.kind === "recent"} label="Recent" count={recent.length} onClick={() => setView({ kind: "recent" })} />
             <NavItem active={view.kind === "all"} label="All books" count={(books ?? []).length} onClick={() => setView({ kind: "all" })} />
@@ -150,7 +160,7 @@ export function LibraryScreen() {
           </div>
         </div>
 
-        <div className="flex-grow-1 d-flex flex-column overflow-hidden">
+        <div className="flex-grow-1 d-flex flex-column overflow-hidden" style={{ minWidth: 0 }}>
           <div className="d-flex justify-content-between align-items-baseline px-3 py-2 border-bottom">
             <h2 className="h6 mb-0">{heading}</h2>
             <span className="small text-body-secondary">{headingDetail}</span>
@@ -175,8 +185,10 @@ export function LibraryScreen() {
                       setView({ kind: "browseValue", dimension: (view as { dimension: BrowseDimension }).dimension, value: entry.value })
                     }
                   >
-                    <span>{entry.value}</span>
-                    <span className="text-body-secondary">{entry.count}</span>
+                    <span className="text-truncate" style={{ minWidth: 0 }}>
+                      {entry.value}
+                    </span>
+                    <span className="text-body-secondary flex-shrink-0 ms-2">{entry.count}</span>
                   </button>
                 ))}
                 {browseList.length === 0 && <p className="text-body-secondary p-3">Nothing here yet.</p>}

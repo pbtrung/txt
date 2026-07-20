@@ -55,4 +55,36 @@ describe("getObject", () => {
     await expectation;
     vi.useRealTimers();
   });
+
+  it("hints at a CORS misconfiguration for a browser-side fetch TypeError", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("window", {});
+    vi.stubGlobal("document", {});
+    const client = fakeAwsClient(async () => {
+      throw new TypeError("Failed to fetch");
+    });
+
+    const promise = getObject(client, config, "missing-key");
+    const expectation = expect(promise).rejects.toThrow(/CORS policy/);
+    await vi.runAllTimersAsync();
+    await expectation;
+
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it("does not add the CORS hint for a plain HTTP-status failure", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("window", {});
+    vi.stubGlobal("document", {});
+    const client = fakeAwsClient(async () => new Response("nope", { status: 500 }));
+
+    const promise = getObject(client, config, "missing-key");
+    const expectation = expect(promise).rejects.not.toThrow(/CORS policy/);
+    await vi.runAllTimersAsync();
+    await expectation;
+
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
 });

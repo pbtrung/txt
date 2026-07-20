@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import type { Client } from "@libsql/core/api";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   allBooksSorted,
@@ -6,6 +7,8 @@ import {
   bookStatus,
   browseEntries,
   booksForDimensionValue,
+  loadLibraryBooks,
+  loadPartCount,
   matchesSearch,
   recentBooks,
   type LibraryBook,
@@ -38,6 +41,78 @@ describe("bookStatus / bookProgressPercent", () => {
     const b = book({ txtId: 1, partCount: 40, lastPartNum: 40 });
     expect(bookStatus(b)).toBe("finished");
     expect(bookProgressPercent(b)).toBe(100);
+  });
+
+  it("assumes in-progress (not finished) while partCount hasn't loaded yet", () => {
+    const b = book({ txtId: 1, partCount: null, lastPartNum: 14 });
+    expect(bookStatus(b)).toBe("in-progress");
+    expect(bookProgressPercent(b)).toBe(0);
+  });
+
+  it("stays not-started with no read position, regardless of partCount", () => {
+    const b = book({ txtId: 1, partCount: null, lastPartNum: null });
+    expect(bookStatus(b)).toBe("not-started");
+  });
+});
+
+describe("loadLibraryBooks", () => {
+  function fakeClient(rows: Record<string, unknown[]>): Client {
+    return {
+      async execute({ sql }: { sql: string }) {
+        for (const [needle, resultRows] of Object.entries(rows)) {
+          if (sql.includes(needle)) {
+            return { rows: resultRows, columns: [], columnTypes: [], rowsAffected: 0, lastInsertRowid: undefined, toJSON: () => ({}) };
+          }
+        }
+        throw new Error(`no handler for SQL: ${sql}`);
+      },
+    } as unknown as Client;
+  }
+
+  it("does not fetch part_count -- every loaded book's partCount is null", async () => {
+    const umk = new Uint8Array(64).fill(1);
+    const db = fakeClient({
+      "FROM txt WHERE user_id": [{ id: 7 }],
+      "FROM txt_metadata": [{ txt_metadata_key: null, content: null }],
+      "FROM txt_access": [],
+    });
+    const getTxtKey = vi.fn().mockResolvedValue(new Uint8Array(64));
+
+    const books = await loadLibraryBooks(db, 42, umk, getTxtKey);
+
+    expect(books).toHaveLength(1);
+    expect(books[0].partCount).toBeNull();
+  });
+
+  it("skips a book whose data fails to load instead of rejecting the whole list", async () => {
+    const umk = new Uint8Array(64).fill(1);
+    const db = fakeClient({
+      "FROM txt WHERE user_id": [{ id: 7 }, { id: 8 }],
+      "FROM txt_metadata": [{ txt_metadata_key: null, content: null }],
+      "FROM txt_access": [],
+    });
+    const getTxtKey = vi.fn().mockImplementation(async (txtId: number) => {
+      if (txtId === 7) throw new Error("simulated failure (e.g. a 404)");
+      return new Uint8Array(64);
+    });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const books = await loadLibraryBooks(db, 42, umk, getTxtKey);
+
+    expect(books.map((b) => b.txtId)).toEqual([8]);
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+});
+
+describe("loadPartCount", () => {
+  it("fetches a single book's part count", async () => {
+    const db = {
+      async execute() {
+        return { rows: [{ count: 41 }], columns: [], columnTypes: [], rowsAffected: 0, lastInsertRowid: undefined, toJSON: () => ({}) };
+      },
+    } as unknown as Client;
+    expect(await loadPartCount(db, 7)).toBe(41);
   });
 });
 

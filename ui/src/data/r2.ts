@@ -29,6 +29,22 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function isBrowser(): boolean {
+  return typeof window !== "undefined" && typeof document !== "undefined";
+}
+
+// A signed GET carries an Authorization/x-amz-date/x-amz-content-sha256
+// header set, which makes it a "non-simple" cross-origin request -- the
+// browser sends a CORS preflight (OPTIONS) before it, and R2 buckets ship
+// with no CORS policy at all by default. When that preflight fails, every
+// browser surfaces the exact same generic `TypeError: Failed to fetch` as
+// a plain network error (deliberately indistinguishable from e.g. being
+// offline, so a page can't probe cross-origin state) -- so this can only
+// ever be a best-effort hint, not a certain diagnosis.
+const CORS_HINT =
+  "if this is happening in a browser, check that the R2 bucket's CORS policy allows GET from this page's " +
+  "origin (Cloudflare R2 ships with no CORS policy by default, which fails exactly this way)";
+
 /** Fetches one R2 object, retrying with backoff before giving up. */
 export async function getObject(client: AwsClient, config: R2Config, key: string): Promise<Uint8Array> {
   let lastError: unknown;
@@ -46,5 +62,6 @@ export async function getObject(client: AwsClient, config: R2Config, key: string
       lastError = err;
     }
   }
-  throw new Error(`R2 GET ${key} failed after ${MAX_ATTEMPTS} attempt(s): ${String(lastError)}`);
+  const hint = isBrowser() && lastError instanceof TypeError ? ` (${CORS_HINT})` : "";
+  throw new Error(`R2 GET ${key} failed after ${MAX_ATTEMPTS} attempt(s): ${String(lastError)}${hint}`);
 }
