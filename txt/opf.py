@@ -44,6 +44,15 @@ def _add_metadata_field(result: dict, key: str, value: str) -> None:
     result[key].append(value)
 
 
+def _element_value(child: ET.Element) -> dict | str:
+    # Attributes like opf:scheme/opf:role/opf:file-as/id carry real meaning
+    # (e.g. which of several dc:identifier values is the ISBN vs the uuid) --
+    # keep them, not just the text, whenever an element has any.
+    text = (child.text or "").strip()
+    attrs = {_local_name(k): v for k, v in child.attrib.items()}
+    return {"text": text, **attrs} if attrs else text
+
+
 def _metadata_dict(metadata_el: ET.Element) -> dict:
     result: dict = {}
     for child in metadata_el:
@@ -51,18 +60,17 @@ def _metadata_dict(metadata_el: ET.Element) -> dict:
         if tag == "meta":
             key, value = child.get("name"), child.get("content")
         else:
-            key, value = tag, (child.text or "").strip()
+            key, value = tag, _element_value(child)
         if key is not None:
             _add_metadata_field(result, key, value)
     return result
 
 
 def parse_opf_metadata(opf_path: Path) -> dict:
-    """Parses <name>.opf's <metadata> element into a flat dict.
-
-    dc:* elements (title, creator, date, ...) become {tag: text}; Calibre's
-    <meta name="calibre:x" content="y"/> elements become {name: content};
-    repeated tags (e.g. multiple dc:subject) collapse into a list.
+    """Parses <name>.opf's <metadata> into a flat dict: dc:* elements become
+    {tag: text} or {tag: {"text": ..., **attrs}} if attributed (scheme/id/
+    role/file-as); <meta name=".." content=".."/> becomes {name: content};
+    repeated tags collapse into a list.
     """
     root = ET.parse(opf_path).getroot()
     metadata_el = _metadata_element(root)
