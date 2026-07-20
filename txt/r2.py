@@ -57,9 +57,7 @@ class R2Client:
         logger.debug("Deleted %s", key)
 
     async def put_async(self, key: str, body: bytes) -> None:
-        await asyncio.get_running_loop().run_in_executor(
-            _executor, self.put, key, body
-        )
+        await asyncio.get_running_loop().run_in_executor(_executor, self.put, key, body)
 
     async def get_async(self, key: str) -> bytes:
         return await asyncio.get_running_loop().run_in_executor(
@@ -67,6 +65,4 @@ class R2Client:
         )
 
     async def delete_async(self, key: str) -> None:
-        await asyncio.get_running_loop().run_in_executor(
-            _executor, self.delete, key
-        )
+        await asyncio.get_running_loop().run_in_executor(_executor, self.delete, key)

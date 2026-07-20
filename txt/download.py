@@ -25,9 +25,7 @@ class TxtDownloader(TxtOwner):
             logger.debug("No txt_metadata content for user_id=%d", user_id)
             return {}
         txt_metadata_key = Blob.decrypt(umk, row[0])
-        content = json.loads(
-            Blob.decrypt(txt_metadata_key, row[1], compressed=True)
-        )
+        content = json.loads(Blob.decrypt(txt_metadata_key, row[1], compressed=True))
         names = {int(txt_id): entry["name"] for txt_id, entry in content.items()}
         logger.debug("Loaded %d name(s) from txt_metadata", len(names))
         return names
