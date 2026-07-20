@@ -16,20 +16,24 @@ logger = logging.getLogger(__name__)
 # many files or parts are in flight concurrently.
 _executor = ThreadPoolExecutor(max_workers=c.R2_NUM_THREADS)
 
-# put_async/get_async retry on failure with exponential backoff (2s, 4s, 8s)
-# before giving up -- up to 3 retries beyond the first attempt, 4 tries total.
+# put_async/get_async/delete_async/list_keys_async retry on failure with
+# exponential backoff before giving up.
 _RETRY_DELAYS = (2, 4, 8)
+_MAX_ATTEMPTS = 1 + len(_RETRY_DELAYS)
+
+
+def _require_read_write_keys(r2_config: R2Config) -> None:
+    if not (
+        r2_config.read_write_access_key_id and r2_config.read_write_secret_access_key
+    ):
+        raise ValueError("r2_config must have read_write keys to upload objects")
 
 
 class R2Client:
     """Thin wrapper around boto3's S3 client, using an R2Config's read-write keys."""
 
     def __init__(self, r2_config: R2Config) -> None:
-        if not (
-            r2_config.read_write_access_key_id
-            and r2_config.read_write_secret_access_key
-        ):
-            raise ValueError("r2_config must have read_write keys to upload objects")
+        _require_read_write_keys(r2_config)
         self._bucket = r2_config.bucket
         self._client = boto3.client(
             "s3",
@@ -61,10 +65,9 @@ class R2Client:
         logger.debug("Deleted %s", key)
 
     def list_keys(self) -> list[str]:
-        """Every object key currently in the bucket, across as many
-        list_objects_v2 pages as it takes.
+        """Every object key in the bucket, across as many list_objects_v2
+        pages as it takes.
         """
-        logger.debug("Listing all keys in bucket=%r", self._bucket)
         keys = []
         paginator = self._client.get_paginator("list_objects_v2")
         for page in paginator.paginate(Bucket=self._bucket):
@@ -73,36 +76,31 @@ class R2Client:
         return keys
 
     @staticmethod
+    def _log_retry(what: str, attempt: int, delay: int, exc: Exception) -> None:
+        logger.warning(
+            "%s failed (attempt %d/%d): %s -- retrying in %ds",
+            what,
+            attempt,
+            _MAX_ATTEMPTS,
+            exc,
+            delay,
+        )
+
+    @staticmethod
     async def _with_retries(what: str, fn, *args):
-        """Runs fn(*args) in the shared executor, retrying on failure with
-        exponential backoff (_RETRY_DELAYS) before letting the last exception
-        propagate to the caller.
-        """
+        """Runs fn(*args) in the shared executor, retrying with backoff."""
         last_exc: Exception | None = None
-        for attempt in range(1 + len(_RETRY_DELAYS)):
+        for attempt in range(_MAX_ATTEMPTS):
             if attempt > 0:
                 delay = _RETRY_DELAYS[attempt - 1]
-                logger.warning(
-                    "%s failed (attempt %d/%d): %s -- retrying in %ds",
-                    what,
-                    attempt,
-                    1 + len(_RETRY_DELAYS),
-                    last_exc,
-                    delay,
-                )
+                R2Client._log_retry(what, attempt, delay, last_exc)
                 await asyncio.sleep(delay)
             try:
-                return await asyncio.get_running_loop().run_in_executor(
-                    _executor, fn, *args
-                )
+                loop = asyncio.get_running_loop()
+                return await loop.run_in_executor(_executor, fn, *args)
             except Exception as exc:
                 last_exc = exc
-        logger.error(
-            "%s failed after %d attempt(s), giving up: %s",
-            what,
-            1 + len(_RETRY_DELAYS),
-            last_exc,
-        )
+        logger.error("%s failed after %d attempt(s), giving up", what, _MAX_ATTEMPTS)
         raise last_exc
 
     async def put_async(self, key: str, body: bytes) -> None:

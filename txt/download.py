@@ -35,43 +35,62 @@ class TxtDownloader(TxtOwner):
         compressed = Blob.decrypt(txt_key, body)
         return brotli.decompress(compressed)
 
+    def _start_part_fetches(self, txt_key: bytes, raw_paths: list[str]) -> list:
+        # Fetches all start concurrently; awaited/written in part_num order
+        # later (see _write_parts_to_file) so at most one part's decompressed
+        # bytes -- not the whole document -- is ever in memory.
+        return [
+            asyncio.create_task(self._fetch_part(txt_key, raw_path))
+            for raw_path in raw_paths
+        ]
+
+    @staticmethod
+    async def _write_parts_to_file(out_path: Path, tasks: list) -> int:
+        total = 0
+        with out_path.open("wb") as f:
+            for task in tasks:
+                part = await task
+                f.write(part)
+                total += len(part)
+        return total
+
+    @staticmethod
+    def _abort_download(
+        txt_id: int, out_path: Path, tasks: list, exc: Exception
+    ) -> None:
+        for task in tasks:
+            task.cancel()
+        out_path.unlink(missing_ok=True)
+        raise RuntimeError(
+            f"txt_id={txt_id}: failed to fetch part(s) from R2 after retries; "
+            f"deleted partial file {out_path}"
+        ) from exc
+
+    @staticmethod
+    def _log_download_done(
+        txt_id: int, out_path: Path, total: int, num_parts: int
+    ) -> None:
+        logger.info(
+            "txt_id=%d: wrote %s (%d bytes from %d part(s))",
+            txt_id,
+            out_path,
+            total,
+            num_parts,
+        )
+
     async def _download_txt(
         self, txt_id: int, umk: bytes, dst: Path, names: dict[int, str]
     ) -> Path:
         txt_key = self._txt_key(txt_id, umk)
         raw_paths = self._part_raw_paths(txt_id, txt_key)
         logger.info("txt_id=%d: fetching %d part(s)", txt_id, len(raw_paths))
-        # Fetches all start concurrently (create_task), but are awaited and
-        # written in part_num order, one at a time, so at most one part's
-        # decompressed bytes -- not the whole document -- is ever in memory.
-        tasks = [
-            asyncio.create_task(self._fetch_part(txt_key, raw_path))
-            for raw_path in raw_paths
-        ]
-        name = names.get(txt_id, f"txt_{txt_id}.txt")
-        out_path = dst / name
-        total = 0
+        tasks = self._start_part_fetches(txt_key, raw_paths)
+        out_path = dst / names.get(txt_id, f"txt_{txt_id}.txt")
         try:
-            with out_path.open("wb") as f:
-                for task in tasks:
-                    part = await task
-                    f.write(part)
-                    total += len(part)
+            total = await self._write_parts_to_file(out_path, tasks)
         except Exception as exc:
-            for task in tasks:
-                task.cancel()
-            out_path.unlink(missing_ok=True)
-            raise RuntimeError(
-                f"txt_id={txt_id}: failed to fetch part(s) from R2 after retries; "
-                f"deleted partial file {out_path}"
-            ) from exc
-        logger.info(
-            "txt_id=%d: wrote %s (%d bytes from %d part(s))",
-            txt_id,
-            out_path,
-            total,
-            len(raw_paths),
-        )
+            self._abort_download(txt_id, out_path, tasks, exc)
+        self._log_download_done(txt_id, out_path, total, len(raw_paths))
         return out_path
 
     async def download_all(self, dst: Path) -> list[Path]:
