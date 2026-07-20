@@ -34,9 +34,9 @@ class TxtIngester(TxtOwner):
     def _part_path() -> str:
         return base32.encode(os.urandom(c.RAW_PATH_LEN))
 
-    async def _insert_part(
+    async def _upload_part(
         self, txt_id: int, part_num: int, txt_key: bytes, raw_part: bytes
-    ) -> None:
+    ) -> tuple[int, str, bytes]:
         cleaned = preprocess_text(raw_part)
         compressed = brotli.compress(cleaned)
         raw_path = self._part_path()
@@ -51,11 +51,40 @@ class TxtIngester(TxtOwner):
         )
         await self.r2.put_async(raw_path, Blob.encrypt(txt_key, compressed))
         path_blob = Blob.encrypt(txt_key, raw_path.encode("ascii"))
-        self.db.conn.execute(
+        return part_num, raw_path, path_blob
+
+    def _insert_part_rows(
+        self, txt_id: int, parts: list[tuple[int, str, bytes]]
+    ) -> None:
+        # One executemany call, not one execute() per part -- still a single
+        # uninterrupted, synchronous burst (no awaits in between): the
+        # libsql/Hrana connection isn't safe to touch from coroutines left
+        # concurrently in flight (see the "stream not found" Hrana error this
+        # fixed, from writing a row per part from inside _upload_part while
+        # asyncio.gather kept every part's upload concurrently in flight).
+        self.db.conn.executemany(
             "INSERT INTO txt_parts (txt_id, part_num, path) VALUES (?, ?, ?)",
-            (txt_id, part_num, path_blob),
+            [(txt_id, part_num, path_blob) for part_num, _raw_path, path_blob in parts],
         )
-        logger.debug("txt_id=%d part %d: inserted txt_parts row", txt_id, part_num)
+        logger.debug("txt_id=%d: inserted %d txt_parts row(s)", txt_id, len(parts))
+
+    async def _delete_uploaded_parts(
+        self, txt_id: int, parts: list[tuple[int, str, bytes]]
+    ) -> None:
+        # Cleans up parts that already made it to R2 once something later in
+        # the same file's ingest fails -- either another part's upload (after
+        # exhausting put_async's own retries) or the DB write that was meant
+        # to record them -- so they don't linger as orphaned R2 objects
+        # nothing will ever reference.
+        logger.warning(
+            "txt_id=%d: deleting %d already-uploaded R2 part(s)", txt_id, len(parts)
+        )
+        await asyncio.gather(
+            *(
+                self.r2.delete_async(raw_path)
+                for _part_num, raw_path, _path_blob in parts
+            )
+        )
 
     def _update_txt_metadata_entry(
         self, user_id: int, umk: bytes, txt_id: int, name: str
@@ -106,18 +135,36 @@ class TxtIngester(TxtOwner):
         logger.info(
             "%s (txt_id=%d): split into %d part(s)", path, txt_id, len(raw_parts)
         )
-        await asyncio.gather(
+        results = await asyncio.gather(
             *(
-                self._insert_part(txt_id, part_num, txt_key, raw_part)
+                self._upload_part(txt_id, part_num, txt_key, raw_part)
                 for part_num, raw_part in enumerate(raw_parts, start=1)
+            ),
+            return_exceptions=True,
+        )
+        uploaded = [r for r in results if not isinstance(r, BaseException)]
+        failures = [r for r in results if isinstance(r, BaseException)]
+        if failures:
+            self.db.conn.rollback()
+            await self._delete_uploaded_parts(txt_id, uploaded)
+            raise RuntimeError(
+                f"{path}: {len(failures)}/{len(raw_parts)} part(s) failed to upload "
+                f"to R2 after retries (txt_id={txt_id}); deleted {len(uploaded)} "
+                "already-uploaded part(s); aborting this file"
+            ) from failures[0]
+        parts = uploaded
+        try:
+            self._insert_part_rows(txt_id, parts)
+            self.db.conn.execute(
+                "INSERT INTO part_count (txt_id, count) VALUES (?, ?)",
+                (txt_id, len(raw_parts)),
             )
-        )
-        self.db.conn.execute(
-            "INSERT INTO part_count (txt_id, count) VALUES (?, ?)",
-            (txt_id, len(raw_parts)),
-        )
-        self._update_txt_metadata_entry(user_id, umk, txt_id, path.name)
-        self.db.conn.commit()
+            self._update_txt_metadata_entry(user_id, umk, txt_id, path.name)
+            self.db.conn.commit()
+        except Exception:
+            self.db.conn.rollback()
+            await self._delete_uploaded_parts(txt_id, parts)
+            raise
         logger.info(
             "Ingested %s as txt_id=%d (%d part(s))", path, txt_id, len(raw_parts)
         )
