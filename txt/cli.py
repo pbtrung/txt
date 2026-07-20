@@ -25,21 +25,21 @@ def _cmd_init(admin_creds_path: str) -> None:
     )
 
 
-def _cmd_add_txt(admin_creds_path: str, src: str) -> None:
+def _cmd_txt_ingest(admin_creds_path: str, src: str) -> None:
     creds = AdminCreds.load(Path(admin_creds_path))
     db = Database(creds)
     txt_ids = asyncio.run(TxtIngester(db, creds).add_dir(Path(src)))
     click.echo(f"Ingested {len(txt_ids)} file(s): txt_id(s) = {txt_ids}")
 
 
-def _cmd_download(admin_creds_path: str, dst: str) -> None:
+def _cmd_txt_download(admin_creds_path: str, dst: str) -> None:
     creds = AdminCreds.load(Path(admin_creds_path))
     db = Database(creds)
     paths = asyncio.run(TxtDownloader(db, creds).download_all(Path(dst)))
     click.echo(f"Downloaded {len(paths)} file(s) to {dst}")
 
 
-def _cmd_delete_txt(admin_creds_path: str, skip_confirm: bool) -> None:
+def _cmd_txt_delete(admin_creds_path: str, skip_confirm: bool) -> None:
     creds = AdminCreds.load(Path(admin_creds_path))
     if not skip_confirm:
         click.confirm(
@@ -57,22 +57,22 @@ def _cmd_delete_txt(admin_creds_path: str, skip_confirm: bool) -> None:
     "--init", "do_init", is_flag=True, help="Create schema and the admin user"
 )
 @click.option(
-    "--add-txt",
-    "add_txt_dir",
+    "--txt-ingest",
+    "txt_ingest_dir",
     metavar="DIR",
     default=None,
     help="Ingest .txt files (case-insensitive) from DIR",
 )
 @click.option(
-    "--download",
-    "download_dir",
+    "--txt-download",
+    "txt_download_dir",
     metavar="DIR",
     default=None,
     help="Download all txt (concatenated parts) to DIR",
 )
 @click.option(
-    "--delete-txt",
-    "do_delete_txt",
+    "--txt-delete",
+    "do_txt_delete",
     is_flag=True,
     help="Delete all txt and their R2 parts",
 )
@@ -80,21 +80,21 @@ def _cmd_delete_txt(admin_creds_path: str, skip_confirm: bool) -> None:
     "--admin-creds",
     default="admin_creds.json",
     show_default=True,
-    help="Credential JSON file, required by --init, --add-txt, --download, and --delete-txt",
+    help="Credential JSON file, required by --init, --txt-ingest, --txt-download, and --txt-delete",
 )
 @click.option(
     "--yes",
     "-y",
     "skip_confirm",
     is_flag=True,
-    help="Skip the --delete-txt confirmation prompt",
+    help="Skip the --txt-delete confirmation prompt",
 )
 @click.option("--verbose", "-v", is_flag=True, help="Enable debug-level logging")
 def main(
     do_init: bool,
-    add_txt_dir: str | None,
-    download_dir: str | None,
-    do_delete_txt: bool,
+    txt_ingest_dir: str | None,
+    txt_download_dir: str | None,
+    do_txt_delete: bool,
     admin_creds: str,
     skip_confirm: bool,
     verbose: bool,
@@ -111,15 +111,15 @@ def main(
     if do_init:
         _cmd_init(admin_creds)
         return
-    if add_txt_dir is not None:
-        _cmd_add_txt(admin_creds, add_txt_dir)
+    if txt_ingest_dir is not None:
+        _cmd_txt_ingest(admin_creds, txt_ingest_dir)
         return
-    if download_dir is not None:
-        _cmd_download(admin_creds, download_dir)
+    if txt_download_dir is not None:
+        _cmd_txt_download(admin_creds, txt_download_dir)
         return
-    if do_delete_txt:
-        _cmd_delete_txt(admin_creds, skip_confirm)
+    if do_txt_delete:
+        _cmd_txt_delete(admin_creds, skip_confirm)
         return
     raise click.UsageError(
-        "No action specified. Use --init, --add-txt DIR, --download DIR, or --delete-txt."
+        "No action specified. Use --init, --txt-ingest DIR, --txt-download DIR, or --txt-delete."
     )

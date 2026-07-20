@@ -57,22 +57,22 @@ python3 txt.py --init --admin-creds admin_creds.json
 Ingest every `.txt` file (matched case-insensitively) from a directory into the vault:
 
 ```sh
-python3 txt.py --add-txt txt_src/ --admin-creds admin_creds.json
+python3 txt.py --txt-ingest txt_src/ --admin-creds admin_creds.json
 ```
 
 Download every txt back out, concatenating each document's parts into a single file per document:
 
 ```sh
-python3 txt.py --download txt_out/ --admin-creds admin_creds.json
+python3 txt.py --txt-download txt_out/ --admin-creds admin_creds.json
 ```
 
 Delete every txt, its R2 parts, and all dependent rows (shares, bookmarks, read-position) — prompts for confirmation unless `-y`/`--yes` is given:
 
 ```sh
-python3 txt.py --delete-txt --admin-creds admin_creds.json
+python3 txt.py --txt-delete --admin-creds admin_creds.json
 ```
 
-`--add-txt`/`--download`/`--delete-txt` all operate on parts concurrently, capped at `R2_NUM_THREADS` (see `txt/constants.py`) parallel R2 requests. Add `-v`/`--verbose` to any command for debug-level logging. Run `python3 txt.py --help` for the full option list.
+`--txt-ingest`/`--txt-download`/`--txt-delete` all operate on parts concurrently, capped at `R2_NUM_THREADS` (see `txt/constants.py`) parallel R2 requests. Add `-v`/`--verbose` to any command for debug-level logging. Run `python3 txt.py --help` for the full option list.
 
 ## License
 
