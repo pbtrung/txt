@@ -68,6 +68,26 @@ describe("ReaderScreen", () => {
     expect(screen.getByText("Military")).toBeInTheDocument();
   });
 
+  it("renders HTML formatting in the description (e.g. Calibre-style OPF markup)", () => {
+    renderReader(baseResult({ info: { ...baseResult().info!, description: "<b>Bold</b> and <i>italic</i> text." } }));
+    const bold = screen.getByText("Bold");
+    expect(bold.tagName).toBe("B");
+    const italic = screen.getByText("italic");
+    expect(italic.tagName).toBe("I");
+  });
+
+  it("sanitizes a malicious description instead of executing it", () => {
+    renderReader(
+      baseResult({
+        info: { ...baseResult().info!, description: '<img src=x onerror="window.__pwned__=true">Safe text<script>window.__pwned__=true</script>' },
+      }),
+    );
+    expect(screen.getByText("Safe text")).toBeInTheDocument();
+    expect((window as unknown as { __pwned__?: boolean }).__pwned__).toBeUndefined();
+    expect(document.querySelector("script")).toBeNull();
+    expect(document.querySelector("img")).toBeNull();
+  });
+
   it("shows bookmarks with part/line and a text preview", () => {
     renderReader(baseResult());
     expect(screen.getByText("Part 14 · Line 1")).toBeInTheDocument();

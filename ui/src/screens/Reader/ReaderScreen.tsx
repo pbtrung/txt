@@ -12,6 +12,7 @@ import { useNavigate, useParams } from "react-router-dom";
 
 import { ProgressBar } from "../../components/ProgressBar";
 import { splitLines, truncatePreview } from "./readerModel";
+import { sanitizeDescriptionHtml } from "./sanitizeHtml";
 import { useReaderBook } from "./useReaderBook";
 
 export function ReaderScreen() {
@@ -42,6 +43,13 @@ export function ReaderScreen() {
   );
   const progressPercent = partCount > 0 ? Math.round((currentPartNum / partCount) * 100) : 0;
   const seriesLabel = info?.series ? `${info.series}${info.seriesIndex ? `, #${info.seriesIndex}` : ""}` : null;
+  // Calibre/OPF descriptions commonly carry HTML (see sanitizeHtml.ts) --
+  // and this book's metadata may come from a document someone else shared
+  // with this account, so it must be sanitized before rendering.
+  const descriptionHtml = useMemo(
+    () => (info?.description ? sanitizeDescriptionHtml(info.description) : null),
+    [info?.description],
+  );
 
   if (loading) {
     return <p className="text-body-secondary p-4">Loading…</p>;
@@ -125,7 +133,9 @@ export function ReaderScreen() {
                 ))}
               </div>
             )}
-            {info?.description && <p className="fst-italic small mt-2">&ldquo;{info.description}&rdquo;</p>}
+            {descriptionHtml && (
+              <div className="fst-italic small mt-2" dangerouslySetInnerHTML={{ __html: descriptionHtml }} />
+            )}
 
             <div className="small text-body-secondary text-uppercase fw-semibold mt-4 mb-2">Bookmarks</div>
             {bookmarks.length === 0 && <p className="small text-body-secondary">No bookmarks yet.</p>}
