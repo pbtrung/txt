@@ -220,11 +220,35 @@ class TxtIngester(TxtOwner):
         self._log_ingested(path, txt_id, len(raw_parts))
         return txt_id
 
-    async def add_dir(self, src: Path) -> list[int]:
+    def _existing_names(self, user_id: int, umk: bytes) -> set[str]:
+        _txt_metadata_key, content = self._load_txt_metadata(user_id, umk)
+        return {entry["name"] for entry in content.values()}
+
+    @staticmethod
+    def _filter_new_files(
+        files: list[Path], existing_names: set[str]
+    ) -> tuple[list[Path], list[str]]:
+        to_ingest = [p for p in files if p.name not in existing_names]
+        skipped = [p.name for p in files if p.name in existing_names]
+        return to_ingest, skipped
+
+    def _files_to_ingest(self, src: Path, user_id: int, umk: bytes) -> list[Path]:
         files = sorted(
             p for p in src.iterdir() if p.is_file() and p.suffix.lower() == ".txt"
         )
-        logger.info("Found %d .txt file(s) in %s", len(files), src)
+        # Skip filenames already recorded in txt_metadata.content -- re-running
+        # --txt-ingest on the same directory shouldn't re-ingest duplicates.
+        existing_names = self._existing_names(user_id, umk)
+        to_ingest, skipped = self._filter_new_files(files, existing_names)
+        if skipped:
+            logger.info("Skipping %d already-ingested file(s): %s", len(skipped), skipped)
+        return to_ingest
+
+    async def add_dir(self, src: Path) -> list[int]:
+        user_id = self._owner_user_id()
+        umk = self._owner_umk(user_id)
+        files = self._files_to_ingest(src, user_id, umk)
+        logger.info("Found %d .txt file(s) to ingest in %s", len(files), src)
         # One file at a time -- its parts still upload concurrently -- rather
         # than every file's parts in flight at once.
         txt_ids = [await self.add_file(p) for p in files]
