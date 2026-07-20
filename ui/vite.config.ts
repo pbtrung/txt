@@ -9,7 +9,12 @@ export default defineConfig({
   plugins: [react()],
   publicDir: "leancrypto",
   test: {
-    environment: "jsdom",
+    // Default to "node": crypto/data-layer tests need neither a DOM nor
+    // jsdom's fake http://localhost:3000 origin (which brotli-wasm's
+    // browser build otherwise tries to `fetch()` its .wasm from). Component
+    // tests opt into jsdom per-file via a `// @vitest-environment jsdom`
+    // docblock.
+    environment: "node",
     setupFiles: ["./src/setupTests.ts"],
     globals: true,
   },
