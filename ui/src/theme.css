@@ -50,12 +50,22 @@
   --brass-active: #aa8c2c;
 }
 
-/* .progress-bar and the active .list-group-item/.nav-pills item -- both
-   hardcode #0d6efd at :root with no per-theme variance of their own. */
-:root {
+/* .progress-bar and the active .list-group-item/.nav-pills item read these
+   custom properties by inheriting them from their *own* container element
+   (.progress/.list-group/.nav-pills) -- which each set a literal #0d6efd
+   locally, on themselves, with no per-theme variance. A :root-level
+   override alone is never consulted: a specified value on the element
+   itself (or a closer ancestor) always wins over one merely inherited from
+   :root, regardless of stylesheet order. So these have to be overridden on
+   the same selector Bootstrap itself uses, not on :root. */
+.progress {
   --bs-progress-bar-bg: var(--bs-primary);
+}
+.list-group {
   --bs-list-group-active-bg: var(--bs-primary);
   --bs-list-group-active-border-color: var(--bs-primary);
+}
+.nav-pills {
   --bs-nav-pills-link-active-bg: var(--bs-primary);
 }
 
