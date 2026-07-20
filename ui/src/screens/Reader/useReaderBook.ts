@@ -25,7 +25,7 @@ export interface UseReaderBookResult {
   goToPart: (partNum: number) => void;
   next: () => void;
   previous: () => void;
-  bookmarkCurrentPart: () => void;
+  bookmarkLine: (line: number, txtPreview: string) => void;
 }
 
 export function useReaderBook(txtId: number): UseReaderBookResult {
@@ -132,14 +132,17 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
   const next = useCallback(() => goToPart(currentPartNum + 1), [goToPart, currentPartNum]);
   const previous = useCallback(() => goToPart(currentPartNum - 1), [goToPart, currentPartNum]);
 
-  const bookmarkCurrentPart = useCallback(() => {
-    if (!session) return;
-    const txtKey = txtKeyRef.current;
-    if (!txtKey) return;
-    void addBookmark(session.db, txtId, session.userId, txtKey, currentPartNum).then(() =>
-      listBookmarks(session.db, txtId, session.userId, txtKey).then(setBookmarks),
-    );
-  }, [session, txtId, currentPartNum]);
+  const bookmarkLine = useCallback(
+    (line: number, txtPreview: string) => {
+      if (!session) return;
+      const txtKey = txtKeyRef.current;
+      if (!txtKey) return;
+      void addBookmark(session.db, txtId, session.userId, txtKey, currentPartNum, line, txtPreview).then(() =>
+        listBookmarks(session.db, txtId, session.userId, txtKey).then(setBookmarks),
+      );
+    },
+    [session, txtId, currentPartNum],
+  );
 
   return {
     loading,
@@ -153,6 +156,6 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
     goToPart,
     next,
     previous,
-    bookmarkCurrentPart,
+    bookmarkLine,
   };
 }
