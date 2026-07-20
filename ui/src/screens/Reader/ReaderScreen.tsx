@@ -93,7 +93,7 @@ export function ReaderScreen() {
         </div>
 
         {sidePanelOpen && (
-          <div className="border-start p-3 overflow-auto" style={{ width: "18rem" }}>
+          <div className="border-start p-3 overflow-auto d-none d-md-block" style={{ width: "18rem" }}>
             <div className="small text-body-secondary text-uppercase fw-semibold mb-2">About this book</div>
             <div className="fw-semibold">{info?.title ?? `txt_${numericTxtId}`}</div>
             {info?.author && <div>{info.author}</div>}

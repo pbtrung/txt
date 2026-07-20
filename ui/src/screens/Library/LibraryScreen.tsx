@@ -38,11 +38,11 @@ function NavItem({ active, label, count, onClick }: { active: boolean; label: st
   return (
     <button
       type="button"
-      className={`list-group-item list-group-item-action d-flex justify-content-between align-items-center ${active ? "active" : ""}`}
+      className={`list-group-item list-group-item-action d-flex justify-content-between align-items-center gap-2 ${active ? "active" : ""}`}
       onClick={onClick}
     >
-      <span>{label}</span>
-      <span className={active ? "" : "text-body-secondary"}>{count}</span>
+      <span className="text-truncate">{label}</span>
+      <span className={`flex-shrink-0 ${active ? "" : "text-body-secondary"}`}>{count}</span>
     </button>
   );
 }
