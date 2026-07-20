@@ -1,11 +1,37 @@
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+
+import { RequireUnlocked } from "./components/RequireUnlocked";
+import { LibraryScreen } from "./screens/Library/LibraryScreen";
+import { ReaderScreen } from "./screens/Reader/ReaderScreen";
+import { UnlockScreen } from "./screens/Unlock/UnlockScreen";
+import { VaultProvider } from "./state/VaultContext";
+
 function App() {
   return (
-    <div className="d-flex align-items-center justify-content-center vh-100">
-      <div className="text-center">
-        <i className="bi bi-book fs-1 text-primary" aria-hidden="true" />
-        <h1 className="mt-2">Skypiea</h1>
-      </div>
-    </div>
+    <VaultProvider>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/" element={<UnlockScreen />} />
+          <Route
+            path="/library"
+            element={
+              <RequireUnlocked>
+                <LibraryScreen />
+              </RequireUnlocked>
+            }
+          />
+          <Route
+            path="/read/:txtId"
+            element={
+              <RequireUnlocked>
+                <ReaderScreen />
+              </RequireUnlocked>
+            }
+          />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </BrowserRouter>
+    </VaultProvider>
   );
 }
 
