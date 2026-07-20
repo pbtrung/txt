@@ -101,7 +101,7 @@ def main(
 ) -> None:
     logging.basicConfig(
         level=logging.DEBUG if verbose else logging.INFO,
-        format="%(asctime)s %(levelname)-8s %(name)-10s %(message)s",
+        format="%(asctime)s %(levelname)-6s %(name)s %(message)s",
     )
     # boto3/botocore/s3transfer/urllib3 are extremely chatty at DEBUG (full
     # request/response dumps) -- keep them quiet even under --verbose, which
