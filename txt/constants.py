@@ -37,7 +37,7 @@ KEM_SS_LEN = KYBER1024_SS_LEN + X448_LEN
 
 BOOKMARK_LIMIT = 20
 
-PART_TARGET = 200 * 1024  # ~200 KB target size per txt_parts.path chunk
+PART_TARGET = 222 * 1024
 RAW_PATH_LEN = 32  # random bytes for each part's R2 object key (see txt/ingest.py)
 
 R2_NUM_THREADS = 10  # max concurrent R2 upload/download threads (see txt/r2.py)
