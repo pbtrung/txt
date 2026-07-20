@@ -74,6 +74,15 @@ python3 txt.py --txt-delete --admin-creds admin_creds.json
 
 `--txt-ingest`/`--txt-download`/`--txt-delete` all operate on parts concurrently, capped at `R2_NUM_THREADS` (see `txt/constants.py`) parallel R2 requests. Add `-v`/`--verbose` to any command for debug-level logging. Run `python3 txt.py --help` for the full option list.
 
+## Test
+
+```sh
+pip install pytest pytest-cov
+pytest --cov=txt --cov-report=term-missing
+```
+
+Unit tests live in `tests/`; `tests/test_crypto.py` covers `txt/crypto.py`'s blob format, AEAD, KDF, and KEM primitives against the real `leancrypto` bindings (no mocking).
+
 ## License
 
 [MIT](LICENSE)
