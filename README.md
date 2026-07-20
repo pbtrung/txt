@@ -72,7 +72,19 @@ Delete every txt, its R2 parts, and all dependent rows (shares, bookmarks, read-
 python3 txt.py --txt-delete --admin-creds admin_creds.json
 ```
 
-`--txt-ingest`/`--txt-download`/`--txt-delete` all operate on parts concurrently, capped at `R2_NUM_THREADS` (see `txt/constants.py`) parallel R2 requests. Add `-v`/`--verbose` to any command for debug-level logging. Run `python3 txt.py --help` for the full option list.
+Delete every object in the R2 bucket, regardless of what the DB knows about — prompts for confirmation unless `-y`/`--yes` is given:
+
+```sh
+python3 txt.py --purge-bucket --admin-creds admin_creds.json
+```
+
+Delete every R2 object that isn't referenced by any of this account's txt_parts — housekeeping for objects orphaned by e.g. a crash mid-ingest — prompts for confirmation unless `-y`/`--yes` is given:
+
+```sh
+python3 txt.py --txt-clean-bucket --admin-creds admin_creds.json
+```
+
+`--txt-ingest`/`--txt-download`/`--txt-delete`/`--purge-bucket`/`--txt-clean-bucket` all operate on parts/objects concurrently, capped at `R2_NUM_THREADS` (see `txt/constants.py`) parallel R2 requests, and R2 reads/writes/deletes retry with exponential backoff (2s/4s/8s, up to 3 retries) before giving up. Add `-v`/`--verbose` to any command for debug-level logging. Run `python3 txt.py --help` for the full option list.
 
 ## Test
 
