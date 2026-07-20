@@ -23,13 +23,17 @@ export function BookRow({ book, onClick }: BookRowProps) {
       className="list-group-item list-group-item-action d-flex justify-content-between align-items-center gap-3 py-3 text-start"
       onClick={onClick}
     >
-      <span className="overflow-hidden">
+      {/* minWidth:0 lets a long title/subtitle actually truncate instead of
+          forcing this flex item (and its siblings, e.g. the Library's left
+          nav) wider than available -- flex items default to min-width:auto,
+          which ignores overflow-hidden/text-truncate on a descendant. */}
+      <span className="overflow-hidden" style={{ minWidth: 0 }}>
         <span className="d-block fw-semibold text-truncate">{book.info.title}</span>
         {subtitle && <span className="d-block small text-body-secondary text-truncate">{subtitle}</span>}
       </span>
       <span className="text-end flex-shrink-0" style={{ minWidth: "8rem" }}>
         {status === "finished" && <span className="small text-body-secondary">Finished</span>}
-        {status === "not-started" && (
+        {status === "not-started" && book.partCount !== null && (
           <span className="small text-body-secondary">
             {book.partCount} part{book.partCount === 1 ? "" : "s"}
           </span>
@@ -37,9 +41,10 @@ export function BookRow({ book, onClick }: BookRowProps) {
         {status === "in-progress" && (
           <>
             <div className="small text-body-secondary mb-1">
-              Part {book.lastPartNum}/{book.partCount}
+              Part {book.lastPartNum}
+              {book.partCount !== null && `/${book.partCount}`}
             </div>
-            <ProgressBar percent={bookProgressPercent(book)} />
+            {book.partCount !== null && <ProgressBar percent={bookProgressPercent(book)} />}
           </>
         )}
       </span>
