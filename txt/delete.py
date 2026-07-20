@@ -46,7 +46,10 @@ class TxtDeleter(TxtOwner):
         umk = self._owner_umk(user_id)
         txt_ids = self._txt_ids(user_id)
         logger.info("Found %d txt(s) for user_id=%d", len(txt_ids), user_id)
-        await asyncio.gather(*(self._delete_txt(txt_id, umk) for txt_id in txt_ids))
+        # One txt at a time -- its parts still delete concurrently -- rather
+        # than every txt's parts in flight at once.
+        for txt_id in txt_ids:
+            await self._delete_txt(txt_id, umk)
         self._clear_txt_metadata(user_id)
         self.db.conn.commit()
         logger.info("Finished deleting %d txt(s)", len(txt_ids))
