@@ -41,3 +41,5 @@ PART_TARGET = 200 * 1024  # ~200 KB target size per txt_parts.path chunk
 RAW_PATH_LEN = 32  # random bytes for each part's R2 object key (see txt/ingest.py)
 
 R2_NUM_THREADS = 10  # max concurrent R2 upload/download threads (see txt/r2.py)
+
+BROTLI_QUALITY = 11  # max brotli compression level (see txt/crypto.py's Blob.encrypt)
