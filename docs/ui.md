@@ -1,6 +1,6 @@
 # Web UI — visual design
 
-Not yet implemented. This describes the visual design for a local web reader for the vault: three screens — Unlock, Library, Reader — built on Bootstrap (both CSS and its icon set). It covers layout and appearance only; see [docs/data_model.md](data_model.md)/[docs/credentials.md](credentials.md) for the underlying schema and credential model this UI would read from.
+Implemented in `ui/` (React + TypeScript + Vite). This describes the visual design for the local web reader: three screens — Unlock, Library, Reader — built on Bootstrap (both CSS and its icon set). It covers layout and appearance only; see [docs/data_model.md](data_model.md)/[docs/credentials.md](credentials.md) for the underlying schema and credential model this UI reads from.
 
 ## Look and feel
 

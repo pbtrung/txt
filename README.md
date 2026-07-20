@@ -95,6 +95,25 @@ pytest --cov=txt --cov-report=term-missing
 
 Unit tests live in `tests/`; `tests/test_crypto.py` covers `txt/crypto.py`'s blob format, AEAD, KDF, and KEM primitives against the real `leancrypto` bindings (no mocking).
 
+## Web UI
+
+`ui/` is a client-side-encrypted web reader (React + TypeScript + Vite) for the same
+vault: Unlock, Library, and Reader screens per [docs/ui.md](docs/ui.md)'s design. All
+crypto and R2/Turso access happens in the browser, mirroring `txt/crypto.py`/`txt/owner.py`
+in TypeScript (`ui/src/crypto/`, `ui/src/data/`) — the same leancrypto AEAD/HKDF/KEM
+primitives (via the prebuilt `ui/leancrypto/leancrypto.js`/`.wasm`), the same blob format,
+the same schema. It reads a config file shaped like `user_cred_template.json` but without
+`r2_config` — that's fetched from Turso's `r2_config` table and decrypted with the
+account's `umk` instead, same as `key_store.priv_key`.
+
+```sh
+cd ui
+npm install
+npm run dev      # http://localhost:5173
+npm test
+npm run build    # -> ui/dist
+```
+
 ## License
 
 [MIT](LICENSE)
