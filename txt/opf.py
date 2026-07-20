@@ -44,12 +44,25 @@ def _add_metadata_field(result: dict, key: str, value: str) -> None:
     result[key].append(value)
 
 
-def _element_value(child: ET.Element) -> dict | str:
-    # Attributes like opf:scheme/opf:role/opf:file-as/id carry real meaning
-    # (e.g. which of several dc:identifier values is the ISBN vs the uuid) --
-    # keep them, not just the text, whenever an element has any.
-    text = (child.text or "").strip()
-    attrs = {_local_name(k): v for k, v in child.attrib.items()}
+# Calibre's own bookkeeping, not real book metadata: its internal library id
+# and uuid (dc:identifier opf:scheme="calibre"/"uuid") and its self-authored
+# "book producer" contributor entry (opf:role="bkp" opf:file-as="calibre").
+_IGNORED_IDENTIFIER_SCHEMES = {"calibre", "uuid"}
+
+
+def _is_calibre_own(tag: str, attrs: dict) -> bool:
+    if tag == "identifier":
+        return attrs.get("scheme") in _IGNORED_IDENTIFIER_SCHEMES
+    if tag == "contributor":
+        return attrs.get("role") == "bkp" and attrs.get("file-as") == "calibre"
+    return False
+
+
+def _local_attrs(child: ET.Element) -> dict:
+    return {_local_name(k): v for k, v in child.attrib.items()}
+
+
+def _element_value(text: str, attrs: dict) -> dict | str:
     return {"text": text, **attrs} if attrs else text
 
 
@@ -60,7 +73,11 @@ def _metadata_dict(metadata_el: ET.Element) -> dict:
         if tag == "meta":
             key, value = child.get("name"), child.get("content")
         else:
-            key, value = tag, _element_value(child)
+            attrs = _local_attrs(child)
+            if _is_calibre_own(tag, attrs):
+                continue
+            key = tag
+            value = _element_value((child.text or "").strip(), attrs)
         if key is not None:
             _add_metadata_field(result, key, value)
     return result
