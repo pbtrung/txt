@@ -11,9 +11,9 @@ from .creds import R2Config
 
 logger = logging.getLogger(__name__)
 
-# Shared across every R2Client instance so --add-txt/--download never run more
-# than R2_NUM_THREADS blocking S3 calls at once, no matter how many files or
-# parts are in flight concurrently.
+# Shared across every R2Client instance so --txt-ingest/--txt-download/--txt-delete
+# never run more than R2_NUM_THREADS blocking S3 calls at once, no matter how
+# many files or parts are in flight concurrently.
 _executor = ThreadPoolExecutor(max_workers=c.R2_NUM_THREADS)
 
 

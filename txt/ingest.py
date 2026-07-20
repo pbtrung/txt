@@ -1,4 +1,4 @@
-"""--add-txt: ingest .txt files from a directory into the vault (see docs/data_model.md)."""
+"""--txt-ingest: ingest .txt files from a directory into the vault (see docs/data_model.md)."""
 
 import asyncio
 import json
@@ -10,50 +10,15 @@ import brotli
 
 from . import base32
 from . import constants as c
-from .creds import AdminCreds
 from .crypto import Blob, hmac_sha3_256
-from .db import Database
-from .r2 import R2Client
+from .owner import TxtOwner
 from .textproc import preprocess_text, split_parts
 
 logger = logging.getLogger(__name__)
 
 
-class TxtIngester:
-    """Splits, cleans, uploads to R2, and records each .txt file under its owner.
-
-    Owner is the account identified by creds.username -- the same admin user
-    --init provisions with this credential file.
-    """
-
-    def __init__(self, db: Database, creds: AdminCreds) -> None:
-        self.db = db
-        self.creds = creds
-        self.r2 = R2Client(creds.r2_config)
-
-    def _owner_user_id(self) -> int:
-        username_hash = hmac_sha3_256(
-            self.creds.username_lookup_key, self.creds.username.encode()
-        )
-        row = self.db.conn.execute(
-            "SELECT id FROM users WHERE username_hash = ?", (username_hash,)
-        ).fetchone()
-        if row is None:
-            raise ValueError(
-                f"no user found for username={self.creds.username!r}; run --init first"
-            )
-        logger.debug(
-            "Resolved owner user_id=%d for username=%r", row[0], self.creds.username
-        )
-        return row[0]
-
-    def _owner_umk(self, user_id: int) -> bytes:
-        row = self.db.conn.execute(
-            "SELECT umk FROM umk_store WHERE user_id = ?", (user_id,)
-        ).fetchone()
-        umk = Blob.decrypt(self.creds.user_root_key, row[0])
-        logger.debug("Unwrapped umk for user_id=%d", user_id)
-        return umk
+class TxtIngester(TxtOwner):
+    """Splits, cleans, uploads to R2, and records each .txt file under its owner."""
 
     def _insert_txt(self, user_id: int, umk: bytes) -> tuple[int, bytes]:
         txt_key = os.urandom(c.TXT_KEY_LEN)
