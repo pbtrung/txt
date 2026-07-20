@@ -16,6 +16,16 @@
 // dynamic-import browser build; Node (Vitest) uses `require()` via
 // `createRequire`, the only way to actually trigger the "require" condition
 // and get the synchronous, fetch-free Node build.
+//
+// The browser import must NOT carry a /* @vite-ignore */ comment (unlike
+// the Node branch's imports below): Vite needs to statically see this one
+// to bundle brotli-wasm's .wasm asset into dist/ and rewrite the bare
+// "brotli-wasm" specifier into a real URL. Without that, `vite build`
+// silently produces a bundle that never emits the .wasm file at all and
+// throws `TypeError: Failed to resolve module specifier 'brotli-wasm'` the
+// moment a real (non-dev-server) browser evaluates the import -- confirmed
+// by serving the production build and driving it with Playwright, since
+// `vite dev`'s import-rewriting middleware masks the bug entirely.
 
 import { BROTLI_QUALITY } from "./constants";
 
@@ -33,7 +43,7 @@ async function loadBrotli(): Promise<BrotliApi> {
     // The browser build's default export is itself a Promise (see
     // node_modules/brotli-wasm/index.d.ts) -- await it, not just the
     // dynamic import().
-    const mod = await import(/* @vite-ignore */ "brotli-wasm");
+    const mod = await import("brotli-wasm");
     return (await (mod.default ?? mod)) as BrotliApi;
   }
   // The Node build's export is the API object directly, synchronously.
