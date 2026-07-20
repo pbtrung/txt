@@ -1,5 +1,6 @@
-"""--add-txt: ingest .txt files from --src into the vault (see docs/data_model.md)."""
+"""--add-txt: ingest .txt files from a directory into the vault (see docs/data_model.md)."""
 
+import asyncio
 import json
 import logging
 import os
@@ -69,7 +70,7 @@ class TxtIngester:
         digest = hmac_sha3_256(txt_key, compressed)
         return base32.encode(digest)
 
-    def _insert_part(
+    async def _insert_part(
         self, txt_id: int, part_num: int, txt_key: bytes, raw_part: bytes
     ) -> None:
         cleaned = preprocess_text(raw_part)
@@ -84,7 +85,7 @@ class TxtIngester:
             len(compressed),
             raw_path,
         )
-        self.r2.put(raw_path, Blob.encrypt(txt_key, compressed))
+        await self.r2.put_async(raw_path, Blob.encrypt(txt_key, compressed))
         path_blob = Blob.encrypt(txt_key, raw_path.encode("ascii"))
         self.db.conn.execute(
             "INSERT INTO txt_parts (txt_id, part_num, path) VALUES (?, ?, ?)",
@@ -132,7 +133,7 @@ class TxtIngester:
             "Updated txt_metadata entry for txt_id=%d (user_id=%d)", txt_id, user_id
         )
 
-    def add_file(self, path: Path) -> int:
+    async def add_file(self, path: Path) -> int:
         logger.info("Ingesting %s (%d bytes)", path, path.stat().st_size)
         user_id = self._owner_user_id()
         umk = self._owner_umk(user_id)
@@ -141,8 +142,12 @@ class TxtIngester:
         logger.info(
             "%s (txt_id=%d): split into %d part(s)", path, txt_id, len(raw_parts)
         )
-        for part_num, raw_part in enumerate(raw_parts, start=1):
-            self._insert_part(txt_id, part_num, txt_key, raw_part)
+        await asyncio.gather(
+            *(
+                self._insert_part(txt_id, part_num, txt_key, raw_part)
+                for part_num, raw_part in enumerate(raw_parts, start=1)
+            )
+        )
         self.db.conn.execute(
             "INSERT INTO part_count (txt_id, count) VALUES (?, ?)",
             (txt_id, len(raw_parts)),
@@ -154,12 +159,13 @@ class TxtIngester:
         )
         return txt_id
 
-    def add_dir(self, src: Path) -> list[int]:
+    async def add_dir(self, src: Path) -> list[int]:
         files = sorted(
             p for p in src.iterdir() if p.is_file() and p.suffix.lower() == ".txt"
         )
         logger.info("Found %d .txt file(s) in %s", len(files), src)
-        txt_ids = [self.add_file(p) for p in files]
+        txt_ids = await asyncio.gather(*(self.add_file(p) for p in files))
+        txt_ids = list(txt_ids)
         logger.info(
             "Finished ingesting %d file(s) from %s: txt_id(s) = %s",
             len(txt_ids),
