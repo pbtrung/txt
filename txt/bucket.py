@@ -39,10 +39,19 @@ class TxtBucketCleaner(TxtOwner):
     """
 
     def _known_raw_paths(self, user_id: int, umk: bytes) -> set[str]:
+        txt_ids = self._txt_ids(user_id)
         known: set[str] = set()
-        for txt_id in self._txt_ids(user_id):
+        for i, txt_id in enumerate(txt_ids, start=1):
             txt_key = self._txt_key(txt_id, umk)
-            known.update(self._part_raw_paths(txt_id, txt_key))
+            raw_paths = self._part_raw_paths(txt_id, txt_key)
+            known.update(raw_paths)
+            logger.debug(
+                "txt_id=%d (%d/%d): %d known part path(s)",
+                txt_id,
+                i,
+                len(txt_ids),
+                len(raw_paths),
+            )
         return known
 
     async def clean_bucket(self) -> int:
