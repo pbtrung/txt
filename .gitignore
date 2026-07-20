@@ -28,6 +28,9 @@ env/
 .ruff_cache/
 .tox/
 pip-log.txt
+.coverage
+.coverage.*
+htmlcov/
 
 # Project-specific
 *.json
