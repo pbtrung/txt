@@ -129,8 +129,9 @@ class TxtIngester(TxtOwner):
             p for p in src.iterdir() if p.is_file() and p.suffix.lower() == ".txt"
         )
         logger.info("Found %d .txt file(s) in %s", len(files), src)
-        txt_ids = await asyncio.gather(*(self.add_file(p) for p in files))
-        txt_ids = list(txt_ids)
+        # One file at a time -- its parts still upload concurrently -- rather
+        # than every file's parts in flight at once.
+        txt_ids = [await self.add_file(p) for p in files]
         logger.info(
             "Finished ingesting %d file(s) from %s: txt_id(s) = %s",
             len(txt_ids),

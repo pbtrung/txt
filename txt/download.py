@@ -41,18 +41,26 @@ class TxtDownloader(TxtOwner):
         txt_key = self._txt_key(txt_id, umk)
         raw_paths = self._part_raw_paths(txt_id, txt_key)
         logger.info("txt_id=%d: fetching %d part(s)", txt_id, len(raw_paths))
-        parts = await asyncio.gather(
-            *(self._fetch_part(txt_key, raw_path) for raw_path in raw_paths)
-        )
-        content = b"".join(parts)
+        # Fetches all start concurrently (create_task), but are awaited and
+        # written in part_num order, one at a time, so at most one part's
+        # decompressed bytes -- not the whole document -- is ever in memory.
+        tasks = [
+            asyncio.create_task(self._fetch_part(txt_key, raw_path))
+            for raw_path in raw_paths
+        ]
         name = names.get(txt_id, f"txt_{txt_id}.txt")
         out_path = dst / name
-        out_path.write_bytes(content)
+        total = 0
+        with out_path.open("wb") as f:
+            for task in tasks:
+                part = await task
+                f.write(part)
+                total += len(part)
         logger.info(
             "txt_id=%d: wrote %s (%d bytes from %d part(s))",
             txt_id,
             out_path,
-            len(content),
+            total,
             len(raw_paths),
         )
         return out_path
@@ -64,9 +72,10 @@ class TxtDownloader(TxtOwner):
         names = self._txt_names(user_id, umk)
         txt_ids = self._txt_ids(user_id)
         logger.info("Found %d txt(s) for user_id=%d", len(txt_ids), user_id)
-        paths = await asyncio.gather(
-            *(self._download_txt(txt_id, umk, dst, names) for txt_id in txt_ids)
-        )
-        paths = list(paths)
+        # One txt at a time -- its parts still fetch concurrently -- rather than
+        # every txt's parts in flight at once.
+        paths = [
+            await self._download_txt(txt_id, umk, dst, names) for txt_id in txt_ids
+        ]
         logger.info("Finished downloading %d txt(s) to %s", len(paths), dst)
         return paths
