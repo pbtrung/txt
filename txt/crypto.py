@@ -76,7 +76,7 @@ class Blob:
         """compressed=True brotli-compresses payload first, for structured (e.g. JSON) payloads."""
         salt = salt if salt is not None else os.urandom(c.SALT_LEN)
         if compressed:
-            payload = brotli.compress(payload)
+            payload = brotli.compress(payload, quality=c.BROTLI_QUALITY)
         key, iv = cls._derive(ikm, salt)
         ad = c.MAGIC + c.VERSION + salt
         ctx = cls._aead_ctx(key, iv)
