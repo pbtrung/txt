@@ -83,3 +83,14 @@ export async function loadTxtMetadata(db: Client, userId: number, umk: Uint8Arra
   }
   return byId;
 }
+
+/** One book's metadata -- for the Reader, which only needs a single txt_id. */
+export async function getBookInfo(
+  db: Client,
+  userId: number,
+  umk: Uint8Array,
+  txtId: number,
+): Promise<BookInfo | null> {
+  const byId = await loadTxtMetadata(db, userId, umk);
+  return byId.get(txtId) ?? null;
+}
