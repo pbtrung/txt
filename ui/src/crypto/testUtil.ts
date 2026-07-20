@@ -1,6 +1,7 @@
-// Test-only byte encoding helpers (base64/hex <-> Uint8Array). Node and
-// modern browsers both support atob/btoa; Buffer isn't available in the
-// browser so we avoid it here even though these files only run under Vitest.
+// Test-only byte encoding helpers (hex <-> Uint8Array); base64 helpers live
+// in bytes.ts since creds.ts needs them at runtime too, not just in tests.
+
+export { base64ToBytes } from "./bytes";
 
 export function hexToBytes(hex: string): Uint8Array {
   const out = new Uint8Array(hex.length / 2);
@@ -14,13 +15,4 @@ export function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes)
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
-}
-
-export function base64ToBytes(b64: string): Uint8Array {
-  const binary = atob(b64);
-  const out = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    out[i] = binary.charCodeAt(i);
-  }
-  return out;
 }
