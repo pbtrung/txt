@@ -34,21 +34,29 @@ class TxtIngester(TxtOwner):
     def _part_path() -> str:
         return base32.encode(os.urandom(c.RAW_PATH_LEN))
 
+    @staticmethod
+    def _log_part_upload(
+        txt_id: int, part_num: int, sizes: tuple[int, int, int], raw_path: str
+    ) -> None:
+        raw_len, cleaned_len, compressed_len = sizes
+        logger.debug(
+            "txt_id=%d part %d: %d bytes raw -> %d cleaned -> %d compressed, path=%s",
+            txt_id,
+            part_num,
+            raw_len,
+            cleaned_len,
+            compressed_len,
+            raw_path,
+        )
+
     async def _upload_part(
         self, txt_id: int, part_num: int, txt_key: bytes, raw_part: bytes
     ) -> tuple[int, str, bytes]:
         cleaned = preprocess_text(raw_part)
         compressed = brotli.compress(cleaned)
         raw_path = self._part_path()
-        logger.debug(
-            "txt_id=%d part %d: %d bytes raw -> %d cleaned -> %d compressed, path=%s",
-            txt_id,
-            part_num,
-            len(raw_part),
-            len(cleaned),
-            len(compressed),
-            raw_path,
-        )
+        sizes = (len(raw_part), len(cleaned), len(compressed))
+        self._log_part_upload(txt_id, part_num, sizes, raw_path)
         await self.r2.put_async(raw_path, Blob.encrypt(txt_key, compressed))
         path_blob = Blob.encrypt(txt_key, raw_path.encode("ascii"))
         return part_num, raw_path, path_blob
@@ -56,65 +64,53 @@ class TxtIngester(TxtOwner):
     def _insert_part_rows(
         self, txt_id: int, parts: list[tuple[int, str, bytes]]
     ) -> None:
-        # One executemany call, not one execute() per part -- still a single
-        # uninterrupted, synchronous burst (no awaits in between): the
-        # libsql/Hrana connection isn't safe to touch from coroutines left
-        # concurrently in flight (see the "stream not found" Hrana error this
-        # fixed, from writing a row per part from inside _upload_part while
-        # asyncio.gather kept every part's upload concurrently in flight).
+        # One synchronous burst, no awaits -- concurrent coroutines touching
+        # this libsql/Hrana connection caused a "stream not found" error.
         self.db.conn.executemany(
             "INSERT INTO txt_parts (txt_id, part_num, path) VALUES (?, ?, ?)",
-            [(txt_id, part_num, path_blob) for part_num, _raw_path, path_blob in parts],
+            [(txt_id, n, blob) for n, _raw_path, blob in parts],
+        )
+        self.db.conn.execute(
+            "INSERT INTO part_count (txt_id, count) VALUES (?, ?)",
+            (txt_id, len(parts)),
         )
         logger.debug("txt_id=%d: inserted %d txt_parts row(s)", txt_id, len(parts))
 
     async def _delete_uploaded_parts(
         self, txt_id: int, parts: list[tuple[int, str, bytes]]
     ) -> None:
-        # Cleans up parts that already made it to R2 once something later in
-        # the same file's ingest fails -- either another part's upload (after
-        # exhausting put_async's own retries) or the DB write that was meant
-        # to record them -- so they don't linger as orphaned R2 objects
-        # nothing will ever reference.
+        # Cleans up parts that already made it to R2 once something later
+        # fails (another part's upload, or the DB write meant to record
+        # them) -- so they don't linger as orphaned R2 objects.
         logger.warning(
             "txt_id=%d: deleting %d already-uploaded R2 part(s)", txt_id, len(parts)
         )
-        await asyncio.gather(
-            *(
-                self.r2.delete_async(raw_path)
-                for _part_num, raw_path, _path_blob in parts
-            )
-        )
+        raw_paths = [raw_path for _n, raw_path, _blob in parts]
+        await asyncio.gather(*(self.r2.delete_async(p) for p in raw_paths))
 
-    def _update_txt_metadata_entry(
-        self, user_id: int, umk: bytes, txt_id: int, name: str
-    ) -> None:
-        # txt_metadata is a single row per user (user_id is UNIQUE), provisioned
-        # by AdminInitializer/--init -- not ingest's job to create it. A single
-        # encrypted JSON blob {"<txt_id>": {"name": ...}, ...} indexed by
-        # txt_id, so a lookup is O(1) average-case once decrypted -- but every
-        # update here decrypts, mutates, and re-encrypts the *entire* blob
-        # (there's no partial-update path), so persisting one change costs
-        # O(blob size), not O(1). Fine for a per-user filename index, not a
-        # design meant to scale to huge per-user document counts.
+    @staticmethod
+    def _parse_txt_metadata_content(
+        txt_metadata_key: bytes, content_blob: bytes | None
+    ) -> dict:
+        if content_blob is None:
+            return {}
+        return json.loads(Blob.decrypt(txt_metadata_key, content_blob, compressed=True))
+
+    def _load_txt_metadata(self, user_id: int, umk: bytes) -> tuple[bytes, dict]:
         row = self.db.conn.execute(
             "SELECT txt_metadata_key, content FROM txt_metadata WHERE user_id = ?",
             (user_id,),
         ).fetchone()
         if row is None:
-            raise ValueError(
-                f"no txt_metadata row for user_id={user_id}; run --init first"
-            )
+            raise ValueError(f"no txt_metadata row for user_id={user_id}; run --init")
         key_blob, content_blob = row
         txt_metadata_key = Blob.decrypt(umk, key_blob)
-        # content is NULL until this user's first txt is ingested (see
-        # docs/data_model.md's txt_metadata) -- nothing to decrypt yet then.
-        content = (
-            json.loads(Blob.decrypt(txt_metadata_key, content_blob, compressed=True))
-            if content_blob is not None
-            else {}
-        )
-        content[str(txt_id)] = {"name": name}
+        content = self._parse_txt_metadata_content(txt_metadata_key, content_blob)
+        return txt_metadata_key, content
+
+    def _save_txt_metadata(
+        self, user_id: int, txt_metadata_key: bytes, content: dict
+    ) -> None:
         content_blob = Blob.encrypt(
             txt_metadata_key, json.dumps(content).encode(), compressed=True
         )
@@ -122,9 +118,62 @@ class TxtIngester(TxtOwner):
             "UPDATE txt_metadata SET content = ? WHERE user_id = ?",
             (content_blob, user_id),
         )
+
+    def _update_txt_metadata_entry(
+        self, user_id: int, umk: bytes, txt_id: int, name: str
+    ) -> None:
+        # txt_metadata is one encrypted JSON blob per user, not one row per
+        # doc (see docs/data_model.md) -- every update rewrites it whole.
+        txt_metadata_key, content = self._load_txt_metadata(user_id, umk)
+        content[str(txt_id)] = {"name": name}
+        self._save_txt_metadata(user_id, txt_metadata_key, content)
         logger.debug(
             "Updated txt_metadata entry for txt_id=%d (user_id=%d)", txt_id, user_id
         )
+
+    async def _gather_uploads(
+        self, txt_id: int, txt_key: bytes, raw_parts: list[bytes]
+    ) -> list:
+        return await asyncio.gather(
+            *(
+                self._upload_part(txt_id, n, txt_key, raw_part)
+                for n, raw_part in enumerate(raw_parts, start=1)
+            ),
+            return_exceptions=True,
+        )
+
+    @staticmethod
+    def _split_upload_results(results: list) -> tuple[list, list]:
+        uploaded = [r for r in results if not isinstance(r, BaseException)]
+        failures = [r for r in results if isinstance(r, BaseException)]
+        return uploaded, failures
+
+    async def _abort_ingest(
+        self, path: Path, txt_id: int, raw_parts: list, uploaded: list, failures: list
+    ) -> None:
+        self.db.conn.rollback()
+        await self._delete_uploaded_parts(txt_id, uploaded)
+        raise RuntimeError(
+            f"{path}: {len(failures)}/{len(raw_parts)} part(s) failed to upload "
+            f"to R2 after retries (txt_id={txt_id}); deleted {len(uploaded)} "
+            "already-uploaded part(s); aborting this file"
+        ) from failures[0]
+
+    async def _persist_txt(
+        self, user_id: int, umk: bytes, txt_id: int, path: Path, parts: list
+    ) -> None:
+        try:
+            self._insert_part_rows(txt_id, parts)
+            self._update_txt_metadata_entry(user_id, umk, txt_id, path.name)
+            self.db.conn.commit()
+        except Exception:
+            self.db.conn.rollback()
+            await self._delete_uploaded_parts(txt_id, parts)
+            raise
+
+    @staticmethod
+    def _log_ingested(path: Path, txt_id: int, num_parts: int) -> None:
+        logger.info("Ingested %s as txt_id=%d (%d part(s))", path, txt_id, num_parts)
 
     async def add_file(self, path: Path) -> int:
         logger.info("Ingesting %s (%d bytes)", path, path.stat().st_size)
@@ -132,42 +181,13 @@ class TxtIngester(TxtOwner):
         umk = self._owner_umk(user_id)
         txt_id, txt_key = self._insert_txt(user_id, umk)
         raw_parts = split_parts(path.read_bytes())
-        logger.info(
-            "%s (txt_id=%d): split into %d part(s)", path, txt_id, len(raw_parts)
-        )
-        results = await asyncio.gather(
-            *(
-                self._upload_part(txt_id, part_num, txt_key, raw_part)
-                for part_num, raw_part in enumerate(raw_parts, start=1)
-            ),
-            return_exceptions=True,
-        )
-        uploaded = [r for r in results if not isinstance(r, BaseException)]
-        failures = [r for r in results if isinstance(r, BaseException)]
+        logger.info("%s (txt_id=%d): %d part(s)", path, txt_id, len(raw_parts))
+        results = await self._gather_uploads(txt_id, txt_key, raw_parts)
+        uploaded, failures = self._split_upload_results(results)
         if failures:
-            self.db.conn.rollback()
-            await self._delete_uploaded_parts(txt_id, uploaded)
-            raise RuntimeError(
-                f"{path}: {len(failures)}/{len(raw_parts)} part(s) failed to upload "
-                f"to R2 after retries (txt_id={txt_id}); deleted {len(uploaded)} "
-                "already-uploaded part(s); aborting this file"
-            ) from failures[0]
-        parts = uploaded
-        try:
-            self._insert_part_rows(txt_id, parts)
-            self.db.conn.execute(
-                "INSERT INTO part_count (txt_id, count) VALUES (?, ?)",
-                (txt_id, len(raw_parts)),
-            )
-            self._update_txt_metadata_entry(user_id, umk, txt_id, path.name)
-            self.db.conn.commit()
-        except Exception:
-            self.db.conn.rollback()
-            await self._delete_uploaded_parts(txt_id, parts)
-            raise
-        logger.info(
-            "Ingested %s as txt_id=%d (%d part(s))", path, txt_id, len(raw_parts)
-        )
+            await self._abort_ingest(path, txt_id, raw_parts, uploaded, failures)
+        await self._persist_txt(user_id, umk, txt_id, path, uploaded)
+        self._log_ingested(path, txt_id, len(raw_parts))
         return txt_id
 
     async def add_dir(self, src: Path) -> list[int]:
