@@ -77,8 +77,6 @@ class TxtIngester(TxtOwner):
     def _insert_part_rows(
         self, txt_id: int, parts: list[tuple[int, str, bytes]]
     ) -> None:
-        # One synchronous burst, no awaits -- concurrent coroutines touching
-        # this libsql/Hrana connection caused a "stream not found" error.
         self.db.conn.executemany(
             "INSERT INTO txt_parts (txt_id, part_num, path) VALUES (?, ?, ?)",
             [(txt_id, n, blob) for n, _raw_path, blob in parts],
