@@ -30,13 +30,13 @@ function baseResult(overrides: Partial<UseReaderBookResult> = {}): UseReaderBook
     partText: "First paragraph of part 14.\n\nSecond paragraph.",
     partTextLoading: false,
     bookmarks: [
-      { id: 3, partNum: 14, createdAtMs: Date.now() - 1000 },
-      { id: 2, partNum: 8, createdAtMs: Date.now() - 2 * 24 * 60 * 60 * 1000 },
+      { id: 3, partNum: 14, line: 1, txtPreview: "First paragraph of part 14." },
+      { id: 2, partNum: 8, line: 2, txtPreview: "Some earlier line preview" },
     ],
     goToPart: vi.fn(),
     next: vi.fn(),
     previous: vi.fn(),
-    bookmarkCurrentPart: vi.fn(),
+    bookmarkLine: vi.fn(),
     ...overrides,
   };
 }
@@ -54,7 +54,7 @@ function renderReader(result: UseReaderBookResult) {
 }
 
 describe("ReaderScreen", () => {
-  it("renders the current part's text, split into paragraphs", () => {
+  it("renders the current part's text, split into lines", () => {
     renderReader(baseResult());
     expect(screen.getByText("First paragraph of part 14.")).toBeInTheDocument();
     expect(screen.getByText("Second paragraph.")).toBeInTheDocument();
@@ -68,12 +68,12 @@ describe("ReaderScreen", () => {
     expect(screen.getByText("Military")).toBeInTheDocument();
   });
 
-  it("shows bookmarks most-recent-first with relative times", () => {
+  it("shows bookmarks with part/line and a text preview", () => {
     renderReader(baseResult());
-    expect(screen.getByText("Part 14")).toBeInTheDocument();
-    expect(screen.getByText("Just now")).toBeInTheDocument();
-    expect(screen.getByText("Part 8")).toBeInTheDocument();
-    expect(screen.getByText("2 days ago")).toBeInTheDocument();
+    expect(screen.getByText("Part 14 · Line 1")).toBeInTheDocument();
+    expect(screen.getByText("“First paragraph of part 14.”")).toBeInTheDocument();
+    expect(screen.getByText("Part 8 · Line 2")).toBeInTheDocument();
+    expect(screen.getByText("“Some earlier line preview”")).toBeInTheDocument();
   });
 
   it("hides the side panel when the info button is toggled off", async () => {
@@ -98,11 +98,24 @@ describe("ReaderScreen", () => {
     expect(previous).toHaveBeenCalledTimes(1);
   });
 
-  it("calls bookmarkCurrentPart() when the bookmark button is clicked", async () => {
-    const bookmarkCurrentPart = vi.fn();
-    renderReader(baseResult({ bookmarks: [], bookmarkCurrentPart }));
-    await userEvent.click(screen.getByRole("button", { name: /bookmark this part/i }));
-    expect(bookmarkCurrentPart).toHaveBeenCalledTimes(1);
+  it("bookmarks a specific line via that line's own gutter button", async () => {
+    const bookmarkLine = vi.fn();
+    renderReader(baseResult({ bookmarks: [], bookmarkLine }));
+    await userEvent.click(screen.getByRole("button", { name: /bookmark line 2/i }));
+    expect(bookmarkLine).toHaveBeenCalledWith(2, "Second paragraph.");
+  });
+
+  it("marks an already-bookmarked line's gutter icon as pressed", () => {
+    renderReader(baseResult());
+    expect(screen.getByRole("button", { name: /bookmark line 1/i })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: /bookmark line 2/i })).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("jumps to a bookmark's part when it's clicked", async () => {
+    const goToPart = vi.fn();
+    renderReader(baseResult({ goToPart }));
+    await userEvent.click(screen.getByText("Part 8 · Line 2"));
+    expect(goToPart).toHaveBeenCalledWith(8);
   });
 
   it("navigates back to /library", async () => {

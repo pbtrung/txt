@@ -64,31 +64,31 @@ Reading pane on the left, a slim metadata/bookmarks panel on the right, a part-n
 
 ```
 ┌────────────────────────────────────────────────────────────────────┐
-│ [<] Library   The White Order / L. E. Modesitt, Jr.  [bk][i]       │
+│ [<] Library   The White Order / L. E. Modesitt, Jr.        [i]     │
 ├───────────────────────────────────────────────┬────────────────────┤
 │ PART 14 OF 41                                 │ ABOUT THIS BOOK    │
 │                                               │ The White Order    │
 │ The White Order                               │ L. E. Modesitt, Jr.│
 │                                               │ Saga of Recluce, #8│
-│ Powerful white mages killed Cerryl's father   │                    │
-│ to protect their control of the world's       │ [Fantasy][Mil.]    │
-│ magic. Raised by his aunt and uncle, Cerryl   │ "...continues his  │
-│ learns that he has inherited his father's     │ bestselling fantasy│
-│ magic abilities...                            │ series"            │
+│[bk] Powerful white mages killed Cerryl's      │                    │
+│    father to protect their control of the     │ [Fantasy][Mil.]    │
+│    world's magic. Raised by his aunt and      │ "...continues his  │
+│    uncle, Cerryl learns that he has           │ bestselling fantasy│
+│    inherited his father's magic abilities...  │ series"            │
 │                                               │                    │
-│ When Cerryl witnesses a white mage destroy    │ BOOKMARKS          │
-│ a renegade magician in the market square,     │ [bk] Part 14       │
-│ he understands, all at once and far too       │     Just now       │
-│ late, exactly what he is...                   │ [bk] Part 8        │
-│                                               │     2 days ago     │
-│                                               │ [bk] Part 3        │
-│                                               │     6 days ago     │
+│[bk] When Cerryl witnesses a white mage        │ BOOKMARKS          │
+│    destroy a renegade magician in the         │ [bk] Part 14·Line 1│
+│    market square, he understands, all at      │  "Powerful white   │
+│    once and far too late, exactly what he is. │   mages killed..." │
+│                                               │ [bk] Part 8·Line 3 │
+│                                               │  "He knew that the │
+│                                               │   white robes..."  │
 ├───────────────────────────────────────────────┴────────────────────┤
 │ [< Previous]   Part 14 / 41  [========            ]  [Next >]      │
 └────────────────────────────────────────────────────────────────────┘
 ```
 
-- **Top bar**: back-to-library, the current book's title/author, and two toggleable icon buttons — bookmark this part, and open the "About this book" panel. Both are shown active/open here so the panel's content is visible in the design.
-- **Reading column**: comfortable line length, one part's text at a time — no chapter/whole-document view.
-- **Side panel**: "About this book" (title, author, series if any, subject tags, a short description pulled from the book's catalog metadata) above "Bookmarks" (most recent first, each showing which part and how long ago).
+- **Top bar**: back-to-library, the current book's title/author, and a single toggleable icon button that opens the "About this book" panel (shown active/open here so the panel's content is visible in the design).
+- **Reading column**: comfortable line length, one part's text at a time — no chapter/whole-document view. Each line has its own bookmark icon in the left gutter, filled in once bookmarked; there's no separate "bookmark this part" control.
+- **Side panel**: "About this book" (title, author, series if any, subject tags, a short description pulled from the book's catalog metadata) above "Bookmarks" (most recent first — bookmarks carry no timestamp, so this is insertion order — each showing which part and line, plus a short preview of that line's text; clicking one jumps to that part).
 - **Bottom bar**: Previous/Next, the current part out of the total, and a slim progress track — the same progress indicator style used in the Library list, so a book's position reads consistently in both places.

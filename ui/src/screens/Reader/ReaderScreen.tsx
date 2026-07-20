@@ -1,12 +1,17 @@
 // Screen 3 -- Reader (docs/ui.md): a reading pane on the left, a slim
 // metadata/bookmarks panel on the right, a part-navigation bar along the
 // bottom.
+//
+// Bookmarking is per-line (docs/data_model.md's bookmarks: {part_num, line,
+// txt_preview}), not per-part: each line in the reading pane has its own
+// gutter bookmark button, so "bookmark by line number" is just "click the
+// line's own icon" -- no separate number-entry control needed.
 
 import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import { ProgressBar } from "../../components/ProgressBar";
-import { formatRelativeTime } from "./readerModel";
+import { splitLines, truncatePreview } from "./readerModel";
 import { useReaderBook } from "./useReaderBook";
 
 export function ReaderScreen() {
@@ -24,13 +29,17 @@ export function ReaderScreen() {
     partText,
     partTextLoading,
     bookmarks,
+    goToPart,
     next,
     previous,
-    bookmarkCurrentPart,
+    bookmarkLine,
   } = useReaderBook(numericTxtId);
 
-  const paragraphs = useMemo(() => (partText ? partText.split(/\n{2,}/).filter(Boolean) : []), [partText]);
-  const isBookmarked = bookmarks.some((b) => b.partNum === currentPartNum);
+  const lines = useMemo(() => (partText ? splitLines(partText) : []), [partText]);
+  const bookmarkedLines = useMemo(
+    () => new Set(bookmarks.filter((b) => b.partNum === currentPartNum).map((b) => b.line)),
+    [bookmarks, currentPartNum],
+  );
   const progressPercent = partCount > 0 ? Math.round((currentPartNum / partCount) * 100) : 0;
   const seriesLabel = info?.series ? `${info.series}${info.seriesIndex ? `, #${info.seriesIndex}` : ""}` : null;
 
@@ -58,16 +67,6 @@ export function ReaderScreen() {
         </div>
         <button
           type="button"
-          className={`btn btn-sm ${isBookmarked ? "btn-primary" : "btn-outline-secondary"}`}
-          onClick={bookmarkCurrentPart}
-          aria-pressed={isBookmarked}
-          aria-label="Bookmark this part"
-          title="Bookmark this part"
-        >
-          <i className="bi bi-bookmark-fill" aria-hidden="true" />
-        </button>
-        <button
-          type="button"
           className={`btn btn-sm ${sidePanelOpen ? "btn-primary" : "btn-outline-secondary"}`}
           onClick={() => setSidePanelOpen((open) => !open)}
           aria-pressed={sidePanelOpen}
@@ -86,9 +85,28 @@ export function ReaderScreen() {
             </div>
             {info?.title && <h2 className="h4 mb-3">{info.title}</h2>}
             {partTextLoading && <p className="text-body-secondary">Loading part…</p>}
-            {!partTextLoading && paragraphs.map((paragraph, i) => (
-              <p key={i}>{paragraph}</p>
-            ))}
+            {!partTextLoading &&
+              lines.map((line, i) => {
+                const lineNum = i + 1;
+                const isBookmarked = bookmarkedLines.has(lineNum);
+                return (
+                  <div key={lineNum} className="d-flex align-items-start gap-2">
+                    <button
+                      type="button"
+                      className={`btn btn-sm p-0 border-0 bg-transparent lh-1 mt-1 ${
+                        isBookmarked ? "text-primary" : "text-body-tertiary"
+                      }`}
+                      onClick={() => bookmarkLine(lineNum, truncatePreview(line))}
+                      aria-pressed={isBookmarked}
+                      aria-label={`Bookmark line ${lineNum}`}
+                      title={`Bookmark line ${lineNum}`}
+                    >
+                      <i className={`bi ${isBookmarked ? "bi-bookmark-fill" : "bi-bookmark"}`} aria-hidden="true" />
+                    </button>
+                    <p className="flex-grow-1">{line}</p>
+                  </div>
+                );
+              })}
           </div>
         </div>
 
@@ -112,15 +130,22 @@ export function ReaderScreen() {
             <div className="small text-body-secondary text-uppercase fw-semibold mt-4 mb-2">Bookmarks</div>
             {bookmarks.length === 0 && <p className="small text-body-secondary">No bookmarks yet.</p>}
             {bookmarks.map((bookmark) => (
-              <div key={bookmark.id} className="d-flex align-items-start gap-2 mb-2">
-                <i className="bi bi-bookmark-fill text-primary" aria-hidden="true" />
-                <div>
-                  <div className="small">Part {bookmark.partNum}</div>
-                  <div className="text-body-secondary" style={{ fontSize: "0.75rem" }}>
-                    {formatRelativeTime(bookmark.createdAtMs, Date.now())}
-                  </div>
-                </div>
-              </div>
+              <button
+                key={bookmark.id}
+                type="button"
+                className="btn btn-sm text-start d-flex align-items-start gap-2 mb-2 w-100 p-0 border-0 bg-transparent"
+                onClick={() => goToPart(bookmark.partNum)}
+              >
+                <i className="bi bi-bookmark-fill text-primary mt-1" aria-hidden="true" />
+                <span>
+                  <span className="small d-block">
+                    Part {bookmark.partNum} · Line {bookmark.line}
+                  </span>
+                  <span className="text-body-secondary fst-italic" style={{ fontSize: "0.75rem" }}>
+                    &ldquo;{bookmark.txtPreview}&rdquo;
+                  </span>
+                </span>
+              </button>
             ))}
           </div>
         )}

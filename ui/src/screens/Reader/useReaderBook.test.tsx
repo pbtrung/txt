@@ -110,7 +110,7 @@ describe("useReaderBook", () => {
     await waitFor(() => expect(result.current.currentPartNum).toBe(1));
   });
 
-  it("bookmarkCurrentPart() adds a bookmark and reloads the list", async () => {
+  it("bookmarkLine() adds a bookmark for the given line/preview and reloads the list", async () => {
     mockVault();
     vi.mocked(metadataModule.getBookInfo).mockResolvedValue(null);
     vi.mocked(ownerModule.partCount).mockResolvedValue(3);
@@ -119,15 +119,25 @@ describe("useReaderBook", () => {
     vi.mocked(partsModule.fetchPart).mockResolvedValue("text");
     vi.mocked(bookmarksModule.listBookmarks)
       .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([{ id: 1, partNum: 1, createdAtMs: 100 }]);
+      .mockResolvedValueOnce([{ id: 1, partNum: 1, line: 2, txtPreview: "some preview text" }]);
     vi.mocked(bookmarksModule.addBookmark).mockResolvedValue(undefined);
 
     const { result } = renderHook(() => useReaderBook(5));
     await waitFor(() => expect(result.current.loading).toBe(false));
 
-    act(() => result.current.bookmarkCurrentPart());
+    act(() => result.current.bookmarkLine(2, "some preview text"));
 
-    await waitFor(() => expect(result.current.bookmarks).toEqual([{ id: 1, partNum: 1, createdAtMs: 100 }]));
-    expect(bookmarksModule.addBookmark).toHaveBeenCalledWith(session.db, 5, 42, expect.any(Uint8Array), 1);
+    await waitFor(() =>
+      expect(result.current.bookmarks).toEqual([{ id: 1, partNum: 1, line: 2, txtPreview: "some preview text" }]),
+    );
+    expect(bookmarksModule.addBookmark).toHaveBeenCalledWith(
+      session.db,
+      5,
+      42,
+      expect.any(Uint8Array),
+      1,
+      2,
+      "some preview text",
+    );
   });
 });

@@ -1,29 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { clampPartNum, formatRelativeTime } from "./readerModel";
-
-describe("formatRelativeTime", () => {
-  const now = 1_700_000_000_000;
-
-  it("says 'Just now' for anything under a minute", () => {
-    expect(formatRelativeTime(now, now)).toBe("Just now");
-    expect(formatRelativeTime(now - 59_000, now)).toBe("Just now");
-  });
-
-  it("formats minutes", () => {
-    expect(formatRelativeTime(now - 5 * 60_000, now)).toBe("5 minutes ago");
-    expect(formatRelativeTime(now - 60_000, now)).toBe("1 minute ago");
-  });
-
-  it("formats hours", () => {
-    expect(formatRelativeTime(now - 3 * 60 * 60_000, now)).toBe("3 hours ago");
-  });
-
-  it("formats days", () => {
-    expect(formatRelativeTime(now - 2 * 24 * 60 * 60_000, now)).toBe("2 days ago");
-    expect(formatRelativeTime(now - 6 * 24 * 60 * 60_000, now)).toBe("6 days ago");
-  });
-});
+import { clampPartNum, splitLines, truncatePreview } from "./readerModel";
 
 describe("clampPartNum", () => {
   it("clamps within [1, partCount]", () => {
@@ -34,5 +11,37 @@ describe("clampPartNum", () => {
 
   it("returns 1 when there are no parts", () => {
     expect(clampPartNum(5, 0)).toBe(1);
+  });
+});
+
+describe("truncatePreview", () => {
+  it("returns short text unchanged", () => {
+    expect(truncatePreview("Cerryl learns the truth.")).toBe("Cerryl learns the truth.");
+  });
+
+  it("truncates to maxLen and appends an ellipsis", () => {
+    const line = "Powerful white mages killed Cerryl's father to protect their control of the world's magic.";
+    const result = truncatePreview(line, 60);
+    expect(result.length).toBeLessThanOrEqual(61); // 60 chars + "…"
+    expect(result.endsWith("…")).toBe(true);
+    expect(line.startsWith(result.slice(0, -1))).toBe(true);
+  });
+
+  it("trims surrounding whitespace", () => {
+    expect(truncatePreview("   padded text   ")).toBe("padded text");
+  });
+});
+
+describe("splitLines", () => {
+  it("splits on blank-line separators and drops empty entries", () => {
+    expect(splitLines("First paragraph.\n\nSecond paragraph.\n\n\nThird.")).toEqual([
+      "First paragraph.",
+      "Second paragraph.",
+      "Third.",
+    ]);
+  });
+
+  it("returns a single line for text with no blank-line separators", () => {
+    expect(splitLines("Just one line of text")).toEqual(["Just one line of text"]);
   });
 });
