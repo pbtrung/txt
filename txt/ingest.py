@@ -10,7 +10,7 @@ import brotli
 
 from . import base32
 from . import constants as c
-from .crypto import Blob, hmac_sha3_256
+from .crypto import Blob
 from .owner import TxtOwner
 from .textproc import preprocess_text, split_parts
 
@@ -31,16 +31,15 @@ class TxtIngester(TxtOwner):
         return txt_id, txt_key
 
     @staticmethod
-    def _part_path(txt_key: bytes, compressed: bytes) -> str:
-        digest = hmac_sha3_256(txt_key, compressed)
-        return base32.encode(digest)
+    def _part_path() -> str:
+        return base32.encode(os.urandom(c.RAW_PATH_LEN))
 
     async def _insert_part(
         self, txt_id: int, part_num: int, txt_key: bytes, raw_part: bytes
     ) -> None:
         cleaned = preprocess_text(raw_part)
         compressed = brotli.compress(cleaned)
-        raw_path = self._part_path(txt_key, compressed)
+        raw_path = self._part_path()
         logger.debug(
             "txt_id=%d part %d: %d bytes raw -> %d cleaned -> %d compressed, path=%s",
             txt_id,
