@@ -151,7 +151,9 @@ class TxtIngester(TxtOwner):
         if opf_path is None:
             return None
         metadata = parse_opf_metadata(opf_path)
-        logger.info("%s: found OPF sidecar %s (%d field(s))", path, opf_path, len(metadata))
+        logger.info(
+            "%s: found OPF sidecar %s (%d field(s))", path, opf_path, len(metadata)
+        )
         return metadata
 
     def _update_metadata_for_file(
