@@ -148,10 +148,19 @@ class TxtIngester(TxtOwner):
         failures = [r for r in results if isinstance(r, BaseException)]
         return uploaded, failures
 
+    def _safe_rollback(self, txt_id: int) -> None:
+        # rollback() can itself raise (e.g. the same broken Hrana stream that
+        # caused the failure being handled) -- never let that skip the R2
+        # cleanup below, or parts get orphaned in the bucket.
+        try:
+            self.db.conn.rollback()
+        except Exception as exc:
+            logger.warning("txt_id=%d: rollback failed: %s", txt_id, exc)
+
     async def _abort_ingest(
         self, path: Path, txt_id: int, raw_parts: list, uploaded: list, failures: list
     ) -> None:
-        self.db.conn.rollback()
+        self._safe_rollback(txt_id)
         await self._delete_uploaded_parts(txt_id, uploaded)
         raise RuntimeError(
             f"{path}: {len(failures)}/{len(raw_parts)} part(s) failed to upload "
@@ -167,7 +176,7 @@ class TxtIngester(TxtOwner):
             self._update_txt_metadata_entry(user_id, umk, txt_id, path.name)
             self.db.conn.commit()
         except Exception:
-            self.db.conn.rollback()
+            self._safe_rollback(txt_id)
             await self._delete_uploaded_parts(txt_id, parts)
             raise
 
