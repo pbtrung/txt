@@ -7,6 +7,7 @@ from pathlib import Path
 import click
 
 from .admin import AdminInitializer
+from .bucket import BucketPurger, TxtBucketCleaner
 from .creds import AdminCreds
 from .db import Database
 from .delete import TxtDeleter
@@ -52,6 +53,31 @@ def _cmd_txt_delete(admin_creds_path: str, skip_confirm: bool) -> None:
     click.echo(f"Deleted {count} txt(s) and their R2 parts")
 
 
+def _cmd_purge_bucket(admin_creds_path: str, skip_confirm: bool) -> None:
+    creds = AdminCreds.load(Path(admin_creds_path))
+    if not skip_confirm:
+        click.confirm(
+            "Delete EVERY object in the R2 bucket, regardless of what's tracked "
+            "in the DB? This cannot be undone.",
+            abort=True,
+        )
+    count = asyncio.run(BucketPurger(creds).purge_all())
+    click.echo(f"Purged {count} object(s) from the R2 bucket")
+
+
+def _cmd_txt_clean_bucket(admin_creds_path: str, skip_confirm: bool) -> None:
+    creds = AdminCreds.load(Path(admin_creds_path))
+    if not skip_confirm:
+        click.confirm(
+            "Delete every R2 object not referenced by any txt in the DB for "
+            f"username={creds.username!r}? This cannot be undone.",
+            abort=True,
+        )
+    db = Database(creds)
+    count = asyncio.run(TxtBucketCleaner(db, creds).clean_bucket())
+    click.echo(f"Deleted {count} orphaned object(s) from the R2 bucket")
+
+
 @click.command()
 @click.option(
     "--init", "do_init", is_flag=True, help="Create schema and the admin user"
@@ -77,17 +103,32 @@ def _cmd_txt_delete(admin_creds_path: str, skip_confirm: bool) -> None:
     help="Delete all txt and their R2 parts",
 )
 @click.option(
+    "--purge-bucket",
+    "do_purge_bucket",
+    is_flag=True,
+    help="Delete every object in the R2 bucket, regardless of the DB",
+)
+@click.option(
+    "--txt-clean-bucket",
+    "do_txt_clean_bucket",
+    is_flag=True,
+    help="Delete every R2 object not referenced by any txt in the DB",
+)
+@click.option(
     "--admin-creds",
     default="admin_creds.json",
     show_default=True,
-    help="Credential JSON file, required by --init, --txt-ingest, --txt-download, and --txt-delete",
+    help=(
+        "Credential JSON file, required by --init, --txt-ingest, "
+        "--txt-download, --txt-delete, --purge-bucket, and --txt-clean-bucket"
+    ),
 )
 @click.option(
     "--yes",
     "-y",
     "skip_confirm",
     is_flag=True,
-    help="Skip the --txt-delete confirmation prompt",
+    help="Skip the --txt-delete/--purge-bucket/--txt-clean-bucket confirmation prompt",
 )
 @click.option("--verbose", "-v", is_flag=True, help="Enable debug-level logging")
 def main(
@@ -95,6 +136,8 @@ def main(
     txt_ingest_dir: str | None,
     txt_download_dir: str | None,
     do_txt_delete: bool,
+    do_purge_bucket: bool,
+    do_txt_clean_bucket: bool,
     admin_creds: str,
     skip_confirm: bool,
     verbose: bool,
@@ -120,6 +163,13 @@ def main(
     if do_txt_delete:
         _cmd_txt_delete(admin_creds, skip_confirm)
         return
+    if do_purge_bucket:
+        _cmd_purge_bucket(admin_creds, skip_confirm)
+        return
+    if do_txt_clean_bucket:
+        _cmd_txt_clean_bucket(admin_creds, skip_confirm)
+        return
     raise click.UsageError(
-        "No action specified. Use --init, --txt-ingest DIR, --txt-download DIR, or --txt-delete."
+        "No action specified. Use --init, --txt-ingest DIR, --txt-download DIR, "
+        "--txt-delete, --purge-bucket, or --txt-clean-bucket."
     )

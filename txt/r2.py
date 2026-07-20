@@ -60,6 +60,18 @@ class R2Client:
         self._client.delete_object(Bucket=self._bucket, Key=key)
         logger.debug("Deleted %s", key)
 
+    def list_keys(self) -> list[str]:
+        """Every object key currently in the bucket, across as many
+        list_objects_v2 pages as it takes.
+        """
+        logger.debug("Listing all keys in bucket=%r", self._bucket)
+        keys = []
+        paginator = self._client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=self._bucket):
+            keys.extend(obj["Key"] for obj in page.get("Contents", []))
+        logger.debug("Listed %d key(s) in bucket=%r", len(keys), self._bucket)
+        return keys
+
     @staticmethod
     async def _with_retries(what: str, fn, *args):
         """Runs fn(*args) in the shared executor, retrying on failure with
@@ -100,4 +112,7 @@ class R2Client:
         return await self._with_retries(f"get {key}", self.get, key)
 
     async def delete_async(self, key: str) -> None:
-        await asyncio.get_running_loop().run_in_executor(_executor, self.delete, key)
+        await self._with_retries(f"delete {key}", self.delete, key)
+
+    async def list_keys_async(self) -> list[str]:
+        return await self._with_retries("list bucket keys", self.list_keys)
