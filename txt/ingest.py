@@ -239,7 +239,9 @@ class TxtIngester(TxtOwner):
         existing_names = self._existing_names(user_id, umk)
         to_ingest, skipped = self._filter_new_files(files, existing_names)
         if skipped:
-            logger.info("Skipping %d already-ingested file(s): %s", len(skipped), skipped)
+            logger.info(
+                "Skipping %d already-ingested file(s): %s", len(skipped), skipped
+            )
         return to_ingest
 
     async def add_dir(self, src: Path) -> list[int]:
