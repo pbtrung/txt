@@ -11,6 +11,7 @@ import brotli
 from . import base32
 from . import constants as c
 from .crypto import Blob
+from .opf import find_opf_sidecar, parse_opf_metadata
 from .owner import TxtOwner
 from .textproc import preprocess_text, split_parts
 
@@ -130,16 +131,34 @@ class TxtIngester(TxtOwner):
         )
 
     def _update_txt_metadata_entry(
-        self, user_id: int, umk: bytes, txt_id: int, name: str
+        self, user_id: int, umk: bytes, txt_id: int, name: str, metadata: dict | None
     ) -> None:
         # txt_metadata is one encrypted JSON blob per user, not one row per
         # doc (see docs/data_model.md) -- every update rewrites it whole.
         txt_metadata_key, content = self._load_txt_metadata(user_id, umk)
-        content[str(txt_id)] = {"name": name}
+        entry = {"name": name}
+        if metadata:
+            entry["metadata"] = metadata
+        content[str(txt_id)] = entry
         self._save_txt_metadata(user_id, txt_metadata_key, content)
         logger.debug(
             "Updated txt_metadata entry for txt_id=%d (user_id=%d)", txt_id, user_id
         )
+
+    @staticmethod
+    def _resolve_opf_metadata(path: Path) -> dict | None:
+        opf_path = find_opf_sidecar(path)
+        if opf_path is None:
+            return None
+        metadata = parse_opf_metadata(opf_path)
+        logger.info("%s: found OPF sidecar %s (%d field(s))", path, opf_path, len(metadata))
+        return metadata
+
+    def _update_metadata_for_file(
+        self, user_id: int, umk: bytes, txt_id: int, path: Path
+    ) -> None:
+        metadata = self._resolve_opf_metadata(path)
+        self._update_txt_metadata_entry(user_id, umk, txt_id, path.name, metadata)
 
     async def _gather_uploads(
         self, path: Path, txt_key: bytes, raw_parts: list[bytes]
@@ -190,7 +209,7 @@ class TxtIngester(TxtOwner):
         try:
             txt_id = self._insert_txt_row(user_id, umk, txt_key)
             self._insert_part_rows(txt_id, parts)
-            self._update_txt_metadata_entry(user_id, umk, txt_id, path.name)
+            self._update_metadata_for_file(user_id, umk, txt_id, path)
             self.db.conn.commit()
             return txt_id
         except Exception:

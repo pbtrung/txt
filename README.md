@@ -54,7 +54,7 @@ Initialize the schema and the admin account (safe to re-run — it fills in anyt
 python3 txt.py --init --admin-creds admin_creds.json
 ```
 
-Ingest every `.txt` file (matched case-insensitively) from a directory into the vault:
+Ingest every `.txt` file (matched case-insensitively) from a directory into the vault — already-ingested filenames are skipped, and a `<name>.epub.txt` file with a sibling `<name>.opf` (a Calibre metadata sidecar, also matched case-insensitively) gets that OPF's `<metadata>` recorded alongside it:
 
 ```sh
 python3 txt.py --txt-ingest txt_src/ --admin-creds admin_creds.json
