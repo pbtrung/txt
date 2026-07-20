@@ -1,0 +1,73 @@
+/*
+ * The one deliberate brand touch (docs/ui.md): a brass/gold primary accent,
+ * lighter and more saturated in dark mode, darker and more muted in light
+ * mode.
+ *
+ * Overriding --bs-primary/--bs-primary-rgb alone is *not* enough: stock
+ * Bootstrap's precompiled CSS bakes literal hex colors into most
+ * components' own custom properties (--bs-btn-bg, --bs-progress-bar-bg,
+ * --bs-list-group-active-bg, --bs-nav-pills-link-active-bg, ...) rather than
+ * referencing var(--bs-primary) -- only a handful of utilities
+ * (.text-primary, .text-bg-primary, .border-primary, .link-primary) and the
+ * color-mode-derived *-text-emphasis/-bg-subtle/-border-subtle tokens
+ * actually read var(--bs-primary-rgb) at runtime. So this overrides both:
+ * the root tokens (for the utilities that do reference them) and each
+ * stock component's own hardcoded custom properties (for the ones that
+ * don't), scoped per color mode since Bootstrap itself never varies these
+ * hardcoded values by [data-bs-theme] -- confirmed by inspecting
+ * node_modules/bootstrap/dist/css/bootstrap.css directly rather than
+ * assuming.
+ */
+
+:root,
+[data-bs-theme="light"] {
+  --bs-primary: #8a6f23;
+  --bs-primary-rgb: 138, 111, 35;
+  --bs-primary-text-emphasis: #5c4a17;
+  --bs-primary-bg-subtle: #f5efdc;
+  --bs-primary-border-subtle: #e0d3a5;
+  --bs-link-color: var(--bs-primary);
+  --bs-link-color-rgb: var(--bs-primary-rgb);
+  --bs-link-hover-color: #6e5719;
+  --bs-link-hover-color-rgb: 110, 87, 25;
+
+  --brass-hover: #79621f;
+  --brass-active: #6e591c;
+}
+
+[data-bs-theme="dark"] {
+  --bs-primary: #d4af37;
+  --bs-primary-rgb: 212, 175, 55;
+  --bs-primary-text-emphasis: #e8cd7a;
+  --bs-primary-bg-subtle: #3a2f0f;
+  --bs-primary-border-subtle: #5c4a17;
+  --bs-link-color: var(--bs-primary);
+  --bs-link-color-rgb: var(--bs-primary-rgb);
+  --bs-link-hover-color: #e2c565;
+  --bs-link-hover-color-rgb: 226, 197, 101;
+
+  --brass-hover: #bb9a30;
+  --brass-active: #aa8c2c;
+}
+
+/* .progress-bar and the active .list-group-item/.nav-pills item -- both
+   hardcode #0d6efd at :root with no per-theme variance of their own. */
+:root {
+  --bs-progress-bar-bg: var(--bs-primary);
+  --bs-list-group-active-bg: var(--bs-primary);
+  --bs-list-group-active-border-color: var(--bs-primary);
+  --bs-nav-pills-link-active-bg: var(--bs-primary);
+}
+
+/* .btn-primary also hardcodes every one of its states at the class level. */
+.btn-primary {
+  --bs-btn-bg: var(--bs-primary);
+  --bs-btn-border-color: var(--bs-primary);
+  --bs-btn-hover-bg: var(--brass-hover);
+  --bs-btn-hover-border-color: var(--brass-hover);
+  --bs-btn-active-bg: var(--brass-active);
+  --bs-btn-active-border-color: var(--brass-active);
+  --bs-btn-disabled-bg: var(--bs-primary);
+  --bs-btn-disabled-border-color: var(--bs-primary);
+  --bs-btn-focus-shadow-rgb: var(--bs-primary-rgb);
+}
