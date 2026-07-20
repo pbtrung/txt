@@ -51,11 +51,20 @@ class TxtDownloader(TxtOwner):
         name = names.get(txt_id, f"txt_{txt_id}.txt")
         out_path = dst / name
         total = 0
-        with out_path.open("wb") as f:
+        try:
+            with out_path.open("wb") as f:
+                for task in tasks:
+                    part = await task
+                    f.write(part)
+                    total += len(part)
+        except Exception as exc:
             for task in tasks:
-                part = await task
-                f.write(part)
-                total += len(part)
+                task.cancel()
+            out_path.unlink(missing_ok=True)
+            raise RuntimeError(
+                f"txt_id={txt_id}: failed to fetch part(s) from R2 after retries; "
+                f"deleted partial file {out_path}"
+            ) from exc
         logger.info(
             "txt_id=%d: wrote %s (%d bytes from %d part(s))",
             txt_id,
