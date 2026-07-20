@@ -36,3 +36,10 @@ htmlcov/
 *.json
 *.txt
 .claude/
+
+# ui/ is a normal npm project; its package/tsconfig JSON files aren't secrets
+!ui/package.json
+!ui/package-lock.json
+!ui/tsconfig.json
+!ui/tsconfig.*.json
+*.tsbuildinfo
