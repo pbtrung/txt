@@ -166,7 +166,7 @@ export function ReaderScreen() {
                 </span>
                 <button
                   type="button"
-                  className="btn btn-sm btn-outline-secondary border-0 flex-shrink-0"
+                  className="btn btn-xs btn-outline-secondary border-0 flex-shrink-0"
                   aria-label={`Remove this bookmark (part ${bookmark.partNum}, line ${bookmark.line})`}
                   onClick={(event) => {
                     event.stopPropagation();
