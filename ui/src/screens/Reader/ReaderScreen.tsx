@@ -162,7 +162,7 @@ export function ReaderScreen() {
   }
 
   return (
-    <div className="shell-80 d-flex flex-column vh-100">
+    <div className="shell-60 d-flex flex-column vh-100">
       <div className="border-bottom d-flex align-items-center gap-3 ps-2 ps-sm-3 pe-3 py-2">
         <button
           type="button"
