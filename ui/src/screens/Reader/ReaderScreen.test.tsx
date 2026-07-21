@@ -66,6 +66,70 @@ async function openBookmarks() {
 }
 
 describe("ReaderScreen", () => {
+  it("shows an icon-only back button, no 'Library' text", () => {
+    renderReader(baseResult());
+    const back = screen.getByRole("button", { name: /library/i });
+    expect(back).toHaveAccessibleName("Back to library");
+    expect(back).not.toHaveTextContent("Library");
+  });
+
+  it("renders the author as a dedicated line for small screens, alongside the inline version for larger ones", () => {
+    renderReader(baseResult());
+    const mobileAuthor = document.querySelector(".d-sm-none");
+    expect(mobileAuthor).toHaveTextContent("L. E. Modesitt, Jr.");
+  });
+
+  it("uses small (btn-sm) Previous/Next buttons, matching the top bar's buttons", () => {
+    renderReader(baseResult());
+    expect(screen.getByRole("button", { name: /previous/i })).toHaveClass("btn-sm");
+    expect(screen.getByRole("button", { name: /next/i })).toHaveClass("btn-sm");
+  });
+
+  describe("editable part number", () => {
+    it("shows the current part number and total", () => {
+      renderReader(baseResult());
+      expect(screen.getByRole("textbox", { name: /go to part/i })).toHaveValue("14");
+      expect(screen.getByText("/ 41")).toBeInTheDocument();
+    });
+
+    it("jumps to a typed part number on Enter", async () => {
+      const goToPart = vi.fn();
+      renderReader(baseResult({ goToPart }));
+      const input = screen.getByRole("textbox", { name: /go to part/i });
+      await userEvent.clear(input);
+      await userEvent.type(input, "7{Enter}");
+      expect(goToPart).toHaveBeenCalledWith(7);
+    });
+
+    it("jumps on blur too", async () => {
+      const goToPart = vi.fn();
+      renderReader(baseResult({ goToPart }));
+      const input = screen.getByRole("textbox", { name: /go to part/i });
+      await userEvent.clear(input);
+      await userEvent.type(input, "3");
+      await userEvent.click(document.body);
+      expect(goToPart).toHaveBeenCalledWith(3);
+    });
+
+    it("resets to the current part instead of jumping when cleared to nothing", async () => {
+      const goToPart = vi.fn();
+      renderReader(baseResult({ goToPart }));
+      const input = screen.getByRole("textbox", { name: /go to part/i });
+      await userEvent.clear(input);
+      await userEvent.click(document.body);
+      expect(goToPart).not.toHaveBeenCalled();
+      expect(input).toHaveValue("14");
+    });
+
+    it("strips non-digits and caps at 3 digits while typing", async () => {
+      renderReader(baseResult());
+      const input = screen.getByRole("textbox", { name: /go to part/i });
+      await userEvent.clear(input);
+      await userEvent.type(input, "12a34b5");
+      expect(input).toHaveValue("123");
+    });
+  });
+
   it("renders the current part's text, split into lines", () => {
     renderReader(baseResult());
     expect(screen.getByText("First paragraph of part 14.")).toBeInTheDocument();
@@ -157,6 +221,13 @@ describe("ReaderScreen", () => {
     it("is closed by default", () => {
       renderReader(baseResult());
       expect(screen.queryByText("Part 14 · Line 1")).not.toBeInTheDocument();
+    });
+
+    it("opens upward (it's anchored in the bottom bar, not the top bar)", async () => {
+      renderReader(baseResult());
+      await openBookmarks();
+      const menu = screen.getByText("Part 14 · Line 1").closest(".dropdown-menu");
+      expect(menu).toHaveClass("reader-dropdown-menu-up");
     });
 
     it("shows the filled icon when the book has bookmarks, outline otherwise", () => {
