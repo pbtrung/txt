@@ -168,7 +168,13 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   const removeAccessEntry = useCallback(
     async (txtId: number) => {
       if (!session) throw new Error("vault is locked");
-      const next = await removeAccessEntryData(session.db, session.userId, session.txtAccessKey, accessMapRef.current, txtId);
+      const next = await removeAccessEntryData(
+        session.db,
+        session.userId,
+        session.txtAccessKey,
+        accessMapRef.current,
+        txtId,
+      );
       setAccessMap(next);
     },
     [session, setAccessMap],

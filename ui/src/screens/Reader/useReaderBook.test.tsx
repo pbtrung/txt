@@ -80,7 +80,12 @@ describe("useReaderBook", () => {
     expect(result.current.info?.title).toBe("The White Order");
 
     await waitFor(() => expect(result.current.partText).toBe("Part fourteen's text."));
-    expect(partsModule.fetchPart).toHaveBeenCalledWith(session.r2Client, session.r2Config, expect.any(Uint8Array), "path-14");
+    expect(partsModule.fetchPart).toHaveBeenCalledWith(
+      session.r2Client,
+      session.r2Config,
+      expect.any(Uint8Array),
+      "path-14",
+    );
     expect(recordReadPosition).toHaveBeenCalledWith(7, expect.objectContaining({ lastPartNum: 14 }));
   });
 
@@ -187,7 +192,9 @@ describe("useReaderBook", () => {
     const { result } = renderReaderBook(5);
     await waitFor(() => expect(result.current.loading).toBe(false));
 
-    expect(result.current.bookmarks).toEqual([{ partNum: 1, line: 2, txtPreview: "some preview text", createdAt: 1000 }]);
+    expect(result.current.bookmarks).toEqual([
+      { partNum: 1, line: 2, txtPreview: "some preview text", createdAt: 1000 },
+    ]);
   });
 
   it("removeBookmark() calls removeBookmarkEntry with the given createdAt", async () => {

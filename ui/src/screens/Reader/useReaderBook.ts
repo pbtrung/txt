@@ -95,9 +95,14 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
       const requestedPart = Number(searchParams.get("part"));
       const requestedLine = Number(searchParams.get("line"));
       const initialPart =
-        Number.isInteger(requestedPart) && requestedPart > 0 ? requestedPart : accessMap.get(txtId)?.lastPartNum ?? 1;
+        Number.isInteger(requestedPart) && requestedPart > 0 ? requestedPart : (accessMap.get(txtId)?.lastPartNum ?? 1);
       setCurrentPartNum(clampPartNum(initialPart, count));
-      if (Number.isInteger(requestedPart) && requestedPart > 0 && Number.isInteger(requestedLine) && requestedLine > 0) {
+      if (
+        Number.isInteger(requestedPart) &&
+        requestedPart > 0 &&
+        Number.isInteger(requestedLine) &&
+        requestedLine > 0
+      ) {
         setTargetLine(requestedLine);
       }
       setLoading(false);

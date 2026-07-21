@@ -17,7 +17,14 @@ function fakeClient(rows: Record<string, unknown[]>): Client {
     async execute({ sql }: { sql: string; args?: unknown[] }) {
       for (const [needle, resultRows] of Object.entries(rows)) {
         if (sql.includes(needle)) {
-          return { rows: resultRows, columns: [], columnTypes: [], rowsAffected: 0, lastInsertRowid: undefined, toJSON: () => ({}) };
+          return {
+            rows: resultRows,
+            columns: [],
+            columnTypes: [],
+            rowsAffected: 0,
+            lastInsertRowid: undefined,
+            toJSON: () => ({}),
+          };
         }
       }
       throw new Error(`fakeClient: no handler for SQL: ${sql}`);

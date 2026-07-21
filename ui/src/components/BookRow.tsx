@@ -46,7 +46,9 @@ export function BookRow({ book, onClick, onDelete }: BookRowProps) {
         {subtitle && <span className="d-block small text-body-secondary text-truncate">{subtitle}</span>}
       </span>
       <span className="d-flex align-items-center gap-2 flex-shrink-0">
-        {status === "in-progress" && <span className="small text-body-secondary text-nowrap">Part {book.lastPartNum}</span>}
+        {status === "in-progress" && (
+          <span className="small text-body-secondary text-nowrap">Part {book.lastPartNum}</span>
+        )}
         {onDelete && (
           <button
             type="button"

@@ -72,7 +72,10 @@ export async function loadTxtMetadata(db: Client, userId: number, umk: Uint8Arra
   if (!row || row.content === null) {
     return new Map();
   }
-  const txtMetadataKey = await blob.decrypt(umk, requireBlobBytes(row.txt_metadata_key, "txt_metadata.txt_metadata_key"));
+  const txtMetadataKey = await blob.decrypt(
+    umk,
+    requireBlobBytes(row.txt_metadata_key, "txt_metadata.txt_metadata_key"),
+  );
   const contentBytes = await blob.decrypt(txtMetadataKey, requireBlobBytes(row.content, "txt_metadata.content"), true);
   const content = JSON.parse(new TextDecoder().decode(contentBytes)) as Record<string, TxtMetadataEntry>;
 
