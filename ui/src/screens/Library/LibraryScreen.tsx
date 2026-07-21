@@ -358,9 +358,13 @@ export function LibraryScreen() {
                   {recentBookmarkItems.map((item) => (
                     <BookmarkRow
                       key={`${item.txtId}-${item.createdAt}`}
-                      item={item}
+                      title={item.info.title}
+                      partNum={item.partNum}
+                      line={item.line}
+                      txtPreview={item.txtPreview}
                       onClick={() => openBookmark(item)}
                       onDelete={() => void removeBookmarkEntry(item.txtId, item.createdAt)}
+                      deleteAriaLabel={`Remove this bookmark in ${item.info.title}`}
                     />
                   ))}
                   {recentBookmarkItems.length === 0 && (

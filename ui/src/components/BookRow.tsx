@@ -5,8 +5,8 @@
 // view's Continue Reading section doesn't show it). An optional onDelete
 // renders a trailing "x" (also just Continue Reading).
 
-import type { KeyboardEvent } from "react";
-
+import { ClickableRow } from "./ClickableRow";
+import { DeleteButton } from "./DeleteButton";
 import { bookStatus, type LibraryBook } from "../screens/Library/libraryModel";
 
 interface BookRowProps {
@@ -22,22 +22,10 @@ export function BookRow({ book, onClick, onDelete, hidePartNum }: BookRowProps) 
     .filter((part): part is string => Boolean(part))
     .join(" · ");
 
-  function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      onClick();
-    }
-  }
-
   return (
-    // A plain button can't contain the nested delete button below, so this
-    // is a div playing the button role instead.
-    <div
-      role="button"
-      tabIndex={0}
-      className="list-group-item list-group-item-action d-flex justify-content-between align-items-center gap-3 py-3"
+    <ClickableRow
       onClick={onClick}
-      onKeyDown={handleKeyDown}
+      className="list-group-item list-group-item-action d-flex justify-content-between align-items-center gap-3 py-3"
     >
       {/* minWidth:0 lets a long title/subtitle actually truncate instead of
           forcing this flex item (and its siblings, e.g. the Library's left
@@ -51,20 +39,8 @@ export function BookRow({ book, onClick, onDelete, hidePartNum }: BookRowProps) 
         {status === "in-progress" && !hidePartNum && (
           <span className="small text-body-secondary text-nowrap">Part {book.lastPartNum}</span>
         )}
-        {onDelete && (
-          <button
-            type="button"
-            className="btn btn-xs btn-outline-secondary border-0"
-            aria-label={`Remove ${book.info.title} from Recent`}
-            onClick={(event) => {
-              event.stopPropagation();
-              onDelete();
-            }}
-          >
-            <i className="bi bi-x-lg" aria-hidden="true" />
-          </button>
-        )}
+        {onDelete && <DeleteButton onClick={onDelete} ariaLabel={`Remove ${book.info.title} from Recent`} />}
       </span>
-    </div>
+    </ClickableRow>
   );
 }

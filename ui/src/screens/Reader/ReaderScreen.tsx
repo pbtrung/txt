@@ -12,6 +12,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
+import { BookmarkRow } from "../../components/BookmarkRow";
 import { useDropdown } from "../../hooks/useDropdown";
 import { splitLines, truncatePreview } from "./readerModel";
 import { descriptionPlainText, sanitizeDescriptionHtml } from "./sanitizeHtml";
@@ -316,41 +317,16 @@ export function ReaderScreen() {
             >
               {bookmarks.length === 0 && <p className="small text-body-secondary mb-0">No bookmarks yet.</p>}
               {bookmarks.map((bookmark) => (
-                // A plain button can't contain the nested delete button below.
-                <div
+                <BookmarkRow
                   key={bookmark.createdAt}
-                  role="button"
-                  tabIndex={0}
-                  className="d-flex align-items-start gap-2 mb-2 w-100"
+                  partNum={bookmark.partNum}
+                  line={bookmark.line}
+                  txtPreview={bookmark.txtPreview}
                   onClick={() => goToBookmark(bookmark.partNum, bookmark.line)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      goToBookmark(bookmark.partNum, bookmark.line);
-                    }
-                  }}
-                >
-                  <i className="bi bi-bookmark-fill text-primary mt-1" aria-hidden="true" />
-                  <span className="flex-grow-1">
-                    <span className="small d-block">
-                      Part {bookmark.partNum} · Line {bookmark.line}
-                    </span>
-                    <span className="text-body-secondary fst-italic" style={{ fontSize: "0.75rem" }}>
-                      &ldquo;{bookmark.txtPreview}&rdquo;
-                    </span>
-                  </span>
-                  <button
-                    type="button"
-                    className="btn btn-xs btn-outline-secondary border-0 flex-shrink-0"
-                    aria-label={`Remove this bookmark (part ${bookmark.partNum}, line ${bookmark.line})`}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      removeBookmark(bookmark.createdAt);
-                    }}
-                  >
-                    <i className="bi bi-x-lg" aria-hidden="true" />
-                  </button>
-                </div>
+                  onDelete={() => removeBookmark(bookmark.createdAt)}
+                  deleteAriaLabel={`Remove this bookmark (part ${bookmark.partNum}, line ${bookmark.line})`}
+                  className="d-flex align-items-start gap-2 mb-2 w-100"
+                />
               ))}
             </div>
           )}
