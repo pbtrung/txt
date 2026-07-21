@@ -144,7 +144,7 @@ function LibraryNavContent({
           aria-label="Lock"
           title="Lock"
         >
-          <i className="bi bi-unlock" aria-hidden="true" />
+          <i className="bi bi-unlock text-primary" aria-hidden="true" />
         </button>
       </div>
     </>
@@ -223,8 +223,13 @@ export function LibraryScreen() {
         {/* lg+: a fixed-width cell -- same class (and width) as the sidebar
             below -- so the content cell beside it starts at the same x as
             the right pane's own content, and its border-end continues the
-            sidebar's vertical rule upward into the top bar. */}
-        <div className="library-nav border-end p-2 d-none d-lg-flex align-items-center">
+            sidebar's vertical rule upward into the top bar. .library-nav
+            sets flex-direction:column (for the sidebar's own content-above-
+            footer stacking), which flips align-items-center to a
+            *horizontal* centering here -- justify-content-center is what
+            actually centers the wordmark vertically in a column-direction
+            flex container, since its main axis is now the vertical one. */}
+        <div className="library-nav border-end p-2 d-none d-lg-flex align-items-center justify-content-center">
           <Wordmark />
         </div>
 
