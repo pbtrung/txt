@@ -283,20 +283,23 @@ export function LibraryScreen() {
         <div className="d-none d-lg-block">
           <Wordmark />
         </div>
-        <div className="flex-grow-1" style={{ minWidth: "10rem", maxWidth: "28rem" }}>
-          <div className="input-group">
-            <span className="input-group-text bg-transparent">
-              <i className="bi bi-search" aria-hidden="true" />
-            </span>
-            <input
-              type="search"
-              className="form-control"
-              placeholder="Search your library"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              aria-label="Search your library"
-            />
-          </div>
+        <div className="position-relative flex-grow-1" style={{ minWidth: "10rem", maxWidth: "28rem" }}>
+          {/* The icon sits inside the input itself (absolutely positioned,
+              padding-left on the input to make room) rather than Bootstrap's
+              input-group, which renders it as its own bordered segment
+              beside the input -- visually two joined boxes, not one. */}
+          <i
+            className="bi bi-search position-absolute top-50 start-0 translate-middle-y ms-3 text-body-secondary pe-none"
+            aria-hidden="true"
+          />
+          <input
+            type="search"
+            className="form-control ps-5"
+            placeholder="Search your library"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            aria-label="Search your library"
+          />
         </div>
       </div>
 
