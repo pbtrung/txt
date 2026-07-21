@@ -103,7 +103,10 @@ export function ReaderScreen() {
       </div>
 
       <div className="flex-grow-1 d-flex overflow-hidden">
-        <div className="flex-grow-1 overflow-auto px-4 py-4">
+        {/* On mobile there's no room for both panes at once, so opening the
+            side panel swaps it in for the reading pane instead of sitting
+            beside it -- at md+ they stay side by side, unaffected. */}
+        <div className={`flex-grow-1 overflow-auto px-4 py-4 ${sidePanelOpen ? "d-none d-md-block" : ""}`}>
           <div className="mx-auto" style={{ maxWidth: "42rem" }}>
             {!loading && (
               <div className="small text-body-secondary text-uppercase mb-3">
@@ -151,7 +154,7 @@ export function ReaderScreen() {
         </div>
 
         {sidePanelOpen && (
-          <div className="border-start p-3 overflow-auto d-none d-md-block" style={{ width: "18rem" }}>
+          <div className="reader-side-panel border-start p-3 overflow-auto">
             <div className="small text-body-secondary text-uppercase fw-semibold mb-2">About this book</div>
             <div className="fw-semibold">{info?.title ?? `txt_${numericTxtId}`}</div>
             {info?.author && <div>{info.author}</div>}
@@ -212,15 +215,19 @@ export function ReaderScreen() {
         )}
       </div>
 
-      <div className="border-top d-flex align-items-center gap-3 px-3 py-2">
+      <div className="border-top d-flex align-items-center gap-2 gap-sm-3 px-3 py-2">
         <button
           type="button"
           className="btn btn-outline-secondary"
           onClick={previous}
           disabled={loading || currentPartNum <= 1}
+          aria-label="Previous part"
         >
-          <i className="bi bi-chevron-left me-1" aria-hidden="true" />
-          Previous
+          <i className="bi bi-chevron-left d-sm-none" aria-hidden="true" />
+          <span className="d-none d-sm-inline">
+            <i className="bi bi-chevron-left me-1" aria-hidden="true" />
+            Previous
+          </span>
         </button>
         <span className="text-body-secondary small text-nowrap">
           Part {currentPartNum} / {partCount}
@@ -233,9 +240,13 @@ export function ReaderScreen() {
           className="btn btn-outline-secondary"
           onClick={next}
           disabled={loading || currentPartNum >= partCount}
+          aria-label="Next part"
         >
-          Next
-          <i className="bi bi-chevron-right ms-1" aria-hidden="true" />
+          <i className="bi bi-chevron-right d-sm-none" aria-hidden="true" />
+          <span className="d-none d-sm-inline">
+            Next
+            <i className="bi bi-chevron-right ms-1" aria-hidden="true" />
+          </span>
         </button>
       </div>
     </div>
