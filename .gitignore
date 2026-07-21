@@ -44,6 +44,7 @@ creds/
 !ui/tsconfig.json
 !ui/tsconfig.*.json
 !ui/leancrypto/package.json
+!ui/.prettierrc.json
 # ...and neither are its source-tree JSON files (test fixtures, etc.) --
 # credential JSONs live only at the repo root, never under ui/src/.
 !ui/src/**/*.json

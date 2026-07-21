@@ -49,14 +49,7 @@ export interface LeancryptoModule {
     out: number,
     outLen: number,
   ): number;
-  _lc_hmac(
-    hash: number,
-    key: number,
-    keyLen: number,
-    data: number,
-    dataLen: number,
-    out: number,
-  ): number;
+  _lc_hmac(hash: number, key: number, keyLen: number, data: number, dataLen: number, out: number): number;
   _lc_pbkdf2(
     hash: number,
     password: number,

@@ -37,7 +37,17 @@ const DIMENSION_LABEL: Record<BrowseDimension, string> = {
   publisher: "Publishers",
 };
 
-function NavItem({ active, label, count, onClick }: { active: boolean; label: string; count: number; onClick: () => void }) {
+function NavItem({
+  active,
+  label,
+  count,
+  onClick,
+}: {
+  active: boolean;
+  label: string;
+  count: number;
+  onClick: () => void;
+}) {
   return (
     <button
       type="button"
@@ -174,8 +184,18 @@ export function LibraryScreen() {
           style={{ overflowY: "auto" }}
         >
           <div className="list-group list-group-flush">
-            <NavItem active={view.kind === "recent"} label="Recent" count={recent.length} onClick={() => selectView({ kind: "recent" })} />
-            <NavItem active={view.kind === "all"} label="All books" count={(books ?? []).length} onClick={() => selectView({ kind: "all" })} />
+            <NavItem
+              active={view.kind === "recent"}
+              label="Recent"
+              count={recent.length}
+              onClick={() => selectView({ kind: "recent" })}
+            />
+            <NavItem
+              active={view.kind === "all"}
+              label="All books"
+              count={(books ?? []).length}
+              onClick={() => selectView({ kind: "all" })}
+            />
           </div>
           <div className="text-body-secondary small fw-semibold text-uppercase mt-3 mb-1 px-2">Browse</div>
           <div className="list-group list-group-flush">
@@ -211,7 +231,9 @@ export function LibraryScreen() {
 
             {!loading && view.kind === "recent" && (
               <>
-                <div className="small text-body-secondary text-uppercase fw-semibold px-3 pt-3 pb-1">Continue Reading</div>
+                <div className="small text-body-secondary text-uppercase fw-semibold px-3 pt-3 pb-1">
+                  Continue Reading
+                </div>
                 <div className="list-group list-group-flush">
                   {continueReading.map((book) => (
                     <BookRow
@@ -221,10 +243,14 @@ export function LibraryScreen() {
                       onDelete={() => void removeAccessEntry(book.txtId)}
                     />
                   ))}
-                  {continueReading.length === 0 && <p className="text-body-secondary px-3 pb-3">No books in progress yet.</p>}
+                  {continueReading.length === 0 && (
+                    <p className="text-body-secondary px-3 pb-3">No books in progress yet.</p>
+                  )}
                 </div>
 
-                <div className="small text-body-secondary text-uppercase fw-semibold px-3 pt-4 pb-1">Recent Bookmarks</div>
+                <div className="small text-body-secondary text-uppercase fw-semibold px-3 pt-4 pb-1">
+                  Recent Bookmarks
+                </div>
                 <div className="list-group list-group-flush">
                   {recentBookmarkItems.map((item) => (
                     <BookmarkRow
@@ -234,7 +260,9 @@ export function LibraryScreen() {
                       onDelete={() => void removeBookmarkEntry(item.txtId, item.createdAt)}
                     />
                   ))}
-                  {recentBookmarkItems.length === 0 && <p className="text-body-secondary px-3 pb-3">No bookmarks yet.</p>}
+                  {recentBookmarkItems.length === 0 && (
+                    <p className="text-body-secondary px-3 pb-3">No bookmarks yet.</p>
+                  )}
                 </div>
               </>
             )}
@@ -247,7 +275,11 @@ export function LibraryScreen() {
                     type="button"
                     className="list-group-item list-group-item-action d-flex justify-content-between align-items-center"
                     onClick={() =>
-                      selectView({ kind: "browseValue", dimension: (view as { dimension: BrowseDimension }).dimension, value: entry.value })
+                      selectView({
+                        kind: "browseValue",
+                        dimension: (view as { dimension: BrowseDimension }).dimension,
+                        value: entry.value,
+                      })
                     }
                   >
                     <span className="text-truncate" style={{ minWidth: 0 }}>

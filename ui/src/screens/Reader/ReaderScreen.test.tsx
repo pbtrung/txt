@@ -83,7 +83,10 @@ describe("ReaderScreen", () => {
   it("sanitizes a malicious description instead of executing it", () => {
     renderReader(
       baseResult({
-        info: { ...baseResult().info!, description: '<img src=x onerror="window.__pwned__=true">Safe text<script>window.__pwned__=true</script>' },
+        info: {
+          ...baseResult().info!,
+          description: '<img src=x onerror="window.__pwned__=true">Safe text<script>window.__pwned__=true</script>',
+        },
       }),
     );
     expect(screen.getByText("Safe text")).toBeInTheDocument();

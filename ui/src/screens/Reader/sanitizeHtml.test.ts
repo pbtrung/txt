@@ -5,7 +5,9 @@ import { sanitizeDescriptionHtml } from "./sanitizeHtml";
 
 describe("sanitizeDescriptionHtml", () => {
   it("keeps allowed formatting tags", () => {
-    const result = sanitizeDescriptionHtml("<p>Cerryl learns that he has <b>inherited</b> his father's <i>magic</i>.</p>");
+    const result = sanitizeDescriptionHtml(
+      "<p>Cerryl learns that he has <b>inherited</b> his father's <i>magic</i>.</p>",
+    );
     expect(result).toBe("<p>Cerryl learns that he has <b>inherited</b> his father's <i>magic</i>.</p>");
   });
 
@@ -32,7 +34,9 @@ describe("sanitizeDescriptionHtml", () => {
   });
 
   it("strips disallowed structural tags (e.g. iframe, img, style) but keeps their text", () => {
-    const result = sanitizeDescriptionHtml('<iframe src="https://evil.example"></iframe><style>body{}</style>Plain text');
+    const result = sanitizeDescriptionHtml(
+      '<iframe src="https://evil.example"></iframe><style>body{}</style>Plain text',
+    );
     expect(result).not.toContain("iframe");
     expect(result).not.toContain("style");
     expect(result).toContain("Plain text");

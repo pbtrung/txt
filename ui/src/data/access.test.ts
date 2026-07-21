@@ -45,9 +45,7 @@ describe("loadOrInitAccess", () => {
     const accessBlob = await blob.encrypt(txtAccessKey, new TextEncoder().encode(JSON.stringify(json)), {
       compressed: true,
     });
-    const execute = vi
-      .fn()
-      .mockResolvedValue(rowResult({ txt_access_key: keyBlob.buffer, access: accessBlob.buffer }));
+    const execute = vi.fn().mockResolvedValue(rowResult({ txt_access_key: keyBlob.buffer, access: accessBlob.buffer }));
     const db = { execute } as unknown as Client;
 
     const result = await loadOrInitAccess(db, 42, umk);

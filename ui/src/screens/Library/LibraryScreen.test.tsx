@@ -41,7 +41,13 @@ const books: LibraryBook[] = [
   }),
   book({
     txtId: 2,
-    info: { txtId: 2, name: "n2", title: "21 Lessons for the 21st Century", author: "Yuval Noah Harari", subjects: ["History"] },
+    info: {
+      txtId: 2,
+      name: "n2",
+      title: "21 Lessons for the 21st Century",
+      author: "Yuval Noah Harari",
+      subjects: ["History"],
+    },
     lastPartNum: 18,
     lastAccessedMs: 3000,
   }),

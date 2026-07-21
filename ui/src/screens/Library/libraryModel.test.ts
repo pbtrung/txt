@@ -109,7 +109,14 @@ describe("browseEntries / booksForDimensionValue", () => {
   const books = [
     book({
       txtId: 1,
-      info: { txtId: 1, name: "n1", title: "T1", author: "Author A", subjects: ["Fantasy", "Military"], publisher: "Pub X" },
+      info: {
+        txtId: 1,
+        name: "n1",
+        title: "T1",
+        author: "Author A",
+        subjects: ["Fantasy", "Military"],
+        publisher: "Pub X",
+      },
     }),
     book({
       txtId: 2,
