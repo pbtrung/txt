@@ -4,6 +4,9 @@
 // "last_accessed": int (unix ms)}, ...}, capped at TXT_ACCESS_LIMIT entries
 // (the client evicts the entry with the oldest last_accessed on overflow --
 // there's no DB-level enforcement, see the data model doc's Design Notes).
+// The load-or-init/save mechanics themselves (shared with bookmarks.ts) live
+// in perUserBlob.ts; this file only holds what's genuinely specific to
+// txt_access: its JSON shape and its eviction policy.
 //
 // Writes are best-effort: docs/credentials.md notes that a read-only Turso
 // token legitimately can't write here (the write-mediation layer for that
@@ -12,10 +15,10 @@
 
 import type { Client } from "@libsql/core/api";
 
-import * as blob from "../crypto/blob";
-import { randomBytes } from "../crypto/bytes";
 import { TXT_ACCESS_KEY_LEN, TXT_ACCESS_LIMIT } from "../crypto/constants";
-import { requireBlobBytes } from "./db";
+import { loadOrInitPerUserBlob, savePerUserBlob } from "./perUserBlob";
+
+const TABLE = { table: "txt_access", keyColumn: "txt_access_key", blobColumn: "access" };
 
 export interface ReadPosition {
   lastPartNum: number;
@@ -62,13 +65,7 @@ function evictOldest(map: AccessMap): void {
 }
 
 async function saveAccess(db: Client, userId: number, txtAccessKey: Uint8Array, map: AccessMap): Promise<void> {
-  const encrypted = await blob.encrypt(txtAccessKey, new TextEncoder().encode(JSON.stringify(toAccessJson(map))), {
-    compressed: true,
-  });
-  await db.execute({
-    sql: "UPDATE txt_access SET access = ? WHERE user_id = ?",
-    args: [encrypted, userId],
-  });
+  await savePerUserBlob(db, TABLE, userId, txtAccessKey, toAccessJson(map));
 }
 
 /** Loads this user's txt_access row, creating it (an encrypted empty object,
@@ -79,26 +76,16 @@ export async function loadOrInitAccess(
   userId: number,
   umk: Uint8Array,
 ): Promise<{ txtAccessKey: Uint8Array; accessMap: AccessMap }> {
-  const result = await db.execute({
-    sql: "SELECT txt_access_key, access FROM txt_access WHERE user_id = ?",
-    args: [userId],
-  });
-  const row = result.rows[0];
-  if (row) {
-    const txtAccessKey = await blob.decrypt(umk, requireBlobBytes(row.txt_access_key, "txt_access.txt_access_key"));
-    const decrypted = await blob.decrypt(txtAccessKey, requireBlobBytes(row.access, "txt_access.access"), true);
-    const json = JSON.parse(new TextDecoder().decode(decrypted)) as Record<string, AccessJson>;
-    return { txtAccessKey, accessMap: toAccessMap(json) };
-  }
-
-  const txtAccessKey = randomBytes(TXT_ACCESS_KEY_LEN);
-  const keyBlob = await blob.encrypt(umk, txtAccessKey);
-  const accessBlob = await blob.encrypt(txtAccessKey, new TextEncoder().encode("{}"), { compressed: true });
-  await db.execute({
-    sql: "INSERT INTO txt_access (user_id, txt_access_key, access) VALUES (?, ?, ?)",
-    args: [userId, keyBlob, accessBlob],
-  });
-  return { txtAccessKey, accessMap: new Map() };
+  const { key, value } = await loadOrInitPerUserBlob<AccessMap>(
+    db,
+    TABLE,
+    userId,
+    umk,
+    TXT_ACCESS_KEY_LEN,
+    (json) => toAccessMap(json as Record<string, AccessJson>),
+    new Map(),
+  );
+  return { txtAccessKey: key, accessMap: value };
 }
 
 /** Records a read position, evicting the least-recently-accessed txt_id if

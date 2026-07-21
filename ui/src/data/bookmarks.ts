@@ -4,16 +4,19 @@
 // "line": int, "txt_preview": str, "created_at": int (unix ms)}, ...], ...},
 // each txt_id's list capped at BOOKMARK_LIMIT entries (the client evicts the
 // oldest-created_at entry on overflow -- there's no DB-level enforcement,
-// see the data model doc's Design Notes).
+// see the data model doc's Design Notes). The load-or-init/save mechanics
+// themselves (shared with access.ts) live in perUserBlob.ts; this file only
+// holds what's genuinely specific to bookmarks: its JSON shape and its
+// eviction policy.
 //
 // Like txt_access, writes are best-effort -- see access.ts's comment.
 
 import type { Client } from "@libsql/core/api";
 
-import * as blob from "../crypto/blob";
-import { randomBytes } from "../crypto/bytes";
 import { BOOKMARK_KEY_LEN, BOOKMARK_LIMIT } from "../crypto/constants";
-import { requireBlobBytes } from "./db";
+import { loadOrInitPerUserBlob, savePerUserBlob } from "./perUserBlob";
+
+const TABLE = { table: "bookmarks", keyColumn: "bookmark_key", blobColumn: "bookmark" };
 
 export interface BookmarkEntry {
   partNum: number;
@@ -56,13 +59,7 @@ function toBookmarksJson(map: BookmarksMap): Record<string, BookmarkJson[]> {
 }
 
 async function saveBookmarks(db: Client, userId: number, bookmarkKey: Uint8Array, map: BookmarksMap): Promise<void> {
-  const encrypted = await blob.encrypt(bookmarkKey, new TextEncoder().encode(JSON.stringify(toBookmarksJson(map))), {
-    compressed: true,
-  });
-  await db.execute({
-    sql: "UPDATE bookmarks SET bookmark = ? WHERE user_id = ?",
-    args: [encrypted, userId],
-  });
+  await savePerUserBlob(db, TABLE, userId, bookmarkKey, toBookmarksJson(map));
 }
 
 /** Loads this user's bookmarks row, creating it (an encrypted empty object,
@@ -73,26 +70,16 @@ export async function loadOrInitBookmarks(
   userId: number,
   umk: Uint8Array,
 ): Promise<{ bookmarkKey: Uint8Array; bookmarksMap: BookmarksMap }> {
-  const result = await db.execute({
-    sql: "SELECT bookmark_key, bookmark FROM bookmarks WHERE user_id = ?",
-    args: [userId],
-  });
-  const row = result.rows[0];
-  if (row) {
-    const bookmarkKey = await blob.decrypt(umk, requireBlobBytes(row.bookmark_key, "bookmarks.bookmark_key"));
-    const decrypted = await blob.decrypt(bookmarkKey, requireBlobBytes(row.bookmark, "bookmarks.bookmark"), true);
-    const json = JSON.parse(new TextDecoder().decode(decrypted)) as Record<string, BookmarkJson[]>;
-    return { bookmarkKey, bookmarksMap: toBookmarksMap(json) };
-  }
-
-  const bookmarkKey = randomBytes(BOOKMARK_KEY_LEN);
-  const keyBlob = await blob.encrypt(umk, bookmarkKey);
-  const bookmarkBlob = await blob.encrypt(bookmarkKey, new TextEncoder().encode("{}"), { compressed: true });
-  await db.execute({
-    sql: "INSERT INTO bookmarks (user_id, bookmark_key, bookmark) VALUES (?, ?, ?)",
-    args: [userId, keyBlob, bookmarkBlob],
-  });
-  return { bookmarkKey, bookmarksMap: new Map() };
+  const { key, value } = await loadOrInitPerUserBlob<BookmarksMap>(
+    db,
+    TABLE,
+    userId,
+    umk,
+    BOOKMARK_KEY_LEN,
+    (json) => toBookmarksMap(json as Record<string, BookmarkJson[]>),
+    new Map(),
+  );
+  return { bookmarkKey: key, bookmarksMap: value };
 }
 
 /** Appends a bookmark for (txtId, partNum, line), evicting that txt_id's
