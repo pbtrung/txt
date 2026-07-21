@@ -126,7 +126,7 @@ export function LibraryScreen() {
   }
 
   return (
-    <div className="library-shell d-flex flex-column vh-100">
+    <div className="shell-80 d-flex flex-column vh-100">
       <div className="border-bottom d-flex flex-wrap align-items-center gap-2 gap-md-3 px-3 py-2">
         <button
           type="button"
@@ -155,7 +155,11 @@ export function LibraryScreen() {
         </div>
         <div className="ms-auto d-flex align-items-center gap-3">
           <StatusPill>Unlocked</StatusPill>
-          <button type="button" className="btn btn-primary btn-sm d-flex align-items-center gap-2" onClick={lock}>
+          <button
+            type="button"
+            className="btn btn-primary btn-sm rounded-pill d-flex align-items-center gap-2"
+            onClick={lock}
+          >
             <i className="bi bi-unlock" aria-hidden="true" />
             Lock
           </button>
