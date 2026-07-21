@@ -118,8 +118,6 @@ describe("fetchR2Config", () => {
       bucket: "my-bucket",
       readOnlyAccessKeyId: "ro-id",
       readOnlySecretAccessKey: "ro-secret",
-      readWriteAccessKeyId: undefined,
-      readWriteSecretAccessKey: undefined,
     });
   });
 });

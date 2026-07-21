@@ -17,23 +17,33 @@ describe("parseR2Config", () => {
       bucket: "my-bucket",
       readOnlyAccessKeyId: "ro-id",
       readOnlySecretAccessKey: "ro-secret",
-      readWriteAccessKeyId: undefined,
-      readWriteSecretAccessKey: undefined,
     });
   });
 
-  it("also carries read-write keys through when present (an admin-role account)", () => {
-    const result = parseR2Config({
-      endpoint: "https://acct.r2.cloudflarestorage.com",
-      region: "auto",
-      bucket: "my-bucket",
-      read_only_access_key_id: "ro-id",
-      read_only_secret_access_key: "ro-secret",
-      read_write_access_key_id: "rw-id",
-      read_write_secret_access_key: "rw-secret",
-    });
-    expect(result.readWriteAccessKeyId).toBe("rw-id");
-    expect(result.readWriteSecretAccessKey).toBe("rw-secret");
+  it("rejects a config carrying read_write_access_key_id (this UI is never an admin-role session)", () => {
+    expect(() =>
+      parseR2Config({
+        endpoint: "https://acct.r2.cloudflarestorage.com",
+        region: "auto",
+        bucket: "my-bucket",
+        read_only_access_key_id: "ro-id",
+        read_only_secret_access_key: "ro-secret",
+        read_write_access_key_id: "rw-id",
+      }),
+    ).toThrow("must not include read_write keys");
+  });
+
+  it("rejects a config carrying read_write_secret_access_key", () => {
+    expect(() =>
+      parseR2Config({
+        endpoint: "https://acct.r2.cloudflarestorage.com",
+        region: "auto",
+        bucket: "my-bucket",
+        read_only_access_key_id: "ro-id",
+        read_only_secret_access_key: "ro-secret",
+        read_write_secret_access_key: "rw-secret",
+      }),
+    ).toThrow("must not include read_write keys");
   });
 
   it("rejects a missing required field", () => {
