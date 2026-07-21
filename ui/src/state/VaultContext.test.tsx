@@ -13,8 +13,34 @@ vi.mock("../data/owner", () => ({
   unwrapTxtKey: vi.fn(),
   fetchR2Config: vi.fn(),
 }));
+vi.mock("../data/metadata", () => ({ loadTxtMetadata: vi.fn() }));
+vi.mock("../data/access", () => ({
+  loadOrInitAccess: vi.fn(),
+  setReadPosition: vi.fn(),
+  removeAccessEntry: vi.fn(),
+}));
+vi.mock("../data/bookmarks", () => ({
+  loadOrInitBookmarks: vi.fn(),
+  addBookmark: vi.fn(),
+  removeBookmark: vi.fn(),
+}));
 
+import * as accessData from "../data/access";
+import * as bookmarksData from "../data/bookmarks";
+import * as metadata from "../data/metadata";
 import * as owner from "../data/owner";
+
+/** Wires up the three post-auth loads (metadata/access/bookmarks) that
+ * unlock() now performs, so a successful-unlock test doesn't need to spell
+ * this out every time. */
+function mockLibraryLoads() {
+  vi.mocked(metadata.loadTxtMetadata).mockResolvedValue(new Map());
+  vi.mocked(accessData.loadOrInitAccess).mockResolvedValue({ txtAccessKey: new Uint8Array(64), accessMap: new Map() });
+  vi.mocked(bookmarksData.loadOrInitBookmarks).mockResolvedValue({
+    bookmarkKey: new Uint8Array(64),
+    bookmarksMap: new Map(),
+  });
+}
 
 const CONFIG = {
   turso_database_url: "libsql://example",
@@ -46,6 +72,7 @@ describe("VaultProvider", () => {
       readOnlyAccessKeyId: "id",
       readOnlySecretAccessKey: "secret",
     });
+    mockLibraryLoads();
 
     const { result } = renderVault();
     expect(result.current.status).toBe("locked");
@@ -96,6 +123,7 @@ describe("VaultProvider", () => {
       readOnlyAccessKeyId: "id",
       readOnlySecretAccessKey: "secret",
     });
+    mockLibraryLoads();
 
     const { result } = renderVault();
     await act(async () => {
