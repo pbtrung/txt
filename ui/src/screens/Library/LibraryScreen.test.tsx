@@ -118,10 +118,18 @@ describe("LibraryScreen", () => {
     expect(screen.getByText("The White Order")).toBeInTheDocument();
   });
 
-  it("shows Part N (no total, no progress bar) for an in-progress book", () => {
+  it("shows Part N (no total, no progress bar) for an in-progress book under All books", async () => {
     renderLibrary();
+    await userEvent.click(screen.getByRole("button", { name: /All books/ }));
     expect(screen.getByText("Part 14")).toBeInTheDocument();
     expect(screen.queryByText(/Part 14\/\d+/)).not.toBeInTheDocument();
+  });
+
+  it("does not show a part number under Continue Reading", () => {
+    renderLibrary();
+    expect(screen.getByText("The White Order")).toBeInTheDocument();
+    expect(screen.queryByText("Part 14")).not.toBeInTheDocument();
+    expect(screen.queryByText("Part 18")).not.toBeInTheDocument();
   });
 
   it("drills into Authors, then filters by the chosen author", async () => {
