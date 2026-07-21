@@ -52,9 +52,6 @@ export function ReaderScreen() {
     [info?.description],
   );
 
-  if (loading) {
-    return <p className="text-body-secondary p-4">Loading…</p>;
-  }
   if (error) {
     return (
       <div className="alert alert-danger m-4" role="alert">
@@ -89,12 +86,21 @@ export function ReaderScreen() {
       <div className="flex-grow-1 d-flex overflow-hidden">
         <div className="flex-grow-1 overflow-auto px-4 py-4">
           <div className="mx-auto" style={{ maxWidth: "42rem" }}>
-            <div className="small text-body-secondary text-uppercase mb-3">
-              Part {currentPartNum} of {partCount}
-            </div>
-            {info?.title && <h2 className="h4 mb-3">{info.title}</h2>}
-            {partTextLoading && <p className="text-body-secondary">Loading part…</p>}
-            {!partTextLoading &&
+            {!loading && (
+              <div className="small text-body-secondary text-uppercase mb-3">
+                Part {currentPartNum} of {partCount}
+              </div>
+            )}
+            {!loading && info?.title && <h2 className="h4 mb-3">{info.title}</h2>}
+            {(loading || partTextLoading) && (
+              <div className="d-flex justify-content-center py-5">
+                <div className="spinner-border text-primary" role="status">
+                  <span className="visually-hidden">Loading…</span>
+                </div>
+              </div>
+            )}
+            {!loading &&
+              !partTextLoading &&
               lines.map((line, i) => {
                 const lineNum = i + 1;
                 const isBookmarked = bookmarkedLines.has(lineNum);
@@ -182,7 +188,12 @@ export function ReaderScreen() {
       </div>
 
       <div className="border-top d-flex align-items-center gap-3 px-3 py-2">
-        <button type="button" className="btn btn-outline-secondary" onClick={previous} disabled={currentPartNum <= 1}>
+        <button
+          type="button"
+          className="btn btn-outline-secondary"
+          onClick={previous}
+          disabled={loading || currentPartNum <= 1}
+        >
           <i className="bi bi-chevron-left me-1" aria-hidden="true" />
           Previous
         </button>
@@ -192,7 +203,12 @@ export function ReaderScreen() {
         <div className="flex-grow-1">
           <ProgressBar percent={progressPercent} />
         </div>
-        <button type="button" className="btn btn-outline-secondary" onClick={next} disabled={currentPartNum >= partCount}>
+        <button
+          type="button"
+          className="btn btn-outline-secondary"
+          onClick={next}
+          disabled={loading || currentPartNum >= partCount}
+        >
           Next
           <i className="bi bi-chevron-right ms-1" aria-hidden="true" />
         </button>

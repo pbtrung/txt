@@ -155,9 +155,18 @@ describe("ReaderScreen", () => {
     expect(await screen.findByText("Library screen")).toBeInTheDocument();
   });
 
-  it("shows a loading state", () => {
+  it("shows a spinner in the reading pane while loading, but keeps the rest of the chrome", () => {
     renderReader(baseResult({ loading: true }));
-    expect(screen.getByText(/loading/i)).toBeInTheDocument();
+    expect(screen.getByRole("status")).toBeInTheDocument();
+    // The top bar (back-to-library, book title fallback) renders right away
+    // instead of being replaced by a full-page loading screen.
+    expect(screen.getByRole("button", { name: /library/i })).toBeInTheDocument();
+    expect(screen.queryByText("First paragraph of part 14.")).not.toBeInTheDocument();
+  });
+
+  it("shows a spinner in the reading pane while a part is (re)loading", () => {
+    renderReader(baseResult({ partTextLoading: true, partText: null }));
+    expect(screen.getByRole("status")).toBeInTheDocument();
   });
 
   it("shows an error state", () => {
