@@ -3,6 +3,25 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      DOMPurify (sanitizeHtml.ts) is the only thing standing between a
+      maliciously-shared document's OPF description and script execution --
+      this is defense-in-depth in case that's ever weakened by a future
+      change (e.g. widening its allowed tags). script-src/object-src/base-uri
+      are the load-bearing directives: same-origin scripts only (plus
+      wasm-unsafe-eval, which leancrypto's Emscripten/WASM build needs to
+      instantiate), no <object>/<embed>, no <base> tag hijacking relative
+      URLs. connect-src is intentionally unrestricted -- Turso's database URL
+      and R2's endpoint are per-account values from the user's own config/
+      r2_config, not fixed hosts this policy could otherwise pin down.
+      style-src allows 'unsafe-inline' for this app's own style={{...}}
+      JSX props (developer-authored, not attacker-influenced -- DOMPurify's
+      own attribute allowlist already excludes `style` from sanitized HTML).
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src *; object-src 'none'; base-uri 'self'; form-action 'self';"
+    />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Skypiea</title>
   </head>
