@@ -135,6 +135,16 @@ body,
   box-shadow: 0 0 0 0.15rem rgba(var(--bs-primary-rgb), 0.25);
 }
 
+/* Reader's font-size <select>: Bootstrap's default .form-select reserves
+   2.25rem of right padding for its dropdown arrow (positioned 0.75rem from
+   the right edge) -- generous for a full-width select, but in this narrow,
+   fixed-width box it leaves a noticeably large gap between short text like
+   "16px" and the arrow. Both tightened down. */
+.font-size-select {
+  padding-right: 1.25rem;
+  background-position: right 0.35rem center;
+}
+
 /* A smaller variant of Bootstrap's .btn-sm, for row-level delete buttons
    (Library's BookRow/BookmarkRow, Reader's bookmark list) that shouldn't
    compete visually with the row's own primary click target. */
