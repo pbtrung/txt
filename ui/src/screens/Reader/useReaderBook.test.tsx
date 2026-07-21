@@ -201,6 +201,25 @@ describe("useReaderBook", () => {
     expect(addBookmarkEntry).toHaveBeenCalledWith(5, 1, 2, "some preview text");
   });
 
+  it("bookmarkLine() removes the existing bookmark instead of adding a duplicate when the line is already bookmarked", async () => {
+    const bookmarksMap: BookmarksMap = new Map([
+      [5, [{ partNum: 1, line: 2, txtPreview: "some preview text", createdAt: 1000 }]],
+    ]);
+    mockVault(new Map(), bookmarksMap);
+    vi.mocked(ownerModule.partCount).mockResolvedValue(3);
+    vi.mocked(ownerModule.partRawPaths).mockResolvedValue(["p1", "p2", "p3"]);
+    vi.mocked(partsModule.fetchPart).mockResolvedValue("text");
+
+    const { result } = renderReaderBook(5);
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const addCallsBefore = addBookmarkEntry.mock.calls.length;
+    act(() => result.current.bookmarkLine(2, "some preview text"));
+
+    expect(removeBookmarkEntry).toHaveBeenCalledWith(5, 1000);
+    expect(addBookmarkEntry.mock.calls.length).toBe(addCallsBefore); // took the remove path, not add
+  });
+
   it("exposes the current book's bookmarks straight from bookmarksMap", async () => {
     const bookmarksMap: BookmarksMap = new Map([
       [5, [{ partNum: 1, line: 2, txtPreview: "some preview text", createdAt: 1000 }]],
