@@ -3,3 +3,25 @@ body,
 #root {
   height: 100%;
 }
+
+/* Reader screen: a line's bookmark toggle only appears on hover/focus of
+   that line, unless the line is already bookmarked (then it stays visible
+   as a status indicator, not just a hover affordance). */
+.reader-line .bookmark-toggle {
+  opacity: 0;
+  transition: opacity 0.1s ease-in-out;
+}
+.reader-line:hover .bookmark-toggle,
+.reader-line .bookmark-toggle:focus-visible,
+.reader-line .bookmark-toggle.is-bookmarked {
+  opacity: 1;
+}
+
+/* A smaller variant of Bootstrap's .btn-sm, for row-level delete buttons
+   (Library's BookRow/BookmarkRow, Reader's bookmark list) that shouldn't
+   compete visually with the row's own primary click target. */
+.btn-xs {
+  --bs-btn-padding-y: 0.1rem;
+  --bs-btn-padding-x: 0.35rem;
+  --bs-btn-font-size: 0.7rem;
+}
