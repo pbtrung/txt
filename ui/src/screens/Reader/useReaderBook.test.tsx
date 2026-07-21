@@ -108,6 +108,38 @@ describe("useReaderBook", () => {
     expect(result.current.currentPartNum).toBe(4);
   });
 
+  it("prefers a ?part=&line= query param over the saved read position, and sets targetLine", async () => {
+    mockVault(new Map([[3, { lastPartNum: 1, lastAccessedMs: 1 }]]));
+    vi.mocked(metadataModule.getBookInfo).mockResolvedValue(null);
+    vi.mocked(ownerModule.partCount).mockResolvedValue(5);
+    vi.mocked(ownerModule.partRawPaths).mockResolvedValue(["p1", "p2", "p3", "p4", "p5"]);
+    vi.mocked(partsModule.fetchPart).mockImplementation(async (_c, _cfg, _key, path) => `text for ${path}`);
+
+    const { result } = renderReaderBook(3, "/?part=4&line=7");
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.currentPartNum).toBe(4);
+    expect(result.current.targetLine).toBe(7);
+  });
+
+  it("goToBookmark() moves to the given part and sets targetLine", async () => {
+    mockVault();
+    vi.mocked(metadataModule.getBookInfo).mockResolvedValue(null);
+    vi.mocked(ownerModule.partCount).mockResolvedValue(5);
+    vi.mocked(ownerModule.partRawPaths).mockResolvedValue(["p1", "p2", "p3", "p4", "p5"]);
+    vi.mocked(partsModule.fetchPart).mockImplementation(async (_c, _cfg, _key, path) => `text for ${path}`);
+
+    const { result } = renderReaderBook(9);
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    act(() => result.current.goToBookmark(3, 5));
+
+    await waitFor(() => expect(result.current.currentPartNum).toBe(3));
+    expect(result.current.targetLine).toBe(5);
+
+    act(() => result.current.clearTargetLine());
+    expect(result.current.targetLine).toBeNull();
+  });
+
   it("next()/previous() move within [1, partCount] and re-fetch the new part", async () => {
     mockVault(new Map([[9, { lastPartNum: 1, lastAccessedMs: 1 }]]));
     vi.mocked(metadataModule.getBookInfo).mockResolvedValue(null);

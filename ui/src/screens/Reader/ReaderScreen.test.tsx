@@ -33,7 +33,10 @@ function baseResult(overrides: Partial<UseReaderBookResult> = {}): UseReaderBook
       { partNum: 14, line: 1, txtPreview: "First paragraph of part 14.", createdAt: 3000 },
       { partNum: 8, line: 2, txtPreview: "Some earlier line preview", createdAt: 2000 },
     ],
+    targetLine: null,
+    clearTargetLine: vi.fn(),
     goToPart: vi.fn(),
+    goToBookmark: vi.fn(),
     next: vi.fn(),
     previous: vi.fn(),
     bookmarkLine: vi.fn(),
@@ -132,21 +135,30 @@ describe("ReaderScreen", () => {
     expect(screen.getByRole("button", { name: /bookmark line 2/i })).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("jumps to a bookmark's part when it's clicked", async () => {
-    const goToPart = vi.fn();
-    renderReader(baseResult({ goToPart }));
+  it("jumps to a bookmark's exact part and line when it's clicked", async () => {
+    const goToBookmark = vi.fn();
+    renderReader(baseResult({ goToBookmark }));
     await userEvent.click(screen.getByText("Part 8 · Line 2"));
-    expect(goToPart).toHaveBeenCalledWith(8);
+    expect(goToBookmark).toHaveBeenCalledWith(8, 2);
   });
 
-  it("removes a bookmark via its delete button, without jumping to its part", async () => {
-    const goToPart = vi.fn();
+  it("removes a bookmark via its delete button, without jumping to it", async () => {
+    const goToBookmark = vi.fn();
     const removeBookmark = vi.fn();
-    renderReader(baseResult({ goToPart, removeBookmark }));
+    renderReader(baseResult({ goToBookmark, removeBookmark }));
     const row = screen.getByText("Part 8 · Line 2").closest('[role="button"]') as HTMLElement;
     await userEvent.click(within(row).getByRole("button", { name: /remove this bookmark/i }));
     expect(removeBookmark).toHaveBeenCalledWith(2000);
-    expect(goToPart).not.toHaveBeenCalled();
+    expect(goToBookmark).not.toHaveBeenCalled();
+  });
+
+  it("scrolls to and briefly highlights the target line once its text is ready", () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    renderReader(baseResult({ targetLine: 1 }));
+    expect(scrollIntoView).toHaveBeenCalled();
+    const lineEl = screen.getByText("First paragraph of part 14.").closest(".reader-line");
+    expect(lineEl).toHaveClass("is-highlighted");
   });
 
   it("navigates back to /library", async () => {
