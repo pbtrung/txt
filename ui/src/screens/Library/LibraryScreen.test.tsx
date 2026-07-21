@@ -160,10 +160,10 @@ describe("LibraryScreen", () => {
       expect(screen.getByText(/Powerful white mages killed/)).toBeInTheDocument();
     });
 
-    it("navigates to the reader at that part when clicked", async () => {
+    it("navigates to the reader at that exact part and line when clicked", async () => {
       renderLibrary(bookmarksMap);
       await userEvent.click(screen.getByText(/Powerful white mages killed/));
-      await waitFor(() => expect(screen.getByText(/Reader for \/read\/1\?part=14/)).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByText(/Reader for \/read\/1\?part=14&line=1/)).toBeInTheDocument());
     });
 
     it("deletes a bookmark via its delete button", async () => {
