@@ -73,6 +73,16 @@ body,
   margin-top: 0.5rem;
 }
 
+/* The Bookmarks dropdown lives in the bottom bar (anchored near the bottom
+   of the screen), so it opens upward instead -- same idea as Bootstrap's
+   own .dropup, which is equally inert here without its JS. */
+.reader-dropdown-menu-up {
+  top: auto;
+  bottom: 100%;
+  margin-top: 0;
+  margin-bottom: 0.5rem;
+}
+
 /* A smaller variant of Bootstrap's .btn-sm, for row-level delete buttons
    (Library's BookRow/BookmarkRow, Reader's bookmark list) that shouldn't
    compete visually with the row's own primary click target. */

@@ -64,11 +64,12 @@ Two panes: a catalog nav on the left, a plain list of books on the right — no 
 
 ## Screen 3 — Reader
 
-A full-width reading pane with a part-navigation bar along the bottom. "About this book" and "Bookmarks" aren't a persistent side panel — each is its own dropdown, closed by default, anchored to its own icon button in the top bar.
+A full-width reading pane with a part-navigation bar along the bottom. "About this book" and "Bookmarks" aren't a persistent side panel — each is its own dropdown, closed by default: Info hangs off the top bar (opens downward), Bookmarks off the bottom bar (opens upward, since it's anchored near the bottom of the screen).
 
 ```
 ┌────────────────────────────────────────────────────────────────────┐
-│ [<] Library   The White Order / L. E. Modesitt, Jr.      [bk] [i]  │
+│ [<]   The White Order                                        [i]   │
+│       L. E. Modesitt, Jr.                                          │
 ├────────────────────────────────────────────────────────────────────┤
 │ PART 14 OF 41                                                      │
 │                                                                     │
@@ -83,12 +84,11 @@ A full-width reading pane with a part-navigation bar along the bottom. "About th
 │    magician in the market square, he understands, all at once       │
 │    and far too late, exactly what he is.                            │
 ├────────────────────────────────────────────────────────────────────┤
-│ [< Previous]   Part 14 / 41  [========            ]  [Next >]      │
+│ [<]  [14]/ 41  [========            ]  [bk]  [>]                   │
 └────────────────────────────────────────────────────────────────────┘
 ```
 
-- **Top bar**: back-to-library, the current book's title/author, and two icon buttons — Bookmarks (filled when the book has any, outline otherwise) and Info — each toggling its own dropdown. Opening one closes the other; both close on an outside click or Escape, same as any dropdown.
+- **Top bar**: an icon-only back-to-library button (no label), the current book's title/author, and the Info button (toggles its dropdown, closed by default; closes on an outside click or Escape). Below the `sm` breakpoint the author drops to its own second line instead of sharing one with the title — no room for both there.
 - **Reading column**: comfortable line length, one part's text at a time — no chapter/whole-document view, always full width (there's no side panel competing for space). Each line has its own bookmark icon in the left gutter, only visible on hover/focus unless that line is already bookmarked (then it stays visible as a status indicator), filled in once bookmarked; there's no separate "bookmark this part" control.
-- **Bookmarks dropdown**: most recent first, by `created_at` — each entry showing which part and line, plus a short preview of that line's text; clicking one jumps to that exact line (scrolling to it and briefly highlighting it), not just its part. Each bookmark carries a small delete ("x") button that removes just that one, the same affordance as the Library's Recent Bookmarks rows.
 - **Info dropdown**: title, author, series if any, subject tags, and a short description pulled from the book's catalog metadata. A description longer than 200 characters shows truncated with an ellipsis and a "Show more"/"Show less" toggle rather than the full text up front.
-- **Bottom bar**: Previous/Next, the current part out of the total, and a slim progress track — the same progress indicator style used in the Library list, so a book's position reads consistently in both places.
+- **Bottom bar**: Previous/Next (small buttons, same size as the top bar's), an editable part-number box (up to 3 digits — typing a number and pressing Enter or clicking away jumps there, clamped to the book's actual range) followed by `/ <total>`, a slim progress track, and the Bookmarks button. Bookmarks lists entries most recent first by `created_at`, each showing which part and line plus a short preview of that line's text; clicking one jumps to that exact line (scrolling to it and briefly highlighting it), not just its part. Each bookmark carries a small delete ("x") button that removes just that one, the same affordance as the Library's Recent Bookmarks rows.

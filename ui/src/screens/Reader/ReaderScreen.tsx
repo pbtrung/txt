@@ -1,7 +1,8 @@
 // Screen 3 -- Reader (docs/ui.md): a reading pane with a part-navigation bar
-// along the bottom. "About this book" and "Bookmarks" are two independent
-// dropdowns anchored to their own top-bar buttons (closed by default) --
-// there's no persistent side panel; the reading pane is always full width.
+// along the bottom. "About this book" is a dropdown off the top bar;
+// "Bookmarks" is a dropdown off the bottom bar (opening upward, since it's
+// anchored near the bottom of the screen) -- both closed by default, no
+// persistent side panel, the reading pane is always full width.
 //
 // Bookmarking is per-line (docs/data_model.md's bookmarks: {part_num, line,
 // txt_preview}), not per-part: each line in the reading pane has its own
@@ -30,7 +31,8 @@ export function ReaderScreen() {
   const [bookmarksOpen, setBookmarksOpen] = useState(false);
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const [highlightedLine, setHighlightedLine] = useState<number | null>(null);
-  const menusRef = useRef<HTMLDivElement>(null);
+  const infoMenuRef = useRef<HTMLDivElement>(null);
+  const bookmarksMenuRef = useRef<HTMLDivElement>(null);
 
   const {
     loading,
@@ -43,6 +45,7 @@ export function ReaderScreen() {
     bookmarks,
     targetLine,
     clearTargetLine,
+    goToPart,
     goToBookmark,
     next,
     previous,
@@ -50,24 +53,47 @@ export function ReaderScreen() {
     removeBookmark,
   } = useReaderBook(numericTxtId);
 
+  // The bottom bar's editable part-number box: a local, freely-typeable
+  // string kept in sync with currentPartNum whenever *that* changes (paging,
+  // a bookmark jump, ...), but not on every keystroke -- otherwise typing
+  // would be overwritten mid-edit.
+  const [partInput, setPartInput] = useState(() => String(currentPartNum));
+  useEffect(() => setPartInput(String(currentPartNum)), [currentPartNum]);
+
+  function commitPartInput() {
+    const parsed = Number(partInput);
+    if (Number.isInteger(parsed) && parsed > 0) {
+      goToPart(parsed); // clamps to [1, partCount] itself
+    } else {
+      setPartInput(String(currentPartNum));
+    }
+  }
+
   // A fresh book starts with its description collapsed again.
   useEffect(() => setDescriptionExpanded(false), [numericTxtId]);
 
   // Closing on an outside click/Escape is what makes these read as dropdowns
   // rather than plain toggle panels -- there's no Bootstrap JS in this
   // project (only its CSS), so both the open/closed state and this behavior
-  // are hand-rolled instead of relying on its dropdown plugin.
+  // are hand-rolled instead of relying on its dropdown plugin. Each menu
+  // gets its own ref (they're not DOM siblings -- one's in the top bar, the
+  // other's in the bottom bar) so a click inside one doesn't close the other.
   useEffect(() => {
     if (!infoOpen && !bookmarksOpen) return;
-    function closeMenus() {
-      setInfoOpen(false);
-      setBookmarksOpen(false);
-    }
     function handlePointerDown(event: MouseEvent) {
-      if (menusRef.current && !menusRef.current.contains(event.target as Node)) closeMenus();
+      const target = event.target as Node;
+      if (infoOpen && infoMenuRef.current && !infoMenuRef.current.contains(target)) {
+        setInfoOpen(false);
+      }
+      if (bookmarksOpen && bookmarksMenuRef.current && !bookmarksMenuRef.current.contains(target)) {
+        setBookmarksOpen(false);
+      }
     }
     function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") closeMenus();
+      if (event.key === "Escape") {
+        setInfoOpen(false);
+        setBookmarksOpen(false);
+      }
     }
     document.addEventListener("mousedown", handlePointerDown);
     document.addEventListener("keydown", handleKeyDown);
@@ -140,125 +166,74 @@ export function ReaderScreen() {
   return (
     <div className="shell-80 d-flex flex-column vh-100">
       <div className="border-bottom d-flex align-items-center gap-3 px-3 py-2">
-        <button type="button" className="btn btn-link text-decoration-none px-0" onClick={() => navigate("/library")}>
-          <i className="bi bi-arrow-left me-1" aria-hidden="true" />
-          Library
+        <button
+          type="button"
+          className="btn btn-link text-decoration-none px-0"
+          onClick={() => navigate("/library")}
+          aria-label="Back to library"
+          title="Back to library"
+        >
+          <i className="bi bi-arrow-left" aria-hidden="true" />
         </button>
         <div className="flex-grow-1 text-truncate">
-          <span className="fw-semibold">{info?.title ?? `txt_${numericTxtId}`}</span>
-          {info?.author && <span className="text-body-secondary"> / {info.author}</span>}
+          <div className="text-truncate">
+            <span className="fw-semibold">{info?.title ?? `txt_${numericTxtId}`}</span>
+            {info?.author && <span className="text-body-secondary d-none d-sm-inline"> / {info.author}</span>}
+          </div>
+          {/* Below sm there's no room to share a line with the title -- the
+              author gets its own second line instead of being squeezed in. */}
+          {info?.author && <div className="text-body-secondary small text-truncate d-sm-none">{info.author}</div>}
         </div>
 
-        <div ref={menusRef} className="d-flex align-items-center gap-2">
-          <div className="dropdown position-relative">
-            <button
-              type="button"
-              className={`btn btn-sm ${bookmarksOpen ? "btn-primary" : "btn-outline-secondary"}`}
-              onClick={toggleBookmarks}
-              aria-expanded={bookmarksOpen}
-              aria-haspopup="true"
-              aria-label="Bookmarks"
-              title="Bookmarks"
+        <div ref={infoMenuRef} className="dropdown position-relative">
+          <button
+            type="button"
+            className={`btn btn-sm ${infoOpen ? "btn-primary" : "btn-outline-secondary"}`}
+            onClick={toggleInfo}
+            aria-expanded={infoOpen}
+            aria-haspopup="true"
+            aria-label="About this book"
+            title="About this book"
+          >
+            <i className="bi bi-info-lg" aria-hidden="true" />
+          </button>
+          {infoOpen && (
+            <div
+              className="dropdown-menu reader-dropdown-menu show p-3"
+              style={{ width: "20rem", maxWidth: "90vw", maxHeight: "70vh", overflowY: "auto" }}
             >
-              <i className={`bi ${bookmarks.length > 0 ? "bi-bookmark-fill" : "bi-bookmark"}`} aria-hidden="true" />
-            </button>
-            {bookmarksOpen && (
-              <div
-                className="dropdown-menu reader-dropdown-menu show p-3"
-                style={{ width: "20rem", maxWidth: "90vw", maxHeight: "70vh", overflowY: "auto" }}
-              >
-                {bookmarks.length === 0 && <p className="small text-body-secondary mb-0">No bookmarks yet.</p>}
-                {bookmarks.map((bookmark) => (
-                  // A plain button can't contain the nested delete button below.
-                  <div
-                    key={bookmark.createdAt}
-                    role="button"
-                    tabIndex={0}
-                    className="d-flex align-items-start gap-2 mb-2 w-100"
-                    onClick={() => goToBookmark(bookmark.partNum, bookmark.line)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        goToBookmark(bookmark.partNum, bookmark.line);
-                      }
-                    }}
-                  >
-                    <i className="bi bi-bookmark-fill text-primary mt-1" aria-hidden="true" />
-                    <span className="flex-grow-1">
-                      <span className="small d-block">
-                        Part {bookmark.partNum} · Line {bookmark.line}
-                      </span>
-                      <span className="text-body-secondary fst-italic" style={{ fontSize: "0.75rem" }}>
-                        &ldquo;{bookmark.txtPreview}&rdquo;
-                      </span>
+              <div className="fw-semibold">{info?.title ?? `txt_${numericTxtId}`}</div>
+              {info?.author && <div>{info.author}</div>}
+              {seriesLabel && <div className="text-body-secondary small">{seriesLabel}</div>}
+              {info && info.subjects.length > 0 && (
+                <div className="mt-2">
+                  {info.subjects.map((subject) => (
+                    <span key={subject} className="badge text-bg-secondary me-1 mb-1">
+                      {subject}
                     </span>
+                  ))}
+                </div>
+              )}
+              {descriptionHtml && (
+                <div className="fst-italic small mt-2">
+                  {descriptionExpanded || !descriptionIsLong ? (
+                    <span dangerouslySetInnerHTML={{ __html: descriptionHtml }} />
+                  ) : (
+                    <span>{truncatePreview(descriptionPlain ?? "", DESCRIPTION_PREVIEW_LEN)}</span>
+                  )}
+                  {descriptionIsLong && (
                     <button
                       type="button"
-                      className="btn btn-xs btn-outline-secondary border-0 flex-shrink-0"
-                      aria-label={`Remove this bookmark (part ${bookmark.partNum}, line ${bookmark.line})`}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        removeBookmark(bookmark.createdAt);
-                      }}
+                      className="btn btn-link btn-sm p-0 ms-1 align-baseline"
+                      onClick={() => setDescriptionExpanded((expanded) => !expanded)}
                     >
-                      <i className="bi bi-x-lg" aria-hidden="true" />
+                      {descriptionExpanded ? "Show less" : "Show more"}
                     </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="dropdown position-relative">
-            <button
-              type="button"
-              className={`btn btn-sm ${infoOpen ? "btn-primary" : "btn-outline-secondary"}`}
-              onClick={toggleInfo}
-              aria-expanded={infoOpen}
-              aria-haspopup="true"
-              aria-label="About this book"
-              title="About this book"
-            >
-              <i className="bi bi-info-lg" aria-hidden="true" />
-            </button>
-            {infoOpen && (
-              <div
-                className="dropdown-menu reader-dropdown-menu show p-3"
-                style={{ width: "20rem", maxWidth: "90vw", maxHeight: "70vh", overflowY: "auto" }}
-              >
-                <div className="fw-semibold">{info?.title ?? `txt_${numericTxtId}`}</div>
-                {info?.author && <div>{info.author}</div>}
-                {seriesLabel && <div className="text-body-secondary small">{seriesLabel}</div>}
-                {info && info.subjects.length > 0 && (
-                  <div className="mt-2">
-                    {info.subjects.map((subject) => (
-                      <span key={subject} className="badge text-bg-secondary me-1 mb-1">
-                        {subject}
-                      </span>
-                    ))}
-                  </div>
-                )}
-                {descriptionHtml && (
-                  <div className="fst-italic small mt-2">
-                    {descriptionExpanded || !descriptionIsLong ? (
-                      <span dangerouslySetInnerHTML={{ __html: descriptionHtml }} />
-                    ) : (
-                      <span>{truncatePreview(descriptionPlain ?? "", DESCRIPTION_PREVIEW_LEN)}</span>
-                    )}
-                    {descriptionIsLong && (
-                      <button
-                        type="button"
-                        className="btn btn-link btn-sm p-0 ms-1 align-baseline"
-                        onClick={() => setDescriptionExpanded((expanded) => !expanded)}
-                      >
-                        {descriptionExpanded ? "Show less" : "Show more"}
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -312,7 +287,7 @@ export function ReaderScreen() {
       <div className="border-top d-flex align-items-center gap-2 gap-sm-3 px-3 py-2">
         <button
           type="button"
-          className="btn btn-outline-secondary"
+          className="btn btn-sm btn-outline-secondary"
           onClick={previous}
           disabled={loading || currentPartNum <= 1}
           aria-label="Previous part"
@@ -323,15 +298,96 @@ export function ReaderScreen() {
             Previous
           </span>
         </button>
-        <span className="text-body-secondary small text-nowrap">
-          Part {currentPartNum} / {partCount}
-        </span>
+
+        <div className="d-flex align-items-center gap-1 text-body-secondary small text-nowrap">
+          <input
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            maxLength={3}
+            className="form-control form-control-sm text-center"
+            style={{ width: "3.5rem" }}
+            value={partInput}
+            disabled={loading}
+            onChange={(event) => setPartInput(event.target.value.replace(/\D/g, "").slice(0, 3))}
+            onBlur={commitPartInput}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                commitPartInput();
+                event.currentTarget.blur();
+              }
+            }}
+            aria-label="Go to part"
+          />
+          <span>/ {partCount}</span>
+        </div>
+
         <div className="flex-grow-1">
           <ProgressBar percent={progressPercent} />
         </div>
+
+        <div ref={bookmarksMenuRef} className="dropdown position-relative">
+          <button
+            type="button"
+            className={`btn btn-sm ${bookmarksOpen ? "btn-primary" : "btn-outline-secondary"}`}
+            onClick={toggleBookmarks}
+            aria-expanded={bookmarksOpen}
+            aria-haspopup="true"
+            aria-label="Bookmarks"
+            title="Bookmarks"
+          >
+            <i className={`bi ${bookmarks.length > 0 ? "bi-bookmark-fill" : "bi-bookmark"}`} aria-hidden="true" />
+          </button>
+          {bookmarksOpen && (
+            <div
+              className="dropdown-menu reader-dropdown-menu reader-dropdown-menu-up show p-3"
+              style={{ width: "20rem", maxWidth: "90vw", maxHeight: "70vh", overflowY: "auto" }}
+            >
+              {bookmarks.length === 0 && <p className="small text-body-secondary mb-0">No bookmarks yet.</p>}
+              {bookmarks.map((bookmark) => (
+                // A plain button can't contain the nested delete button below.
+                <div
+                  key={bookmark.createdAt}
+                  role="button"
+                  tabIndex={0}
+                  className="d-flex align-items-start gap-2 mb-2 w-100"
+                  onClick={() => goToBookmark(bookmark.partNum, bookmark.line)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      goToBookmark(bookmark.partNum, bookmark.line);
+                    }
+                  }}
+                >
+                  <i className="bi bi-bookmark-fill text-primary mt-1" aria-hidden="true" />
+                  <span className="flex-grow-1">
+                    <span className="small d-block">
+                      Part {bookmark.partNum} · Line {bookmark.line}
+                    </span>
+                    <span className="text-body-secondary fst-italic" style={{ fontSize: "0.75rem" }}>
+                      &ldquo;{bookmark.txtPreview}&rdquo;
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    className="btn btn-xs btn-outline-secondary border-0 flex-shrink-0"
+                    aria-label={`Remove this bookmark (part ${bookmark.partNum}, line ${bookmark.line})`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      removeBookmark(bookmark.createdAt);
+                    }}
+                  >
+                    <i className="bi bi-x-lg" aria-hidden="true" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         <button
           type="button"
-          className="btn btn-outline-secondary"
+          className="btn btn-sm btn-outline-secondary"
           onClick={next}
           disabled={loading || currentPartNum >= partCount}
           aria-label="Next part"
