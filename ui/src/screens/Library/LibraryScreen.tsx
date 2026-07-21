@@ -10,12 +10,13 @@
 // icon alone (not the full wordmark) rather than a separate hamburger
 // button next to it.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { BookmarkRow } from "../../components/BookmarkRow";
 import { BookRow } from "../../components/BookRow";
 import { Wordmark } from "../../components/Wordmark";
+import { useDropdown } from "../../hooks/useDropdown";
 import { useVault } from "../../state/VaultContext";
 import {
   allBooksSorted,
@@ -159,35 +160,12 @@ export function LibraryScreen() {
   // Below the lg breakpoint the left nav collapses into the wordmark's
   // dropdown; picking anything in it closes it again so the chosen view
   // actually comes into view.
-  const [navOpen, setNavOpen] = useState(false);
-  const navMenuRef = useRef<HTMLDivElement>(null);
+  const nav = useDropdown();
 
   function selectView(next: View) {
     setView(next);
-    setNavOpen(false);
+    nav.close();
   }
-
-  // Closing on an outside click/Escape is what makes this read as a
-  // dropdown rather than a plain toggle panel -- there's no Bootstrap JS in
-  // this project (only its CSS), so this is hand-rolled instead of relying
-  // on its dropdown plugin (same pattern as the Reader screen's dropdowns).
-  useEffect(() => {
-    if (!navOpen) return;
-    function handlePointerDown(event: MouseEvent) {
-      if (navMenuRef.current && !navMenuRef.current.contains(event.target as Node)) {
-        setNavOpen(false);
-      }
-    }
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") setNavOpen(false);
-    }
-    document.addEventListener("mousedown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [navOpen]);
 
   const authorEntries = useMemo(() => browseEntries(books ?? [], "author"), [books]);
   const subjectEntries = useMemo(() => browseEntries(books ?? [], "subject"), [books]);
@@ -256,21 +234,21 @@ export function LibraryScreen() {
             fixed-width alignment cell here -- below lg there's no
             persistent sidebar for it to line up against. */}
         <div
-          ref={navMenuRef}
+          ref={nav.ref}
           className="dropdown position-relative d-lg-none d-flex align-items-center gap-2 ps-2 ps-sm-3 py-2"
         >
           <button
             type="button"
-            className="btn btn-outline-secondary border-primary btn-sm d-flex align-items-center justify-content-center"
-            onClick={() => setNavOpen((open) => !open)}
-            aria-expanded={navOpen}
+            className={`btn btn-sm d-flex align-items-center justify-content-center ${nav.open ? "btn-primary" : "btn-outline-secondary border-primary"}`}
+            onClick={nav.toggle}
+            aria-expanded={nav.open}
             aria-haspopup="true"
             aria-label="Library menu"
           >
-            <i className="bi bi-book text-primary" aria-hidden="true" />
+            <i className={`bi bi-book ${nav.open ? "" : "text-primary"}`} aria-hidden="true" />
           </button>
           <span className="fw-semibold">Skypiea</span>
-          {navOpen && (
+          {nav.open && (
             <div
               className="dropdown-menu app-dropdown-menu app-dropdown-menu-start show p-2 d-flex flex-column"
               style={{ width: "16rem", maxWidth: "90vw", maxHeight: "70vh" }}
