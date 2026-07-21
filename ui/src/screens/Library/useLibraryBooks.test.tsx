@@ -31,8 +31,8 @@ function mockVault(session: VaultContextModule.VaultSession | null, accessMap = 
 }
 
 const metadataById = new Map<number, BookInfo>([
-  [1, { txtId: 1, name: "n1", title: "Title 1", subjects: [] }],
-  [2, { txtId: 2, name: "n2", title: "Title 2", subjects: [] }],
+  [1, { txtId: 1, name: "n1", title: "Title 1", subjects: [], rawMetadata: [] }],
+  [2, { txtId: 2, name: "n2", title: "Title 2", subjects: [], rawMetadata: [] }],
 ]);
 
 const session: VaultContextModule.VaultSession = {

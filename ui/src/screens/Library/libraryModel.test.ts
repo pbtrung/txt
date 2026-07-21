@@ -17,7 +17,13 @@ import {
 
 function book(overrides: Partial<LibraryBook> & { txtId: number }): LibraryBook {
   return {
-    info: { txtId: overrides.txtId, name: `t${overrides.txtId}`, title: `Title ${overrides.txtId}`, subjects: [] },
+    info: {
+      txtId: overrides.txtId,
+      name: `t${overrides.txtId}`,
+      title: `Title ${overrides.txtId}`,
+      subjects: [],
+      rawMetadata: [],
+    },
     lastPartNum: null,
     lastAccessedMs: null,
     ...overrides,
@@ -37,8 +43,8 @@ describe("bookStatus", () => {
 describe("buildLibraryBooks", () => {
   it("combines metadata with read position, keyed by txt_id", () => {
     const metadataById = new Map<number, BookInfo>([
-      [7, { txtId: 7, name: "n7", title: "Title 7", subjects: [] }],
-      [8, { txtId: 8, name: "n8", title: "Title 8", subjects: [] }],
+      [7, { txtId: 7, name: "n7", title: "Title 7", subjects: [], rawMetadata: [] }],
+      [8, { txtId: 8, name: "n8", title: "Title 8", subjects: [], rawMetadata: [] }],
     ]);
     const accessMap: AccessMap = new Map([[7, { lastPartNum: 14, lastAccessedMs: 1000 }]]);
 
@@ -51,7 +57,9 @@ describe("buildLibraryBooks", () => {
   });
 
   it("returns every metadata entry even with an empty access map", () => {
-    const metadataById = new Map<number, BookInfo>([[7, { txtId: 7, name: "n7", title: "Title 7", subjects: [] }]]);
+    const metadataById = new Map<number, BookInfo>([
+      [7, { txtId: 7, name: "n7", title: "Title 7", subjects: [], rawMetadata: [] }],
+    ]);
     expect(buildLibraryBooks(metadataById, new Map())).toHaveLength(1);
   });
 });
@@ -71,8 +79,8 @@ describe("recentBooks", () => {
 describe("allBooksSorted", () => {
   it("sorts by title", () => {
     const books = [
-      book({ txtId: 1, info: { txtId: 1, name: "b", title: "Beta", subjects: [] } }),
-      book({ txtId: 2, info: { txtId: 2, name: "a", title: "Alpha", subjects: [] } }),
+      book({ txtId: 1, info: { txtId: 1, name: "b", title: "Beta", subjects: [], rawMetadata: [] } }),
+      book({ txtId: 2, info: { txtId: 2, name: "a", title: "Alpha", subjects: [], rawMetadata: [] } }),
     ];
     expect(allBooksSorted(books).map((b) => b.info.title)).toEqual(["Alpha", "Beta"]);
   });
@@ -88,6 +96,7 @@ describe("matchesSearch", () => {
       author: "L. E. Modesitt, Jr.",
       subjects: ["Fantasy", "Military"],
       publisher: "Tor Publishing Group",
+      rawMetadata: [],
     },
   });
 
@@ -116,15 +125,24 @@ describe("browseEntries / booksForDimensionValue", () => {
         author: "Author A",
         subjects: ["Fantasy", "Military"],
         publisher: "Pub X",
+        rawMetadata: [],
       },
     }),
     book({
       txtId: 2,
-      info: { txtId: 2, name: "n2", title: "T2", author: "Author B", subjects: ["Fantasy"], publisher: "Pub X" },
+      info: {
+        txtId: 2,
+        name: "n2",
+        title: "T2",
+        author: "Author B",
+        subjects: ["Fantasy"],
+        publisher: "Pub X",
+        rawMetadata: [],
+      },
     }),
     book({
       txtId: 3,
-      info: { txtId: 3, name: "n3", title: "T3", subjects: [] }, // no author/publisher
+      info: { txtId: 3, name: "n3", title: "T3", subjects: [], rawMetadata: [] }, // no author/publisher
     }),
   ];
 
@@ -155,8 +173,8 @@ describe("browseEntries / booksForDimensionValue", () => {
 describe("recentBookmarks", () => {
   it("flattens every txt_id's bookmarks, most recently created first", () => {
     const metadataById = new Map<number, BookInfo>([
-      [7, { txtId: 7, name: "n7", title: "The White Order", subjects: [] }],
-      [8, { txtId: 8, name: "n8", title: "Unshrinking", subjects: [] }],
+      [7, { txtId: 7, name: "n7", title: "The White Order", subjects: [], rawMetadata: [] }],
+      [8, { txtId: 8, name: "n8", title: "Unshrinking", subjects: [], rawMetadata: [] }],
     ]);
     const bookmarksMap: BookmarksMap = new Map([
       [

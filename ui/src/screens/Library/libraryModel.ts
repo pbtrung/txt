@@ -106,7 +106,13 @@ export interface RecentBookmarkItem {
 export function recentBookmarks(bookmarksMap: BookmarksMap, metadataById: Map<number, BookInfo>): RecentBookmarkItem[] {
   const items: RecentBookmarkItem[] = [];
   for (const [txtId, entries] of bookmarksMap) {
-    const info = metadataById.get(txtId) ?? { txtId, name: `txt_${txtId}`, title: `txt_${txtId}`, subjects: [] };
+    const info = metadataById.get(txtId) ?? {
+      txtId,
+      name: `txt_${txtId}`,
+      title: `txt_${txtId}`,
+      subjects: [],
+      rawMetadata: [],
+    };
     for (const entry of entries) {
       items.push({
         txtId,
