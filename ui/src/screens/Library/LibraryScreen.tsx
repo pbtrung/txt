@@ -145,7 +145,12 @@ export function LibraryScreen() {
         </div>
         <div className="ms-auto d-flex align-items-center gap-3">
           <StatusPill>Unlocked</StatusPill>
-          <button type="button" className="btn btn-sm btn-outline-secondary" onClick={lock}>
+          <button
+            type="button"
+            className="btn btn-sm btn-outline-secondary rounded-pill px-3 py-2 d-flex align-items-center gap-1"
+            onClick={lock}
+          >
+            <i className="bi bi-unlock" aria-hidden="true" />
             Lock
           </button>
         </div>
