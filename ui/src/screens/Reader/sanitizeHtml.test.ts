@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
 
-import { sanitizeDescriptionHtml } from "./sanitizeHtml";
+import { descriptionPlainText, sanitizeDescriptionHtml } from "./sanitizeHtml";
 
 describe("sanitizeDescriptionHtml", () => {
   it("keeps allowed formatting tags", () => {
@@ -44,5 +44,21 @@ describe("sanitizeDescriptionHtml", () => {
 
   it("passes plain text (no markup) through unchanged", () => {
     expect(sanitizeDescriptionHtml("Just a plain description.")).toBe("Just a plain description.");
+  });
+});
+
+describe("descriptionPlainText", () => {
+  it("strips all markup, keeping only the text", () => {
+    const result = descriptionPlainText("<p>Cerryl learns that he has <b>inherited</b> his father's magic.</p>");
+    expect(result).toBe("Cerryl learns that he has inherited his father's magic.");
+  });
+
+  it("still strips a script tag's content, not just the tag", () => {
+    const result = descriptionPlainText('<p>Hello</p><script>alert("xss")</script>');
+    expect(result).toBe("Hello");
+  });
+
+  it("passes plain text through unchanged", () => {
+    expect(descriptionPlainText("Just a plain description.")).toBe("Just a plain description.");
   });
 });

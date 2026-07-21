@@ -44,10 +44,10 @@ Two panes: a catalog nav on the left, a plain list of books on the right — no 
 │ All books  10  │───────────────────────────────────────────────────│
 │                │ CONTINUE READING                                  │
 │ BROWSE         │───────────────────────────────────────────────────│
-│ Authors     9  │ 21 Lessons for the 21st Century      Part 18 [x]  │
+│ Authors     9  │ 21 Lessons for the 21st Century               [x]│
 │ Subjects   14  │ Yuval Noah Harari · History, Anthropology         │
 │ Publishers  9  │───────────────────────────────────────────────────│
-│                │ The White Order                      Part 14 [x] │
+│                │ The White Order                               [x]│
 │                │ L. E. Modesitt, Jr. · Fantasy, Military           │
 │                │───────────────────────────────────────────────────│
 │                │ RECENT BOOKMARKS                                  │
@@ -59,40 +59,36 @@ Two panes: a catalog nav on the left, a plain list of books on the right — no 
 
 - **Left nav**: Recent and All books as the two primary views, each with a count; a Browse group below for Authors / Subjects / Publishers, each also with a count. Recent is the default landing view.
 - **Right pane, All books/Browse views**: one row per book, two lines each — title on top, then `Author · Subject, Subject · Publisher` underneath. In-progress books show "Part N" at the right edge (the Library screen doesn't fetch a total part count — see the Reader screen for that — so there's no fraction or progress bar here, and no "Finished" state either); unstarted books show nothing there.
-- **Right pane, Recent view**: two stacked sections instead of a single list. "Continue Reading" is the book-row list above, most recently opened first; "Recent Bookmarks" below it flattens every bookmark across every book, most recently created first, each row showing the book title, `Part N · Line M`, and a short preview of that line's text — clicking one opens the reader at that spot. Every row in both sections carries a small delete ("x") button that removes just that entry (forgetting a book's read position, or discarding a bookmark) without deleting the book itself.
+- **Right pane, Recent view**: two stacked sections instead of a single list. "Continue Reading" is the book-row list above, most recently opened first — unlike the All books/Browse rows, it doesn't show a part number at all (this view is already scoped to "in progress", so it'd be redundant). "Recent Bookmarks" below it flattens every bookmark across every book, most recently created first, each row showing the book title, `Part N · Line M`, and a short preview of that line's text — clicking one opens the reader at that spot. Every row in both sections carries a small delete ("x") button that removes just that entry (forgetting a book's read position, or discarding a bookmark) without deleting the book itself.
 - Top bar stays a slim strip above both panes: wordmark, a search field, and a status pill confirming the vault is unlocked.
 
 ## Screen 3 — Reader
 
-Reading pane on the left, a slim metadata/bookmarks panel on the right, a part-navigation bar along the bottom.
+A full-width reading pane with a part-navigation bar along the bottom. "About this book" and "Bookmarks" aren't a persistent side panel — each is its own dropdown, closed by default, anchored to its own icon button in the top bar.
 
 ```
 ┌────────────────────────────────────────────────────────────────────┐
-│ [<] Library   The White Order / L. E. Modesitt, Jr.        [i]     │
-├───────────────────────────────────────────────┬────────────────────┤
-│ PART 14 OF 41                                 │ ABOUT THIS BOOK    │
-│                                               │ The White Order    │
-│ The White Order                               │ L. E. Modesitt, Jr.│
-│                                               │ Saga of Recluce, #8│
-│[bk] Powerful white mages killed Cerryl's      │                    │
-│    father to protect their control of the     │ [Fantasy][Mil.]    │
-│    world's magic. Raised by his aunt and      │ "...continues his  │
-│    uncle, Cerryl learns that he has           │ bestselling fantasy│
-│    inherited his father's magic abilities...  │ series"            │
-│                                               │                    │
-│[bk] When Cerryl witnesses a white mage        │ BOOKMARKS          │
-│    destroy a renegade magician in the         │ [bk] Part 14·Line 1│
-│    market square, he understands, all at      │  "Powerful white   │
-│    once and far too late, exactly what he is. │   mages killed..." │
-│                                               │ [bk] Part 8·Line 3 │
-│                                               │  "He knew that the │
-│                                               │   white robes..."  │
-├───────────────────────────────────────────────┴────────────────────┤
+│ [<] Library   The White Order / L. E. Modesitt, Jr.      [bk] [i]  │
+├────────────────────────────────────────────────────────────────────┤
+│ PART 14 OF 41                                                      │
+│                                                                     │
+│ The White Order                                                    │
+│                                                                     │
+│[bk] Powerful white mages killed Cerryl's father to protect their    │
+│    control of the world's magic. Raised by his aunt and uncle,      │
+│    Cerryl learns that he has inherited his father's magic           │
+│    abilities...                                                     │
+│                                                                     │
+│[bk] When Cerryl witnesses a white mage destroy a renegade            │
+│    magician in the market square, he understands, all at once       │
+│    and far too late, exactly what he is.                            │
+├────────────────────────────────────────────────────────────────────┤
 │ [< Previous]   Part 14 / 41  [========            ]  [Next >]      │
 └────────────────────────────────────────────────────────────────────┘
 ```
 
-- **Top bar**: back-to-library, the current book's title/author, and a single toggleable icon button that opens the "About this book" panel (shown active/open here so the panel's content is visible in the design).
-- **Reading column**: comfortable line length, one part's text at a time — no chapter/whole-document view. Each line has its own bookmark icon in the left gutter, filled in once bookmarked; there's no separate "bookmark this part" control.
-- **Side panel**: "About this book" (title, author, series if any, subject tags, a short description pulled from the book's catalog metadata) above "Bookmarks" (most recent first, by `created_at` — each showing which part and line, plus a short preview of that line's text; clicking one jumps to that part). Each bookmark also carries a small delete ("x") button that removes just that one, the same affordance as the Library's Recent Bookmarks rows.
+- **Top bar**: back-to-library, the current book's title/author, and two icon buttons — Bookmarks (filled when the book has any, outline otherwise) and Info — each toggling its own dropdown. Opening one closes the other; both close on an outside click or Escape, same as any dropdown.
+- **Reading column**: comfortable line length, one part's text at a time — no chapter/whole-document view, always full width (there's no side panel competing for space). Each line has its own bookmark icon in the left gutter, only visible on hover/focus unless that line is already bookmarked (then it stays visible as a status indicator), filled in once bookmarked; there's no separate "bookmark this part" control.
+- **Bookmarks dropdown**: most recent first, by `created_at` — each entry showing which part and line, plus a short preview of that line's text; clicking one jumps to that exact line (scrolling to it and briefly highlighting it), not just its part. Each bookmark carries a small delete ("x") button that removes just that one, the same affordance as the Library's Recent Bookmarks rows.
+- **Info dropdown**: title, author, series if any, subject tags, and a short description pulled from the book's catalog metadata. A description longer than 200 characters shows truncated with an ellipsis and a "Show more"/"Show less" toggle rather than the full text up front.
 - **Bottom bar**: Previous/Next, the current part out of the total, and a slim progress track — the same progress indicator style used in the Library list, so a book's position reads consistently in both places.

@@ -19,3 +19,10 @@ const ALLOWED_ATTR = ["href"];
 export function sanitizeDescriptionHtml(dirty: string): string {
   return DOMPurify.sanitize(dirty, { ALLOWED_TAGS, ALLOWED_ATTR });
 }
+
+/** Strips all markup down to plain text -- same sanitization guarantees as
+ * sanitizeDescriptionHtml (still untrusted input), for the collapsed
+ * "first 200 characters" preview, which doesn't try to preserve formatting. */
+export function descriptionPlainText(dirty: string): string {
+  return DOMPurify.sanitize(dirty, { ALLOWED_TAGS: [] });
+}
