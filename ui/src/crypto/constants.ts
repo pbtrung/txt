@@ -15,6 +15,8 @@ export const BLOB_MIN_LEN = AD_LEN + TAG_LEN;
 export const UMK_LEN = 64;
 export const TXT_KEY_LEN = 64;
 export const TXT_METADATA_KEY_LEN = 64;
+export const TXT_ACCESS_KEY_LEN = 64;
+export const BOOKMARK_KEY_LEN = 64;
 
 export const PW_SALT_LEN = 32;
 export const PBKDF2_ITERATIONS = 1_000;
@@ -37,6 +39,9 @@ export const KEM_CT_LEN = KYBER1024_CT_LEN + X448_LEN;
 export const KEM_SS_LEN = KYBER1024_SS_LEN + X448_LEN;
 
 export const BOOKMARK_LIMIT = 20;
+// Max distinct txt_ids tracked in txt_access.access -- client-enforced only,
+// no equivalent constant on the Python side (see docs/data_model.md).
+export const TXT_ACCESS_LIMIT = 7;
 
 export const PART_TARGET = 222 * 1024;
 export const RAW_PATH_LEN = 32; // random bytes for each part's R2 object key
