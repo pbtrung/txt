@@ -28,15 +28,15 @@ body,
   background-color: var(--bs-primary-bg-subtle);
 }
 
-/* Library screen: full width up through lg, capped to 80% (and centered) on
-   larger screens so the book list doesn't stretch edge-to-edge on a wide
-   monitor -- but stays full-bleed on mobile/tablet, where every pixel of a
-   narrow viewport matters more than reading-width comfort. */
-.library-shell {
+/* Library and Reader screens: full width up through lg, capped to 80% (and
+   centered) on larger screens so content doesn't stretch edge-to-edge on a
+   wide monitor -- but stays full-bleed on mobile/tablet, where every pixel
+   of a narrow viewport matters more than reading-width comfort. */
+.shell-80 {
   width: 100%;
 }
 @media (min-width: 992px) {
-  .library-shell {
+  .shell-80 {
     max-width: 80%;
     margin-inline: auto;
   }

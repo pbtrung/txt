@@ -87,7 +87,7 @@ export function ReaderScreen() {
   }
 
   return (
-    <div className="d-flex flex-column vh-100">
+    <div className="shell-80 d-flex flex-column vh-100">
       <div className="border-bottom d-flex align-items-center gap-3 px-3 py-2">
         <button type="button" className="btn btn-link text-decoration-none px-0" onClick={() => navigate("/library")}>
           <i className="bi bi-arrow-left me-1" aria-hidden="true" />
