@@ -65,9 +65,12 @@ function textsOf(value: OpfValue | undefined): string[] {
 // badges) -- showing them again here as raw text would just be redundant.
 const HIDDEN_METADATA_KEYS = new Set(["calibre:rating", "calibre:title_sort", "description", "subject"]);
 
-// calibre:timestamp (when the book was added to the Calibre library) reads
-// as an internal field name; shown under its plainer meaning instead.
-const RENAMED_METADATA_KEYS: Record<string, string> = { "calibre:timestamp": "timestamp" };
+// Internal field names shown under their plainer meaning instead.
+const RENAMED_METADATA_KEYS: Record<string, string> = {
+  "calibre:timestamp": "timestamp",
+  "calibre:series": "series",
+  "calibre:series_index": "series index",
+};
 
 // Both are ISO-8601-ish timestamps in OPF/Calibre metadata (dc:date,
 // calibre:timestamp) -- worth reformatting for a human reader rather than
