@@ -28,6 +28,20 @@ body,
   background-color: var(--bs-primary-bg-subtle);
 }
 
+/* Library screen: full width up through lg, capped to 80% (and centered) on
+   larger screens so the book list doesn't stretch edge-to-edge on a wide
+   monitor -- but stays full-bleed on mobile/tablet, where every pixel of a
+   narrow viewport matters more than reading-width comfort. */
+.library-shell {
+  width: 100%;
+}
+@media (min-width: 992px) {
+  .library-shell {
+    max-width: 80%;
+    margin-inline: auto;
+  }
+}
+
 /* A smaller variant of Bootstrap's .btn-sm, for row-level delete buttons
    (Library's BookRow/BookmarkRow, Reader's bookmark list) that shouldn't
    compete visually with the row's own primary click target. */
