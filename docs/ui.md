@@ -8,6 +8,8 @@ Mostly stock Bootstrap: default components (`navbar`, `list-group`, `progress`, 
 
 No cover art anywhere — the vault only ever holds text, so titles and author names carry the visual weight instead of a thumbnail grid.
 
+The browser tab's favicon (`ui/leancrypto/favicon.svg` — that directory is Vite's `publicDir`, see `vite.config.ts`) reuses Bootstrap Icons' `book` glyph, the same one in the wordmark, recolored to the brass/gold accent.
+
 ## Screen 1 — Unlock
 
 The only job here is loading the credential file. No headline, no explanatory copy, no dropzone preview — a wordmark and a single button.
@@ -57,7 +59,7 @@ Two panes: a catalog nav on the left, a plain list of books on the right — no 
 └────────────────┴───────────────────────────────────────────────────┘
 ```
 
-- **Left nav**: Recent and All books as the two primary views, each with a count; a Browse group below for Authors / Subjects / Publishers, each also with a count. Recent is the default landing view.
+- **Left nav**: Recent and All books as the two primary views, each with a count; a Browse group below for Authors / Subjects / Publishers, each also with a count. Recent is the default landing view. Below the `lg` breakpoint there's no room for it beside the book list, so it collapses into a dropdown instead — merged into the wordmark itself (clicking it opens/closes the dropdown, rather than a separate icon button next to it), closed by default, closing again on a selection, an outside click, or Escape, same as the Reader screen's dropdowns.
 - **Right pane, All books/Browse views**: one row per book, two lines each — title on top, then `Author · Subject, Subject · Publisher` underneath. In-progress books show "Part N" at the right edge (the Library screen doesn't fetch a total part count — see the Reader screen for that — so there's no fraction or progress bar here, and no "Finished" state either); unstarted books show nothing there.
 - **Right pane, Recent view**: two stacked sections instead of a single list. "Continue Reading" is the book-row list above, most recently opened first — unlike the All books/Browse rows, it doesn't show a part number at all (this view is already scoped to "in progress", so it'd be redundant). "Recent Bookmarks" below it flattens every bookmark across every book, most recently created first, each row showing the book title, `Part N · Line M`, and a short preview of that line's text — clicking one opens the reader at that spot. Every row in both sections carries a small delete ("x") button that removes just that entry (forgetting a book's read position, or discarding a bookmark) without deleting the book itself.
 - Top bar stays a slim strip above both panes: wordmark, a search field, and a status pill confirming the vault is unlocked.

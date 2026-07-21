@@ -162,6 +162,45 @@ describe("LibraryScreen", () => {
     expect(removeAccessEntry).toHaveBeenCalledWith(1);
   });
 
+  describe("small-screen nav drawer (merged into the wordmark)", () => {
+    it("is closed by default -- only the lg+ sidebar's nav items exist", () => {
+      renderLibrary();
+      expect(screen.getAllByRole("button", { name: /All books/ })).toHaveLength(1);
+    });
+
+    it("opens on clicking the wordmark toggle, showing a second copy of the nav", async () => {
+      renderLibrary();
+      await userEvent.click(screen.getByRole("button", { name: /library menu/i }));
+      expect(screen.getAllByRole("button", { name: /All books/ })).toHaveLength(2);
+    });
+
+    it("closes again after selecting a view from the drawer", async () => {
+      renderLibrary();
+      await userEvent.click(screen.getByRole("button", { name: /library menu/i }));
+      const allBooksButtons = screen.getAllByRole("button", { name: /All books/ });
+      await userEvent.click(allBooksButtons[0]); // the drawer's copy -- renders before the sidebar's in DOM order
+      expect(screen.getAllByRole("button", { name: /All books/ })).toHaveLength(1);
+      expect(screen.getByText("Never Opened Yet")).toBeInTheDocument();
+    });
+
+    it("closes on an outside click", async () => {
+      renderLibrary();
+      await userEvent.click(screen.getByRole("button", { name: /library menu/i }));
+      expect(screen.getAllByRole("button", { name: /All books/ })).toHaveLength(2);
+      // Plain text, not the book row itself -- clicking that would navigate
+      // away (openBook), which isn't what "click elsewhere" is testing here.
+      await userEvent.click(screen.getByText("Continue Reading"));
+      expect(screen.getAllByRole("button", { name: /All books/ })).toHaveLength(1);
+    });
+
+    it("closes on Escape", async () => {
+      renderLibrary();
+      await userEvent.click(screen.getByRole("button", { name: /library menu/i }));
+      await userEvent.keyboard("{Escape}");
+      expect(screen.getAllByRole("button", { name: /All books/ })).toHaveLength(1);
+    });
+  });
+
   describe("Recent Bookmarks", () => {
     const bookmarksMap: BookmarksMap = new Map([
       [1, [{ partNum: 14, line: 1, txtPreview: "Powerful white mages killed", createdAt: 1000 }]],

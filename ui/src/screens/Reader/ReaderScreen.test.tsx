@@ -227,7 +227,7 @@ describe("ReaderScreen", () => {
       renderReader(baseResult());
       await openBookmarks();
       const menu = screen.getByText("Part 14 · Line 1").closest(".dropdown-menu");
-      expect(menu).toHaveClass("reader-dropdown-menu-up");
+      expect(menu).toHaveClass("app-dropdown-menu-up");
     });
 
     it("shows the filled icon when the book has bookmarks, outline otherwise", () => {
