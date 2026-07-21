@@ -241,6 +241,7 @@ export function LibraryScreen() {
                       book={book}
                       onClick={() => openBook(book)}
                       onDelete={() => void removeAccessEntry(book.txtId)}
+                      hidePartNum
                     />
                   ))}
                   {continueReading.length === 0 && (
