@@ -12,6 +12,8 @@ The browser tab's favicon (`ui/leancrypto/favicon.svg` — that directory is Vit
 
 The Library and Reader shells are full width through `lg`, then capped to 60% (and centered) at `lg` and above — full-bleed matters more on a narrow screen than reading-width comfort, but a wide monitor shouldn't stretch either screen edge-to-edge.
 
+Every dropdown toggle button (Library's nav drawer, Reader's Info and Bookmarks) shares one visual language: a brass-bordered outline button when closed, filling solid brass when open — the same open/closed cue everywhere a dropdown can be toggled.
+
 ## Screen 1 — Unlock
 
 The only job here is loading the credential file. No headline, no explanatory copy, no dropzone preview — a wordmark and a single button.

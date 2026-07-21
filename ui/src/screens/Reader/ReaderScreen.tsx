@@ -9,9 +9,10 @@
 // gutter bookmark button, so "bookmark by line number" is just "click the
 // line's own icon" -- no separate number-entry control needed.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
+import { useDropdown } from "../../hooks/useDropdown";
 import { splitLines, truncatePreview } from "./readerModel";
 import { descriptionPlainText, sanitizeDescriptionHtml } from "./sanitizeHtml";
 import { useReaderBook } from "./useReaderBook";
@@ -26,12 +27,10 @@ export function ReaderScreen() {
   const { txtId } = useParams();
   const navigate = useNavigate();
   const numericTxtId = Number(txtId);
-  const [infoOpen, setInfoOpen] = useState(false);
-  const [bookmarksOpen, setBookmarksOpen] = useState(false);
+  const infoMenu = useDropdown();
+  const bookmarksMenu = useDropdown();
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const [highlightedLine, setHighlightedLine] = useState<number | null>(null);
-  const infoMenuRef = useRef<HTMLDivElement>(null);
-  const bookmarksMenuRef = useRef<HTMLDivElement>(null);
 
   const {
     loading,
@@ -70,37 +69,6 @@ export function ReaderScreen() {
 
   // A fresh book starts with its description collapsed again.
   useEffect(() => setDescriptionExpanded(false), [numericTxtId]);
-
-  // Closing on an outside click/Escape is what makes these read as dropdowns
-  // rather than plain toggle panels -- there's no Bootstrap JS in this
-  // project (only its CSS), so both the open/closed state and this behavior
-  // are hand-rolled instead of relying on its dropdown plugin. Each menu
-  // gets its own ref (they're not DOM siblings -- one's in the top bar, the
-  // other's in the bottom bar) so a click inside one doesn't close the other.
-  useEffect(() => {
-    if (!infoOpen && !bookmarksOpen) return;
-    function handlePointerDown(event: MouseEvent) {
-      const target = event.target as Node;
-      if (infoOpen && infoMenuRef.current && !infoMenuRef.current.contains(target)) {
-        setInfoOpen(false);
-      }
-      if (bookmarksOpen && bookmarksMenuRef.current && !bookmarksMenuRef.current.contains(target)) {
-        setBookmarksOpen(false);
-      }
-    }
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        setInfoOpen(false);
-        setBookmarksOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [infoOpen, bookmarksOpen]);
 
   const lines = useMemo(() => (partText ? splitLines(partText) : []), [partText]);
 
@@ -143,14 +111,17 @@ export function ReaderScreen() {
   );
   const descriptionIsLong = (descriptionPlain?.length ?? 0) > DESCRIPTION_PREVIEW_LEN;
 
+  // Two independent dropdowns (Info and Bookmarks), but opening one should
+  // still close the other -- useDropdown() itself has no notion of sibling
+  // menus, so that coordination happens here.
   function toggleInfo() {
-    setInfoOpen((open) => !open);
-    setBookmarksOpen(false);
+    infoMenu.toggle();
+    bookmarksMenu.close();
   }
 
   function toggleBookmarks() {
-    setBookmarksOpen((open) => !open);
-    setInfoOpen(false);
+    bookmarksMenu.toggle();
+    infoMenu.close();
   }
 
   if (error) {
@@ -183,19 +154,19 @@ export function ReaderScreen() {
           {info?.author && <div className="text-body-secondary small text-truncate d-sm-none">{info.author}</div>}
         </div>
 
-        <div ref={infoMenuRef} className="dropdown position-relative">
+        <div ref={infoMenu.ref} className="dropdown position-relative">
           <button
             type="button"
-            className={`btn btn-sm ${infoOpen ? "btn-primary" : "btn-outline-secondary"}`}
+            className={`btn btn-sm ${infoMenu.open ? "btn-primary" : "btn-outline-secondary border-primary"}`}
             onClick={toggleInfo}
-            aria-expanded={infoOpen}
+            aria-expanded={infoMenu.open}
             aria-haspopup="true"
             aria-label="About this book"
             title="About this book"
           >
             <i className="bi bi-info-lg" aria-hidden="true" />
           </button>
-          {infoOpen && (
+          {infoMenu.open && (
             <div
               className="dropdown-menu app-dropdown-menu show p-3"
               style={{ width: "20rem", maxWidth: "90vw", maxHeight: "70vh", overflowY: "auto" }}
@@ -326,19 +297,19 @@ export function ReaderScreen() {
           <i className="bi bi-chevron-right" aria-hidden="true" />
         </button>
 
-        <div ref={bookmarksMenuRef} className="dropdown position-relative ms-auto">
+        <div ref={bookmarksMenu.ref} className="dropdown position-relative ms-auto">
           <button
             type="button"
-            className={`btn btn-sm ${bookmarksOpen ? "btn-primary" : "btn-outline-secondary"}`}
+            className={`btn btn-sm ${bookmarksMenu.open ? "btn-primary" : "btn-outline-secondary border-primary"}`}
             onClick={toggleBookmarks}
-            aria-expanded={bookmarksOpen}
+            aria-expanded={bookmarksMenu.open}
             aria-haspopup="true"
             aria-label="Bookmarks"
             title="Bookmarks"
           >
             <i className={`bi ${bookmarks.length > 0 ? "bi-bookmark-fill" : "bi-bookmark"}`} aria-hidden="true" />
           </button>
-          {bookmarksOpen && (
+          {bookmarksMenu.open && (
             <div
               className="dropdown-menu app-dropdown-menu app-dropdown-menu-up show p-3"
               style={{ width: "20rem", maxWidth: "90vw", maxHeight: "70vh", overflowY: "auto" }}
