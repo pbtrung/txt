@@ -18,7 +18,13 @@ vi.mock("./useLibraryBooks", () => ({ useLibraryBooks: vi.fn() }));
 
 function book(overrides: Partial<LibraryBook> & { txtId: number }): LibraryBook {
   return {
-    info: { txtId: overrides.txtId, name: `n${overrides.txtId}`, title: `Title ${overrides.txtId}`, subjects: [] },
+    info: {
+      txtId: overrides.txtId,
+      name: `n${overrides.txtId}`,
+      title: `Title ${overrides.txtId}`,
+      subjects: [],
+      rawMetadata: [],
+    },
     lastPartNum: null,
     lastAccessedMs: null,
     ...overrides,
@@ -35,6 +41,7 @@ const books: LibraryBook[] = [
       author: "L. E. Modesitt, Jr.",
       subjects: ["Fantasy", "Military"],
       publisher: "Tor Publishing Group",
+      rawMetadata: [],
     },
     lastPartNum: 14,
     lastAccessedMs: 2000,
@@ -47,13 +54,14 @@ const books: LibraryBook[] = [
       title: "21 Lessons for the 21st Century",
       author: "Yuval Noah Harari",
       subjects: ["History"],
+      rawMetadata: [],
     },
     lastPartNum: 18,
     lastAccessedMs: 3000,
   }),
   book({
     txtId: 3,
-    info: { txtId: 3, name: "n3", title: "Never Opened Yet", subjects: [] },
+    info: { txtId: 3, name: "n3", title: "Never Opened Yet", subjects: [], rawMetadata: [] },
   }),
 ];
 

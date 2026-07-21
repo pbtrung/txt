@@ -74,6 +74,14 @@ describe("loadTxtMetadata", () => {
       description: undefined,
       series: "Saga of Recluce",
       seriesIndex: "8",
+      rawMetadata: [
+        { key: "title", values: ["The White Order"] },
+        { key: "creator", values: ["L. E. Modesitt, Jr."] },
+        { key: "subject", values: ["Fantasy", "Military"] },
+        { key: "publisher", values: ["Tor Publishing Group"] },
+        { key: "calibre:series", values: ["Saga of Recluce"] },
+        { key: "calibre:series_index", values: ["8"] },
+      ],
     });
     expect(result.get(8)).toEqual({
       txtId: 8,
@@ -85,6 +93,38 @@ describe("loadTxtMetadata", () => {
       description: undefined,
       series: undefined,
       seriesIndex: undefined,
+      rawMetadata: [],
     });
+  });
+
+  it("keeps every metadata field verbatim in rawMetadata, including ones with no curated column", async () => {
+    const umk = new Uint8Array(64).fill(1);
+    const txtMetadataKey = new Uint8Array(64).fill(4);
+    const keyBlob = await blob.encrypt(umk, txtMetadataKey);
+
+    const content = {
+      "9": {
+        name: "some-book.epub.txt",
+        metadata: {
+          title: "Some Book",
+          date: { text: "2020-01-01", event: "publication" },
+          identifier: { text: "978-0-000-00000-0", scheme: "ISBN" },
+          language: "en",
+        },
+      },
+    };
+    const contentBlob = await blob.encrypt(txtMetadataKey, new TextEncoder().encode(JSON.stringify(content)), {
+      compressed: true,
+    });
+
+    const db = fakeClient({ txt_metadata_key: keyBlob.buffer, content: contentBlob.buffer });
+    const result = await loadTxtMetadata(db, 42, umk);
+
+    expect(result.get(9)?.rawMetadata).toEqual([
+      { key: "title", values: ["Some Book"] },
+      { key: "date", values: ["2020-01-01"] },
+      { key: "identifier", values: ["978-0-000-00000-0"] },
+      { key: "language", values: ["en"] },
+    ]);
   });
 });

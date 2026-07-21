@@ -68,7 +68,7 @@ describe("useReaderBook", () => {
     const session = mockVault(
       new Map([[7, { lastPartNum: 14, lastAccessedMs: 1 }]]),
       new Map(),
-      new Map([[7, { txtId: 7, name: "n", title: "The White Order", subjects: [] }]]),
+      new Map([[7, { txtId: 7, name: "n", title: "The White Order", subjects: [], rawMetadata: [] }]]),
     );
     vi.mocked(ownerModule.partCount).mockResolvedValue(41);
     vi.mocked(ownerModule.partRawPaths).mockResolvedValue(Array.from({ length: 41 }, (_, i) => `path-${i + 1}`));

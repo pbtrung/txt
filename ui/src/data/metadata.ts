@@ -9,6 +9,11 @@ import type { Client } from "@libsql/core/api";
 import * as blob from "../crypto/blob";
 import { requireBlobBytes } from "./db";
 
+export interface MetadataField {
+  key: string;
+  values: string[];
+}
+
 export interface BookInfo {
   txtId: number;
   /** Original ingested filename -- always present, the fallback title. */
@@ -20,6 +25,12 @@ export interface BookInfo {
   description?: string;
   series?: string;
   seriesIndex?: string;
+  /** Every OPF/Calibre field this book's metadata carries, verbatim key
+   * names and all values -- not just the curated subset above. The fields
+   * above exist for their own special-purpose rendering (title in the top
+   * bar, description's sanitized/truncated HTML, ...); this is for Reader's
+   * Info dropdown to show the complete record underneath that summary. */
+  rawMetadata: MetadataField[];
 }
 
 // opf.py's parse_opf_metadata shape: a plain string, or {text, ...attrs} if
@@ -47,6 +58,12 @@ function textsOf(value: OpfValue | undefined): string[] {
   return single ? [single] : [];
 }
 
+function toRawMetadata(md: OpfMetadata): MetadataField[] {
+  return Object.entries(md)
+    .map(([key, value]) => ({ key, values: textsOf(value) }))
+    .filter((field) => field.values.length > 0);
+}
+
 function toBookInfo(txtId: number, entry: TxtMetadataEntry): BookInfo {
   const md = entry.metadata ?? {};
   return {
@@ -59,6 +76,7 @@ function toBookInfo(txtId: number, entry: TxtMetadataEntry): BookInfo {
     description: textOf(md.description),
     series: textOf(md["calibre:series"]),
     seriesIndex: textOf(md["calibre:series_index"]),
+    rawMetadata: toRawMetadata(md),
   };
 }
 

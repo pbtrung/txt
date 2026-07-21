@@ -24,6 +24,12 @@ function baseResult(overrides: Partial<UseReaderBookResult> = {}): UseReaderBook
       series: "Saga of Recluce",
       seriesIndex: "8",
       description: "...continues his bestselling fantasy series",
+      rawMetadata: [
+        { key: "title", values: ["The White Order"] },
+        { key: "creator", values: ["L. E. Modesitt, Jr."] },
+        { key: "date", values: ["1998-01-01"] },
+        { key: "language", values: ["en"] },
+      ],
     },
     partCount: 41,
     currentPartNum: 14,
@@ -214,6 +220,22 @@ describe("ReaderScreen", () => {
       renderReader(baseResult());
       await openInfo();
       expect(screen.queryByRole("button", { name: /show more/i })).not.toBeInTheDocument();
+    });
+
+    it("shows every raw metadata field from the catalog entry, not just the curated summary", async () => {
+      renderReader(baseResult());
+      await openInfo();
+      expect(screen.getByText("All metadata")).toBeInTheDocument();
+      expect(screen.getByText("date")).toBeInTheDocument();
+      expect(screen.getByText("1998-01-01")).toBeInTheDocument();
+      expect(screen.getByText("language")).toBeInTheDocument();
+      expect(screen.getByText("en")).toBeInTheDocument();
+    });
+
+    it("hides the 'All metadata' section entirely when there's none to show", async () => {
+      renderReader(baseResult({ info: { ...baseResult().info!, rawMetadata: [] } }));
+      await openInfo();
+      expect(screen.queryByText("All metadata")).not.toBeInTheDocument();
     });
   });
 
