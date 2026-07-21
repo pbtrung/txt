@@ -6,7 +6,9 @@ export function clampPartNum(partNum: number, partCount: number): number {
   return Math.max(1, Math.min(partNum, partCount));
 }
 
-/** The first maxLen characters of a line, for a bookmark's txt_preview. */
+/** The first maxLen characters of text, trimmed, with an ellipsis if it was
+ * cut short -- used for a bookmark's txt_preview (default maxLen) and the
+ * collapsed book description (maxLen 200). */
 export function truncatePreview(text: string, maxLen = 60): string {
   const trimmed = text.trim();
   return trimmed.length <= maxLen ? trimmed : `${trimmed.slice(0, maxLen).trimEnd()}…`;

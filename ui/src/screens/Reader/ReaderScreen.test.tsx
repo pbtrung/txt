@@ -57,6 +57,14 @@ function renderReader(result: UseReaderBookResult) {
   );
 }
 
+async function openInfo() {
+  await userEvent.click(screen.getByRole("button", { name: /about this book/i }));
+}
+
+async function openBookmarks() {
+  await userEvent.click(screen.getByRole("button", { name: /^bookmarks$/i }));
+}
+
 describe("ReaderScreen", () => {
   it("renders the current part's text, split into lines", () => {
     renderReader(baseResult());
@@ -65,48 +73,144 @@ describe("ReaderScreen", () => {
     expect(screen.getByText("Part 14 of 41")).toBeInTheDocument();
   });
 
-  it("shows the About-this-book panel with series and subjects", () => {
-    renderReader(baseResult());
-    expect(screen.getByText("Saga of Recluce, #8")).toBeInTheDocument();
-    expect(screen.getByText("Fantasy")).toBeInTheDocument();
-    expect(screen.getByText("Military")).toBeInTheDocument();
+  describe("About this book dropdown", () => {
+    it("is closed by default", () => {
+      renderReader(baseResult());
+      expect(screen.queryByText("Saga of Recluce, #8")).not.toBeInTheDocument();
+    });
+
+    it("opens on click, showing series and subjects, and closes on a second click", async () => {
+      renderReader(baseResult());
+      await openInfo();
+      expect(screen.getByText("Saga of Recluce, #8")).toBeInTheDocument();
+      expect(screen.getByText("Fantasy")).toBeInTheDocument();
+      expect(screen.getByText("Military")).toBeInTheDocument();
+
+      await openInfo();
+      expect(screen.queryByText("Saga of Recluce, #8")).not.toBeInTheDocument();
+    });
+
+    it("closes when clicking outside it", async () => {
+      renderReader(baseResult());
+      await openInfo();
+      expect(screen.getByText("Saga of Recluce, #8")).toBeInTheDocument();
+
+      await userEvent.click(screen.getByText("First paragraph of part 14."));
+      expect(screen.queryByText("Saga of Recluce, #8")).not.toBeInTheDocument();
+    });
+
+    it("closes on Escape", async () => {
+      renderReader(baseResult());
+      await openInfo();
+      await userEvent.keyboard("{Escape}");
+      expect(screen.queryByText("Saga of Recluce, #8")).not.toBeInTheDocument();
+    });
+
+    it("renders HTML formatting in a short description (e.g. Calibre-style OPF markup)", async () => {
+      renderReader(baseResult({ info: { ...baseResult().info!, description: "<b>Bold</b> and <i>italic</i> text." } }));
+      await openInfo();
+      const bold = screen.getByText("Bold");
+      expect(bold.tagName).toBe("B");
+      const italic = screen.getByText("italic");
+      expect(italic.tagName).toBe("I");
+    });
+
+    it("sanitizes a malicious description instead of executing it", async () => {
+      renderReader(
+        baseResult({
+          info: {
+            ...baseResult().info!,
+            description: '<img src=x onerror="window.__pwned__=true">Safe text<script>window.__pwned__=true</script>',
+          },
+        }),
+      );
+      await openInfo();
+      expect(screen.getByText("Safe text")).toBeInTheDocument();
+      expect((window as unknown as { __pwned__?: boolean }).__pwned__).toBeUndefined();
+      expect(document.querySelector("script")).toBeNull();
+      expect(document.querySelector("img")).toBeNull();
+    });
+
+    it("truncates a long description to 200 characters with a Show more button", async () => {
+      const longDescription = "A".repeat(250);
+      renderReader(baseResult({ info: { ...baseResult().info!, description: longDescription } }));
+      await openInfo();
+
+      expect(screen.getByText(`${"A".repeat(200)}…`)).toBeInTheDocument();
+      expect(screen.queryByText(longDescription)).not.toBeInTheDocument();
+
+      await userEvent.click(screen.getByRole("button", { name: /show more/i }));
+      expect(screen.getByText(longDescription)).toBeInTheDocument();
+
+      await userEvent.click(screen.getByRole("button", { name: /show less/i }));
+      expect(screen.queryByText(longDescription)).not.toBeInTheDocument();
+    });
+
+    it("doesn't show a Show more button for a short description", async () => {
+      renderReader(baseResult());
+      await openInfo();
+      expect(screen.queryByRole("button", { name: /show more/i })).not.toBeInTheDocument();
+    });
   });
 
-  it("renders HTML formatting in the description (e.g. Calibre-style OPF markup)", () => {
-    renderReader(baseResult({ info: { ...baseResult().info!, description: "<b>Bold</b> and <i>italic</i> text." } }));
-    const bold = screen.getByText("Bold");
-    expect(bold.tagName).toBe("B");
-    const italic = screen.getByText("italic");
-    expect(italic.tagName).toBe("I");
-  });
+  describe("Bookmarks dropdown", () => {
+    it("is closed by default", () => {
+      renderReader(baseResult());
+      expect(screen.queryByText("Part 14 · Line 1")).not.toBeInTheDocument();
+    });
 
-  it("sanitizes a malicious description instead of executing it", () => {
-    renderReader(
-      baseResult({
-        info: {
-          ...baseResult().info!,
-          description: '<img src=x onerror="window.__pwned__=true">Safe text<script>window.__pwned__=true</script>',
-        },
-      }),
-    );
-    expect(screen.getByText("Safe text")).toBeInTheDocument();
-    expect((window as unknown as { __pwned__?: boolean }).__pwned__).toBeUndefined();
-    expect(document.querySelector("script")).toBeNull();
-    expect(document.querySelector("img")).toBeNull();
-  });
+    it("shows the filled icon when the book has bookmarks, outline otherwise", () => {
+      const { rerender } = renderReader(baseResult());
+      expect(document.querySelector(".bi-bookmark-fill")).toBeInTheDocument();
 
-  it("shows bookmarks with part/line and a text preview", () => {
-    renderReader(baseResult());
-    expect(screen.getByText("Part 14 · Line 1")).toBeInTheDocument();
-    expect(screen.getByText("“First paragraph of part 14.”")).toBeInTheDocument();
-    expect(screen.getByText("Part 8 · Line 2")).toBeInTheDocument();
-    expect(screen.getByText("“Some earlier line preview”")).toBeInTheDocument();
-  });
+      vi.mocked(useReaderBookModule.useReaderBook).mockReturnValue(baseResult({ bookmarks: [] }));
+      rerender(
+        <MemoryRouter initialEntries={["/read/1"]}>
+          <Routes>
+            <Route path="/read/:txtId" element={<ReaderScreen />} />
+          </Routes>
+        </MemoryRouter>,
+      );
+      expect(document.querySelector(".bi-bookmark-fill")).not.toBeInTheDocument();
+    });
 
-  it("hides the side panel when the info button is toggled off", async () => {
-    renderReader(baseResult());
-    await userEvent.click(screen.getByRole("button", { name: /about this book/i }));
-    expect(screen.queryByText("Saga of Recluce, #8")).not.toBeInTheDocument();
+    it("opens on click, showing part/line and a text preview", async () => {
+      renderReader(baseResult());
+      await openBookmarks();
+      expect(screen.getByText("Part 14 · Line 1")).toBeInTheDocument();
+      expect(screen.getByText("“First paragraph of part 14.”")).toBeInTheDocument();
+      expect(screen.getByText("Part 8 · Line 2")).toBeInTheDocument();
+      expect(screen.getByText("“Some earlier line preview”")).toBeInTheDocument();
+    });
+
+    it("opening it closes an already-open info dropdown, and vice versa", async () => {
+      renderReader(baseResult());
+      await openInfo();
+      expect(screen.getByText("Saga of Recluce, #8")).toBeInTheDocument();
+
+      await openBookmarks();
+      expect(screen.queryByText("Saga of Recluce, #8")).not.toBeInTheDocument();
+      expect(screen.getByText("Part 14 · Line 1")).toBeInTheDocument();
+    });
+
+    it("jumps to a bookmark's exact part and line when it's clicked", async () => {
+      const goToBookmark = vi.fn();
+      renderReader(baseResult({ goToBookmark }));
+      await openBookmarks();
+      await userEvent.click(screen.getByText("Part 8 · Line 2"));
+      expect(goToBookmark).toHaveBeenCalledWith(8, 2);
+    });
+
+    it("removes a bookmark via its delete button, without jumping to it", async () => {
+      const goToBookmark = vi.fn();
+      const removeBookmark = vi.fn();
+      renderReader(baseResult({ goToBookmark, removeBookmark }));
+      await openBookmarks();
+      const row = screen.getByText("Part 8 · Line 2").closest('[role="button"]') as HTMLElement;
+      await userEvent.click(within(row).getByRole("button", { name: /remove this bookmark/i }));
+      expect(removeBookmark).toHaveBeenCalledWith(2000);
+      expect(goToBookmark).not.toHaveBeenCalled();
+    });
   });
 
   it("disables Previous on the first part and Next on the last", () => {
@@ -136,23 +240,6 @@ describe("ReaderScreen", () => {
     renderReader(baseResult());
     expect(screen.getByRole("button", { name: /bookmark line 1/i })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: /bookmark line 2/i })).toHaveAttribute("aria-pressed", "false");
-  });
-
-  it("jumps to a bookmark's exact part and line when it's clicked", async () => {
-    const goToBookmark = vi.fn();
-    renderReader(baseResult({ goToBookmark }));
-    await userEvent.click(screen.getByText("Part 8 · Line 2"));
-    expect(goToBookmark).toHaveBeenCalledWith(8, 2);
-  });
-
-  it("removes a bookmark via its delete button, without jumping to it", async () => {
-    const goToBookmark = vi.fn();
-    const removeBookmark = vi.fn();
-    renderReader(baseResult({ goToBookmark, removeBookmark }));
-    const row = screen.getByText("Part 8 · Line 2").closest('[role="button"]') as HTMLElement;
-    await userEvent.click(within(row).getByRole("button", { name: /remove this bookmark/i }));
-    expect(removeBookmark).toHaveBeenCalledWith(2000);
-    expect(goToBookmark).not.toHaveBeenCalled();
   });
 
   it("scrolls to and briefly highlights the target line once its text is ready", () => {

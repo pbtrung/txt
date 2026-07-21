@@ -58,19 +58,6 @@ body,
   }
 }
 
-/* Reader screen's side panel ("About this book"/"Bookmarks"): full width
-   when it's showing on mobile (see ReaderScreen's sidePanelOpen toggle),
-   a fixed-width column beside the reading pane at md+. */
-.reader-side-panel {
-  width: 100%;
-}
-@media (min-width: 768px) {
-  .reader-side-panel {
-    width: 18rem;
-    flex-shrink: 0;
-  }
-}
-
 /* A smaller variant of Bootstrap's .btn-sm, for row-level delete buttons
    (Library's BookRow/BookmarkRow, Reader's bookmark list) that shouldn't
    compete visually with the row's own primary click target. */
