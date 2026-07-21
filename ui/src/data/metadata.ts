@@ -58,9 +58,60 @@ function textsOf(value: OpfValue | undefined): string[] {
   return single ? [single] : [];
 }
 
+// Calibre's own bookkeeping, not useful to a reader: a numeric star rating
+// and a sort-friendly title variant (e.g. "White Order, The"). Dropped
+// entirely from the "All metadata" display rather than shown verbatim.
+const HIDDEN_METADATA_KEYS = new Set(["calibre:rating", "calibre:title_sort"]);
+
+// calibre:timestamp (when the book was added to the Calibre library) reads
+// as an internal field name; shown under its plainer meaning instead.
+const RENAMED_METADATA_KEYS: Record<string, string> = { "calibre:timestamp": "timestamp" };
+
+// Both are ISO-8601-ish timestamps in OPF/Calibre metadata (dc:date,
+// calibre:timestamp) -- worth reformatting for a human reader rather than
+// showing the raw "2020-01-15T00:00:00+00:00" string verbatim.
+const DATE_METADATA_KEYS = new Set(["date", "calibre:timestamp"]);
+
+const OPF_DATE_RE = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}):(\d{2}))?/;
+
+/** Formats an OPF/Calibre timestamp for a human reader: "January 15, 2020"
+ * if the time-of-day is absent or all-zero (a date with no meaningful time
+ * component, which is the common case for dc:date), otherwise "January 15,
+ * 2020, 8:23 AM". Parses the literal date/time digits in the string directly
+ * -- rather than handing it to `Date` and letting the browser convert
+ * through the viewer's own timezone -- so the calendar date shown always
+ * matches what was actually recorded, never shifted by a day near midnight.
+ * Falls back to the raw string if it doesn't look like an OPF timestamp. */
+function formatOpfDate(raw: string): string {
+  const match = OPF_DATE_RE.exec(raw);
+  if (!match) return raw;
+  const [, year, month, day, hour, minute, second] = match;
+  const hasTime = hour !== undefined;
+  const isMidnight = hasTime && hour === "00" && minute === "00" && second === "00";
+  const date = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour ?? 0), Number(minute ?? 0)));
+  const dateText = new Intl.DateTimeFormat("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    timeZone: "UTC",
+  }).format(date);
+  if (!hasTime || isMidnight) return dateText;
+  const timeText = new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", timeZone: "UTC" }).format(
+    date,
+  );
+  return `${dateText}, ${timeText}`;
+}
+
 function toRawMetadata(md: OpfMetadata): MetadataField[] {
   return Object.entries(md)
-    .map(([key, value]) => ({ key, values: textsOf(value) }))
+    .filter(([key]) => !HIDDEN_METADATA_KEYS.has(key))
+    .map(([key, value]) => {
+      const values = textsOf(value);
+      return {
+        key: RENAMED_METADATA_KEYS[key] ?? key,
+        values: DATE_METADATA_KEYS.has(key) ? values.map(formatOpfDate) : values,
+      };
+    })
     .filter((field) => field.values.length > 0);
 }
 
