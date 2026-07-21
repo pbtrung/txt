@@ -12,6 +12,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
+// Literata: a serif typeface designed for long-form reading (Google Fonts'
+// dedicated ebook font), self-hosted via @fontsource rather than fetched
+// from a remote origin -- consistent with this app's other assets
+// (leancrypto/brotli wasm, bootstrap-icons' font) and required by index.html's
+// CSP, which only allows font-src 'self'. Only the two weights the reading
+// pane actually renders (400 for line text, 500 for the title heading, which
+// inherits Bootstrap's default heading weight) are imported.
+import "@fontsource/literata/400.css";
+import "@fontsource/literata/500.css";
+
 import { BookmarkRow } from "../../components/BookmarkRow";
 import { useDropdown } from "../../hooks/useDropdown";
 import { splitLines, truncatePreview } from "./readerModel";
@@ -222,7 +232,7 @@ export function ReaderScreen() {
       </div>
 
       <div className="flex-grow-1 overflow-auto ps-2 ps-sm-4 pe-4 py-4">
-        <div className="mx-auto" style={{ maxWidth: "42rem" }}>
+        <div className="mx-auto reader-font" style={{ maxWidth: "42rem" }}>
           {!loading && (
             <div className="small text-body-secondary text-uppercase mb-3">
               Part {currentPartNum} of {partCount}

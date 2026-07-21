@@ -13,6 +13,7 @@
     "format:check": "prettier --check \"src/**/*.{ts,tsx}\""
   },
   "dependencies": {
+    "@fontsource/literata": "^5.3.0",
     "@libsql/client": "^0.17.4",
     "aws4fetch": "^1.0.20",
     "bootstrap": "^5.3.8",
