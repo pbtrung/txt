@@ -56,6 +56,14 @@ export function LibraryScreen() {
   const { books, loading } = useLibraryBooks();
   const [view, setView] = useState<View>({ kind: "recent" });
   const [search, setSearch] = useState("");
+  // Below the lg breakpoint the left nav collapses; picking anything in it
+  // closes it again so the chosen view actually comes into view.
+  const [navOpen, setNavOpen] = useState(false);
+
+  function selectView(next: View) {
+    setView(next);
+    setNavOpen(false);
+  }
 
   const authorEntries = useMemo(() => browseEntries(books ?? [], "author"), [books]);
   const subjectEntries = useMemo(() => browseEntries(books ?? [], "subject"), [books]);
@@ -109,9 +117,18 @@ export function LibraryScreen() {
 
   return (
     <div className="library-shell d-flex flex-column vh-100">
-      <div className="border-bottom d-flex align-items-center gap-3 px-3 py-2">
+      <div className="border-bottom d-flex flex-wrap align-items-center gap-2 gap-md-3 px-3 py-2">
+        <button
+          type="button"
+          className="btn btn-outline-secondary d-lg-none"
+          onClick={() => setNavOpen((open) => !open)}
+          aria-expanded={navOpen}
+          aria-label="Toggle library navigation"
+        >
+          <i className="bi bi-list" aria-hidden="true" />
+        </button>
         <Wordmark />
-        <div className="flex-grow-1" style={{ maxWidth: "28rem" }}>
+        <div className="flex-grow-1" style={{ minWidth: "10rem", maxWidth: "28rem" }}>
           <div className="input-group">
             <span className="input-group-text bg-transparent">
               <i className="bi bi-search" aria-hidden="true" />
@@ -135,20 +152,25 @@ export function LibraryScreen() {
       </div>
 
       {/*
-        Flex items default to min-width:auto, meaning a child won't shrink
+        Below lg, the nav collapses (toggled by the top bar's hamburger
+        button) and stacks above the content instead of sitting beside it --
+        library-nav (index.css) handles the width/visibility switch. At lg+,
+        flex items default to min-width:auto, meaning a child won't shrink
         below its own content's intrinsic width even with overflow-hidden/
         text-truncate on a descendant -- so a long title/author/subject
         list in the right pane could otherwise demand more width than
         available and squeeze this fixed-width nav out of the way. The
-        nav gets flexShrink:0 (never give up its width) and the right pane
-        gets minWidth:0 below (let its own long content actually truncate
-        instead of forcing extra width).
+        right pane gets minWidth:0 below (let its own long content actually
+        truncate instead of forcing extra width).
       */}
-      <div className="flex-grow-1 d-flex overflow-hidden">
-        <div className="border-end p-2" style={{ width: "16rem", flexShrink: 0, overflowY: "auto" }}>
+      <div className="flex-grow-1 d-flex flex-column flex-lg-row overflow-hidden">
+        <div
+          className={`library-nav border-end p-2 ${navOpen ? "d-block" : "d-none"} d-lg-block`}
+          style={{ overflowY: "auto" }}
+        >
           <div className="list-group list-group-flush">
-            <NavItem active={view.kind === "recent"} label="Recent" count={recent.length} onClick={() => setView({ kind: "recent" })} />
-            <NavItem active={view.kind === "all"} label="All books" count={(books ?? []).length} onClick={() => setView({ kind: "all" })} />
+            <NavItem active={view.kind === "recent"} label="Recent" count={recent.length} onClick={() => selectView({ kind: "recent" })} />
+            <NavItem active={view.kind === "all"} label="All books" count={(books ?? []).length} onClick={() => selectView({ kind: "all" })} />
           </div>
           <div className="text-body-secondary small fw-semibold text-uppercase mt-3 mb-1 px-2">Browse</div>
           <div className="list-group list-group-flush">
@@ -156,19 +178,19 @@ export function LibraryScreen() {
               active={view.kind === "browse" && view.dimension === "author"}
               label="Authors"
               count={authorEntries.length}
-              onClick={() => setView({ kind: "browse", dimension: "author" })}
+              onClick={() => selectView({ kind: "browse", dimension: "author" })}
             />
             <NavItem
               active={view.kind === "browse" && view.dimension === "subject"}
               label="Subjects"
               count={subjectEntries.length}
-              onClick={() => setView({ kind: "browse", dimension: "subject" })}
+              onClick={() => selectView({ kind: "browse", dimension: "subject" })}
             />
             <NavItem
               active={view.kind === "browse" && view.dimension === "publisher"}
               label="Publishers"
               count={publisherEntries.length}
-              onClick={() => setView({ kind: "browse", dimension: "publisher" })}
+              onClick={() => selectView({ kind: "browse", dimension: "publisher" })}
             />
           </div>
         </div>
@@ -220,7 +242,7 @@ export function LibraryScreen() {
                     type="button"
                     className="list-group-item list-group-item-action d-flex justify-content-between align-items-center"
                     onClick={() =>
-                      setView({ kind: "browseValue", dimension: (view as { dimension: BrowseDimension }).dimension, value: entry.value })
+                      selectView({ kind: "browseValue", dimension: (view as { dimension: BrowseDimension }).dimension, value: entry.value })
                     }
                   >
                     <span className="text-truncate" style={{ minWidth: 0 }}>

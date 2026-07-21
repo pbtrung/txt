@@ -42,6 +42,35 @@ body,
   }
 }
 
+/* Library screen's left nav: below lg it's a collapsible full-width panel
+   (toggled by the top bar's hamburger button, capped in height since it can
+   push the book list further down than a small screen can spare) stacked
+   above the content; at lg+ it's the fixed-width sidebar beside it. */
+.library-nav {
+  width: 100%;
+  max-height: 40vh;
+}
+@media (min-width: 992px) {
+  .library-nav {
+    width: 16rem;
+    max-height: none;
+    flex-shrink: 0;
+  }
+}
+
+/* Reader screen's side panel ("About this book"/"Bookmarks"): full width
+   when it's showing on mobile (see ReaderScreen's sidePanelOpen toggle),
+   a fixed-width column beside the reading pane at md+. */
+.reader-side-panel {
+  width: 100%;
+}
+@media (min-width: 768px) {
+  .reader-side-panel {
+    width: 18rem;
+    flex-shrink: 0;
+  }
+}
+
 /* A smaller variant of Bootstrap's .btn-sm, for row-level delete buttons
    (Library's BookRow/BookmarkRow, Reader's bookmark list) that shouldn't
    compete visually with the row's own primary click target. */
