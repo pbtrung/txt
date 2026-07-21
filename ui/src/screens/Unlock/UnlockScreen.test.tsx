@@ -23,16 +23,27 @@ function renderUnlock() {
   );
 }
 
+/** Defaults for the parts of VaultContextValue this screen doesn't exercise. */
+function baseVaultValue(): VaultContextModule.VaultContextValue {
+  return {
+    status: "locked",
+    session: null,
+    error: null,
+    accessMap: new Map(),
+    bookmarksMap: new Map(),
+    unlock: vi.fn(),
+    lock: vi.fn(),
+    getTxtKey: vi.fn(),
+    recordReadPosition: vi.fn(),
+    removeAccessEntry: vi.fn(),
+    addBookmarkEntry: vi.fn(),
+    removeBookmarkEntry: vi.fn(),
+  };
+}
+
 describe("UnlockScreen", () => {
   it("renders the wordmark and unlock button", () => {
-    vi.mocked(VaultContextModule.useVault).mockReturnValue({
-      status: "locked",
-      session: null,
-      error: null,
-      unlock: vi.fn(),
-      lock: vi.fn(),
-      getTxtKey: vi.fn(),
-    });
+    vi.mocked(VaultContextModule.useVault).mockReturnValue(baseVaultValue());
     renderUnlock();
     expect(screen.getByText("Skypiea")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /choose file/i })).toBeInTheDocument();
@@ -40,14 +51,7 @@ describe("UnlockScreen", () => {
 
   it("calls unlock() with the chosen file", async () => {
     const unlock = vi.fn().mockResolvedValue(undefined);
-    vi.mocked(VaultContextModule.useVault).mockReturnValue({
-      status: "locked",
-      session: null,
-      error: null,
-      unlock,
-      lock: vi.fn(),
-      getTxtKey: vi.fn(),
-    });
+    vi.mocked(VaultContextModule.useVault).mockReturnValue({ ...baseVaultValue(), unlock });
     renderUnlock();
 
     const file = new File(["{}"], "config.json", { type: "application/json" });
@@ -60,26 +64,22 @@ describe("UnlockScreen", () => {
 
   it("shows an error message when present", () => {
     vi.mocked(VaultContextModule.useVault).mockReturnValue({
-      status: "locked",
-      session: null,
+      ...baseVaultValue(),
       error: "Incorrect password for this account.",
-      unlock: vi.fn(),
-      lock: vi.fn(),
-      getTxtKey: vi.fn(),
     });
     renderUnlock();
     expect(screen.getByRole("alert")).toHaveTextContent("Incorrect password for this account.");
   });
 
+  it("shows a spinner and status line while unlocking", () => {
+    vi.mocked(VaultContextModule.useVault).mockReturnValue({ ...baseVaultValue(), status: "unlocking" });
+    renderUnlock();
+    expect(screen.getByRole("status")).toBeInTheDocument();
+    expect(screen.getByText(/setting up your library/i)).toBeInTheDocument();
+  });
+
   it("navigates to /library once unlocked", async () => {
-    vi.mocked(VaultContextModule.useVault).mockReturnValue({
-      status: "unlocked",
-      session: null,
-      error: null,
-      unlock: vi.fn(),
-      lock: vi.fn(),
-      getTxtKey: vi.fn(),
-    });
+    vi.mocked(VaultContextModule.useVault).mockReturnValue({ ...baseVaultValue(), status: "unlocked" });
     renderUnlock();
     await waitFor(() => expect(screen.getByText("Library screen")).toBeInTheDocument());
   });

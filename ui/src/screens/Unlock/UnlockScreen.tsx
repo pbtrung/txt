@@ -49,6 +49,13 @@ export function UnlockScreen() {
           </span>
         </button>
 
+        {unlocking && (
+          <div className="mt-4 d-flex flex-column align-items-center gap-2">
+            <div className="spinner-border spinner-border-sm text-primary" role="status" />
+            <div className="small text-body-secondary">Setting up your library…</div>
+          </div>
+        )}
+
         {error && (
           <div className="alert alert-danger mt-4" role="alert">
             {error}
