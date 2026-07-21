@@ -13,10 +13,15 @@ body,
 
 /* Reader screen: a line's bookmark toggle only appears on hover/focus of
    that line, unless the line is already bookmarked (then it stays visible
-   as a status indicator, not just a hover affordance). */
+   as a status indicator, not just a hover affordance). font-size: inherit
+   overrides .btn-sm's own --bs-btn-font-size (a fixed 0.875rem, relative to
+   the root font size, not this line's) so the icon glyph -- sized like any
+   text glyph, off the button's font-size -- scales with the font-size
+   dropdown instead of staying a constant size regardless of it. */
 .reader-line .bookmark-toggle {
   opacity: 0;
   transition: opacity 0.1s ease-in-out;
+  font-size: inherit;
 }
 .reader-line:hover .bookmark-toggle,
 .reader-line .bookmark-toggle:focus-visible,
