@@ -40,7 +40,7 @@ Two panes: a catalog nav on the left, a plain list of books on the right — no 
 
 ```
 ┌────────────────────────────────────────────────────────────────────┐
-│   [library] Skypiea   [search  Search your library]   [Unlocked]   │
+│   [lib] Skypiea       [search  Search your library]                │
 ├────────────────┬───────────────────────────────────────────────────┤
 │ ● Recent    2  │ Recent                            2 in progress   │
 │ All books  10  │───────────────────────────────────────────────────│
@@ -56,13 +56,16 @@ Two panes: a catalog nav on the left, a plain list of books on the right — no 
 │                │───────────────────────────────────────────────────│
 │                │ [bk] The White Order      Part 14 · Line 1   [x]  │
 │                │      "Powerful white mages killed..."             │
+│────────────────│                                                   │
+│ [@] Alice [lock]│                                                  │
 └────────────────┴───────────────────────────────────────────────────┘
 ```
 
-- **Left nav**: Recent and All books as the two primary views, each with a count; a Browse group below for Authors / Subjects / Publishers, each also with a count. Recent is the default landing view. Below the `lg` breakpoint there's no room for it beside the book list, so it collapses into a dropdown instead — merged into the wordmark itself (clicking it opens/closes the dropdown, rather than a separate icon button next to it), closed by default, closing again on a selection, an outside click, or Escape, same as the Reader screen's dropdowns.
+- **Left nav**: Recent and All books as the two primary views, each with a count; a Browse group below for Authors / Subjects / Publishers, each also with a count. Recent is the default landing view. Below the `lg` breakpoint there's no room for it beside the book list, so it collapses into a dropdown instead — toggled by the book icon alone (styled as a visible bordered button so it reads as tappable, unlike the plain "Skypiea" text beside it, which isn't part of the click target), closed by default, closing again on a selection, an outside click, or Escape, same as the Reader screen's dropdowns.
+- **Account footer**: pinned to the bottom of the left nav (both the lg+ sidebar and the below-`lg` dropdown share this content) — a person icon and the signed-in `display_name` on the left, an icon-only Lock button (no text label) on the right. This is the only place the Lock action lives; there's no separate button for it in the top bar.
 - **Right pane, All books/Browse views**: one row per book, two lines each — title on top, then `Author · Subject, Subject · Publisher` underneath. In-progress books show "Part N" at the right edge (the Library screen doesn't fetch a total part count — see the Reader screen for that — so there's no fraction or progress bar here, and no "Finished" state either); unstarted books show nothing there.
 - **Right pane, Recent view**: two stacked sections instead of a single list. "Continue Reading" is the book-row list above, most recently opened first — unlike the All books/Browse rows, it doesn't show a part number at all (this view is already scoped to "in progress", so it'd be redundant). "Recent Bookmarks" below it flattens every bookmark across every book, most recently created first, each row showing the book title, `Part N · Line M`, and a short preview of that line's text — clicking one opens the reader at that spot. Every row in both sections carries a small delete ("x") button that removes just that entry (forgetting a book's read position, or discarding a bookmark) without deleting the book itself.
-- Top bar stays a slim strip above both panes: wordmark, a search field, and a status pill confirming the vault is unlocked.
+- Top bar stays a slim strip above both panes: wordmark (icon-only toggle below `lg`) and a search field — no status pill; being on this screen at all already implies the vault is unlocked.
 
 ## Screen 3 — Reader
 
