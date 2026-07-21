@@ -290,7 +290,7 @@ export function ReaderScreen() {
       <div className="border-top d-flex align-items-center gap-2 gap-sm-3 ps-2 ps-sm-3 pe-3 py-2">
         <select
           className="form-select form-select-sm themed-control font-size-select"
-          style={{ width: "4rem" }}
+          style={{ width: "4.25rem" }}
           value={fontSizePx}
           onChange={(event) => setFontSizePx(Number(event.target.value))}
           aria-label="Font size"
