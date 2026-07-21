@@ -28,16 +28,16 @@ body,
   background-color: var(--bs-primary-bg-subtle);
 }
 
-/* Library and Reader screens: full width up through lg, capped to 80% (and
+/* Library and Reader screens: full width up through lg, capped to 60% (and
    centered) on larger screens so content doesn't stretch edge-to-edge on a
    wide monitor -- but stays full-bleed on mobile/tablet, where every pixel
    of a narrow viewport matters more than reading-width comfort. */
-.shell-80 {
+.shell-60 {
   width: 100%;
 }
 @media (min-width: 992px) {
-  .shell-80 {
-    max-width: 80%;
+  .shell-60 {
+    max-width: 60%;
     margin-inline: auto;
   }
 }
@@ -92,6 +92,29 @@ body,
 .app-dropdown-menu-start {
   right: auto;
   left: 0;
+}
+
+/* Library top bar's search field: full width of its cell below lg (no
+   persistent sidebar there to leave room for), capped to half the cell's
+   width at lg+ so it doesn't stretch across the whole right pane. */
+.search-bar-width {
+  width: 100%;
+}
+@media (min-width: 992px) {
+  .search-bar-width {
+    width: 50%;
+  }
+}
+
+/* The search input's own border: themed to the brass accent like the
+   drawer-toggle/Lock buttons' .border-primary, but the softer *-subtle
+   tint (rather than full-strength --bs-primary) and half the default
+   control border-width -- a full-width text field reads as bordered at a
+   glance regardless, so it doesn't need as bold a line as a small button
+   does to register as "there". */
+.search-input {
+  border-width: 0.5px;
+  border-color: var(--bs-primary-border-subtle);
 }
 
 /* A smaller variant of Bootstrap's .btn-sm, for row-level delete buttons

@@ -138,7 +138,7 @@ function LibraryNavContent({
         </span>
         <button
           type="button"
-          className="btn btn-sm btn-outline-secondary flex-shrink-0"
+          className="btn btn-sm btn-outline-secondary border-primary flex-shrink-0"
           onClick={onLock}
           aria-label="Lock"
           title="Lock"
@@ -240,17 +240,28 @@ export function LibraryScreen() {
   }
 
   return (
-    <div className="shell-80 d-flex flex-column vh-100">
-      <div className="border-bottom d-flex flex-wrap align-items-center gap-2 gap-md-3 ps-2 ps-sm-3 pe-3 py-2">
+    <div className="shell-60 d-flex flex-column vh-100">
+      <div className="border-bottom d-flex flex-wrap align-items-stretch">
+        {/* lg+: a fixed-width cell -- same class (and width) as the sidebar
+            below -- so the content cell beside it starts at the same x as
+            the right pane's own content, and its border-end continues the
+            sidebar's vertical rule upward into the top bar. */}
+        <div className="library-nav border-end p-2 d-none d-lg-flex align-items-center">
+          <Wordmark />
+        </div>
+
         {/* Below lg: the book icon alone (not the "Skypiea" text) is the
             drawer toggle -- styled as a visible bordered button so it reads
-            as tappable; the wordmark text sits beside it, plain. At lg+ the
-            whole wordmark is plain branding below, since there's nothing to
-            toggle there. */}
-        <div ref={navMenuRef} className="dropdown position-relative d-lg-none d-flex align-items-center gap-2">
+            as tappable; the wordmark text sits beside it, plain. There's no
+            fixed-width alignment cell here -- below lg there's no
+            persistent sidebar for it to line up against. */}
+        <div
+          ref={navMenuRef}
+          className="dropdown position-relative d-lg-none d-flex align-items-center gap-2 ps-2 ps-sm-3 py-2"
+        >
           <button
             type="button"
-            className="btn btn-outline-secondary btn-sm d-flex align-items-center justify-content-center"
+            className="btn btn-outline-secondary border-primary btn-sm d-flex align-items-center justify-content-center"
             onClick={() => setNavOpen((open) => !open)}
             aria-expanded={navOpen}
             aria-haspopup="true"
@@ -278,28 +289,32 @@ export function LibraryScreen() {
             </div>
           )}
         </div>
-        {/* lg+: plain, non-interactive branding -- the sidebar's always
-            visible there, so there's nothing for the wordmark to toggle. */}
-        <div className="d-none d-lg-block">
-          <Wordmark />
-        </div>
-        <div className="position-relative flex-grow-1" style={{ minWidth: "10rem", maxWidth: "28rem" }}>
-          {/* The icon sits inside the input itself (absolutely positioned,
-              padding-left on the input to make room) rather than Bootstrap's
-              input-group, which renders it as its own bordered segment
-              beside the input -- visually two joined boxes, not one. */}
-          <i
-            className="bi bi-search position-absolute top-50 start-0 translate-middle-y ms-3 text-body-secondary pe-none"
-            aria-hidden="true"
-          />
-          <input
-            type="search"
-            className="form-control ps-5"
-            placeholder="Search your library"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            aria-label="Search your library"
-          />
+
+        {/* Content cell: same horizontal padding (px-3) as the right pane's
+            own header row below, so the search bar's left edge lines up
+            with the book list's heading/rows -- and at lg+ the input
+            itself is capped to half this cell's width instead of
+            stretching across the whole pane. */}
+        <div className="flex-grow-1 d-flex align-items-center px-3 py-2" style={{ minWidth: 0 }}>
+          <div className="position-relative search-bar-width">
+            {/* The icon sits inside the input itself (absolutely
+                positioned, padding-left on the input to make room) rather
+                than Bootstrap's input-group, which renders it as its own
+                bordered segment beside the input -- visually two joined
+                boxes, not one. */}
+            <i
+              className="bi bi-search position-absolute top-50 start-0 translate-middle-y ms-3 text-body-secondary pe-none"
+              aria-hidden="true"
+            />
+            <input
+              type="search"
+              className="form-control search-input ps-5"
+              placeholder="Search your library"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              aria-label="Search your library"
+            />
+          </div>
         </div>
       </div>
 
