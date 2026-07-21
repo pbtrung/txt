@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS bookmarks (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id      INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
     bookmark_key BLOB    NOT NULL,   -- magic||version||salt||Ascon-Keccak(bookmark_key bytes)||tag, wrapped under owner's umk; bookmark_key itself is 64 random bytes
-    bookmark     BLOB    NOT NULL    -- magic||version||salt||Ascon-Keccak(brotli(JSON))||tag, wrapped under bookmark_key; JSON = {"<txt_id>": [{"part_num": int, "line": int, "txt_preview": str, "created_at": int (unix ms)}, ...], ...}, each txt_id's list capped at constants.BOOKMARK_LIMIT (20) entries, oldest-first (client evicts index 0 before exceeding the cap — no DB-level enforcement)
+    bookmark     BLOB    NOT NULL    -- magic||version||salt||Ascon-Keccak(brotli(JSON))||tag, wrapped under bookmark_key; JSON = {"<txt_id>": [{"part_num": int, "line": int, "txt_preview": str, "created_at": int (unix ms)}, ...], ...}, each txt_id's list capped at constants.BOOKMARK_LIMIT (20) entries (client evicts the entry with the oldest created_at before exceeding the cap — no DB-level enforcement)
 );
 
 CREATE TABLE IF NOT EXISTS txt_metadata (
