@@ -1,53 +1,24 @@
-import { useEffect, useState } from "react";
+import { useMemo } from "react";
 
 import { useVault } from "../../state/VaultContext";
-import { loadLibraryBooks, loadPartCount, type LibraryBook } from "./libraryModel";
+import { buildLibraryBooks, type LibraryBook } from "./libraryModel";
 
 export interface UseLibraryBooksResult {
   books: LibraryBook[] | null;
-  error: string | null;
   loading: boolean;
 }
 
-/** Loads every book's metadata/read-position once a session exists, then
- * fills in each book's part count in the background (see
- * libraryModel.ts's loadLibraryBooks comment for why that's a separate,
- * later pass) -- null books = still loading the initial list.
- */
+/** Derives the Library's book list from data the session already loaded in
+ * full during unlock (session.metadataById, session.accessMap) -- no DB
+ * calls of its own. `loading` is only ever true for the brief window before
+ * a session exists at all. */
 export function useLibraryBooks(): UseLibraryBooksResult {
-  const { session, getTxtKey } = useVault();
-  const [books, setBooks] = useState<LibraryBook[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { session, accessMap } = useVault();
 
-  useEffect(() => {
-    if (!session) return;
-    let cancelled = false;
-    setBooks(null);
-    setError(null);
+  const books = useMemo(() => {
+    if (!session) return null;
+    return buildLibraryBooks(session.metadataById, accessMap);
+  }, [session, accessMap]);
 
-    loadLibraryBooks(session.db, session.userId, session.umk, getTxtKey)
-      .then((result) => {
-        if (cancelled) return;
-        setBooks(result);
-        for (const book of result) {
-          loadPartCount(session.db, book.txtId)
-            .then((partCount) => {
-              if (cancelled) return;
-              setBooks((prev) => prev?.map((b) => (b.txtId === book.txtId ? { ...b, partCount } : b)) ?? prev);
-            })
-            .catch((err: unknown) => {
-              console.warn(`part count load failed for txt_id=${book.txtId}: ${String(err)}`);
-            });
-        }
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [session, getTxtKey]);
-
-  return { books, error, loading: books === null && error === null };
+  return { books, loading: books === null };
 }

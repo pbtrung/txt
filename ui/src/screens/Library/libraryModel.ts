@@ -1,88 +1,45 @@
 // Pure data-shaping logic for the Library screen (docs/ui.md's Screen 2):
-// combining each txt's metadata and read position into one LibraryBook,
-// then deriving the Recent/All books/Authors/Subjects/Publishers views from
-// that list. Kept free of React so it's easily unit tested and so
-// useLibraryBooks.ts (the data-fetching hook) stays thin.
+// combining each txt's metadata and read position into one LibraryBook, and
+// every txt's bookmarks into one flat, recency-sorted feed, then deriving
+// the Recent/All books/Authors/Subjects/Publishers views from those. Kept
+// free of React so it's easily unit tested and so useLibraryBooks.ts (the
+// session-selector hook) stays thin.
+//
+// part_count is deliberately never fetched here: it's only needed once a
+// book is open in the Reader (which already fetches it there itself) -- the
+// Library list only ever shows "Part N" for an in-progress book, not a
+// total or a percentage, so nothing here needs it.
 
-import type { Client } from "@libsql/core/api";
-
-import { getReadPosition } from "../../data/access";
-import { loadTxtMetadata, type BookInfo } from "../../data/metadata";
-import { listTxtIds, partCount as fetchPartCount } from "../../data/owner";
+import type { AccessMap } from "../../data/access";
+import type { BookmarksMap } from "../../data/bookmarks";
+import type { BookInfo } from "../../data/metadata";
 
 export interface LibraryBook {
   txtId: number;
   info: BookInfo;
-  /** null until loadPartCount() fills it in -- deliberately not fetched by
-   * loadLibraryBooks itself, see that function's comment. */
-  partCount: number | null;
   lastPartNum: number | null;
   lastAccessedMs: number | null;
 }
 
-export type BookStatus = "not-started" | "in-progress" | "finished";
+export type BookStatus = "not-started" | "in-progress";
 
 export function bookStatus(book: LibraryBook): BookStatus {
-  if (book.lastPartNum === null) return "not-started";
-  // partCount not loaded yet: assume still in progress rather than
-  // guessing "finished" -- gets corrected once loadPartCount() resolves.
-  if (book.partCount === null) return "in-progress";
-  if (book.partCount > 0 && book.lastPartNum >= book.partCount) return "finished";
-  return "in-progress";
+  return book.lastPartNum === null ? "not-started" : "in-progress";
 }
 
-/** 0-100. Meaningless (0) for a book with no parts yet, or whose part count isn't loaded yet. */
-export function bookProgressPercent(book: LibraryBook): number {
-  if (book.partCount === null || book.partCount === 0 || book.lastPartNum === null) return 0;
-  return Math.round((Math.min(book.lastPartNum, book.partCount) / book.partCount) * 100);
-}
-
-/** Loads every book's metadata + read position -- NOT its part count.
- *
- * part_count is deliberately left out here: fetching it for every book
- * up front doesn't scale (one more Turso round trip per book, on top of
- * the txt_key unwrap + read-position lookup each book already needs) and
- * isn't needed to render the initial list. Call loadPartCount() per book
- * afterward instead, so the list appears immediately and part counts fill
- * in progressively (see useLibraryBooks.ts).
- *
- * Each book's data is loaded independently: one failing/slow book (e.g. a
- * stale or unreachable row) is logged and skipped rather than rejecting
- * -- and so hanging the whole list -- via Promise.all.
- */
-export async function loadLibraryBooks(
-  db: Client,
-  userId: number,
-  umk: Uint8Array,
-  getTxtKey: (txtId: number) => Promise<Uint8Array>,
-): Promise<LibraryBook[]> {
-  const [txtIds, metadataById] = await Promise.all([listTxtIds(db, userId), loadTxtMetadata(db, userId, umk)]);
-
-  const results = await Promise.all(
-    txtIds.map(async (txtId): Promise<LibraryBook | null> => {
-      try {
-        const txtKey = await getTxtKey(txtId);
-        const readPosition = await getReadPosition(db, txtId, userId, txtKey);
-        const info = metadataById.get(txtId) ?? { txtId, name: `txt_${txtId}`, title: `txt_${txtId}`, subjects: [] };
-        return {
-          txtId,
-          info,
-          partCount: null,
-          lastPartNum: readPosition?.lastPartNum ?? null,
-          lastAccessedMs: readPosition?.lastAccessedMs ?? null,
-        };
-      } catch (err) {
-        console.warn(`skipping txt_id=${txtId}: ${err instanceof Error ? err.message : String(err)}`);
-        return null;
-      }
-    }),
-  );
-  return results.filter((book): book is LibraryBook => book !== null);
-}
-
-/** Loads one book's part count -- see loadLibraryBooks's comment for why this is separate. */
-export async function loadPartCount(db: Client, txtId: number): Promise<number> {
-  return fetchPartCount(db, txtId);
+/** Every book this account has, combining metadata with its read position
+ * (if any) -- both already loaded once, in full, during unlock (see
+ * VaultContext), so this is a synchronous, in-memory combine, not a fetch. */
+export function buildLibraryBooks(metadataById: Map<number, BookInfo>, accessMap: AccessMap): LibraryBook[] {
+  return Array.from(metadataById.entries()).map(([txtId, info]) => {
+    const position = accessMap.get(txtId);
+    return {
+      txtId,
+      info,
+      lastPartNum: position?.lastPartNum ?? null,
+      lastAccessedMs: position?.lastAccessedMs ?? null,
+    };
+  });
 }
 
 /** Most recently opened first -- books never opened don't appear here. */
@@ -134,4 +91,32 @@ export function browseEntries(books: LibraryBook[], dimension: BrowseDimension):
 
 export function booksForDimensionValue(books: LibraryBook[], dimension: BrowseDimension, value: string): LibraryBook[] {
   return allBooksSorted(books.filter((book) => dimensionValues(book, dimension).includes(value)));
+}
+
+export interface RecentBookmarkItem {
+  txtId: number;
+  info: BookInfo;
+  partNum: number;
+  line: number;
+  txtPreview: string;
+  createdAt: number;
+}
+
+/** Every bookmark across every book, flattened and most-recently-created first. */
+export function recentBookmarks(bookmarksMap: BookmarksMap, metadataById: Map<number, BookInfo>): RecentBookmarkItem[] {
+  const items: RecentBookmarkItem[] = [];
+  for (const [txtId, entries] of bookmarksMap) {
+    const info = metadataById.get(txtId) ?? { txtId, name: `txt_${txtId}`, title: `txt_${txtId}`, subjects: [] };
+    for (const entry of entries) {
+      items.push({
+        txtId,
+        info,
+        partNum: entry.partNum,
+        line: entry.line,
+        txtPreview: entry.txtPreview,
+        createdAt: entry.createdAt,
+      });
+    }
+  }
+  return items.sort((a, b) => b.createdAt - a.createdAt);
 }

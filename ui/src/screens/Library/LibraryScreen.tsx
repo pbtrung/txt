@@ -6,6 +6,7 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
+import { BookmarkRow } from "../../components/BookmarkRow";
 import { BookRow } from "../../components/BookRow";
 import { StatusPill } from "../../components/StatusPill";
 import { Wordmark } from "../../components/Wordmark";
@@ -16,9 +17,11 @@ import {
   browseEntries,
   booksForDimensionValue,
   matchesSearch,
+  recentBookmarks,
   recentBooks,
   type BrowseDimension,
   type LibraryBook,
+  type RecentBookmarkItem,
 } from "./libraryModel";
 import { useLibraryBooks } from "./useLibraryBooks";
 
@@ -48,9 +51,9 @@ function NavItem({ active, label, count, onClick }: { active: boolean; label: st
 }
 
 export function LibraryScreen() {
-  const { lock } = useVault();
+  const { lock, bookmarksMap, removeAccessEntry, removeBookmarkEntry } = useVault();
   const navigate = useNavigate();
-  const { books, error, loading } = useLibraryBooks();
+  const { books, loading } = useLibraryBooks();
   const [view, setView] = useState<View>({ kind: "recent" });
   const [search, setSearch] = useState("");
 
@@ -59,9 +62,20 @@ export function LibraryScreen() {
   const publisherEntries = useMemo(() => browseEntries(books ?? [], "publisher"), [books]);
   const recent = useMemo(() => recentBooks(books ?? []), [books]);
   const inProgressCount = useMemo(() => recent.filter((b) => bookStatus(b) === "in-progress").length, [recent]);
+  // Search only filters Continue Reading -- Recent Bookmarks isn't searchable.
+  const continueReading = useMemo(
+    () => (search.trim() ? recent.filter((b) => matchesSearch(b, search)) : recent),
+    [recent, search],
+  );
+  const metadataById = useMemo(() => new Map((books ?? []).map((b) => [b.txtId, b.info])), [books]);
+  const recentBookmarkItems = useMemo(() => recentBookmarks(bookmarksMap, metadataById), [bookmarksMap, metadataById]);
 
   function openBook(book: LibraryBook) {
     navigate(`/read/${book.txtId}`);
+  }
+
+  function openBookmark(item: RecentBookmarkItem) {
+    navigate(`/read/${item.txtId}?part=${item.partNum}`);
   }
 
   let heading: string;
@@ -72,7 +86,6 @@ export function LibraryScreen() {
   if (view.kind === "recent") {
     heading = "Recent";
     headingDetail = `${inProgressCount} in progress`;
-    bookList = recent;
   } else if (view.kind === "all") {
     const all = allBooksSorted(books ?? []);
     heading = "All books";
@@ -168,13 +181,38 @@ export function LibraryScreen() {
 
           <div className="flex-grow-1 overflow-auto">
             {loading && <p className="text-body-secondary p-3">Loading your library…</p>}
-            {error && (
-              <div className="alert alert-danger m-3" role="alert">
-                {error}
-              </div>
+
+            {!loading && view.kind === "recent" && (
+              <>
+                <div className="small text-body-secondary text-uppercase fw-semibold px-3 pt-3 pb-1">Continue Reading</div>
+                <div className="list-group list-group-flush">
+                  {continueReading.map((book) => (
+                    <BookRow
+                      key={book.txtId}
+                      book={book}
+                      onClick={() => openBook(book)}
+                      onDelete={() => void removeAccessEntry(book.txtId)}
+                    />
+                  ))}
+                  {continueReading.length === 0 && <p className="text-body-secondary px-3 pb-3">No books in progress yet.</p>}
+                </div>
+
+                <div className="small text-body-secondary text-uppercase fw-semibold px-3 pt-4 pb-1">Recent Bookmarks</div>
+                <div className="list-group list-group-flush">
+                  {recentBookmarkItems.map((item) => (
+                    <BookmarkRow
+                      key={`${item.txtId}-${item.createdAt}`}
+                      item={item}
+                      onClick={() => openBookmark(item)}
+                      onDelete={() => void removeBookmarkEntry(item.txtId, item.createdAt)}
+                    />
+                  ))}
+                  {recentBookmarkItems.length === 0 && <p className="text-body-secondary px-3 pb-3">No bookmarks yet.</p>}
+                </div>
+              </>
             )}
 
-            {!loading && !error && browseList && (
+            {!loading && view.kind !== "recent" && browseList && (
               <div className="list-group list-group-flush">
                 {browseList.map((entry) => (
                   <button
@@ -195,7 +233,7 @@ export function LibraryScreen() {
               </div>
             )}
 
-            {!loading && !error && bookList && (
+            {!loading && view.kind !== "recent" && bookList && (
               <div className="list-group list-group-flush">
                 {bookList.map((book) => (
                   <BookRow key={book.txtId} book={book} onClick={() => openBook(book)} />
