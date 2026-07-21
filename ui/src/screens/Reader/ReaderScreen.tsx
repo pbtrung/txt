@@ -34,6 +34,7 @@ export function ReaderScreen() {
     next,
     previous,
     bookmarkLine,
+    removeBookmark,
   } = useReaderBook(numericTxtId);
 
   const lines = useMemo(() => (partText ? splitLines(partText) : []), [partText]);
@@ -140,14 +141,22 @@ export function ReaderScreen() {
             <div className="small text-body-secondary text-uppercase fw-semibold mt-4 mb-2">Bookmarks</div>
             {bookmarks.length === 0 && <p className="small text-body-secondary">No bookmarks yet.</p>}
             {bookmarks.map((bookmark) => (
-              <button
-                key={bookmark.id}
-                type="button"
-                className="btn btn-sm text-start d-flex align-items-start gap-2 mb-2 w-100 p-0 border-0 bg-transparent"
+              // A plain button can't contain the nested delete button below.
+              <div
+                key={bookmark.createdAt}
+                role="button"
+                tabIndex={0}
+                className="d-flex align-items-start gap-2 mb-2 w-100"
                 onClick={() => goToPart(bookmark.partNum)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    goToPart(bookmark.partNum);
+                  }
+                }}
               >
                 <i className="bi bi-bookmark-fill text-primary mt-1" aria-hidden="true" />
-                <span>
+                <span className="flex-grow-1">
                   <span className="small d-block">
                     Part {bookmark.partNum} · Line {bookmark.line}
                   </span>
@@ -155,7 +164,18 @@ export function ReaderScreen() {
                     &ldquo;{bookmark.txtPreview}&rdquo;
                   </span>
                 </span>
-              </button>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-outline-secondary border-0 flex-shrink-0"
+                  aria-label={`Remove this bookmark (part ${bookmark.partNum}, line ${bookmark.line})`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    removeBookmark(bookmark.createdAt);
+                  }}
+                >
+                  <i className="bi bi-x-lg" aria-hidden="true" />
+                </button>
+              </div>
             ))}
           </div>
         )}

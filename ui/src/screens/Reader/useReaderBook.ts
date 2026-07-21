@@ -2,11 +2,16 @@
 // txt_key and every part's raw path once, then fetches/caches one part's
 // text at a time as the reader navigates, persisting read position and
 // bookmarks along the way.
+//
+// Read position and bookmarks themselves are no longer fetched here -- both
+// already live in VaultContext (loaded once, in full, during unlock), so
+// this hook only reads/writes through the context's accessMap/bookmarksMap
+// and its recordReadPosition/addBookmarkEntry/removeBookmarkEntry actions.
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 
-import { getReadPosition, setReadPosition } from "../../data/access";
-import { addBookmark, listBookmarks, type Bookmark } from "../../data/bookmarks";
+import type { BookmarkEntry } from "../../data/bookmarks";
 import { getBookInfo, type BookInfo } from "../../data/metadata";
 import { partCount as fetchPartCount, partRawPaths } from "../../data/owner";
 import { fetchPart } from "../../data/parts";
@@ -21,22 +26,24 @@ export interface UseReaderBookResult {
   currentPartNum: number;
   partText: string | null;
   partTextLoading: boolean;
-  bookmarks: Bookmark[];
+  bookmarks: BookmarkEntry[];
   goToPart: (partNum: number) => void;
   next: () => void;
   previous: () => void;
   bookmarkLine: (line: number, txtPreview: string) => void;
+  removeBookmark: (createdAt: number) => void;
 }
 
 export function useReaderBook(txtId: number): UseReaderBookResult {
-  const { session, getTxtKey } = useVault();
+  const { session, getTxtKey, accessMap, bookmarksMap, recordReadPosition, addBookmarkEntry, removeBookmarkEntry } =
+    useVault();
+  const [searchParams] = useSearchParams();
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<BookInfo | null>(null);
   const [partCount, setPartCount] = useState(0);
   const [currentPartNum, setCurrentPartNum] = useState(1);
-  const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
 
   const [partText, setPartText] = useState<string | null>(null);
   const [partTextLoading, setPartTextLoading] = useState(false);
@@ -45,8 +52,13 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
   const rawPathsRef = useRef<string[]>([]);
   const partTextCache = useRef(new Map<number, string>());
 
-  // Load the book's key, metadata, part count, initial read position, and
-  // bookmarks once per (session, txtId).
+  const bookmarks = bookmarksMap.get(txtId) ?? [];
+
+  // Load the book's key, metadata, part count, and part paths once per
+  // (session, txtId). accessMap/searchParams are read here only to seed the
+  // initial part -- deliberately not in the dep list below, since a
+  // read-position write (which updates accessMap) shouldn't re-trigger a
+  // full reload of metadata/part count/paths.
   useEffect(() => {
     if (!session) return;
     let cancelled = false;
@@ -56,12 +68,10 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
 
     (async () => {
       const txtKey = await getTxtKey(txtId);
-      const [bookInfo, count, rawPaths, readPosition, bookmarkList] = await Promise.all([
+      const [bookInfo, count, rawPaths] = await Promise.all([
         getBookInfo(session.db, session.userId, session.umk, txtId),
         fetchPartCount(session.db, txtId),
         partRawPaths(session.db, txtId, txtKey),
-        getReadPosition(session.db, txtId, session.userId, txtKey),
-        listBookmarks(session.db, txtId, session.userId, txtKey),
       ]);
       if (cancelled) return;
 
@@ -69,8 +79,14 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
       rawPathsRef.current = rawPaths;
       setInfo(bookInfo);
       setPartCount(count);
-      setBookmarks(bookmarkList);
-      setCurrentPartNum(clampPartNum(readPosition?.lastPartNum ?? 1, count));
+
+      // A Library "Recent Bookmarks" click carries ?part=N -- prefer that,
+      // once, over the saved read position (mirrors clicking a bookmark
+      // in-screen, just from a cold load instead of an already-open book).
+      const requestedPart = Number(searchParams.get("part"));
+      const initialPart =
+        Number.isInteger(requestedPart) && requestedPart > 0 ? requestedPart : accessMap.get(txtId)?.lastPartNum ?? 1;
+      setCurrentPartNum(clampPartNum(initialPart, count));
       setLoading(false);
     })().catch((err: unknown) => {
       if (!cancelled) {
@@ -82,6 +98,8 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
     return () => {
       cancelled = true;
     };
+    // accessMap/searchParams intentionally excluded -- see comment above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, txtId, getTxtKey]);
 
   // Fetch (and cache) the current part's text; persist the read position.
@@ -91,10 +109,7 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
     const rawPath = rawPathsRef.current[currentPartNum - 1];
     if (!txtKey || !rawPath) return;
 
-    void setReadPosition(session.db, txtId, session.userId, txtKey, {
-      lastPartNum: currentPartNum,
-      lastAccessedMs: Date.now(),
-    });
+    void recordReadPosition(txtId, { lastPartNum: currentPartNum, lastAccessedMs: Date.now() });
 
     const cached = partTextCache.current.get(currentPartNum);
     if (cached !== undefined) {
@@ -120,7 +135,7 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
     return () => {
       cancelled = true;
     };
-  }, [session, txtId, loading, currentPartNum]);
+  }, [session, txtId, loading, currentPartNum, recordReadPosition]);
 
   const goToPart = useCallback(
     (partNum: number) => {
@@ -134,14 +149,16 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
 
   const bookmarkLine = useCallback(
     (line: number, txtPreview: string) => {
-      if (!session) return;
-      const txtKey = txtKeyRef.current;
-      if (!txtKey) return;
-      void addBookmark(session.db, txtId, session.userId, txtKey, currentPartNum, line, txtPreview).then(() =>
-        listBookmarks(session.db, txtId, session.userId, txtKey).then(setBookmarks),
-      );
+      void addBookmarkEntry(txtId, currentPartNum, line, txtPreview);
     },
-    [session, txtId, currentPartNum],
+    [addBookmarkEntry, txtId, currentPartNum],
+  );
+
+  const removeBookmark = useCallback(
+    (createdAt: number) => {
+      void removeBookmarkEntry(txtId, createdAt);
+    },
+    [removeBookmarkEntry, txtId],
   );
 
   return {
@@ -157,5 +174,6 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
     next,
     previous,
     bookmarkLine,
+    removeBookmark,
   };
 }

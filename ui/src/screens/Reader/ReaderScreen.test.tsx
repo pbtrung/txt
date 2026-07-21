@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
@@ -30,13 +30,14 @@ function baseResult(overrides: Partial<UseReaderBookResult> = {}): UseReaderBook
     partText: "First paragraph of part 14.\n\nSecond paragraph.",
     partTextLoading: false,
     bookmarks: [
-      { id: 3, partNum: 14, line: 1, txtPreview: "First paragraph of part 14." },
-      { id: 2, partNum: 8, line: 2, txtPreview: "Some earlier line preview" },
+      { partNum: 14, line: 1, txtPreview: "First paragraph of part 14.", createdAt: 3000 },
+      { partNum: 8, line: 2, txtPreview: "Some earlier line preview", createdAt: 2000 },
     ],
     goToPart: vi.fn(),
     next: vi.fn(),
     previous: vi.fn(),
     bookmarkLine: vi.fn(),
+    removeBookmark: vi.fn(),
     ...overrides,
   };
 }
@@ -136,6 +137,16 @@ describe("ReaderScreen", () => {
     renderReader(baseResult({ goToPart }));
     await userEvent.click(screen.getByText("Part 8 · Line 2"));
     expect(goToPart).toHaveBeenCalledWith(8);
+  });
+
+  it("removes a bookmark via its delete button, without jumping to its part", async () => {
+    const goToPart = vi.fn();
+    const removeBookmark = vi.fn();
+    renderReader(baseResult({ goToPart, removeBookmark }));
+    const row = screen.getByText("Part 8 · Line 2").closest('[role="button"]') as HTMLElement;
+    await userEvent.click(within(row).getByRole("button", { name: /remove this bookmark/i }));
+    expect(removeBookmark).toHaveBeenCalledWith(2000);
+    expect(goToPart).not.toHaveBeenCalled();
   });
 
   it("navigates back to /library", async () => {
