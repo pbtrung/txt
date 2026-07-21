@@ -99,11 +99,11 @@ export function ReaderScreen() {
                 const lineNum = i + 1;
                 const isBookmarked = bookmarkedLines.has(lineNum);
                 return (
-                  <div key={lineNum} className="d-flex align-items-start gap-2">
+                  <div key={lineNum} className="reader-line d-flex align-items-start gap-2">
                     <button
                       type="button"
-                      className={`btn btn-sm p-0 border-0 bg-transparent lh-1 mt-1 ${
-                        isBookmarked ? "text-primary" : "text-body-tertiary"
+                      className={`bookmark-toggle btn btn-sm p-0 border-0 bg-transparent lh-1 mt-1 ${
+                        isBookmarked ? "is-bookmarked text-primary" : "text-body-tertiary"
                       }`}
                       onClick={() => bookmarkLine(lineNum, truncatePreview(line))}
                       aria-pressed={isBookmarked}
