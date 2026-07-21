@@ -58,6 +58,21 @@ body,
   }
 }
 
+/* Reader screen's Bookmarks/Info dropdowns: Bootstrap's .dropdown-menu ships
+   with `position: absolute` unconditionally, but its actual placement
+   (`top: 100%`, and `right: 0` for .dropdown-menu-end) only applies via a
+   `[data-bs-popper]` attribute that its JS/Popper sets at runtime -- this
+   project loads only Bootstrap's CSS, never its JS, so that attribute is
+   never present and those rules never fire, leaving the menu with no real
+   offset at all (effectively stuck at its in-flow position instead of
+   floating below the button). This supplies that placement by hand. */
+.reader-dropdown-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 0.5rem;
+}
+
 /* A smaller variant of Bootstrap's .btn-sm, for row-level delete buttons
    (Library's BookRow/BookmarkRow, Reader's bookmark list) that shouldn't
    compete visually with the row's own primary click target. */
