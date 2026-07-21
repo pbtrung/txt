@@ -40,7 +40,7 @@ export function BookmarkRow({ item, onClick, onDelete }: BookmarkRowProps) {
       </span>
       <button
         type="button"
-        className="btn btn-sm btn-outline-secondary border-0 flex-shrink-0"
+        className="btn btn-xs btn-outline-secondary border-0 flex-shrink-0"
         aria-label={`Remove this bookmark in ${item.info.title}`}
         onClick={(event) => {
           event.stopPropagation();

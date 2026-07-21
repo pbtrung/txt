@@ -50,7 +50,7 @@ export function BookRow({ book, onClick, onDelete }: BookRowProps) {
         {onDelete && (
           <button
             type="button"
-            className="btn btn-sm btn-outline-secondary border-0"
+            className="btn btn-xs btn-outline-secondary border-0"
             aria-label={`Remove ${book.info.title} from Recent`}
             onClick={(event) => {
               event.stopPropagation();
