@@ -91,6 +91,42 @@ describe("ReaderScreen", () => {
     expect(screen.getByRole("button", { name: /next/i })).toHaveClass("btn-sm");
   });
 
+  describe("font size", () => {
+    function fontSizeSelect() {
+      return screen.getByRole("combobox", { name: /font size/i });
+    }
+
+    it("offers 12/14/16/18/20/22px, defaulting to 16px", () => {
+      renderReader(baseResult());
+      const select = fontSizeSelect();
+      expect(select).toHaveValue("16");
+      expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual([
+        "12px",
+        "14px",
+        "16px",
+        "18px",
+        "20px",
+        "22px",
+      ]);
+    });
+
+    it("sits to the left of the Previous button in the bottom bar", () => {
+      renderReader(baseResult());
+      const select = fontSizeSelect();
+      const previous = screen.getByRole("button", { name: /previous/i });
+      expect(select.compareDocumentPosition(previous) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it("resizes the reading pane's text when changed", async () => {
+      renderReader(baseResult());
+      const line = screen.getByText("First paragraph of part 14.").closest(".reader-font") as HTMLElement;
+      expect(line.style.fontSize).toBe("16px");
+
+      await userEvent.selectOptions(fontSizeSelect(), "22");
+      expect(line.style.fontSize).toBe("22px");
+    });
+  });
+
   describe("editable part number", () => {
     it("shows the current part number and total", () => {
       renderReader(baseResult());
