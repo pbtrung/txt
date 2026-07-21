@@ -75,7 +75,7 @@ export function LibraryScreen() {
   }
 
   function openBookmark(item: RecentBookmarkItem) {
-    navigate(`/read/${item.txtId}?part=${item.partNum}`);
+    navigate(`/read/${item.txtId}?part=${item.partNum}&line=${item.line}`);
   }
 
   let heading: string;
