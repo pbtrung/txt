@@ -31,7 +31,6 @@ export function ReaderScreen() {
   const infoMenu = useDropdown();
   const bookmarksMenu = useDropdown();
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
-  const [highlightedLine, setHighlightedLine] = useState<number | null>(null);
 
   const {
     loading,
@@ -73,23 +72,20 @@ export function ReaderScreen() {
 
   const lines = useMemo(() => (partText ? splitLines(partText) : []), [partText]);
 
-  // Once a targeted line's text is actually on screen, scroll to it and
-  // flash-highlight it briefly -- set by clicking a bookmark (here or in
-  // Library's Recent Bookmarks) rather than just landing on its part.
-  // partText === null (not just !loading/!partTextLoading) matters here:
-  // right after switching books/parts there's a render where loading and
-  // partTextLoading are both momentarily false again but partText is still
-  // the *previous* part's (useReaderBook clears it to null up front, before
-  // fetching the new one) -- without this check this effect would fire
-  // against that stale content and clear targetLine before the real text
-  // (and its line elements) ever appears.
+  // Once a targeted line's text is actually on screen, scroll to it -- set
+  // by clicking a bookmark (here or in Library's Recent Bookmarks) rather
+  // than just landing on its part. partText === null (not just
+  // !loading/!partTextLoading) matters here: right after switching books/
+  // parts there's a render where loading and partTextLoading are both
+  // momentarily false again but partText is still the *previous* part's
+  // (useReaderBook clears it to null up front, before fetching the new one)
+  // -- without this check this effect would fire against that stale content
+  // and clear targetLine before the real text (and its line elements) ever
+  // appears.
   useEffect(() => {
     if (loading || partTextLoading || partText === null || targetLine === null) return;
     document.getElementById(lineElementId(targetLine))?.scrollIntoView({ behavior: "smooth", block: "center" });
-    setHighlightedLine(targetLine);
     clearTargetLine();
-    const timer = setTimeout(() => setHighlightedLine(null), 1500);
-    return () => clearTimeout(timer);
   }, [loading, partTextLoading, partText, targetLine, clearTargetLine]);
   const bookmarkedLines = useMemo(
     () => new Set(bookmarks.filter((b) => b.partNum === currentPartNum).map((b) => b.line)),
@@ -246,13 +242,7 @@ export function ReaderScreen() {
               const lineNum = i + 1;
               const isBookmarked = bookmarkedLines.has(lineNum);
               return (
-                <div
-                  key={lineNum}
-                  id={lineElementId(lineNum)}
-                  className={`reader-line d-flex align-items-start gap-2 ${
-                    highlightedLine === lineNum ? "is-highlighted" : ""
-                  }`}
-                >
+                <div key={lineNum} id={lineElementId(lineNum)} className="reader-line d-flex align-items-start gap-2">
                   <button
                     type="button"
                     className={`bookmark-toggle btn btn-sm p-0 border-0 bg-transparent lh-1 mt-1 ${

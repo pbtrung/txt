@@ -17,17 +17,6 @@ body,
   opacity: 1;
 }
 
-/* Briefly flashes the line a bookmark click jumped to (Reader's own
-   bookmark list, or Library's Recent Bookmarks) so it's obvious which line
-   was meant, not just which part. */
-.reader-line {
-  transition: background-color 0.6s ease;
-  border-radius: 0.25rem;
-}
-.reader-line.is-highlighted {
-  background-color: var(--bs-primary-bg-subtle);
-}
-
 /* Library and Reader screens: full width up through lg, capped to 60% (and
    centered) on larger screens so content doesn't stretch edge-to-edge on a
    wide monitor -- but stays full-bleed on mobile/tablet, where every pixel

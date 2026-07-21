@@ -335,13 +335,18 @@ describe("ReaderScreen", () => {
     expect(screen.getByRole("button", { name: /bookmark line 2/i })).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("scrolls to and briefly highlights the target line once its text is ready", () => {
+  it("scrolls to the target line once its text is ready", () => {
     const scrollIntoView = vi.fn();
     Element.prototype.scrollIntoView = scrollIntoView;
     renderReader(baseResult({ targetLine: 1 }));
     expect(scrollIntoView).toHaveBeenCalled();
-    const lineEl = screen.getByText("First paragraph of part 14.").closest(".reader-line");
-    expect(lineEl).toHaveClass("is-highlighted");
+  });
+
+  it("clears the target line once it's been scrolled to", () => {
+    Element.prototype.scrollIntoView = vi.fn();
+    const clearTargetLine = vi.fn();
+    renderReader(baseResult({ targetLine: 1, clearTargetLine }));
+    expect(clearTargetLine).toHaveBeenCalled();
   });
 
   it("navigates back to /library", async () => {
