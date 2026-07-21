@@ -12,7 +12,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
 import type { BookmarkEntry } from "../../data/bookmarks";
-import { getBookInfo, type BookInfo } from "../../data/metadata";
+import type { BookInfo } from "../../data/metadata";
 import { partCount as fetchPartCount, partRawPaths } from "../../data/owner";
 import { fetchPart } from "../../data/parts";
 import { useVault } from "../../state/VaultContext";
@@ -48,7 +48,6 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [info, setInfo] = useState<BookInfo | null>(null);
   const [partCount, setPartCount] = useState(0);
   const [currentPartNum, setCurrentPartNum] = useState(1);
 
@@ -61,23 +60,32 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
   const partTextCache = useRef(new Map<number, string>());
 
   const bookmarks = bookmarksMap.get(txtId) ?? [];
+  // Metadata for every book is already loaded in full during unlock (see
+  // VaultContext) -- available instantly, unlike part count/paths/content,
+  // which are only ever fetched for whichever book is actually open.
+  const info: BookInfo | null = session?.metadataById.get(txtId) ?? null;
 
-  // Load the book's key, metadata, part count, and part paths once per
-  // (session, txtId). accessMap/searchParams are read here only to seed the
-  // initial part -- deliberately not in the dep list below, since a
-  // read-position write (which updates accessMap) shouldn't re-trigger a
-  // full reload of metadata/part count/paths.
+  // Load the book's key, part count, and part paths once per (session,
+  // txtId) -- metadata itself needs no fetch here at all, see `info` above.
+  // accessMap/searchParams are read here only to seed the initial part --
+  // deliberately not in the dep list below, since a read-position write
+  // (which updates accessMap) shouldn't re-trigger a full reload.
   useEffect(() => {
     if (!session) return;
     let cancelled = false;
     setLoading(true);
     setError(null);
+    // Clears out the previous book's (or part's) text immediately, rather
+    // than leaving it visible until this load finishes -- otherwise there's
+    // a render in between where loading/partTextLoading are both false but
+    // partText is still the *old* part's, which would let a pending
+    // targetLine scroll/highlight fire against stale content (see below).
+    setPartText(null);
     partTextCache.current = new Map();
 
     (async () => {
       const txtKey = await getTxtKey(txtId);
-      const [bookInfo, count, rawPaths] = await Promise.all([
-        getBookInfo(session.db, session.userId, session.umk, txtId),
+      const [count, rawPaths] = await Promise.all([
         fetchPartCount(session.db, txtId),
         partRawPaths(session.db, txtId, txtKey),
       ]);
@@ -85,7 +93,6 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
 
       txtKeyRef.current = txtKey;
       rawPathsRef.current = rawPaths;
-      setInfo(bookInfo);
       setPartCount(count);
 
       // A Library "Recent Bookmarks" click carries ?part=N&line=M -- prefer
@@ -157,9 +164,18 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
 
   const goToPart = useCallback(
     (partNum: number) => {
-      setCurrentPartNum((current) => clampPartNum(partNum, partCount) || current);
+      const target = clampPartNum(partNum, partCount) || currentPartNum;
+      if (target !== currentPartNum) {
+        // Cleared in the same batch as currentPartNum, not left for the
+        // part-fetch effect to clear later -- otherwise there's a render in
+        // between showing the *old* part's text under the *new* part
+        // number, which is exactly the stale-content window the ReaderScreen
+        // scroll/highlight effect has to guard against (see its comment).
+        setPartText(null);
+      }
+      setCurrentPartNum(target);
     },
-    [partCount],
+    [partCount, currentPartNum],
   );
 
   const goToBookmark = useCallback(
