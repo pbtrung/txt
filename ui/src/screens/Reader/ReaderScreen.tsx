@@ -12,7 +12,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
-import { ProgressBar } from "../../components/ProgressBar";
 import { splitLines, truncatePreview } from "./readerModel";
 import { descriptionPlainText, sanitizeDescriptionHtml } from "./sanitizeHtml";
 import { useReaderBook } from "./useReaderBook";
@@ -127,7 +126,6 @@ export function ReaderScreen() {
     () => new Set(bookmarks.filter((b) => b.partNum === currentPartNum).map((b) => b.line)),
     [bookmarks, currentPartNum],
   );
-  const progressPercent = partCount > 0 ? Math.round((currentPartNum / partCount) * 100) : 0;
   const seriesLabel = info?.series ? `${info.series}${info.seriesIndex ? `, #${info.seriesIndex}` : ""}` : null;
   // Calibre/OPF descriptions commonly carry HTML (see sanitizeHtml.ts) --
   // and this book's metadata may come from a document someone else shared
@@ -165,7 +163,7 @@ export function ReaderScreen() {
 
   return (
     <div className="shell-80 d-flex flex-column vh-100">
-      <div className="border-bottom d-flex align-items-center gap-3 px-3 py-2">
+      <div className="border-bottom d-flex align-items-center gap-3 ps-2 ps-sm-3 pe-3 py-2">
         <button
           type="button"
           className="btn btn-link text-decoration-none px-0"
@@ -237,7 +235,7 @@ export function ReaderScreen() {
         </div>
       </div>
 
-      <div className="flex-grow-1 overflow-auto px-4 py-4">
+      <div className="flex-grow-1 overflow-auto ps-2 ps-sm-4 pe-4 py-4">
         <div className="mx-auto" style={{ maxWidth: "42rem" }}>
           {!loading && (
             <div className="small text-body-secondary text-uppercase mb-3">
@@ -284,7 +282,7 @@ export function ReaderScreen() {
         </div>
       </div>
 
-      <div className="border-top d-flex align-items-center gap-2 gap-sm-3 px-3 py-2">
+      <div className="border-top d-flex align-items-center gap-2 gap-sm-3 ps-2 ps-sm-3 pe-3 py-2">
         <button
           type="button"
           className="btn btn-sm btn-outline-secondary"
@@ -292,11 +290,7 @@ export function ReaderScreen() {
           disabled={loading || currentPartNum <= 1}
           aria-label="Previous part"
         >
-          <i className="bi bi-chevron-left d-sm-none" aria-hidden="true" />
-          <span className="d-none d-sm-inline">
-            <i className="bi bi-chevron-left me-1" aria-hidden="true" />
-            Previous
-          </span>
+          <i className="bi bi-chevron-left" aria-hidden="true" />
         </button>
 
         <div className="d-flex align-items-center gap-1 text-body-secondary small text-nowrap">
@@ -322,11 +316,17 @@ export function ReaderScreen() {
           <span>/ {partCount}</span>
         </div>
 
-        <div className="flex-grow-1">
-          <ProgressBar percent={progressPercent} />
-        </div>
+        <button
+          type="button"
+          className="btn btn-sm btn-outline-secondary"
+          onClick={next}
+          disabled={loading || currentPartNum >= partCount}
+          aria-label="Next part"
+        >
+          <i className="bi bi-chevron-right" aria-hidden="true" />
+        </button>
 
-        <div ref={bookmarksMenuRef} className="dropdown position-relative">
+        <div ref={bookmarksMenuRef} className="dropdown position-relative ms-auto">
           <button
             type="button"
             className={`btn btn-sm ${bookmarksOpen ? "btn-primary" : "btn-outline-secondary"}`}
@@ -384,20 +384,6 @@ export function ReaderScreen() {
             </div>
           )}
         </div>
-
-        <button
-          type="button"
-          className="btn btn-sm btn-outline-secondary"
-          onClick={next}
-          disabled={loading || currentPartNum >= partCount}
-          aria-label="Next part"
-        >
-          <i className="bi bi-chevron-right d-sm-none" aria-hidden="true" />
-          <span className="d-none d-sm-inline">
-            Next
-            <i className="bi bi-chevron-right ms-1" aria-hidden="true" />
-          </span>
-        </button>
       </div>
     </div>
   );
