@@ -122,9 +122,74 @@ describe("loadTxtMetadata", () => {
 
     expect(result.get(9)?.rawMetadata).toEqual([
       { key: "title", values: ["Some Book"] },
-      { key: "date", values: ["2020-01-01"] },
+      { key: "date", values: ["January 1, 2020"] }, // reformatted, see the dedicated date-formatting tests below
       { key: "identifier", values: ["978-0-000-00000-0"] },
       { key: "language", values: ["en"] },
     ]);
+  });
+
+  describe("rawMetadata: date fields", () => {
+    async function rawMetadataFor(metadata: Record<string, unknown>) {
+      const umk = new Uint8Array(64).fill(1);
+      const txtMetadataKey = new Uint8Array(64).fill(4);
+      const keyBlob = await blob.encrypt(umk, txtMetadataKey);
+      const content = { "1": { name: "book.epub.txt", metadata } };
+      const contentBlob = await blob.encrypt(txtMetadataKey, new TextEncoder().encode(JSON.stringify(content)), {
+        compressed: true,
+      });
+      const db = fakeClient({ txt_metadata_key: keyBlob.buffer, content: contentBlob.buffer });
+      const result = await loadTxtMetadata(db, 42, umk);
+      return result.get(1)?.rawMetadata ?? [];
+    }
+
+    it("formats a date-only value (no time component at all) as just the date", async () => {
+      const rawMetadata = await rawMetadataFor({ date: "2020-01-15" });
+      expect(rawMetadata).toEqual([{ key: "date", values: ["January 15, 2020"] }]);
+    });
+
+    it("formats a timestamp with an all-zero time-of-day as just the date", async () => {
+      const rawMetadata = await rawMetadataFor({ date: "2020-01-15T00:00:00+00:00" });
+      expect(rawMetadata).toEqual([{ key: "date", values: ["January 15, 2020"] }]);
+    });
+
+    it("formats a timestamp with a real time-of-day as date and time", async () => {
+      const rawMetadata = await rawMetadataFor({ date: "2020-01-15T08:23:45+00:00" });
+      expect(rawMetadata).toEqual([{ key: "date", values: ["January 15, 2020, 8:23 AM"] }]);
+    });
+
+    it("renames calibre:timestamp to timestamp and formats it the same way", async () => {
+      const rawMetadata = await rawMetadataFor({ "calibre:timestamp": "2019-06-01T14:05:00+00:00" });
+      expect(rawMetadata).toEqual([{ key: "timestamp", values: ["June 1, 2019, 2:05 PM"] }]);
+    });
+
+    it("falls back to the raw string for a value that doesn't look like an OPF timestamp", async () => {
+      const rawMetadata = await rawMetadataFor({ date: "circa 1990" });
+      expect(rawMetadata).toEqual([{ key: "date", values: ["circa 1990"] }]);
+    });
+  });
+
+  it("drops calibre:rating and calibre:title_sort from rawMetadata entirely", async () => {
+    const umk = new Uint8Array(64).fill(1);
+    const txtMetadataKey = new Uint8Array(64).fill(4);
+    const keyBlob = await blob.encrypt(umk, txtMetadataKey);
+
+    const content = {
+      "1": {
+        name: "book.epub.txt",
+        metadata: {
+          title: "Some Book",
+          "calibre:rating": "8",
+          "calibre:title_sort": "Book, Some",
+        },
+      },
+    };
+    const contentBlob = await blob.encrypt(txtMetadataKey, new TextEncoder().encode(JSON.stringify(content)), {
+      compressed: true,
+    });
+
+    const db = fakeClient({ txt_metadata_key: keyBlob.buffer, content: contentBlob.buffer });
+    const result = await loadTxtMetadata(db, 42, umk);
+
+    expect(result.get(1)?.rawMetadata).toEqual([{ key: "title", values: ["Some Book"] }]);
   });
 });
