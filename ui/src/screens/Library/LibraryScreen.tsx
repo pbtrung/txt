@@ -108,7 +108,7 @@ export function LibraryScreen() {
   }
 
   return (
-    <div className="d-flex flex-column vh-100">
+    <div className="library-shell d-flex flex-column vh-100">
       <div className="border-bottom d-flex align-items-center gap-3 px-3 py-2">
         <Wordmark />
         <div className="flex-grow-1" style={{ maxWidth: "28rem" }}>
