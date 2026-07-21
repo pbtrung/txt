@@ -78,8 +78,8 @@ describe("loadTxtMetadata", () => {
         { key: "title", values: ["The White Order"] },
         { key: "creator", values: ["L. E. Modesitt, Jr."] },
         { key: "publisher", values: ["Tor Publishing Group"] },
-        { key: "calibre:series", values: ["Saga of Recluce"] },
-        { key: "calibre:series_index", values: ["8"] },
+        { key: "series", values: ["Saga of Recluce"] },
+        { key: "series index", values: ["8"] },
       ], // subject is omitted -- already shown as badges in the curated summary above
     });
     expect(result.get(8)).toEqual({
