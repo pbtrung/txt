@@ -140,6 +140,16 @@ body,
   box-shadow: 0 0 0 0.15rem rgba(var(--bs-primary-rgb), 0.25);
 }
 
+/* Bootstrap's .vr uses align-self: stretch, which only fills the flex
+   line's own content height -- inside the bottom bar's py-2 padding, that
+   leaves visible gaps above/below before actually reaching the bar's top
+   border and bottom edge. A negative block margin equal to that padding
+   (0.5rem) extends the divider through it, so it touches both ends of the
+   bar itself rather than just spanning its siblings' height. */
+.bottom-bar-vr {
+  margin-block: -0.5rem;
+}
+
 /* Reader's font-size <select>: Bootstrap's default .form-select reserves
    2.25rem of right padding for its dropdown arrow (positioned 0.75rem from
    the right edge) -- generous for a full-width select, but in this narrow,
