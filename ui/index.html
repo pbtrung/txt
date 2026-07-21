@@ -17,10 +17,16 @@
       style-src allows 'unsafe-inline' for this app's own style={{...}}
       JSX props (developer-authored, not attacker-influenced -- DOMPurify's
       own attribute allowlist already excludes `style` from sanitized HTML).
+      font-src allows data: because Vite inlines some of the bundled
+      @fontsource font files (e.g. Literata's smaller unicode-range subsets)
+      as base64 data URIs rather than separate requests -- without it those
+      particular @font-face srcs would be CSP-blocked and silently fall back
+      to a larger non-inlined format, a needless violation for a
+      same-origin, build-time-bundled asset.
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src *; object-src 'none'; base-uri 'self'; form-action 'self';"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src *; object-src 'none'; base-uri 'self'; form-action 'self';"
     />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Skypiea</title>

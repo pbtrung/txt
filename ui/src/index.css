@@ -4,6 +4,13 @@ body,
   height: 100%;
 }
 
+/* Reader screen's reading column (title + body text): Literata, a serif
+   typeface designed for long-form reading, in place of the default
+   sans-serif system-font stack used everywhere else in the app. */
+.reader-font {
+  font-family: "Literata", serif;
+}
+
 /* Reader screen: a line's bookmark toggle only appears on hover/focus of
    that line, unless the line is already bookmarked (then it stays visible
    as a status indicator, not just a hover affordance). */
