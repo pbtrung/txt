@@ -1,15 +1,16 @@
-import type { Client } from "@libsql/core/api";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
+import type { AccessMap } from "../../data/access";
+import type { BookmarksMap } from "../../data/bookmarks";
+import type { BookInfo } from "../../data/metadata";
 import {
   allBooksSorted,
-  bookProgressPercent,
   bookStatus,
   browseEntries,
+  buildLibraryBooks,
   booksForDimensionValue,
-  loadLibraryBooks,
-  loadPartCount,
   matchesSearch,
+  recentBookmarks,
   recentBooks,
   type LibraryBook,
 } from "./libraryModel";
@@ -17,102 +18,41 @@ import {
 function book(overrides: Partial<LibraryBook> & { txtId: number }): LibraryBook {
   return {
     info: { txtId: overrides.txtId, name: `t${overrides.txtId}`, title: `Title ${overrides.txtId}`, subjects: [] },
-    partCount: 10,
     lastPartNum: null,
     lastAccessedMs: null,
     ...overrides,
   };
 }
 
-describe("bookStatus / bookProgressPercent", () => {
+describe("bookStatus", () => {
   it("is not-started when there's no read position", () => {
-    const b = book({ txtId: 1 });
-    expect(bookStatus(b)).toBe("not-started");
-    expect(bookProgressPercent(b)).toBe(0);
+    expect(bookStatus(book({ txtId: 1 }))).toBe("not-started");
   });
 
-  it("is in-progress partway through", () => {
-    const b = book({ txtId: 1, partCount: 40, lastPartNum: 14 });
-    expect(bookStatus(b)).toBe("in-progress");
-    expect(bookProgressPercent(b)).toBe(35);
-  });
-
-  it("is finished once the last part has been read", () => {
-    const b = book({ txtId: 1, partCount: 40, lastPartNum: 40 });
-    expect(bookStatus(b)).toBe("finished");
-    expect(bookProgressPercent(b)).toBe(100);
-  });
-
-  it("assumes in-progress (not finished) while partCount hasn't loaded yet", () => {
-    const b = book({ txtId: 1, partCount: null, lastPartNum: 14 });
-    expect(bookStatus(b)).toBe("in-progress");
-    expect(bookProgressPercent(b)).toBe(0);
-  });
-
-  it("stays not-started with no read position, regardless of partCount", () => {
-    const b = book({ txtId: 1, partCount: null, lastPartNum: null });
-    expect(bookStatus(b)).toBe("not-started");
+  it("is in-progress once a part has been read", () => {
+    expect(bookStatus(book({ txtId: 1, lastPartNum: 14 }))).toBe("in-progress");
   });
 });
 
-describe("loadLibraryBooks", () => {
-  function fakeClient(rows: Record<string, unknown[]>): Client {
-    return {
-      async execute({ sql }: { sql: string }) {
-        for (const [needle, resultRows] of Object.entries(rows)) {
-          if (sql.includes(needle)) {
-            return { rows: resultRows, columns: [], columnTypes: [], rowsAffected: 0, lastInsertRowid: undefined, toJSON: () => ({}) };
-          }
-        }
-        throw new Error(`no handler for SQL: ${sql}`);
-      },
-    } as unknown as Client;
-  }
+describe("buildLibraryBooks", () => {
+  it("combines metadata with read position, keyed by txt_id", () => {
+    const metadataById = new Map<number, BookInfo>([
+      [7, { txtId: 7, name: "n7", title: "Title 7", subjects: [] }],
+      [8, { txtId: 8, name: "n8", title: "Title 8", subjects: [] }],
+    ]);
+    const accessMap: AccessMap = new Map([[7, { lastPartNum: 14, lastAccessedMs: 1000 }]]);
 
-  it("does not fetch part_count -- every loaded book's partCount is null", async () => {
-    const umk = new Uint8Array(64).fill(1);
-    const db = fakeClient({
-      "FROM txt WHERE user_id": [{ id: 7 }],
-      "FROM txt_metadata": [{ txt_metadata_key: null, content: null }],
-      "FROM txt_access": [],
-    });
-    const getTxtKey = vi.fn().mockResolvedValue(new Uint8Array(64));
+    const books = buildLibraryBooks(metadataById, accessMap);
 
-    const books = await loadLibraryBooks(db, 42, umk, getTxtKey);
-
-    expect(books).toHaveLength(1);
-    expect(books[0].partCount).toBeNull();
+    expect(books).toEqual([
+      { txtId: 7, info: metadataById.get(7), lastPartNum: 14, lastAccessedMs: 1000 },
+      { txtId: 8, info: metadataById.get(8), lastPartNum: null, lastAccessedMs: null },
+    ]);
   });
 
-  it("skips a book whose data fails to load instead of rejecting the whole list", async () => {
-    const umk = new Uint8Array(64).fill(1);
-    const db = fakeClient({
-      "FROM txt WHERE user_id": [{ id: 7 }, { id: 8 }],
-      "FROM txt_metadata": [{ txt_metadata_key: null, content: null }],
-      "FROM txt_access": [],
-    });
-    const getTxtKey = vi.fn().mockImplementation(async (txtId: number) => {
-      if (txtId === 7) throw new Error("simulated failure (e.g. a 404)");
-      return new Uint8Array(64);
-    });
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-
-    const books = await loadLibraryBooks(db, 42, umk, getTxtKey);
-
-    expect(books.map((b) => b.txtId)).toEqual([8]);
-    expect(warnSpy).toHaveBeenCalled();
-    warnSpy.mockRestore();
-  });
-});
-
-describe("loadPartCount", () => {
-  it("fetches a single book's part count", async () => {
-    const db = {
-      async execute() {
-        return { rows: [{ count: 41 }], columns: [], columnTypes: [], rowsAffected: 0, lastInsertRowid: undefined, toJSON: () => ({}) };
-      },
-    } as unknown as Client;
-    expect(await loadPartCount(db, 7)).toBe(41);
+  it("returns every metadata entry even with an empty access map", () => {
+    const metadataById = new Map<number, BookInfo>([[7, { txtId: 7, name: "n7", title: "Title 7", subjects: [] }]]);
+    expect(buildLibraryBooks(metadataById, new Map())).toHaveLength(1);
   });
 });
 
@@ -202,5 +142,46 @@ describe("browseEntries / booksForDimensionValue", () => {
   it("filters books by a dimension value", () => {
     expect(booksForDimensionValue(books, "subject", "Fantasy").map((b) => b.txtId)).toEqual([1, 2]);
     expect(booksForDimensionValue(books, "author", "Author A").map((b) => b.txtId)).toEqual([1]);
+  });
+});
+
+describe("recentBookmarks", () => {
+  it("flattens every txt_id's bookmarks, most recently created first", () => {
+    const metadataById = new Map<number, BookInfo>([
+      [7, { txtId: 7, name: "n7", title: "The White Order", subjects: [] }],
+      [8, { txtId: 8, name: "n8", title: "Unshrinking", subjects: [] }],
+    ]);
+    const bookmarksMap: BookmarksMap = new Map([
+      [
+        7,
+        [
+          { partNum: 14, line: 1, txtPreview: "Powerful white mages", createdAt: 1000 },
+          { partNum: 20, line: 2, txtPreview: "Cerryl witnessed", createdAt: 3000 },
+        ],
+      ],
+      [8, [{ partNum: 2, line: 3, txtPreview: "She knew that fatphobia", createdAt: 2000 }]],
+    ]);
+
+    const items = recentBookmarks(bookmarksMap, metadataById);
+
+    expect(items.map((i) => i.createdAt)).toEqual([3000, 2000, 1000]);
+    expect(items[0]).toEqual({
+      txtId: 7,
+      info: metadataById.get(7),
+      partNum: 20,
+      line: 2,
+      txtPreview: "Cerryl witnessed",
+      createdAt: 3000,
+    });
+  });
+
+  it("falls back to a placeholder title when metadata is missing", () => {
+    const bookmarksMap: BookmarksMap = new Map([[9, [{ partNum: 1, line: 1, txtPreview: "x", createdAt: 1000 }]]]);
+    const items = recentBookmarks(bookmarksMap, new Map());
+    expect(items[0].info.title).toBe("txt_9");
+  });
+
+  it("returns an empty list when there are no bookmarks", () => {
+    expect(recentBookmarks(new Map(), new Map())).toEqual([]);
   });
 });
