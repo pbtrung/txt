@@ -59,6 +59,7 @@ const books: LibraryBook[] = [
 
 const removeAccessEntry = vi.fn();
 const removeBookmarkEntry = vi.fn();
+const lock = vi.fn();
 
 function CurrentPath() {
   const location = useLocation();
@@ -73,12 +74,12 @@ function CurrentPath() {
 function renderLibrary(bookmarksMap: BookmarksMap = new Map()) {
   vi.mocked(VaultContextModule.useVault).mockReturnValue({
     status: "unlocked",
-    session: null,
+    session: { creds: { displayName: "Alice" } } as VaultContextModule.VaultSession,
     error: null,
     accessMap: new Map(),
     bookmarksMap,
     unlock: vi.fn(),
-    lock: vi.fn(),
+    lock,
     getTxtKey: vi.fn(),
     recordReadPosition: vi.fn(),
     removeAccessEntry,
@@ -198,6 +199,46 @@ describe("LibraryScreen", () => {
       await userEvent.click(screen.getByRole("button", { name: /library menu/i }));
       await userEvent.keyboard("{Escape}");
       expect(screen.getAllByRole("button", { name: /All books/ })).toHaveLength(1);
+    });
+
+    it("positions the dropdown to grow rightward (it's anchored at the left edge, not the right)", async () => {
+      renderLibrary();
+      await userEvent.click(screen.getByRole("button", { name: /library menu/i }));
+      const menu = screen.getAllByRole("button", { name: /All books/ })[0].closest(".dropdown-menu");
+      expect(menu).toHaveClass("app-dropdown-menu-start");
+    });
+
+    it("the toggle button wraps only the book icon, not the 'Skypiea' text", () => {
+      renderLibrary();
+      const toggle = screen.getByRole("button", { name: /library menu/i });
+      expect(toggle).not.toHaveTextContent("Skypiea");
+      // Both the small-screen and lg+ copies of the wordmark text coexist in
+      // jsdom (no real CSS media queries), so at least one must be present.
+      expect(screen.getAllByText("Skypiea").length).toBeGreaterThan(0);
+    });
+  });
+
+  describe("account footer (bottom of the left pane)", () => {
+    it("shows the signed-in display name (with a leading user icon) and an icon-only Lock button", () => {
+      renderLibrary();
+      const name = screen.getByText("Alice");
+      expect(name).toBeInTheDocument();
+      expect(name.parentElement?.querySelector(".bi-person-circle")).not.toBeNull();
+      const lockButton = screen.getByRole("button", { name: /^lock$/i });
+      expect(lockButton).not.toHaveTextContent("Lock");
+    });
+
+    it("calls lock() when clicked", async () => {
+      renderLibrary();
+      await userEvent.click(screen.getByRole("button", { name: /^lock$/i }));
+      expect(lock).toHaveBeenCalledTimes(1);
+    });
+
+    it("is no longer in the top bar -- only the nav's copy (or copies) exist", async () => {
+      renderLibrary();
+      expect(screen.getAllByRole("button", { name: /^lock$/i })).toHaveLength(1);
+      await userEvent.click(screen.getByRole("button", { name: /library menu/i }));
+      expect(screen.getAllByRole("button", { name: /^lock$/i })).toHaveLength(2);
     });
   });
 

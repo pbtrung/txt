@@ -45,10 +45,16 @@ body,
 /* Library screen's left nav: only ever rendered at lg+ (below that, its
    content instead shows inside the wordmark's dropdown -- see
    .app-dropdown-menu below), where it's the fixed-width sidebar beside the
-   book list. */
+   book list. display:flex itself comes from the d-lg-flex utility on the
+   element (needs Bootstrap's !important to win over d-none below lg, which
+   a plain rule here couldn't); flex-direction still needs to be supplied,
+   since no Bootstrap utility sets both at once. Together they let
+   LibraryNavContent's own account-footer (display name + Lock) stick to
+   the bottom via flex-grow-1 on the nav-items list above it. */
 .library-nav {
   width: 16rem;
   flex-shrink: 0;
+  flex-direction: column;
 }
 
 /* Dropdowns anchored to a button (Reader's Info/Bookmarks, Library's
@@ -75,6 +81,17 @@ body,
   bottom: 100%;
   margin-top: 0;
   margin-bottom: 0.5rem;
+}
+
+/* Library's wordmark-as-drawer-toggle sits at the *left* edge of the top
+   bar, unlike Reader's Info/Bookmarks buttons (right edge) that
+   .app-dropdown-menu's default right:0 was written for -- anchoring a 16rem
+   menu's right edge to a button that's already at the left edge pushes most
+   of it off-screen to the left. This flips it to grow rightward instead,
+   staying inside the viewport. */
+.app-dropdown-menu-start {
+  right: auto;
+  left: 0;
 }
 
 /* A smaller variant of Bootstrap's .btn-sm, for row-level delete buttons

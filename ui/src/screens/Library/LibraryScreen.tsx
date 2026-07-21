@@ -1,20 +1,20 @@
 // Screen 2 -- Library (docs/ui.md): a catalog nav on the left, a plain list
 // of books on the right. Top bar stays a slim strip above both panes:
-// wordmark, a search field, and a status pill confirming the vault is
-// unlocked.
+// wordmark and a search field. Account status/actions (who's signed in, and
+// locking the vault) live in the nav's account footer instead, not the top
+// bar.
 //
 // Below lg, the nav has no room to sit beside the book list, so its content
 // (NavItem lists) is shared between two renderings instead of duplicated:
-// a persistent lg+ sidebar, and a dropdown below lg -- merged into the
-// wordmark itself (clicking it is what opens/closes the dropdown, rather
-// than a separate hamburger button next to it).
+// a persistent lg+ sidebar, and a dropdown below lg -- toggled by the book
+// icon alone (not the full wordmark) rather than a separate hamburger
+// button next to it.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { BookmarkRow } from "../../components/BookmarkRow";
 import { BookRow } from "../../components/BookRow";
-import { StatusPill } from "../../components/StatusPill";
 import { Wordmark } from "../../components/Wordmark";
 import { useVault } from "../../state/VaultContext";
 import {
@@ -75,6 +75,8 @@ function LibraryNavContent({
   authorEntries,
   subjectEntries,
   publisherEntries,
+  displayName,
+  onLock,
 }: {
   view: View;
   selectView: (next: View) => void;
@@ -83,50 +85,73 @@ function LibraryNavContent({
   authorEntries: BrowseEntry[];
   subjectEntries: BrowseEntry[];
   publisherEntries: BrowseEntry[];
+  displayName: string | undefined;
+  onLock: () => void;
 }) {
   return (
     <>
-      <div className="list-group list-group-flush">
-        <NavItem
-          active={view.kind === "recent"}
-          label="Recent"
-          count={recentCount}
-          onClick={() => selectView({ kind: "recent" })}
-        />
-        <NavItem
-          active={view.kind === "all"}
-          label="All books"
-          count={allCount}
-          onClick={() => selectView({ kind: "all" })}
-        />
+      <div className="flex-grow-1 overflow-auto">
+        <div className="list-group list-group-flush">
+          <NavItem
+            active={view.kind === "recent"}
+            label="Recent"
+            count={recentCount}
+            onClick={() => selectView({ kind: "recent" })}
+          />
+          <NavItem
+            active={view.kind === "all"}
+            label="All books"
+            count={allCount}
+            onClick={() => selectView({ kind: "all" })}
+          />
+        </div>
+        <div className="text-body-secondary small fw-semibold text-uppercase mt-3 mb-1 px-2">Browse</div>
+        <div className="list-group list-group-flush">
+          <NavItem
+            active={view.kind === "browse" && view.dimension === "author"}
+            label="Authors"
+            count={authorEntries.length}
+            onClick={() => selectView({ kind: "browse", dimension: "author" })}
+          />
+          <NavItem
+            active={view.kind === "browse" && view.dimension === "subject"}
+            label="Subjects"
+            count={subjectEntries.length}
+            onClick={() => selectView({ kind: "browse", dimension: "subject" })}
+          />
+          <NavItem
+            active={view.kind === "browse" && view.dimension === "publisher"}
+            label="Publishers"
+            count={publisherEntries.length}
+            onClick={() => selectView({ kind: "browse", dimension: "publisher" })}
+          />
+        </div>
       </div>
-      <div className="text-body-secondary small fw-semibold text-uppercase mt-3 mb-1 px-2">Browse</div>
-      <div className="list-group list-group-flush">
-        <NavItem
-          active={view.kind === "browse" && view.dimension === "author"}
-          label="Authors"
-          count={authorEntries.length}
-          onClick={() => selectView({ kind: "browse", dimension: "author" })}
-        />
-        <NavItem
-          active={view.kind === "browse" && view.dimension === "subject"}
-          label="Subjects"
-          count={subjectEntries.length}
-          onClick={() => selectView({ kind: "browse", dimension: "subject" })}
-        />
-        <NavItem
-          active={view.kind === "browse" && view.dimension === "publisher"}
-          label="Publishers"
-          count={publisherEntries.length}
-          onClick={() => selectView({ kind: "browse", dimension: "publisher" })}
-        />
+
+      {/* The account footer: who's signed in, and the (now icon-only) Lock
+          action -- moved here from the top bar so it's part of "your
+          account" rather than sitting next to the search field. */}
+      <div className="border-top pt-2 mt-2 d-flex align-items-center justify-content-between gap-2">
+        <span className="d-flex align-items-center gap-2 text-truncate">
+          <i className="bi bi-person-circle text-body-secondary flex-shrink-0" aria-hidden="true" />
+          <span className="small text-body-secondary text-truncate">{displayName}</span>
+        </span>
+        <button
+          type="button"
+          className="btn btn-sm btn-outline-secondary flex-shrink-0"
+          onClick={onLock}
+          aria-label="Lock"
+          title="Lock"
+        >
+          <i className="bi bi-unlock" aria-hidden="true" />
+        </button>
       </div>
     </>
   );
 }
 
 export function LibraryScreen() {
-  const { lock, bookmarksMap, removeAccessEntry, removeBookmarkEntry } = useVault();
+  const { lock, session, bookmarksMap, removeAccessEntry, removeBookmarkEntry } = useVault();
   const navigate = useNavigate();
   const { books, loading } = useLibraryBooks();
   const [view, setView] = useState<View>({ kind: "recent" });
@@ -217,23 +242,27 @@ export function LibraryScreen() {
   return (
     <div className="shell-80 d-flex flex-column vh-100">
       <div className="border-bottom d-flex flex-wrap align-items-center gap-2 gap-md-3 ps-2 ps-sm-3 pe-3 py-2">
-        {/* Below lg: the wordmark itself is the drawer toggle -- merged
-            instead of a separate hamburger button next to it. */}
-        <div ref={navMenuRef} className="dropdown position-relative d-lg-none">
+        {/* Below lg: the book icon alone (not the "Skypiea" text) is the
+            drawer toggle -- styled as a visible bordered button so it reads
+            as tappable; the wordmark text sits beside it, plain. At lg+ the
+            whole wordmark is plain branding below, since there's nothing to
+            toggle there. */}
+        <div ref={navMenuRef} className="dropdown position-relative d-lg-none d-flex align-items-center gap-2">
           <button
             type="button"
-            className="btn btn-link text-decoration-none p-0 border-0"
+            className="btn btn-outline-secondary btn-sm d-flex align-items-center justify-content-center"
             onClick={() => setNavOpen((open) => !open)}
             aria-expanded={navOpen}
             aria-haspopup="true"
             aria-label="Library menu"
           >
-            <Wordmark />
+            <i className="bi bi-book text-primary" aria-hidden="true" />
           </button>
+          <span className="fw-semibold">Skypiea</span>
           {navOpen && (
             <div
-              className="dropdown-menu app-dropdown-menu show p-2"
-              style={{ width: "16rem", maxWidth: "90vw", maxHeight: "70vh", overflowY: "auto" }}
+              className="dropdown-menu app-dropdown-menu app-dropdown-menu-start show p-2 d-flex flex-column"
+              style={{ width: "16rem", maxWidth: "90vw", maxHeight: "70vh" }}
             >
               <LibraryNavContent
                 view={view}
@@ -243,6 +272,8 @@ export function LibraryScreen() {
                 authorEntries={authorEntries}
                 subjectEntries={subjectEntries}
                 publisherEntries={publisherEntries}
+                displayName={session?.creds.displayName}
+                onLock={lock}
               />
             </div>
           )}
@@ -267,17 +298,6 @@ export function LibraryScreen() {
             />
           </div>
         </div>
-        <div className="ms-auto d-flex align-items-center gap-3">
-          <StatusPill>Unlocked</StatusPill>
-          <button
-            type="button"
-            className="btn btn-primary btn-sm rounded-pill d-flex align-items-center gap-2"
-            onClick={lock}
-          >
-            <i className="bi bi-unlock" aria-hidden="true" />
-            Lock
-          </button>
-        </div>
       </div>
 
       {/*
@@ -292,7 +312,7 @@ export function LibraryScreen() {
         actually truncate instead of forcing extra width).
       */}
       <div className="flex-grow-1 d-flex flex-column flex-lg-row overflow-hidden">
-        <div className="library-nav border-end p-2 d-none d-lg-block" style={{ overflowY: "auto" }}>
+        <div className="library-nav border-end p-2 d-none d-lg-flex">
           <LibraryNavContent
             view={view}
             selectView={selectView}
@@ -301,6 +321,8 @@ export function LibraryScreen() {
             authorEntries={authorEntries}
             subjectEntries={subjectEntries}
             publisherEntries={publisherEntries}
+            displayName={session?.creds.displayName}
+            onLock={lock}
           />
         </div>
 
