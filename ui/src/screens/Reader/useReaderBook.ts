@@ -191,11 +191,19 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
   const next = useCallback(() => goToPart(currentPartNum + 1), [goToPart, currentPartNum]);
   const previous = useCallback(() => goToPart(currentPartNum - 1), [goToPart, currentPartNum]);
 
+  // Toggles: the gutter button that adds a bookmark is the same one that
+  // removes it, so this looks for an existing entry at this exact
+  // (part, line) before deciding which action to take.
   const bookmarkLine = useCallback(
     (line: number, txtPreview: string) => {
-      void addBookmarkEntry(txtId, currentPartNum, line, txtPreview);
+      const existing = bookmarks.find((b) => b.partNum === currentPartNum && b.line === line);
+      if (existing) {
+        void removeBookmarkEntry(txtId, existing.createdAt);
+      } else {
+        void addBookmarkEntry(txtId, currentPartNum, line, txtPreview);
+      }
     },
-    [addBookmarkEntry, txtId, currentPartNum],
+    [bookmarks, currentPartNum, addBookmarkEntry, removeBookmarkEntry, txtId],
   );
 
   const removeBookmark = useCallback(
