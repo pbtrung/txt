@@ -17,6 +17,17 @@ body,
   opacity: 1;
 }
 
+/* Briefly flashes the line a bookmark click jumped to (Reader's own
+   bookmark list, or Library's Recent Bookmarks) so it's obvious which line
+   was meant, not just which part. */
+.reader-line {
+  transition: background-color 0.6s ease;
+  border-radius: 0.25rem;
+}
+.reader-line.is-highlighted {
+  background-color: var(--bs-primary-bg-subtle);
+}
+
 /* A smaller variant of Bootstrap's .btn-sm, for row-level delete buttons
    (Library's BookRow/BookmarkRow, Reader's bookmark list) that shouldn't
    compete visually with the row's own primary click target. */

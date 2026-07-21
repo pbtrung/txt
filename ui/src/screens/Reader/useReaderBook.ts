@@ -27,7 +27,14 @@ export interface UseReaderBookResult {
   partText: string | null;
   partTextLoading: boolean;
   bookmarks: BookmarkEntry[];
+  /** A line to scroll/highlight once its part's text is ready -- set by
+   * goToBookmark() or an initial ?part=&line= deep link, cleared by the
+   * caller (ReaderScreen) once it's been acted on. */
+  targetLine: number | null;
+  clearTargetLine: () => void;
   goToPart: (partNum: number) => void;
+  /** Like goToPart, but also requests a scroll/highlight to that specific line. */
+  goToBookmark: (partNum: number, line: number) => void;
   next: () => void;
   previous: () => void;
   bookmarkLine: (line: number, txtPreview: string) => void;
@@ -47,6 +54,7 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
 
   const [partText, setPartText] = useState<string | null>(null);
   const [partTextLoading, setPartTextLoading] = useState(false);
+  const [targetLine, setTargetLine] = useState<number | null>(null);
 
   const txtKeyRef = useRef<Uint8Array | null>(null);
   const rawPathsRef = useRef<string[]>([]);
@@ -80,13 +88,18 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
       setInfo(bookInfo);
       setPartCount(count);
 
-      // A Library "Recent Bookmarks" click carries ?part=N -- prefer that,
-      // once, over the saved read position (mirrors clicking a bookmark
-      // in-screen, just from a cold load instead of an already-open book).
+      // A Library "Recent Bookmarks" click carries ?part=N&line=M -- prefer
+      // that, once, over the saved read position (mirrors clicking a
+      // bookmark in-screen, just from a cold load instead of an
+      // already-open book).
       const requestedPart = Number(searchParams.get("part"));
+      const requestedLine = Number(searchParams.get("line"));
       const initialPart =
         Number.isInteger(requestedPart) && requestedPart > 0 ? requestedPart : accessMap.get(txtId)?.lastPartNum ?? 1;
       setCurrentPartNum(clampPartNum(initialPart, count));
+      if (Number.isInteger(requestedPart) && requestedPart > 0 && Number.isInteger(requestedLine) && requestedLine > 0) {
+        setTargetLine(requestedLine);
+      }
       setLoading(false);
     })().catch((err: unknown) => {
       if (!cancelled) {
@@ -144,6 +157,16 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
     [partCount],
   );
 
+  const goToBookmark = useCallback(
+    (partNum: number, line: number) => {
+      goToPart(partNum);
+      setTargetLine(line);
+    },
+    [goToPart],
+  );
+
+  const clearTargetLine = useCallback(() => setTargetLine(null), []);
+
   const next = useCallback(() => goToPart(currentPartNum + 1), [goToPart, currentPartNum]);
   const previous = useCallback(() => goToPart(currentPartNum - 1), [goToPart, currentPartNum]);
 
@@ -170,7 +193,10 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
     partText,
     partTextLoading,
     bookmarks,
+    targetLine,
+    clearTargetLine,
     goToPart,
+    goToBookmark,
     next,
     previous,
     bookmarkLine,

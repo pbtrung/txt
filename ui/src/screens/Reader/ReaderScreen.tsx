@@ -7,7 +7,7 @@
 // gutter bookmark button, so "bookmark by line number" is just "click the
 // line's own icon" -- no separate number-entry control needed.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import { ProgressBar } from "../../components/ProgressBar";
@@ -15,11 +15,16 @@ import { splitLines, truncatePreview } from "./readerModel";
 import { sanitizeDescriptionHtml } from "./sanitizeHtml";
 import { useReaderBook } from "./useReaderBook";
 
+function lineElementId(lineNum: number): string {
+  return `reader-line-${lineNum}`;
+}
+
 export function ReaderScreen() {
   const { txtId } = useParams();
   const navigate = useNavigate();
   const numericTxtId = Number(txtId);
   const [sidePanelOpen, setSidePanelOpen] = useState(true);
+  const [highlightedLine, setHighlightedLine] = useState<number | null>(null);
 
   const {
     loading,
@@ -30,7 +35,9 @@ export function ReaderScreen() {
     partText,
     partTextLoading,
     bookmarks,
-    goToPart,
+    targetLine,
+    clearTargetLine,
+    goToBookmark,
     next,
     previous,
     bookmarkLine,
@@ -38,6 +45,18 @@ export function ReaderScreen() {
   } = useReaderBook(numericTxtId);
 
   const lines = useMemo(() => (partText ? splitLines(partText) : []), [partText]);
+
+  // Once a targeted line's text is actually on screen, scroll to it and
+  // flash-highlight it briefly -- set by clicking a bookmark (here or in
+  // Library's Recent Bookmarks) rather than just landing on its part.
+  useEffect(() => {
+    if (loading || partTextLoading || targetLine === null) return;
+    document.getElementById(lineElementId(targetLine))?.scrollIntoView({ behavior: "smooth", block: "center" });
+    setHighlightedLine(targetLine);
+    clearTargetLine();
+    const timer = setTimeout(() => setHighlightedLine(null), 1500);
+    return () => clearTimeout(timer);
+  }, [loading, partTextLoading, targetLine, clearTargetLine]);
   const bookmarkedLines = useMemo(
     () => new Set(bookmarks.filter((b) => b.partNum === currentPartNum).map((b) => b.line)),
     [bookmarks, currentPartNum],
@@ -105,7 +124,13 @@ export function ReaderScreen() {
                 const lineNum = i + 1;
                 const isBookmarked = bookmarkedLines.has(lineNum);
                 return (
-                  <div key={lineNum} className="reader-line d-flex align-items-start gap-2">
+                  <div
+                    key={lineNum}
+                    id={lineElementId(lineNum)}
+                    className={`reader-line d-flex align-items-start gap-2 ${
+                      highlightedLine === lineNum ? "is-highlighted" : ""
+                    }`}
+                  >
                     <button
                       type="button"
                       className={`bookmark-toggle btn btn-sm p-0 border-0 bg-transparent lh-1 mt-1 ${
@@ -153,11 +178,11 @@ export function ReaderScreen() {
                 role="button"
                 tabIndex={0}
                 className="d-flex align-items-start gap-2 mb-2 w-100"
-                onClick={() => goToPart(bookmark.partNum)}
+                onClick={() => goToBookmark(bookmark.partNum, bookmark.line)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" || event.key === " ") {
                     event.preventDefault();
-                    goToPart(bookmark.partNum);
+                    goToBookmark(bookmark.partNum, bookmark.line);
                   }
                 }}
               >
