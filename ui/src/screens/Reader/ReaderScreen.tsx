@@ -164,7 +164,7 @@ export function ReaderScreen() {
             </button>
             {bookmarksOpen && (
               <div
-                className="dropdown-menu dropdown-menu-end show p-3"
+                className="dropdown-menu reader-dropdown-menu show p-3"
                 style={{ width: "20rem", maxWidth: "90vw", maxHeight: "70vh", overflowY: "auto" }}
               >
                 {bookmarks.length === 0 && <p className="small text-body-secondary mb-0">No bookmarks yet.</p>}
@@ -223,7 +223,7 @@ export function ReaderScreen() {
             </button>
             {infoOpen && (
               <div
-                className="dropdown-menu dropdown-menu-end show p-3"
+                className="dropdown-menu reader-dropdown-menu show p-3"
                 style={{ width: "20rem", maxWidth: "90vw", maxHeight: "70vh", overflowY: "auto" }}
               >
                 <div className="fw-semibold">{info?.title ?? `txt_${numericTxtId}`}</div>
