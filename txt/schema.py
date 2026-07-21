@@ -1,7 +1,5 @@
 """Turso schema DDL (see docs/data_model.md)."""
 
-from .constants import BOOKMARK_LIMIT
-
 _TABLES = """
 CREATE TABLE IF NOT EXISTS users (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -51,18 +49,17 @@ CREATE TABLE IF NOT EXISTS part_count (
     count  INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS txt_access (
-    txt_id  INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    access  BLOB NOT NULL,
-    PRIMARY KEY (txt_id, user_id)
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id        INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+    txt_access_key BLOB    NOT NULL,
+    access         BLOB    NOT NULL
 );
 CREATE TABLE IF NOT EXISTS bookmarks (
-    id       INTEGER PRIMARY KEY AUTOINCREMENT,
-    txt_id   INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
-    user_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    bookmark BLOB NOT NULL
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id      INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+    bookmark_key BLOB    NOT NULL,
+    bookmark     BLOB    NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_bookmarks_txt_id_user_id ON bookmarks(txt_id, user_id);
 CREATE TABLE IF NOT EXISTS txt_metadata (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id          INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
@@ -71,24 +68,7 @@ CREATE TABLE IF NOT EXISTS txt_metadata (
 );
 """
 
-# Kept out of _TABLES and un-split-by-";" since the trigger body contains semicolons.
-_TRIGGER = f"""
-CREATE TRIGGER IF NOT EXISTS trg_limit_bookmarks_per_file
-BEFORE INSERT ON bookmarks
-WHEN (SELECT COUNT(*) FROM bookmarks WHERE txt_id = NEW.txt_id AND user_id = NEW.user_id) >= {BOOKMARK_LIMIT}
-BEGIN
-    DELETE FROM bookmarks
-    WHERE id = (
-        SELECT id FROM bookmarks
-        WHERE txt_id = NEW.txt_id AND user_id = NEW.user_id
-        ORDER BY id ASC LIMIT 1
-    );
-END
-"""
-
 
 def statements() -> list[str]:
     """All DDL statements to apply, in order."""
-    return [s.strip() for s in _TABLES.strip().split(";") if s.strip()] + [
-        _TRIGGER.strip()
-    ]
+    return [s.strip() for s in _TABLES.strip().split(";") if s.strip()]

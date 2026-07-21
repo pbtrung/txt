@@ -1,8 +1,7 @@
-"""Creating the admin user's row, umk, key_store keypair, r2_config, and
-txt_metadata (see docs/data_model.md). Every step here is create-if-missing,
-so --init is safe to re-run at any time -- e.g. to add txt_metadata to an
-account initialized before that step existed -- without erroring or
-duplicating rows.
+"""Creating the admin user's row, umk, key_store keypair, r2_config,
+txt_metadata, txt_access, and bookmarks (see docs/data_model.md). Every step
+here is create-if-missing, so --init is safe to re-run at any time -- e.g. to
+add a row this admin account predates -- without erroring or duplicating rows.
 """
 
 import json
@@ -18,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 class AdminInitializer:
-    """Provisions the admin user: users row, umk_store, key_store, r2_config, txt_metadata."""
+    """Provisions the admin user: users row, umk_store, key_store, r2_config, txt_metadata, txt_access, bookmarks."""
 
     def __init__(self, db: Database, creds: AdminCreds) -> None:
         self.db = db
@@ -121,12 +120,48 @@ class AdminInitializer:
         )
         logger.info("Inserted txt_metadata row (user_id=%d)", user_id)
 
+    def _ensure_txt_access(self, user_id: int, umk: bytes) -> None:
+        row = self.db.conn.execute(
+            "SELECT 1 FROM txt_access WHERE user_id = ?", (user_id,)
+        ).fetchone()
+        if row is not None:
+            logger.info("txt_access row already exists (user_id=%d), skipping", user_id)
+            return
+        # access starts as an encrypted empty JSON object -- unlike
+        # txt_metadata.content, this column is NOT NULL (see docs/data_model.md).
+        txt_access_key = os.urandom(c.TXT_ACCESS_KEY_LEN)
+        key_blob = Blob.encrypt(umk, txt_access_key)
+        access_blob = Blob.encrypt(txt_access_key, b"{}", compressed=True)
+        self.db.conn.execute(
+            "INSERT INTO txt_access (user_id, txt_access_key, access) VALUES (?, ?, ?)",
+            (user_id, key_blob, access_blob),
+        )
+        logger.info("Inserted txt_access row (user_id=%d)", user_id)
+
+    def _ensure_bookmarks(self, user_id: int, umk: bytes) -> None:
+        row = self.db.conn.execute(
+            "SELECT 1 FROM bookmarks WHERE user_id = ?", (user_id,)
+        ).fetchone()
+        if row is not None:
+            logger.info("bookmarks row already exists (user_id=%d), skipping", user_id)
+            return
+        bookmark_key = os.urandom(c.BOOKMARK_KEY_LEN)
+        key_blob = Blob.encrypt(umk, bookmark_key)
+        bookmark_blob = Blob.encrypt(bookmark_key, b"{}", compressed=True)
+        self.db.conn.execute(
+            "INSERT INTO bookmarks (user_id, bookmark_key, bookmark) VALUES (?, ?, ?)",
+            (user_id, key_blob, bookmark_blob),
+        )
+        logger.info("Inserted bookmarks row (user_id=%d)", user_id)
+
     def run(self) -> int:
         user_id = self._get_or_create_user()
         umk = self._get_or_create_umk(user_id)
         self._ensure_key_store(user_id, umk)
         self._ensure_r2_config(user_id, umk)
         self._ensure_txt_metadata(user_id, umk)
+        self._ensure_txt_access(user_id, umk)
+        self._ensure_bookmarks(user_id, umk)
         self.db.conn.commit()
         logger.info("Admin user provisioned (id=%d)", user_id)
         return user_id

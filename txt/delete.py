@@ -1,23 +1,68 @@
 """--txt-delete: remove every txt (and its R2 parts) owned by the account (see docs/data_model.md)."""
 
 import asyncio
+import json
 import logging
 
+from .crypto import Blob
 from .owner import TxtOwner
 
 logger = logging.getLogger(__name__)
 
-# Every table that references txt(id) -- deleted explicitly rather than relying
-# on ON DELETE CASCADE, since nothing in txt/db.py enables PRAGMA foreign_keys.
-_CHILD_TABLES = ("txt_parts", "txt_shares", "part_count", "txt_access", "bookmarks")
+# Every table that references txt(id) via a txt_id column -- deleted
+# explicitly rather than relying on ON DELETE CASCADE, since nothing in
+# txt/db.py enables PRAGMA foreign_keys. txt_access/bookmarks are handled
+# separately below: each is one JSON blob per user keyed by txt_id, not a row
+# per txt_id (see docs/data_model.md), so there's no txt_id column to delete by.
+_CHILD_TABLES = ("txt_parts", "txt_shares", "part_count")
+
+# (table, key_column, content_column) for the two per-user JSON-blob tables.
+_JSON_BLOB_TABLES = (
+    ("txt_access", "txt_access_key", "access"),
+    ("bookmarks", "bookmark_key", "bookmark"),
+)
 
 
 class TxtDeleter(TxtOwner):
     """Deletes every txt owned by creds.username: its R2 parts, then its DB rows."""
 
-    def _delete_txt_db_rows(self, txt_id: int) -> None:
+    def _scrub_txt_id_entry(
+        self,
+        table: str,
+        key_column: str,
+        content_column: str,
+        user_id: int,
+        umk: bytes,
+        txt_id: int,
+    ) -> None:
+        row = self.db.conn.execute(
+            f"SELECT {key_column}, {content_column} FROM {table} WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+        if row is None:
+            return
+        key_blob, content_blob = row
+        key = Blob.decrypt(umk, key_blob)
+        content = json.loads(Blob.decrypt(key, content_blob, compressed=True))
+        if str(txt_id) not in content:
+            return
+        del content[str(txt_id)]
+        new_blob = Blob.encrypt(key, json.dumps(content).encode(), compressed=True)
+        self.db.conn.execute(
+            f"UPDATE {table} SET {content_column} = ? WHERE user_id = ?",
+            (new_blob, user_id),
+        )
+        logger.debug(
+            "Removed txt_id=%d entry from %s (user_id=%d)", txt_id, table, user_id
+        )
+
+    def _delete_txt_db_rows(self, txt_id: int, user_id: int, umk: bytes) -> None:
         for table in _CHILD_TABLES:
             self.db.conn.execute(f"DELETE FROM {table} WHERE txt_id = ?", (txt_id,))
+        for table, key_column, content_column in _JSON_BLOB_TABLES:
+            self._scrub_txt_id_entry(
+                table, key_column, content_column, user_id, umk, txt_id
+            )
         self.db.conn.execute("DELETE FROM txt WHERE id = ?", (txt_id,))
         logger.debug("txt_id=%d: deleted DB rows", txt_id)
 
@@ -32,12 +77,12 @@ class TxtDeleter(TxtOwner):
         )
         logger.debug("Cleared txt_metadata content for user_id=%d", user_id)
 
-    async def _delete_txt(self, txt_id: int, umk: bytes) -> None:
+    async def _delete_txt(self, txt_id: int, user_id: int, umk: bytes) -> None:
         txt_key = self._txt_key(txt_id, umk)
         raw_paths = self._part_raw_paths(txt_id, txt_key)
         logger.info("txt_id=%d: deleting %d part(s) from R2", txt_id, len(raw_paths))
         await asyncio.gather(*(self.r2.delete_async(p) for p in raw_paths))
-        self._delete_txt_db_rows(txt_id)
+        self._delete_txt_db_rows(txt_id, user_id, umk)
         self.db.conn.commit()
         logger.info("txt_id=%d: deleted (%d part(s))", txt_id, len(raw_paths))
 
@@ -49,7 +94,7 @@ class TxtDeleter(TxtOwner):
         # One txt at a time -- its parts still delete concurrently -- rather
         # than every txt's parts in flight at once.
         for txt_id in txt_ids:
-            await self._delete_txt(txt_id, umk)
+            await self._delete_txt(txt_id, user_id, umk)
         self._clear_txt_metadata(user_id)
         self.db.conn.commit()
         logger.info("Finished deleting %d txt(s)", len(txt_ids))
