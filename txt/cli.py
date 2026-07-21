@@ -13,6 +13,7 @@ from .db import Database
 from .delete import TxtDeleter
 from .download import TxtDownloader
 from .ingest import TxtIngester
+from .schema_update import SchemaUpdater
 
 
 def _cmd_init(admin_creds_path: str) -> None:
@@ -23,6 +24,17 @@ def _cmd_init(admin_creds_path: str) -> None:
     click.echo(
         f"Initialized schema and admin user (id={user_id}, username={creds.username!r}, "
         f"display_name={creds.display_name!r})"
+    )
+
+
+def _cmd_update_schema(admin_creds_path: str) -> None:
+    creds = AdminCreds.load(Path(admin_creds_path))
+    db = Database(creds)
+    user_id = SchemaUpdater(db, creds).run()
+    click.echo(
+        f"Updated schema: dropped old txt_access/bookmarks design, recreated "
+        f"current tables, and backfilled txt_access_key/bookmark_key for "
+        f"user_id={user_id}"
     )
 
 
@@ -83,6 +95,16 @@ def _cmd_txt_clean_bucket(admin_creds_path: str, skip_confirm: bool) -> None:
     "--init", "do_init", is_flag=True, help="Create schema and the admin user"
 )
 @click.option(
+    "--update-schema",
+    "do_update_schema",
+    is_flag=True,
+    help=(
+        "Migrate an existing DB's txt_access/bookmarks from the old "
+        "per-(txt_id,user_id)-row design to the current one-row-per-user "
+        "design (drops and recreates both tables, losing existing rows)"
+    ),
+)
+@click.option(
     "--txt-ingest",
     "txt_ingest_dir",
     metavar="DIR",
@@ -119,8 +141,9 @@ def _cmd_txt_clean_bucket(admin_creds_path: str, skip_confirm: bool) -> None:
     default="admin_creds.json",
     show_default=True,
     help=(
-        "Credential JSON file, required by --init, --txt-ingest, "
-        "--txt-download, --txt-delete, --purge-bucket, and --txt-clean-bucket"
+        "Credential JSON file, required by --init, --update-schema, "
+        "--txt-ingest, --txt-download, --txt-delete, --purge-bucket, "
+        "and --txt-clean-bucket"
     ),
 )
 @click.option(
@@ -133,6 +156,7 @@ def _cmd_txt_clean_bucket(admin_creds_path: str, skip_confirm: bool) -> None:
 @click.option("--verbose", "-v", is_flag=True, help="Enable debug-level logging")
 def main(
     do_init: bool,
+    do_update_schema: bool,
     txt_ingest_dir: str | None,
     txt_download_dir: str | None,
     do_txt_delete: bool,
@@ -154,6 +178,9 @@ def main(
     if do_init:
         _cmd_init(admin_creds)
         return
+    if do_update_schema:
+        _cmd_update_schema(admin_creds)
+        return
     if txt_ingest_dir is not None:
         _cmd_txt_ingest(admin_creds, txt_ingest_dir)
         return
@@ -170,6 +197,6 @@ def main(
         _cmd_txt_clean_bucket(admin_creds, skip_confirm)
         return
     raise click.UsageError(
-        "No action specified. Use --init, --txt-ingest DIR, --txt-download DIR, "
-        "--txt-delete, --purge-bucket, or --txt-clean-bucket."
+        "No action specified. Use --init, --update-schema, --txt-ingest DIR, "
+        "--txt-download DIR, --txt-delete, --purge-bucket, or --txt-clean-bucket."
     )
