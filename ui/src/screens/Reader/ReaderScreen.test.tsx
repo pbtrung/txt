@@ -110,10 +110,10 @@ describe("ReaderScreen", () => {
       ]);
     });
 
-    it("adapts the reading column's max-width in ch, not a fixed pixel value, so line length stays ~80 characters at any font size", () => {
+    it("adapts the reading column's max-width in ch, not a fixed pixel value, so line length stays ~70 characters at any font size", () => {
       renderReader(baseResult());
       const line = screen.getByText("First paragraph of part 14.").closest(".reader-font") as HTMLElement;
-      expect(line.style.maxWidth).toBe("80ch");
+      expect(line.style.maxWidth).toBe("70ch");
     });
 
     it("sits to the left of the Previous button in the bottom bar", () => {

@@ -241,13 +241,13 @@ export function ReaderScreen() {
       <div className="flex-grow-1 overflow-auto ps-2 ps-sm-4 pe-4 py-4">
         {/* maxWidth in `ch` (the width of "0" in this element's own font) --
             not a fixed rem value -- so the reading column's line length
-            stays around 80 characters regardless of which font size is
+            stays around 70 characters regardless of which font size is
             picked below, rather than cramming more characters per line into
             the same fixed pixel width at a smaller size (or fewer at a
             larger one). It's still a *max*-width: on a narrow viewport the
             column is capped by the available width same as before, just
-            with fewer than 80 characters per line rather than overflowing. */}
-        <div className="mx-auto reader-font" style={{ maxWidth: "80ch", fontSize: `${fontSizePx}px` }}>
+            with fewer than 70 characters per line rather than overflowing. */}
+        <div className="mx-auto reader-font" style={{ maxWidth: "70ch", fontSize: `${fontSizePx}px` }}>
           {!loading && (
             <div className="small text-body-secondary text-uppercase mb-3">
               Part {currentPartNum} of {partCount}
@@ -289,7 +289,7 @@ export function ReaderScreen() {
 
       <div className="border-top d-flex align-items-center gap-2 gap-sm-3 ps-2 ps-sm-3 pe-3 py-2">
         <select
-          className="form-select form-select-sm"
+          className="form-select form-select-sm themed-control"
           style={{ width: "5.5rem" }}
           value={fontSizePx}
           onChange={(event) => setFontSizePx(Number(event.target.value))}
@@ -318,7 +318,7 @@ export function ReaderScreen() {
             inputMode="numeric"
             pattern="[0-9]*"
             maxLength={3}
-            className="form-control form-control-sm text-center"
+            className="form-control form-control-sm themed-control text-center"
             style={{ width: "3.5rem" }}
             value={partInput}
             disabled={loading}
