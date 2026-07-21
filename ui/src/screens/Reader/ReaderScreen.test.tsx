@@ -96,18 +96,24 @@ describe("ReaderScreen", () => {
       return screen.getByRole("combobox", { name: /font size/i });
     }
 
-    it("offers 12/14/16/18/20/22px, defaulting to 16px", () => {
+    it("offers 14/16/18/20/22/24px, defaulting to 16px", () => {
       renderReader(baseResult());
       const select = fontSizeSelect();
       expect(select).toHaveValue("16");
       expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual([
-        "12px",
         "14px",
         "16px",
         "18px",
         "20px",
         "22px",
+        "24px",
       ]);
+    });
+
+    it("adapts the reading column's max-width in ch, not a fixed pixel value, so line length stays ~80 characters at any font size", () => {
+      renderReader(baseResult());
+      const line = screen.getByText("First paragraph of part 14.").closest(".reader-font") as HTMLElement;
+      expect(line.style.maxWidth).toBe("80ch");
     });
 
     it("sits to the left of the Previous button in the bottom bar", () => {
@@ -122,8 +128,8 @@ describe("ReaderScreen", () => {
       const line = screen.getByText("First paragraph of part 14.").closest(".reader-font") as HTMLElement;
       expect(line.style.fontSize).toBe("16px");
 
-      await userEvent.selectOptions(fontSizeSelect(), "22");
-      expect(line.style.fontSize).toBe("22px");
+      await userEvent.selectOptions(fontSizeSelect(), "24");
+      expect(line.style.fontSize).toBe("24px");
     });
   });
 

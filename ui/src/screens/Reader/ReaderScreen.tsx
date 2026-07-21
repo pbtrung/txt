@@ -37,7 +37,7 @@ const DESCRIPTION_PREVIEW_LEN = 200;
 // The reading pane's body-text size -- a plain per-session preference (not
 // persisted, not part of the vault), so a fresh visit always starts at the
 // default rather than carrying over a size chosen for a different book.
-const FONT_SIZES_PX = [12, 14, 16, 18, 20, 22];
+const FONT_SIZES_PX = [14, 16, 18, 20, 22, 24];
 const DEFAULT_FONT_SIZE_PX = 16;
 
 export function ReaderScreen() {
@@ -239,7 +239,15 @@ export function ReaderScreen() {
       </div>
 
       <div className="flex-grow-1 overflow-auto ps-2 ps-sm-4 pe-4 py-4">
-        <div className="mx-auto reader-font" style={{ maxWidth: "42rem", fontSize: `${fontSizePx}px` }}>
+        {/* maxWidth in `ch` (the width of "0" in this element's own font) --
+            not a fixed rem value -- so the reading column's line length
+            stays around 80 characters regardless of which font size is
+            picked below, rather than cramming more characters per line into
+            the same fixed pixel width at a smaller size (or fewer at a
+            larger one). It's still a *max*-width: on a narrow viewport the
+            column is capped by the available width same as before, just
+            with fewer than 80 characters per line rather than overflowing. */}
+        <div className="mx-auto reader-font" style={{ maxWidth: "80ch", fontSize: `${fontSizePx}px` }}>
           {!loading && (
             <div className="small text-body-secondary text-uppercase mb-3">
               Part {currentPartNum} of {partCount}
@@ -282,7 +290,7 @@ export function ReaderScreen() {
       <div className="border-top d-flex align-items-center gap-2 gap-sm-3 ps-2 ps-sm-3 pe-3 py-2">
         <select
           className="form-select form-select-sm"
-          style={{ width: "4.5rem" }}
+          style={{ width: "5.5rem" }}
           value={fontSizePx}
           onChange={(event) => setFontSizePx(Number(event.target.value))}
           aria-label="Font size"
