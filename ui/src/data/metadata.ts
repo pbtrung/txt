@@ -58,10 +58,12 @@ function textsOf(value: OpfValue | undefined): string[] {
   return single ? [single] : [];
 }
 
-// Calibre's own bookkeeping, not useful to a reader: a numeric star rating
-// and a sort-friendly title variant (e.g. "White Order, The"). Dropped
-// entirely from the "All metadata" display rather than shown verbatim.
-const HIDDEN_METADATA_KEYS = new Set(["calibre:rating", "calibre:title_sort"]);
+// Calibre's own bookkeeping (a numeric star rating, a sort-friendly title
+// variant like "White Order, The"), plus two fields already surfaced with
+// their own special-purpose rendering in the curated summary above this
+// section (description gets sanitized/truncated HTML, subject becomes
+// badges) -- showing them again here as raw text would just be redundant.
+const HIDDEN_METADATA_KEYS = new Set(["calibre:rating", "calibre:title_sort", "description", "subject"]);
 
 // calibre:timestamp (when the book was added to the Calibre library) reads
 // as an internal field name; shown under its plainer meaning instead.

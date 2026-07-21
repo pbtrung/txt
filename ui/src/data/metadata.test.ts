@@ -77,11 +77,10 @@ describe("loadTxtMetadata", () => {
       rawMetadata: [
         { key: "title", values: ["The White Order"] },
         { key: "creator", values: ["L. E. Modesitt, Jr."] },
-        { key: "subject", values: ["Fantasy", "Military"] },
         { key: "publisher", values: ["Tor Publishing Group"] },
         { key: "calibre:series", values: ["Saga of Recluce"] },
         { key: "calibre:series_index", values: ["8"] },
-      ],
+      ], // subject is omitted -- already shown as badges in the curated summary above
     });
     expect(result.get(8)).toEqual({
       txtId: 8,
@@ -168,7 +167,7 @@ describe("loadTxtMetadata", () => {
     });
   });
 
-  it("drops calibre:rating and calibre:title_sort from rawMetadata entirely", async () => {
+  it("drops calibre:rating, calibre:title_sort, description, and subject from rawMetadata entirely", async () => {
     const umk = new Uint8Array(64).fill(1);
     const txtMetadataKey = new Uint8Array(64).fill(4);
     const keyBlob = await blob.encrypt(umk, txtMetadataKey);
@@ -180,6 +179,8 @@ describe("loadTxtMetadata", () => {
           title: "Some Book",
           "calibre:rating": "8",
           "calibre:title_sort": "Book, Some",
+          description: "A book about things.",
+          subject: ["Fantasy"],
         },
       },
     };
