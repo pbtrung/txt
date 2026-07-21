@@ -302,48 +302,58 @@ export function ReaderScreen() {
           ))}
         </select>
 
-        <button
-          type="button"
-          className="btn btn-sm btn-outline-secondary border-primary"
-          onClick={previous}
-          disabled={loading || currentPartNum <= 1}
-          aria-label="Previous part"
-        >
-          <i className="bi bi-chevron-left text-primary" aria-hidden="true" />
-        </button>
+        <div className="vr bottom-bar-vr" />
 
-        <div className="d-flex align-items-center gap-1 text-body-secondary small text-nowrap">
-          <input
-            type="text"
-            inputMode="numeric"
-            pattern="[0-9]*"
-            maxLength={3}
-            className="form-control form-control-sm themed-control text-center"
-            style={{ width: "3.5rem" }}
-            value={partInput}
-            disabled={loading}
-            onChange={(event) => setPartInput(event.target.value.replace(/\D/g, "").slice(0, 3))}
-            onBlur={commitPartInput}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                commitPartInput();
-                event.currentTarget.blur();
-              }
-            }}
-            aria-label="Go to part"
-          />
-          <span>/ {partCount}</span>
+        {/* Previous/part-box/Next stay tightly grouped (gap-1) -- they're
+            one control, unlike the looser gap-2/gap-sm-3 spacing the outer
+            bar uses around the font-size dropdown, this group, and the vr
+            dividers on either side of it. */}
+        <div className="d-flex align-items-center gap-1">
+          <button
+            type="button"
+            className="btn btn-sm btn-link p-0 text-decoration-none"
+            onClick={previous}
+            disabled={loading || currentPartNum <= 1}
+            aria-label="Previous part"
+          >
+            <i className="bi bi-chevron-left text-primary" aria-hidden="true" />
+          </button>
+
+          <div className="d-flex align-items-center gap-1 text-body-secondary small text-nowrap">
+            <input
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              maxLength={3}
+              className="form-control form-control-sm themed-control text-center"
+              style={{ width: "3.5rem" }}
+              value={partInput}
+              disabled={loading}
+              onChange={(event) => setPartInput(event.target.value.replace(/\D/g, "").slice(0, 3))}
+              onBlur={commitPartInput}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  commitPartInput();
+                  event.currentTarget.blur();
+                }
+              }}
+              aria-label="Go to part"
+            />
+            <span>/ {partCount}</span>
+          </div>
+
+          <button
+            type="button"
+            className="btn btn-sm btn-link p-0 text-decoration-none"
+            onClick={next}
+            disabled={loading || currentPartNum >= partCount}
+            aria-label="Next part"
+          >
+            <i className="bi bi-chevron-right text-primary" aria-hidden="true" />
+          </button>
         </div>
 
-        <button
-          type="button"
-          className="btn btn-sm btn-outline-secondary border-primary"
-          onClick={next}
-          disabled={loading || currentPartNum >= partCount}
-          aria-label="Next part"
-        >
-          <i className="bi bi-chevron-right text-primary" aria-hidden="true" />
-        </button>
+        <div className="vr bottom-bar-vr" />
 
         <div ref={bookmarksMenu.ref} className="dropdown position-relative ms-auto">
           <button
