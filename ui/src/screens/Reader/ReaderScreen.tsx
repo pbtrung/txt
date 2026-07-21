@@ -165,7 +165,7 @@ export function ReaderScreen() {
             aria-label="About this book"
             title="About this book"
           >
-            <i className="bi bi-info-lg" aria-hidden="true" />
+            <i className={`bi bi-info-lg ${infoMenu.open ? "" : "text-primary"}`} aria-hidden="true" />
           </button>
           {infoMenu.open && (
             <div
@@ -257,12 +257,12 @@ export function ReaderScreen() {
       <div className="border-top d-flex align-items-center gap-2 gap-sm-3 ps-2 ps-sm-3 pe-3 py-2">
         <button
           type="button"
-          className="btn btn-sm btn-outline-secondary"
+          className="btn btn-sm btn-outline-secondary border-primary"
           onClick={previous}
           disabled={loading || currentPartNum <= 1}
           aria-label="Previous part"
         >
-          <i className="bi bi-chevron-left" aria-hidden="true" />
+          <i className="bi bi-chevron-left text-primary" aria-hidden="true" />
         </button>
 
         <div className="d-flex align-items-center gap-1 text-body-secondary small text-nowrap">
@@ -290,12 +290,12 @@ export function ReaderScreen() {
 
         <button
           type="button"
-          className="btn btn-sm btn-outline-secondary"
+          className="btn btn-sm btn-outline-secondary border-primary"
           onClick={next}
           disabled={loading || currentPartNum >= partCount}
           aria-label="Next part"
         >
-          <i className="bi bi-chevron-right" aria-hidden="true" />
+          <i className="bi bi-chevron-right text-primary" aria-hidden="true" />
         </button>
 
         <div ref={bookmarksMenu.ref} className="dropdown position-relative ms-auto">
@@ -308,7 +308,10 @@ export function ReaderScreen() {
             aria-label="Bookmarks"
             title="Bookmarks"
           >
-            <i className={`bi ${bookmarks.length > 0 ? "bi-bookmark-fill" : "bi-bookmark"}`} aria-hidden="true" />
+            <i
+              className={`bi ${bookmarks.length > 0 ? "bi-bookmark-fill" : "bi-bookmark"} ${bookmarksMenu.open ? "" : "text-primary"}`}
+              aria-hidden="true"
+            />
           </button>
           {bookmarksMenu.open && (
             <div

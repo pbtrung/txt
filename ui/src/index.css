@@ -117,6 +117,17 @@ body,
   border-color: var(--bs-primary-border-subtle);
 }
 
+/* Bootstrap's .form-control:focus hardcodes a blue border-color and glow
+   (border-color: #86b7fe; box-shadow: 0 0 0 0.25rem rgba(13,110,253,.25)) --
+   neither reads var(--bs-primary), so focusing this field would otherwise
+   flip it to the stock blue regardless of the brass theme. Overridden to the
+   full-strength brass accent, with a narrower glow (0.15rem, not 0.25rem) so
+   it doesn't read as a thick border the way the default does. */
+.search-input:focus {
+  border-color: var(--bs-primary);
+  box-shadow: 0 0 0 0.15rem rgba(var(--bs-primary-rgb), 0.25);
+}
+
 /* A smaller variant of Bootstrap's .btn-sm, for row-level delete buttons
    (Library's BookRow/BookmarkRow, Reader's bookmark list) that shouldn't
    compete visually with the row's own primary click target. */
