@@ -17,12 +17,20 @@ export function concatBytes(...parts: Uint8Array[]): Uint8Array {
   return out;
 }
 
+/** Compares two byte arrays for equality without an early exit on the first
+ * mismatching byte -- used to compare secret material (e.g. checkPassword's
+ * recomputed hash against the stored one), where a byte-by-byte short
+ * circuit would let a timing side channel leak how much of a guess matched.
+ * The length check isn't similarly hardened (lengths here are fixed
+ * constants, not secrets), but everything past that always walks the full
+ * array regardless of where the first difference falls. */
 export function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
   if (a.length !== b.length) return false;
+  let diff = 0;
   for (let i = 0; i < a.length; i++) {
-    if (a[i] !== b[i]) return false;
+    diff |= a[i] ^ b[i];
   }
-  return true;
+  return diff === 0;
 }
 
 /** Decodes a base64 string (e.g. a config file's username_lookup_key/user_root_key). */
