@@ -111,24 +111,26 @@ body,
   }
 }
 
-/* The search input's own border: themed to the brass accent like the
-   drawer-toggle/Lock buttons' .border-primary, but the softer *-subtle
-   tint (rather than full-strength --bs-primary) and half the default
-   control border-width -- a full-width text field reads as bordered at a
-   glance regardless, so it doesn't need as bold a line as a small button
-   does to register as "there". */
-.search-input {
+/* Any .form-control/.form-select that should match the brass theme instead
+   of Bootstrap's default gray/blue -- Library's search input, Reader's
+   font-size <select> and part-number <input>. Softer *-subtle tint (rather
+   than full-strength --bs-primary) and half the default control
+   border-width at rest -- these read as bordered at a glance regardless,
+   so they don't need as bold a line as a small button does to register as
+   "there". */
+.themed-control {
   border-width: 0.5px;
   border-color: var(--bs-primary-border-subtle);
 }
 
-/* Bootstrap's .form-control:focus hardcodes a blue border-color and glow
-   (border-color: #86b7fe; box-shadow: 0 0 0 0.25rem rgba(13,110,253,.25)) --
-   neither reads var(--bs-primary), so focusing this field would otherwise
-   flip it to the stock blue regardless of the brass theme. Overridden to the
-   full-strength brass accent, with a narrower glow (0.15rem, not 0.25rem) so
-   it doesn't read as a thick border the way the default does. */
-.search-input:focus {
+/* Bootstrap's .form-control:focus/.form-select:focus both hardcode the same
+   blue border-color and glow (border-color: #86b7fe; box-shadow: 0 0 0
+   0.25rem rgba(13,110,253,.25)) -- neither reads var(--bs-primary), so
+   focusing one of these would otherwise flip it to stock blue regardless of
+   the brass theme. Overridden to the full-strength brass accent, with a
+   narrower glow (0.15rem, not 0.25rem) so it doesn't read as a thick border
+   the way the default does. */
+.themed-control:focus {
   border-color: var(--bs-primary);
   box-shadow: 0 0 0 0.15rem rgba(var(--bs-primary-rgb), 0.25);
 }
