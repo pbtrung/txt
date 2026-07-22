@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { bytesToBase64, concatBytes } from "../crypto/bytes";
 import { hmacSha3_512 } from "../crypto/leancryptoLoader";
 import type { Creds } from "../data/creds";
+import { setVerbose } from "../log";
 import { AssetIntegrityError, verifyAssetIntegrity } from "./verifyAssets";
 
 function fakeResponse(bytes: Uint8Array): Response {
@@ -76,7 +77,35 @@ function mockFetch(files: Record<string, Uint8Array>) {
 }
 
 describe("verifyAssetIntegrity", () => {
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    setVerbose(true);
+  });
+
+  it("logs each asset it verifies, including index.html, when verbose is on", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    setVerbose(true);
+    const { leancryptoJs, leancryptoWasm, appJs, htmlBytes, assetHashes } = await buildFixture();
+    mockFetch({
+      "/": htmlBytes,
+      "/leancrypto.js": leancryptoJs,
+      "/leancrypto.wasm": leancryptoWasm,
+      "/assets/app.js": appJs,
+    });
+
+    await verifyAssetIntegrity(fakeCreds(assetHashes, KEY));
+
+    expect(console.log).toHaveBeenCalledWith("[verbose]", "asset integrity: verifying index.html");
+    expect(console.log).toHaveBeenCalledWith("[verbose]", "asset integrity OK: index.html");
+    expect(console.log).toHaveBeenCalledWith("[verbose]", "asset integrity: verifying leancrypto.js");
+    expect(console.log).toHaveBeenCalledWith("[verbose]", "asset integrity OK: leancrypto.js");
+    expect(console.log).toHaveBeenCalledWith("[verbose]", "asset integrity: verifying leancrypto.wasm");
+    expect(console.log).toHaveBeenCalledWith("[verbose]", "asset integrity OK: leancrypto.wasm");
+    expect(console.log).toHaveBeenCalledWith("[verbose]", "asset integrity: verifying assets/app.js");
+    expect(console.log).toHaveBeenCalledWith("[verbose]", "asset integrity OK: assets/app.js");
+    expect(console.log).toHaveBeenCalledWith("[verbose]", "asset integrity: all 4 asset(s) verified OK");
+  });
 
   it("passes when every asset matches", async () => {
     const { leancryptoJs, leancryptoWasm, appJs, htmlBytes, assetHashes } = await buildFixture();

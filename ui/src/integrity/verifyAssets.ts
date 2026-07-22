@@ -28,6 +28,7 @@ import { ASSET_HMAC_LEN } from "../crypto/constants";
 import { base64ToBytes, bytesEqual } from "../crypto/bytes";
 import { hmacSha3_512 } from "../crypto/leancryptoLoader";
 import type { Creds } from "../data/creds";
+import { verbose } from "../log";
 import { parseAssetManifest, type AssetManifest } from "./manifest";
 
 export class AssetIntegrityError extends Error {}
@@ -71,6 +72,7 @@ function checkHmac(actual: Uint8Array, expected: Uint8Array, what: string): void
   if (!bytesEqual(actual, expected)) {
     throw new AssetIntegrityError(`integrity check failed for ${what} -- it may have been tampered with`);
   }
+  verbose(`asset integrity OK: ${what}`);
 }
 
 async function verifyFetchedEntry(
@@ -78,6 +80,7 @@ async function verifyFetchedEntry(
   expected: Uint8Array,
   compute: (bytes: Uint8Array) => Promise<Uint8Array>,
 ): Promise<void> {
+  verbose(`asset integrity: verifying ${path}`);
   const bytes = await fetchBytes(`/${path}`);
   checkHmac(await compute(bytes), expected, path);
 }
@@ -99,6 +102,7 @@ function splitAssetHashes(assetHashes: Uint8Array): [Uint8Array, Uint8Array, Uin
 export async function verifyAssetIntegrity(creds: Creds): Promise<void> {
   const [indexHtmlHash, leancryptoJsHash, leancryptoWasmHash] = splitAssetHashes(creds.assetHashes);
 
+  verbose("asset integrity: verifying index.html");
   const indexBytes = await fetchBytes("/");
   checkHmac(await hmacSha512Native(creds.assetSignKey, indexBytes), indexHtmlHash, "index.html");
   await verifyFetchedEntry("leancrypto.js", leancryptoJsHash, (bytes) => hmacSha512Native(creds.assetSignKey, bytes));
@@ -107,7 +111,9 @@ export async function verifyAssetIntegrity(creds: Creds): Promise<void> {
   );
 
   const manifest = extractManifest(new TextDecoder().decode(indexBytes));
-  for (const [path, expectedBase64] of Object.entries(manifest["sha3-512"])) {
+  const manifestEntries = Object.entries(manifest["sha3-512"]);
+  for (const [path, expectedBase64] of manifestEntries) {
     await verifyFetchedEntry(path, base64ToBytes(expectedBase64), (bytes) => hmacSha3_512(creds.assetSignKey, bytes));
   }
+  verbose(`asset integrity: all ${manifestEntries.length + 3} asset(s) verified OK`);
 }
