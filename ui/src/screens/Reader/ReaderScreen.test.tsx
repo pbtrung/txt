@@ -169,8 +169,16 @@ describe("ReaderScreen", () => {
       expect(input).toHaveValue("14");
     });
 
-    it("strips non-digits and caps at 3 digits while typing", async () => {
-      renderReader(baseResult());
+    it("strips non-digits and caps at partCount's own digit count while typing", async () => {
+      renderReader(baseResult()); // partCount: 41 -> 2 digits
+      const input = screen.getByRole("textbox", { name: /go to part/i });
+      await userEvent.clear(input);
+      await userEvent.type(input, "12a34b5");
+      expect(input).toHaveValue("12");
+    });
+
+    it("widens the cap to match a 3-digit partCount", async () => {
+      renderReader(baseResult({ partCount: 641 }));
       const input = screen.getByRole("textbox", { name: /go to part/i });
       await userEvent.clear(input);
       await userEvent.type(input, "12a34b5");

@@ -108,6 +108,11 @@ export function ReaderScreen() {
     () => new Set(bookmarks.filter((b) => b.partNum === currentPartNum).map((b) => b.line)),
     [bookmarks, currentPartNum],
   );
+  // The part-number box's width scales with partCount's own digit count
+  // (1 part vs. 999 parts shouldn't share a box sized for the wider of the
+  // two) rather than a fixed guess -- and maxLength tracks it so the box
+  // never invites typing more digits than it can display.
+  const partCountDigits = String(partCount || 1).length;
   const seriesLabel = info?.series ? `${info.series}${info.seriesIndex ? `, #${info.seriesIndex}` : ""}` : null;
   // Calibre/OPF descriptions commonly carry HTML (see sanitizeHtml.ts) --
   // and this book's metadata may come from a document someone else shared
@@ -324,12 +329,14 @@ export function ReaderScreen() {
               type="text"
               inputMode="numeric"
               pattern="[0-9]*"
-              maxLength={3}
+              maxLength={partCountDigits}
               className="form-control form-control-sm themed-control text-center"
-              style={{ width: "3.5rem" }}
+              style={{ width: `calc(${partCountDigits}ch + 2rem)` }}
               value={partInput}
               disabled={loading}
-              onChange={(event) => setPartInput(event.target.value.replace(/\D/g, "").slice(0, 3))}
+              onChange={(event) =>
+                setPartInput(event.target.value.replace(/\D/g, "").slice(0, partCountDigits))
+              }
               onBlur={commitPartInput}
               onKeyDown={(event) => {
                 if (event.key === "Enter") {
