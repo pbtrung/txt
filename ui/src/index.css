@@ -98,19 +98,19 @@ body,
 /* Library top bar's search field: full width of its cell below lg (no
    persistent sidebar there to leave room for). At lg+ it's capped to half
    the cell's width, but only once the viewport is wide enough for that
-   half to comfortably fit the "Search your library" placeholder (taken as
-   >=16rem) -- below that it stays full width instead, rather than
+   half to comfortably fit the "Search library" placeholder (taken as
+   >=13rem) -- below that it stays full width instead, rather than
    cramping the placeholder into a box too narrow to show it. The
    threshold is a fixed viewport width rather than a percentage because,
    at lg+, the cell's own width is a fixed function of the viewport: shell-60
    caps the shell to 60% of the viewport, minus the 16rem sidebar and this
    cell's own px-3 (2rem total) padding. Solving
-   0.5 * (0.6*VW - 16rem - 2rem) >= 16rem for VW gives ~1334px (at the
+   0.5 * (0.6*VW - 16rem - 2rem) >= 13rem for VW gives ~1173px (at the
    standard 16px root font size); rounded up a little for margin. */
 .search-bar-width {
   width: 100%;
 }
-@media (min-width: 1340px) {
+@media (min-width: 1180px) {
   .search-bar-width {
     width: 50%;
   }
