@@ -405,6 +405,14 @@ describe("ReaderScreen", () => {
     expect(await screen.findByText("Library screen")).toBeInTheDocument();
   });
 
+  it('shows "-" instead of 0 for the part box/total on first load, before partCount is known', () => {
+    renderReader(baseResult({ loading: true, partCount: 0, currentPartNum: 1 }));
+    const input = screen.getByRole("textbox", { name: /go to part/i });
+    expect(input).toHaveValue("-");
+    expect(input).toBeDisabled();
+    expect(screen.getByText("/ -")).toBeInTheDocument();
+  });
+
   it("shows a spinner in the reading pane while loading, but keeps the rest of the chrome", () => {
     renderReader(baseResult({ loading: true }));
     expect(screen.getByRole("status")).toBeInTheDocument();
