@@ -139,6 +139,51 @@ describe("VaultProvider", () => {
     expect(result.current.error).toMatch(/incorrect password/i);
   });
 
+  it("serializes concurrent bookmark additions so neither overwrites the other", async () => {
+    vi.mocked(owner.resolveUserId).mockResolvedValue(42);
+    vi.mocked(owner.checkPassword).mockResolvedValue(true);
+    vi.mocked(owner.unwrapUmk).mockResolvedValue(new Uint8Array(64).fill(1));
+    vi.mocked(owner.fetchR2Config).mockResolvedValue({
+      endpoint: "https://x",
+      region: "auto",
+      bucket: "b",
+      readOnlyAccessKeyId: "id",
+      readOnlySecretAccessKey: "secret",
+    });
+    mockLibraryLoads();
+
+    // A faithful-enough stand-in for the real addBookmark (bookmarks.ts):
+    // read-modify-write off whatever map it's handed.
+    let createdAt = 0;
+    vi.mocked(bookmarksData.addBookmark).mockImplementation(
+      async (_db, _userId, _key, currentMap, txtId, partNum, line, txtPreview) => {
+        const next = new Map(currentMap);
+        next.set(txtId, [...(next.get(txtId) ?? []), { partNum, line, txtPreview, createdAt: ++createdAt }]);
+        return next;
+      },
+    );
+
+    const { result } = renderVault();
+    await act(async () => {
+      await result.current.unlock(fakeFile(CONFIG));
+    });
+    await waitFor(() => expect(result.current.status).toBe("unlocked"));
+
+    // Fired back to back, neither awaited before the other starts -- exactly
+    // the "two rapid-fire calls" scenario accessMapRef/bookmarksMapRef exist
+    // to handle. Without serializing through enqueueMutation, both would read
+    // the same pre-mutation bookmarksMap and one addition would silently
+    // overwrite the other.
+    await act(async () => {
+      await Promise.all([
+        result.current.addBookmarkEntry(1, 1, 1, "first"),
+        result.current.addBookmarkEntry(1, 1, 2, "second"),
+      ]);
+    });
+
+    expect(result.current.bookmarksMap.get(1)).toHaveLength(2);
+  });
+
   it("lock() clears the session and returns to locked", async () => {
     vi.mocked(owner.resolveUserId).mockResolvedValue(42);
     vi.mocked(owner.checkPassword).mockResolvedValue(true);

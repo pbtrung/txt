@@ -9,7 +9,8 @@ export const TAG_LEN = 64;
 export const KEY_LEN = 64;
 export const IV_LEN = 64;
 export const OKM_LEN = KEY_LEN + IV_LEN;
-export const AD_LEN = MAGIC.length + VERSION.length + SALT_LEN;
+export const HEADER_LEN = MAGIC.length + VERSION.length;
+export const AD_LEN = HEADER_LEN + SALT_LEN;
 export const BLOB_MIN_LEN = AD_LEN + TAG_LEN;
 
 export const UMK_LEN = 64;

@@ -50,8 +50,11 @@ export function UnlockScreen() {
         </button>
 
         {unlocking && (
-          <div className="mt-4 d-flex flex-column align-items-center gap-2">
-            <div className="spinner-border spinner-border-sm text-primary" role="status" />
+          // role="status" on the wrapper, not the (otherwise unlabeled)
+          // spinner glyph itself -- the visible text is what actually gets
+          // announced, so the spinner is just decorative next to it.
+          <div className="mt-4 d-flex flex-column align-items-center gap-2" role="status">
+            <div className="spinner-border spinner-border-sm text-primary" aria-hidden="true" />
             <div className="small text-body-secondary">Setting up your library…</div>
           </div>
         )}

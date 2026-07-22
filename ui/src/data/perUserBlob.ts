@@ -12,6 +12,7 @@ import type { Client } from "@libsql/core/api";
 
 import * as blob from "../crypto/blob";
 import { randomBytes } from "../crypto/bytes";
+import { decryptJson } from "./decryptJson";
 import { requireBlobBytes } from "./db";
 
 interface PerUserBlobTable {
@@ -39,8 +40,7 @@ export async function loadOrInitPerUserBlob<T>(
   const row = result.rows[0];
   if (row) {
     const key = await blob.decrypt(umk, requireBlobBytes(row[keyColumn], `${table}.${keyColumn}`));
-    const decrypted = await blob.decrypt(key, requireBlobBytes(row[blobColumn], `${table}.${blobColumn}`), true);
-    const json = JSON.parse(new TextDecoder().decode(decrypted)) as unknown;
+    const json = await decryptJson(key, requireBlobBytes(row[blobColumn], `${table}.${blobColumn}`));
     return { key, value: parse(json) };
   }
 

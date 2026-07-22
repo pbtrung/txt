@@ -153,9 +153,14 @@ describe("LibraryScreen", () => {
   it("filters the current book list by the search query", async () => {
     renderLibrary();
     await userEvent.click(screen.getByRole("button", { name: /All books/ }));
+    expect(screen.getByText("3 books")).toBeInTheDocument();
+
     await userEvent.type(screen.getByLabelText(/search library/i), "fantasy");
     expect(screen.getByText("The White Order")).toBeInTheDocument();
     expect(screen.queryByText("21 Lessons for the 21st Century")).not.toBeInTheDocument();
+    // The header count should track the filtered list, not the pre-search total.
+    expect(screen.getByText("1 book")).toBeInTheDocument();
+    expect(screen.queryByText("3 books")).not.toBeInTheDocument();
   });
 
   it("navigates to the reader when a book is clicked", async () => {

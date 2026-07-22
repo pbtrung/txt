@@ -419,8 +419,11 @@ describe("ReaderScreen", () => {
     expect(screen.getByRole("status")).toBeInTheDocument();
   });
 
-  it("shows an error state", () => {
+  it("shows an error state with a way back to the library", async () => {
     renderReader(baseResult({ error: "boom" }));
     expect(screen.getByRole("alert")).toHaveTextContent("boom");
+
+    await userEvent.click(screen.getByRole("button", { name: /back to library/i }));
+    expect(screen.getByText("Library screen")).toBeInTheDocument();
   });
 });

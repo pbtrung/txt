@@ -1,4 +1,12 @@
-"""Turso schema DDL (see docs/data_model.md)."""
+"""Turso schema DDL (see docs/data_model.md).
+
+Every ON DELETE CASCADE below is inert in practice: txt/db.py never issues
+`PRAGMA foreign_keys = ON`, and libsql/SQLite treats foreign keys as
+unenforced (cascades included) unless that pragma is set for the connection.
+txt/delete.py deletes each dependent row explicitly for this reason (see its
+own docstring/comments). The clauses are kept here as documentation of the
+intended relationships, not as something the DB itself will act on.
+"""
 
 _TABLES = """
 CREATE TABLE IF NOT EXISTS users (

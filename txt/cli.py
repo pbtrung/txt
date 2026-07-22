@@ -16,6 +16,11 @@ from .ingest import TxtIngester
 from .schema_update import SchemaUpdater
 
 
+def _confirm_destructive(message: str, skip_confirm: bool) -> None:
+    if not skip_confirm:
+        click.confirm(message, abort=True)
+
+
 def _cmd_init(admin_creds_path: str) -> None:
     creds = AdminCreds.load(Path(admin_creds_path))
     db = Database(creds)
@@ -54,12 +59,10 @@ def _cmd_txt_download(admin_creds_path: str, dst: str) -> None:
 
 def _cmd_txt_delete(admin_creds_path: str, skip_confirm: bool) -> None:
     creds = AdminCreds.load(Path(admin_creds_path))
-    if not skip_confirm:
-        click.confirm(
-            f"Delete ALL txt (and their R2 parts) for username={creds.username!r}? "
-            "This cannot be undone.",
-            abort=True,
-        )
+    _confirm_destructive(
+        f"Delete ALL txt (and their R2 parts) for username={creds.username!r}? This cannot be undone.",
+        skip_confirm,
+    )
     db = Database(creds)
     count = asyncio.run(TxtDeleter(db, creds).delete_all())
     click.echo(f"Deleted {count} txt(s) and their R2 parts")
@@ -67,24 +70,21 @@ def _cmd_txt_delete(admin_creds_path: str, skip_confirm: bool) -> None:
 
 def _cmd_purge_bucket(admin_creds_path: str, skip_confirm: bool) -> None:
     creds = AdminCreds.load(Path(admin_creds_path))
-    if not skip_confirm:
-        click.confirm(
-            "Delete EVERY object in the R2 bucket, regardless of what's tracked "
-            "in the DB? This cannot be undone.",
-            abort=True,
-        )
+    _confirm_destructive(
+        "Delete EVERY object in the R2 bucket, regardless of what's tracked in the DB? This cannot be undone.",
+        skip_confirm,
+    )
     count = asyncio.run(BucketPurger(creds).purge_all())
     click.echo(f"Purged {count} object(s) from the R2 bucket")
 
 
 def _cmd_txt_clean_bucket(admin_creds_path: str, skip_confirm: bool) -> None:
     creds = AdminCreds.load(Path(admin_creds_path))
-    if not skip_confirm:
-        click.confirm(
-            "Delete every R2 object not referenced by any txt in the DB for "
-            f"username={creds.username!r}? This cannot be undone.",
-            abort=True,
-        )
+    _confirm_destructive(
+        f"Delete every R2 object not referenced by any txt in the DB for username={creds.username!r}? "
+        "This cannot be undone.",
+        skip_confirm,
+    )
     db = Database(creds)
     count = asyncio.run(TxtBucketCleaner(db, creds).clean_bucket())
     click.echo(f"Deleted {count} orphaned object(s) from the R2 bucket")

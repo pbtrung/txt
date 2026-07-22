@@ -27,15 +27,12 @@
 // by serving the production build and driving it with Playwright, since
 // `vite dev`'s import-rewriting middleware masks the bug entirely.
 
+import { isBrowser } from "../env";
 import { BROTLI_QUALITY } from "./constants";
 
 interface BrotliApi {
   compress(data: Uint8Array, options?: { quality: number }): Uint8Array;
   decompress(data: Uint8Array): Uint8Array;
-}
-
-function isBrowser(): boolean {
-  return typeof window !== "undefined" && typeof document !== "undefined";
 }
 
 async function loadBrotli(): Promise<BrotliApi> {
