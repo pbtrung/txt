@@ -8,6 +8,7 @@ from pathlib import Path
 import brotli
 
 from .crypto import Blob
+from .opf import metadata_sidecar_name
 from .owner import TxtOwner
 
 logger = logging.getLogger(__name__)
@@ -16,7 +17,7 @@ logger = logging.getLogger(__name__)
 class TxtDownloader(TxtOwner):
     """Fetches, decrypts, and concatenates every txt owned by creds.username."""
 
-    def _txt_names(self, user_id: int, umk: bytes) -> dict[int, str]:
+    def _txt_entries(self, user_id: int, umk: bytes) -> dict[int, dict]:
         row = self.db.conn.execute(
             "SELECT txt_metadata_key, content FROM txt_metadata WHERE user_id = ?",
             (user_id,),
@@ -26,9 +27,9 @@ class TxtDownloader(TxtOwner):
             return {}
         txt_metadata_key = Blob.decrypt(umk, row[0])
         content = json.loads(Blob.decrypt(txt_metadata_key, row[1], compressed=True))
-        names = {int(txt_id): entry["name"] for txt_id, entry in content.items()}
-        logger.debug("Loaded %d name(s) from txt_metadata", len(names))
-        return names
+        entries = {int(txt_id): entry for txt_id, entry in content.items()}
+        logger.debug("Loaded %d txt_metadata entry(ies)", len(entries))
+        return entries
 
     async def _fetch_part(self, txt_key: bytes, raw_path: str) -> bytes:
         body = await self.r2.get_async(raw_path)
@@ -78,32 +79,48 @@ class TxtDownloader(TxtOwner):
             num_parts,
         )
 
+    @staticmethod
+    def _write_metadata_sidecar(
+        txt_id: int, dst: Path, name: str, metadata: dict
+    ) -> None:
+        sidecar_name = metadata_sidecar_name(name)
+        if sidecar_name is None:
+            return
+        sidecar_path = dst / sidecar_name
+        sidecar_path.write_text(json.dumps({"metadata": metadata}, indent=2))
+        logger.info("txt_id=%d: wrote %s", txt_id, sidecar_path)
+
     async def _download_txt(
-        self, txt_id: int, umk: bytes, dst: Path, names: dict[int, str]
+        self, txt_id: int, umk: bytes, dst: Path, entries: dict[int, dict]
     ) -> Path:
         txt_key = self._txt_key(txt_id, umk)
         raw_paths = self._part_raw_paths(txt_id, txt_key)
         logger.info("txt_id=%d: fetching %d part(s)", txt_id, len(raw_paths))
         tasks = self._start_part_fetches(txt_key, raw_paths)
-        out_path = dst / names.get(txt_id, f"txt_{txt_id}.txt")
+        entry = entries.get(txt_id, {})
+        name = entry.get("name", f"txt_{txt_id}.txt")
+        out_path = dst / name
         try:
             total = await self._write_parts_to_file(out_path, tasks)
         except Exception as exc:
             self._abort_download(txt_id, out_path, tasks, exc)
         self._log_download_done(txt_id, out_path, total, len(raw_paths))
+        metadata = entry.get("metadata")
+        if metadata:
+            self._write_metadata_sidecar(txt_id, dst, name, metadata)
         return out_path
 
     async def download_all(self, dst: Path) -> list[Path]:
         dst.mkdir(parents=True, exist_ok=True)
         user_id = self._owner_user_id()
         umk = self._owner_umk(user_id)
-        names = self._txt_names(user_id, umk)
+        entries = self._txt_entries(user_id, umk)
         txt_ids = self._txt_ids(user_id)
         logger.info("Found %d txt(s) for user_id=%d", len(txt_ids), user_id)
         # One txt at a time -- its parts still fetch concurrently -- rather than
         # every txt's parts in flight at once.
         paths = [
-            await self._download_txt(txt_id, umk, dst, names) for txt_id in txt_ids
+            await self._download_txt(txt_id, umk, dst, entries) for txt_id in txt_ids
         ]
         logger.info("Finished downloading %d txt(s) to %s", len(paths), dst)
         return paths

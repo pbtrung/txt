@@ -24,6 +24,15 @@ def find_opf_sidecar(path: Path) -> Path | None:
     return None
 
 
+def metadata_sidecar_name(name: str) -> str | None:
+    """The <base>.opf.json filename to write for a <base>.epub.txt name (any
+    case) on --txt-download, or None if name isn't a .epub.txt file."""
+    if not name.lower().endswith(_EPUB_TXT_SUFFIX):
+        return None
+    base = name[: -len(_EPUB_TXT_SUFFIX)]
+    return f"{base}.opf.json"
+
+
 def _local_name(tag: str) -> str:
     return tag.rsplit("}", 1)[-1]
 
