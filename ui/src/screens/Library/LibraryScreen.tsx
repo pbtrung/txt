@@ -219,7 +219,16 @@ export function LibraryScreen() {
 
   return (
     <div className="shell-60 d-flex flex-column vh-100">
-      <div className="border-bottom d-flex flex-wrap align-items-stretch">
+      {/* flex-nowrap, not flex-wrap: flexbox decides line breaks from each
+          item's *hypothetical* (unshrunk) main size, not its post-shrink
+          size -- so even with minWidth:0 below letting the content cell
+          shrink, a wrapping container could still push it to a second line
+          at viewport widths where its natural (un-shrunk) size doesn't fit
+          next to the drawer toggle, before shrinking ever gets a chance to
+          apply. Forcing one line makes that shrinking actually take effect,
+          keeping the toggle and search box together at every width instead
+          of wrapping at some in-between range. */}
+      <div className="border-bottom d-flex flex-nowrap align-items-stretch">
         {/* lg+: a fixed-width cell -- same class (and width) as the sidebar
             below -- so the content cell beside it starts at the same x as
             the right pane's own content, and its border-end continues the
