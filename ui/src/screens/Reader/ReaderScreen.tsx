@@ -114,6 +114,11 @@ export function ReaderScreen() {
   // two) rather than a fixed guess -- and maxLength tracks it so the box
   // never invites typing more digits than it can display.
   const partCountDigits = String(partCount || 1).length;
+  // partCount starts at 0 until the first load resolves (see
+  // useReaderBook.ts) -- "1 / 0" would misleadingly claim there's a known
+  // current part out of a book with no parts, so show "-" for both instead
+  // of a real-looking but meaningless number.
+  const partCountKnown = partCount > 0;
   const seriesLabel = info?.series ? `${info.series}${info.seriesIndex ? `, #${info.seriesIndex}` : ""}` : null;
   // Calibre/OPF descriptions commonly carry HTML (see sanitizeHtml.ts) --
   // and this book's metadata may come from a document someone else shared
@@ -342,8 +347,8 @@ export function ReaderScreen() {
               maxLength={partCountDigits}
               className="form-control form-control-sm themed-control text-center"
               style={{ width: `calc(${partCountDigits}ch + 2rem)` }}
-              value={partInput}
-              disabled={loading}
+              value={partCountKnown ? partInput : "-"}
+              disabled={loading || !partCountKnown}
               onChange={(event) => setPartInput(event.target.value.replace(/\D/g, "").slice(0, partCountDigits))}
               onBlur={commitPartInput}
               onKeyDown={(event) => {
@@ -354,7 +359,7 @@ export function ReaderScreen() {
               }}
               aria-label="Go to part"
             />
-            <span>/ {partCount}</span>
+            <span>/ {partCountKnown ? partCount : "-"}</span>
           </div>
 
           <button
