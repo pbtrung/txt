@@ -153,7 +153,7 @@ describe("LibraryScreen", () => {
   it("filters the current book list by the search query", async () => {
     renderLibrary();
     await userEvent.click(screen.getByRole("button", { name: /All books/ }));
-    await userEvent.type(screen.getByLabelText(/search your library/i), "fantasy");
+    await userEvent.type(screen.getByLabelText(/search library/i), "fantasy");
     expect(screen.getByText("The White Order")).toBeInTheDocument();
     expect(screen.queryByText("21 Lessons for the 21st Century")).not.toBeInTheDocument();
   });

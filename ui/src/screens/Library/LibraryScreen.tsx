@@ -296,10 +296,10 @@ export function LibraryScreen() {
             <input
               type="search"
               className="form-control themed-control ps-5"
-              placeholder="Search your library"
+              placeholder="Search library"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              aria-label="Search your library"
+              aria-label="Search library"
             />
           </div>
         </div>
