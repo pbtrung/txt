@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { aeadDecrypt, aeadEncrypt, hkdf, hmacSha3_256, pbkdf2Sha3_256 } from "./leancryptoLoader";
+import { aeadDecrypt, aeadEncrypt, hkdf, hmacSha3_256, hmacSha3_512, pbkdf2Sha3_256 } from "./leancryptoLoader";
 import { bytesToHex, hexToBytes } from "./testUtil";
 
 // Known-good vectors cross-checked by hand against the real native
@@ -25,6 +25,16 @@ describe("leancryptoLoader", () => {
     const data = new TextEncoder().encode("hello world");
     const out = await hmacSha3_256(key, data);
     expect(bytesToHex(out)).toBe("09d657bafbe49950f21340e41188aee5f403536db9c0a227e05ee68382ae70f6");
+  });
+
+  it("HMAC-SHA3-512 matches the native leancrypto output", async () => {
+    const key = new TextEncoder().encode("k".repeat(16));
+    const data = new TextEncoder().encode("hello world");
+    const out = await hmacSha3_512(key, data);
+    expect(bytesToHex(out)).toBe(
+      "0ee808e86d3440f8f432b6baacc1aefeead9269d30587931d9104218610c3970765987b5105a5ffe240bb301c2beee7" +
+        "5754c9d7002847307c2dad9ff041494a8",
+    );
   });
 
   it("PBKDF2-HMAC-SHA3-256 matches the native leancrypto output", async () => {

@@ -40,6 +40,8 @@ Create `admin_creds.json` with the following shape:
     "region": "auto",
     "bucket": "..."
   },
+  "asset_sign_key": "<64 random bytes, base64>",
+  "asset_hashes": "<192 bytes, base64>",
   "user_root_key": "<256+ random bytes, base64>"
 }
 ```
@@ -111,8 +113,54 @@ cd ui
 npm install
 npm run dev      # http://localhost:5173
 npm test
-npm run build    # -> ui/dist
+npm run build -- --admin-creds ../creds/admin_creds.json    # -> ui/dist
 ```
+
+### Asset integrity check (`asset_sign_key`/`asset_hashes`)
+
+Before `unlock()` touches Turso or `umk` at all, it verifies that the app currently
+running matches what was signed at build time (`ui/src/integrity/verifyAssets.ts`) —
+this catches tampering introduced between your build and what the browser actually
+receives (a compromised CDN/edge cache, an in-flight modification, a stale/rolled-back
+deploy). `index.html`, `leancrypto.js`, and `leancrypto.wasm` are each verified with
+native HMAC-SHA512 (`asset_hashes` concatenates those three 64-byte digests, in that
+order — 192 bytes total); every other built asset is HMAC-SHA3-512'd into a manifest
+embedded in `index.html` itself, verified via leancrypto once leancrypto.js/.wasm are
+themselves confirmed (leancrypto can't safely verify its own bytes before they're
+trusted). `ui/scripts/sign-assets.mjs` needs a 64-random-byte signing key
+(`openssl rand -base64 64`) to run after `vite build`, from either:
+
+- `npm run build -- --admin-creds <path>` — a JSON file with an `asset_sign_key` field,
+  e.g. `creds/admin_creds.json` (add the field there yourself; `txt/creds.py` ignores
+  keys it doesn't know about, so this doesn't need a schema change). The resulting
+  `asset_hashes` is written straight back into that same file — nothing is printed to
+  the console, since this is meant to also be the UI's own unlock config, and every other
+  field is left untouched.
+- the `ASSET_SIGN_KEY` env var, if you'd rather not point it at a file:
+  `ASSET_SIGN_KEY=$(openssl rand -base64 64) npm run build`. Since there's no file to
+  write back to here, `asset_hashes` is printed to the console instead, to paste into
+  your UI config file's `asset_hashes` field yourself.
+
+Keep the key itself only in CI secrets and whichever local config file(s) hold it — it
+must never end up in a built asset, since the whole point is that whatever serves those
+assets (e.g. Cloudflare Pages) can't also forge a signature for content it's tampered with.
+
+### Verbose logging
+
+On by default. Load the app with `?verbose=0` in the URL to turn it off for that page
+load (`ui/src/log.ts`; toggle mid-session with `setVerbose()` instead of reloading if you
+don't want to lose an in-progress session — it isn't persisted across reloads, same as
+`VaultContext`'s own session state). It logs `unlock()`'s steps
+(`ui/src/state/VaultContext.tsx` — parsing the config, the asset integrity check,
+resolving the user id, checking the password, unwrapping `umk`, loading metadata/access/
+bookmarks) and every `db.execute()` call, from any screen, logs its SQL/args and either
+its row count or its error (`ui/src/data/db.ts`).
+
+This does *not* protect against someone who can rewrite the deployed bundle itself (a
+compromised CI/deploy credential) — the check ships as part of that same bundle, so an
+attacker with that level of access could remove the check along with everything else.
+It's meaningful defense-in-depth against tampering downstream of a legitimate build, not
+a substitute for securing your build/deploy pipeline.
 
 ### R2 bucket CORS policy (required)
 
