@@ -22,6 +22,7 @@ A fully client-side-encrypted text vault.
 - **`--txt-ingest <dir>`** ingests `.txt` files (case-insensitive) from a directory into the admin's own account: `txt/textproc.py` cleans and splits each file, `txt/ingest.py` generates each part's random R2 path and uploads it via `txt/r2.py`. `txt.py --init` remains the one-time step that provisions the admin account this ingests into.
 - **`--txt-download <dir>`** reverses this: `txt/download.py` fetches and decrypts every part of each of the admin's txt, concatenating them back into one file per document. If a txt's `txt_metadata.content` entry has a `metadata` key (i.e. it was ingested from a `<name>.epub.txt` with an OPF sidecar), it also writes that metadata back out as `<name>.opf.json` (`{"metadata": {...}}`, via `txt/opf.py`'s `metadata_sidecar_name`) alongside the reconstructed file.
 - **`--txt-delete`** removes every one of the admin's txt entirely: `txt/delete.py` deletes each txt's R2 parts, then its `txt`/`txt_parts`/`txt_shares`/`part_count`/`txt_access`/`bookmarks` rows (explicitly, since nothing enables `PRAGMA foreign_keys`), and clears `txt_metadata.content`.
+- **`--txt-delete-id <txt_id>`** does the same for a single txt_id, leaving the rest of the admin's txt untouched: `TxtDeleter.delete_one` deletes that txt's R2 parts and the same `txt`/`txt_parts`/`txt_shares`/`part_count`/`txt_access`/`bookmarks` rows, then scrubs just that `txt_id`'s entry out of `txt_metadata.content` (rather than clearing it outright, since other txt's entries must survive).
 
 ### Shared internals
 
