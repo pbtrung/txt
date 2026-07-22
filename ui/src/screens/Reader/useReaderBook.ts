@@ -164,6 +164,11 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
 
   const goToPart = useCallback(
     (partNum: number) => {
+      // clampPartNum always returns >= 1 for a finite partNum, but returns
+      // NaN (falsy) if partNum itself is NaN -- callers other than
+      // ReaderScreen's own validated part-number input (goToBookmark, a
+      // future caller) aren't guaranteed to pass a validated value, so this
+      // falls back to staying put rather than setting currentPartNum to NaN.
       const target = clampPartNum(partNum, partCount) || currentPartNum;
       if (target !== currentPartNum) {
         // Cleared in the same batch as currentPartNum, not left for the

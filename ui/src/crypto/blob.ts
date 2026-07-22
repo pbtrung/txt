@@ -40,7 +40,7 @@ export async function decrypt(ikm: Uint8Array, blob: Uint8Array, compressed = fa
     throw new Error("unsupported major version");
   }
   const ad = blob.slice(0, c.AD_LEN);
-  const salt = blob.slice(4, c.AD_LEN);
+  const salt = blob.slice(c.HEADER_LEN, c.AD_LEN);
   const ciphertext = blob.slice(c.AD_LEN, blob.length - c.TAG_LEN);
   const tag = blob.slice(blob.length - c.TAG_LEN);
   const { key, iv } = await derive(ikm, salt);

@@ -10,6 +10,7 @@ import * as blob from "../crypto/blob";
 import { hmacSha3_256, pbkdf2Sha3_256 } from "../crypto/leancryptoLoader";
 import { bytesEqual } from "../crypto/bytes";
 import { PBKDF2_ITERATIONS, PW_HASH_LEN } from "../crypto/constants";
+import { decryptJson } from "./decryptJson";
 import { requireBlobBytes } from "./db";
 import type { Creds } from "./creds";
 import { parseR2Config, type R2Config } from "./r2Config";
@@ -65,8 +66,7 @@ export async function fetchR2Config(db: Client, userId: number, umk: Uint8Array)
   if (!row) {
     throw new OwnerError(`no r2_config row for user_id=${userId}`);
   }
-  const decrypted = await blob.decrypt(umk, requireBlobBytes(row.config, "r2_config.config"), true);
-  return parseR2Config(JSON.parse(new TextDecoder().decode(decrypted)));
+  return parseR2Config(await decryptJson(umk, requireBlobBytes(row.config, "r2_config.config")));
 }
 
 export async function listTxtIds(db: Client, userId: number): Promise<number[]> {

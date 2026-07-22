@@ -1,9 +1,10 @@
 """Shared owner/key resolution for --txt-ingest, --txt-download, and --txt-delete (see docs/data_model.md)."""
 
+import json
 import logging
 
 from .creds import AdminCreds
-from .crypto import Blob, hmac_sha3_256
+from .crypto import Blob
 from .db import Database
 from .r2 import R2Client
 
@@ -25,9 +26,7 @@ class TxtOwner:
         self.r2 = R2Client(creds.r2_config)
 
     def _owner_user_id(self) -> int:
-        username_hash = hmac_sha3_256(
-            self.creds.username_lookup_key, self.creds.username.encode()
-        )
+        username_hash = self.creds.username_hash()
         row = self.db.conn.execute(
             "SELECT id FROM users WHERE username_hash = ?", (username_hash,)
         ).fetchone()
@@ -44,6 +43,10 @@ class TxtOwner:
         row = self.db.conn.execute(
             "SELECT umk FROM umk_store WHERE user_id = ?", (user_id,)
         ).fetchone()
+        if row is None:
+            raise ValueError(
+                f"no umk_store row for user_id={user_id}; run --init first"
+            )
         umk = Blob.decrypt(self.creds.user_root_key, row[0])
         logger.debug("Unwrapped umk for user_id=%d", user_id)
         return umk
@@ -58,6 +61,8 @@ class TxtOwner:
         row = self.db.conn.execute(
             "SELECT txt_key FROM txt WHERE id = ?", (txt_id,)
         ).fetchone()
+        if row is None:
+            raise ValueError(f"no txt row for txt_id={txt_id}")
         return Blob.decrypt(umk, row[0])
 
     def _part_raw_paths(self, txt_id: int, txt_key: bytes) -> list[str]:
@@ -66,3 +71,27 @@ class TxtOwner:
             (txt_id,),
         ).fetchall()
         return [Blob.decrypt(txt_key, row[0]).decode("ascii") for row in rows]
+
+    def _txt_metadata_key_and_content(
+        self, user_id: int, umk: bytes
+    ) -> tuple[bytes | None, dict]:
+        """(txt_metadata_key, content) for user_id, or (None, {}) if there's no
+        txt_metadata row yet, or (key, {}) if the row exists but content is
+        still NULL (no txt ingested yet) -- shared by TxtIngester (which needs
+        the key to persist new entries, and treats a missing row as an error
+        since --init always creates one) and TxtDownloader (which only reads,
+        and tolerates either being absent)."""
+        row = self.db.conn.execute(
+            "SELECT txt_metadata_key, content FROM txt_metadata WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+        if row is None:
+            return None, {}
+        key_blob, content_blob = row
+        txt_metadata_key = Blob.decrypt(umk, key_blob)
+        if content_blob is None:
+            return txt_metadata_key, {}
+        content = json.loads(
+            Blob.decrypt(txt_metadata_key, content_blob, compressed=True)
+        )
+        return txt_metadata_key, content

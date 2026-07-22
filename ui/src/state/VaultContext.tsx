@@ -87,6 +87,25 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     setBookmarksMapState(next);
   }, []);
 
+  // Serializes recordReadPosition/removeAccessEntry/addBookmarkEntry/
+  // removeBookmarkEntry: each reads accessMapRef/bookmarksMapRef, computes
+  // the next map, and only updates that ref once its own DB write settles --
+  // so two calls fired back to back (before either awaits) would otherwise
+  // both read the *same* pre-mutation ref value and race to overwrite each
+  // other's write with a full-blob UPDATE that doesn't know about the
+  // other's change. Queuing every mutation through this one promise chain
+  // ensures each starts only after the previous one's ref update has
+  // landed, so it always builds on the latest state instead of a stale one.
+  const mutationQueue = useRef(Promise.resolve());
+  const enqueueMutation = useCallback(<T,>(run: () => Promise<T>): Promise<T> => {
+    const result = mutationQueue.current.then(run, run);
+    mutationQueue.current = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }, []);
+
   const unlock = useCallback(
     async (file: File) => {
       setStatus("unlocking");
@@ -174,66 +193,74 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   const recordReadPosition = useCallback(
     async (txtId: number, position: ReadPosition) => {
       if (!session) throw new Error("vault is locked");
-      const next = await setReadPositionData(
-        session.db,
-        session.userId,
-        session.txtAccessKey,
-        accessMapRef.current,
-        txtId,
-        position,
-      );
-      setAccessMap(next);
+      await enqueueMutation(async () => {
+        const next = await setReadPositionData(
+          session.db,
+          session.userId,
+          session.txtAccessKey,
+          accessMapRef.current,
+          txtId,
+          position,
+        );
+        setAccessMap(next);
+      });
     },
-    [session, setAccessMap],
+    [session, setAccessMap, enqueueMutation],
   );
 
   const removeAccessEntry = useCallback(
     async (txtId: number) => {
       if (!session) throw new Error("vault is locked");
-      const next = await removeAccessEntryData(
-        session.db,
-        session.userId,
-        session.txtAccessKey,
-        accessMapRef.current,
-        txtId,
-      );
-      setAccessMap(next);
+      await enqueueMutation(async () => {
+        const next = await removeAccessEntryData(
+          session.db,
+          session.userId,
+          session.txtAccessKey,
+          accessMapRef.current,
+          txtId,
+        );
+        setAccessMap(next);
+      });
     },
-    [session, setAccessMap],
+    [session, setAccessMap, enqueueMutation],
   );
 
   const addBookmarkEntry = useCallback(
     async (txtId: number, partNum: number, line: number, txtPreview: string) => {
       if (!session) throw new Error("vault is locked");
-      const next = await addBookmarkData(
-        session.db,
-        session.userId,
-        session.bookmarkKey,
-        bookmarksMapRef.current,
-        txtId,
-        partNum,
-        line,
-        txtPreview,
-      );
-      setBookmarksMap(next);
+      await enqueueMutation(async () => {
+        const next = await addBookmarkData(
+          session.db,
+          session.userId,
+          session.bookmarkKey,
+          bookmarksMapRef.current,
+          txtId,
+          partNum,
+          line,
+          txtPreview,
+        );
+        setBookmarksMap(next);
+      });
     },
-    [session, setBookmarksMap],
+    [session, setBookmarksMap, enqueueMutation],
   );
 
   const removeBookmarkEntry = useCallback(
     async (txtId: number, createdAt: number) => {
       if (!session) throw new Error("vault is locked");
-      const next = await removeBookmarkData(
-        session.db,
-        session.userId,
-        session.bookmarkKey,
-        bookmarksMapRef.current,
-        txtId,
-        createdAt,
-      );
-      setBookmarksMap(next);
+      await enqueueMutation(async () => {
+        const next = await removeBookmarkData(
+          session.db,
+          session.userId,
+          session.bookmarkKey,
+          bookmarksMapRef.current,
+          txtId,
+          createdAt,
+        );
+        setBookmarksMap(next);
+      });
     },
-    [session, setBookmarksMap],
+    [session, setBookmarksMap, enqueueMutation],
   );
 
   const value = useMemo<VaultContextValue>(

@@ -15,12 +15,12 @@ import { useNavigate } from "react-router-dom";
 
 import { BookmarkRow } from "../../components/BookmarkRow";
 import { BookRow } from "../../components/BookRow";
+import { DropdownToggleButton } from "../../components/DropdownToggleButton";
 import { Wordmark } from "../../components/Wordmark";
 import { useDropdown } from "../../hooks/useDropdown";
 import { useVault } from "../../state/VaultContext";
 import {
   allBooksSorted,
-  bookStatus,
   browseEntries,
   booksForDimensionValue,
   matchesSearch,
@@ -171,7 +171,6 @@ export function LibraryScreen() {
   const subjectEntries = useMemo(() => browseEntries(books ?? [], "subject"), [books]);
   const publisherEntries = useMemo(() => browseEntries(books ?? [], "publisher"), [books]);
   const recent = useMemo(() => recentBooks(books ?? []), [books]);
-  const inProgressCount = useMemo(() => recent.filter((b) => bookStatus(b) === "in-progress").length, [recent]);
   // Search only filters Continue Reading -- Recent Bookmarks isn't searchable.
   const continueReading = useMemo(
     () => (search.trim() ? recent.filter((b) => matchesSearch(b, search)) : recent),
@@ -195,7 +194,10 @@ export function LibraryScreen() {
 
   if (view.kind === "recent") {
     heading = "Recent";
-    headingDetail = `${inProgressCount} in progress`;
+    // Every entry here has lastPartNum set (recentBooks() only includes
+    // books with a lastAccessedMs, and the two are always set together --
+    // see libraryModel.ts's buildLibraryBooks), so this is just its count.
+    headingDetail = `${recent.length} in progress`;
   } else if (view.kind === "all") {
     const all = allBooksSorted(books ?? []);
     heading = "All books";
@@ -215,6 +217,10 @@ export function LibraryScreen() {
 
   if (bookList && search.trim()) {
     bookList = bookList.filter((b) => matchesSearch(b, search));
+    // Recompute now that a search query may have shrunk bookList -- keeps
+    // the header's count in sync with what's actually rendered below,
+    // instead of showing the pre-search total.
+    headingDetail = `${bookList.length} book${bookList.length === 1 ? "" : "s"}`;
   }
 
   return (
@@ -255,16 +261,13 @@ export function LibraryScreen() {
           ref={nav.ref}
           className="dropdown position-relative d-lg-none d-flex align-items-center gap-2 ps-2 ps-sm-3 py-2"
         >
-          <button
-            type="button"
-            className={`btn btn-sm d-flex align-items-center justify-content-center ${nav.open ? "btn-primary" : "btn-outline-secondary border-primary"}`}
+          <DropdownToggleButton
+            open={nav.open}
             onClick={nav.toggle}
-            aria-expanded={nav.open}
-            aria-haspopup="true"
-            aria-label="Library menu"
-          >
-            <i className={`bi bi-book ${nav.open ? "" : "text-primary"}`} aria-hidden="true" />
-          </button>
+            icon="bi-book"
+            ariaLabel="Library menu"
+            className="d-flex align-items-center justify-content-center"
+          />
           <span className="fw-semibold d-none d-sm-inline">Skypiea</span>
           {nav.open && (
             <div

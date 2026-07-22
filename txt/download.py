@@ -18,15 +18,7 @@ class TxtDownloader(TxtOwner):
     """Fetches, decrypts, and concatenates every txt owned by creds.username."""
 
     def _txt_entries(self, user_id: int, umk: bytes) -> dict[int, dict]:
-        row = self.db.conn.execute(
-            "SELECT txt_metadata_key, content FROM txt_metadata WHERE user_id = ?",
-            (user_id,),
-        ).fetchone()
-        if row is None or row[1] is None:
-            logger.debug("No txt_metadata content for user_id=%d", user_id)
-            return {}
-        txt_metadata_key = Blob.decrypt(umk, row[0])
-        content = json.loads(Blob.decrypt(txt_metadata_key, row[1], compressed=True))
+        _txt_metadata_key, content = self._txt_metadata_key_and_content(user_id, umk)
         entries = {int(txt_id): entry for txt_id, entry in content.items()}
         logger.debug("Loaded %d txt_metadata entry(ies)", len(entries))
         return entries
@@ -56,11 +48,15 @@ class TxtDownloader(TxtOwner):
         return total
 
     @staticmethod
-    def _abort_download(
+    async def _abort_download(
         txt_id: int, out_path: Path, tasks: list, exc: Exception
     ) -> None:
         for task in tasks:
             task.cancel()
+        # Cancelling only schedules it -- await so the tasks are actually
+        # unwound before this coroutine returns, rather than leaving them
+        # pending for asyncio to complain about at event-loop teardown.
+        await asyncio.gather(*tasks, return_exceptions=True)
         out_path.unlink(missing_ok=True)
         raise RuntimeError(
             f"txt_id={txt_id}: failed to fetch part(s) from R2 after retries; "
@@ -103,7 +99,7 @@ class TxtDownloader(TxtOwner):
         try:
             total = await self._write_parts_to_file(out_path, tasks)
         except Exception as exc:
-            self._abort_download(txt_id, out_path, tasks, exc)
+            await self._abort_download(txt_id, out_path, tasks, exc)
         self._log_download_done(txt_id, out_path, total, len(raw_paths))
         metadata = entry.get("metadata")
         if metadata:

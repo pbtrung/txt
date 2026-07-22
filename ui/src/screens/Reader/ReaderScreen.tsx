@@ -23,6 +23,7 @@ import "@fontsource/literata/400.css";
 import "@fontsource/literata/500.css";
 
 import { BookmarkRow } from "../../components/BookmarkRow";
+import { DropdownToggleButton } from "../../components/DropdownToggleButton";
 import { useDropdown } from "../../hooks/useDropdown";
 import { splitLines, truncatePreview } from "./readerModel";
 import { descriptionPlainText, sanitizeDescriptionHtml } from "./sanitizeHtml";
@@ -145,8 +146,21 @@ export function ReaderScreen() {
 
   if (error) {
     return (
-      <div className="alert alert-danger m-4" role="alert">
-        {error}
+      <div className="shell-60 d-flex flex-column vh-100">
+        <div className="border-bottom d-flex align-items-center gap-3 ps-2 ps-sm-3 pe-3 py-2">
+          <button
+            type="button"
+            className="btn btn-link text-decoration-none px-0"
+            onClick={() => navigate("/library")}
+            aria-label="Back to library"
+            title="Back to library"
+          >
+            <i className="bi bi-arrow-left" aria-hidden="true" />
+          </button>
+        </div>
+        <div className="alert alert-danger m-4" role="alert">
+          {error}
+        </div>
       </div>
     );
   }
@@ -174,17 +188,13 @@ export function ReaderScreen() {
         </div>
 
         <div ref={infoMenu.ref} className="dropdown position-relative">
-          <button
-            type="button"
-            className={`btn btn-sm ${infoMenu.open ? "btn-primary" : "btn-outline-secondary border-primary"}`}
+          <DropdownToggleButton
+            open={infoMenu.open}
             onClick={toggleInfo}
-            aria-expanded={infoMenu.open}
-            aria-haspopup="true"
-            aria-label="About this book"
+            icon="bi-info-lg"
+            ariaLabel="About this book"
             title="About this book"
-          >
-            <i className={`bi bi-info-lg ${infoMenu.open ? "" : "text-primary"}`} aria-hidden="true" />
-          </button>
+          />
           {infoMenu.open && (
             <div
               className="dropdown-menu app-dropdown-menu show p-3"
@@ -334,9 +344,7 @@ export function ReaderScreen() {
               style={{ width: `calc(${partCountDigits}ch + 2rem)` }}
               value={partInput}
               disabled={loading}
-              onChange={(event) =>
-                setPartInput(event.target.value.replace(/\D/g, "").slice(0, partCountDigits))
-              }
+              onChange={(event) => setPartInput(event.target.value.replace(/\D/g, "").slice(0, partCountDigits))}
               onBlur={commitPartInput}
               onKeyDown={(event) => {
                 if (event.key === "Enter") {
@@ -363,20 +371,13 @@ export function ReaderScreen() {
         <div className="vr bottom-bar-vr" />
 
         <div ref={bookmarksMenu.ref} className="dropdown position-relative ms-auto">
-          <button
-            type="button"
-            className={`btn btn-sm ${bookmarksMenu.open ? "btn-primary" : "btn-outline-secondary border-primary"}`}
+          <DropdownToggleButton
+            open={bookmarksMenu.open}
             onClick={toggleBookmarks}
-            aria-expanded={bookmarksMenu.open}
-            aria-haspopup="true"
-            aria-label="Bookmarks"
+            icon={bookmarks.length > 0 ? "bi-bookmark-fill" : "bi-bookmark"}
+            ariaLabel="Bookmarks"
             title="Bookmarks"
-          >
-            <i
-              className={`bi ${bookmarks.length > 0 ? "bi-bookmark-fill" : "bi-bookmark"} ${bookmarksMenu.open ? "" : "text-primary"}`}
-              aria-hidden="true"
-            />
-          </button>
+          />
           {bookmarksMenu.open && (
             <div
               className="dropdown-menu app-dropdown-menu app-dropdown-menu-up show p-3"

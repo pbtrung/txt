@@ -100,7 +100,7 @@ class Blob:
             raise ValueError("bad magic")
         if blob[2:3] != c.VERSION[:1]:
             raise ValueError("unsupported major version")
-        ad, salt = blob[: c.AD_LEN], blob[4 : c.AD_LEN]
+        ad, salt = blob[: c.AD_LEN], blob[c.HEADER_LEN : c.AD_LEN]
         ct, tag = blob[c.AD_LEN : -c.TAG_LEN], blob[-c.TAG_LEN :]
         key, iv = cls._derive(ikm, salt)
         ctx = cls._aead_ctx(key, iv)

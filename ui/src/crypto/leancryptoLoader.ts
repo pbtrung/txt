@@ -28,6 +28,8 @@
 //    lc_seeded_rng before lc_kyber_1024_x448_keypair) -- skipping it crashes
 //    with "RuntimeError: table index is out of bounds".
 
+import { isBrowser } from "../env";
+
 export interface LeancryptoModule {
   HEAPU8: Uint8Array;
   HEAPU32: Uint32Array;
@@ -92,10 +94,6 @@ export interface LeancryptoModule {
 
 type LeancryptoFactory = (opts?: Record<string, unknown>) => Promise<LeancryptoModule>;
 
-function isBrowser(): boolean {
-  return typeof window !== "undefined" && typeof document !== "undefined";
-}
-
 function loadBrowserFactory(): Promise<LeancryptoFactory> {
   return new Promise((resolve, reject) => {
     const existing = (window as unknown as { leancrypto?: LeancryptoFactory }).leancrypto;
@@ -120,7 +118,7 @@ function loadBrowserFactory(): Promise<LeancryptoFactory> {
 
 async function loadNodeFactory(): Promise<LeancryptoFactory> {
   // @vite-ignore: this path only ever runs under Node/Vitest (see
-  // isBrowser() below) -- keep Vite's client bundler from resolving/
+  // isBrowser(), used below) -- keep Vite's client bundler from resolving/
   // inlining it into the browser build.
   const imported: unknown = await import(/* @vite-ignore */ "../../leancrypto/leancrypto.js");
   const mod = imported as { default?: LeancryptoFactory };
@@ -213,22 +211,26 @@ export async function hkdf(ikm: Uint8Array, salt: Uint8Array, length: number): P
   }
 }
 
-/** HMAC-SHA3-256(key, data), used for username_hash. */
-export async function hmacSha3_256(key: Uint8Array, data: Uint8Array): Promise<Uint8Array> {
-  const { mod, sha3_256 } = await getLeancrypto();
-  const OUT_LEN = 32;
+async function hmac(hashType: number, outLen: number, key: Uint8Array, data: Uint8Array): Promise<Uint8Array> {
+  const { mod } = await getLeancrypto();
   const keyPtr = writeBytes(mod, key);
   const dataPtr = writeBytes(mod, data);
-  const outPtr = mod._malloc(OUT_LEN);
+  const outPtr = mod._malloc(outLen);
   try {
-    const ret = mod._lc_hmac(sha3_256, keyPtr, key.length, dataPtr, data.length, outPtr);
+    const ret = mod._lc_hmac(hashType, keyPtr, key.length, dataPtr, data.length, outPtr);
     check(ret, "lc_hmac");
-    return readBytes(mod, outPtr, OUT_LEN);
+    return readBytes(mod, outPtr, outLen);
   } finally {
     mod._free(keyPtr);
     mod._free(dataPtr);
     mod._free(outPtr);
   }
+}
+
+/** HMAC-SHA3-256(key, data), used for username_hash. */
+export async function hmacSha3_256(key: Uint8Array, data: Uint8Array): Promise<Uint8Array> {
+  const { sha3_256 } = await getLeancrypto();
+  return hmac(sha3_256, 32, key, data);
 }
 
 /** HMAC-SHA3-512(key, data), used to verify non-bootstrap assets against the
@@ -237,20 +239,8 @@ export async function hmacSha3_256(key: Uint8Array, data: Uint8Array): Promise<U
  * WebCrypto HMAC-SHA512 instead, since using leancrypto to verify its own
  * bytes before they're trusted would be circular. */
 export async function hmacSha3_512(key: Uint8Array, data: Uint8Array): Promise<Uint8Array> {
-  const { mod, sha3_512 } = await getLeancrypto();
-  const OUT_LEN = 64;
-  const keyPtr = writeBytes(mod, key);
-  const dataPtr = writeBytes(mod, data);
-  const outPtr = mod._malloc(OUT_LEN);
-  try {
-    const ret = mod._lc_hmac(sha3_512, keyPtr, key.length, dataPtr, data.length, outPtr);
-    check(ret, "lc_hmac");
-    return readBytes(mod, outPtr, OUT_LEN);
-  } finally {
-    mod._free(keyPtr);
-    mod._free(dataPtr);
-    mod._free(outPtr);
-  }
+  const { sha3_512 } = await getLeancrypto();
+  return hmac(sha3_512, 64, key, data);
 }
 
 /** PBKDF2-HMAC-SHA3-256(password, salt, iterations) -> keyLen bytes, used for pw_hash. */
@@ -263,7 +253,7 @@ export async function pbkdf2Sha3_256(
   const { mod, sha3_256 } = await getLeancrypto();
   const pwPtr = writeBytes(mod, password);
   const saltPtr = writeBytes(mod, salt);
-  const outPtr = mod._malloc(keyLen);
+  const outPtr = mod._malloc(keyLen || 1);
   try {
     const ret = mod._lc_pbkdf2(sha3_256, pwPtr, password.length, saltPtr, salt.length, iterations, outPtr, keyLen);
     check(ret, "lc_pbkdf2");

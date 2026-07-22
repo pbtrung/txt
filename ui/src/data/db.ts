@@ -57,7 +57,7 @@ export function createDb(creds: Creds): Client {
 }
 
 /** A BLOB column comes back as ArrayBuffer|null; this gets it into the Uint8Array our crypto layer expects. */
-export function blobToBytes(value: Value | null | undefined): Uint8Array | null {
+function blobToBytes(value: Value | null | undefined): Uint8Array | null {
   if (value === null || value === undefined) return null;
   if (value instanceof ArrayBuffer) return new Uint8Array(value);
   throw new Error(`expected a BLOB column, got ${typeof value}`);

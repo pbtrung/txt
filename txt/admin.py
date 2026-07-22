@@ -10,7 +10,7 @@ import os
 
 from . import constants as c
 from .creds import AdminCreds
-from .crypto import Blob, Kem, hmac_sha3_256, pbkdf2_sha3_256
+from .crypto import Blob, Kem, pbkdf2_sha3_256
 from .db import Database
 
 logger = logging.getLogger(__name__)
@@ -24,9 +24,7 @@ class AdminInitializer:
         self.creds = creds
 
     def _get_or_create_user(self) -> int:
-        username_hash = hmac_sha3_256(
-            self.creds.username_lookup_key, self.creds.username.encode()
-        )
+        username_hash = self.creds.username_hash()
         row = self.db.conn.execute(
             "SELECT id FROM users WHERE username_hash = ?", (username_hash,)
         ).fetchone()
@@ -60,12 +58,16 @@ class AdminInitializer:
         logger.info("Inserted umk_store row (user_id=%d)", user_id)
         return umk
 
-    def _ensure_key_store(self, user_id: int, umk: bytes) -> None:
+    def _row_exists(self, table: str, user_id: int) -> bool:
         row = self.db.conn.execute(
-            "SELECT 1 FROM key_store WHERE user_id = ?", (user_id,)
+            f"SELECT 1 FROM {table} WHERE user_id = ?", (user_id,)
         ).fetchone()
         if row is not None:
-            logger.info("key_store row already exists (user_id=%d), skipping", user_id)
+            logger.info("%s row already exists (user_id=%d), skipping", table, user_id)
+        return row is not None
+
+    def _ensure_key_store(self, user_id: int, umk: bytes) -> None:
+        if self._row_exists("key_store", user_id):
             return
         pub_key, priv_key = Kem.keypair()
         priv_blob = Blob.encrypt(umk, priv_key)
@@ -76,11 +78,7 @@ class AdminInitializer:
         logger.info("Inserted key_store row (user_id=%d)", user_id)
 
     def _ensure_r2_config(self, user_id: int, umk: bytes) -> None:
-        row = self.db.conn.execute(
-            "SELECT 1 FROM r2_config WHERE user_id = ?", (user_id,)
-        ).fetchone()
-        if row is not None:
-            logger.info("r2_config row already exists (user_id=%d), skipping", user_id)
+        if self._row_exists("r2_config", user_id):
             return
         # Only the read-only key pair is ever persisted to Turso, regardless of
         # role — read_write_access_key_id/secret stay local to the admin's own
@@ -102,13 +100,7 @@ class AdminInitializer:
         logger.info("Inserted r2_config row (user_id=%d)", user_id)
 
     def _ensure_txt_metadata(self, user_id: int, umk: bytes) -> None:
-        row = self.db.conn.execute(
-            "SELECT 1 FROM txt_metadata WHERE user_id = ?", (user_id,)
-        ).fetchone()
-        if row is not None:
-            logger.info(
-                "txt_metadata row already exists (user_id=%d), skipping", user_id
-            )
+        if self._row_exists("txt_metadata", user_id):
             return
         # content stays NULL until this user's first txt is ingested -- there's
         # nothing to encrypt yet (see docs/data_model.md's txt_metadata).
@@ -121,11 +113,7 @@ class AdminInitializer:
         logger.info("Inserted txt_metadata row (user_id=%d)", user_id)
 
     def _ensure_txt_access(self, user_id: int, umk: bytes) -> None:
-        row = self.db.conn.execute(
-            "SELECT 1 FROM txt_access WHERE user_id = ?", (user_id,)
-        ).fetchone()
-        if row is not None:
-            logger.info("txt_access row already exists (user_id=%d), skipping", user_id)
+        if self._row_exists("txt_access", user_id):
             return
         # access starts as an encrypted empty JSON object -- unlike
         # txt_metadata.content, this column is NOT NULL (see docs/data_model.md).
@@ -139,11 +127,7 @@ class AdminInitializer:
         logger.info("Inserted txt_access row (user_id=%d)", user_id)
 
     def _ensure_bookmarks(self, user_id: int, umk: bytes) -> None:
-        row = self.db.conn.execute(
-            "SELECT 1 FROM bookmarks WHERE user_id = ?", (user_id,)
-        ).fetchone()
-        if row is not None:
-            logger.info("bookmarks row already exists (user_id=%d), skipping", user_id)
+        if self._row_exists("bookmarks", user_id):
             return
         bookmark_key = os.urandom(c.BOOKMARK_KEY_LEN)
         key_blob = Blob.encrypt(umk, bookmark_key)

@@ -5,6 +5,7 @@
 
 import { AwsClient } from "aws4fetch";
 
+import { isBrowser } from "../env";
 import type { R2Config } from "./r2Config";
 
 // get_async/put_async/delete_async retry on failure with exponential
@@ -27,10 +28,6 @@ function objectUrl(config: R2Config, key: string): string {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function isBrowser(): boolean {
-  return typeof window !== "undefined" && typeof document !== "undefined";
 }
 
 // A signed GET carries an Authorization/x-amz-date/x-amz-content-sha256

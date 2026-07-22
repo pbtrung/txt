@@ -7,6 +7,7 @@
 import type { Client } from "@libsql/core/api";
 
 import * as blob from "../crypto/blob";
+import { decryptJson } from "./decryptJson";
 import { requireBlobBytes } from "./db";
 
 export interface MetadataField {
@@ -150,8 +151,10 @@ export async function loadTxtMetadata(db: Client, userId: number, umk: Uint8Arra
     umk,
     requireBlobBytes(row.txt_metadata_key, "txt_metadata.txt_metadata_key"),
   );
-  const contentBytes = await blob.decrypt(txtMetadataKey, requireBlobBytes(row.content, "txt_metadata.content"), true);
-  const content = JSON.parse(new TextDecoder().decode(contentBytes)) as Record<string, TxtMetadataEntry>;
+  const content = (await decryptJson(txtMetadataKey, requireBlobBytes(row.content, "txt_metadata.content"))) as Record<
+    string,
+    TxtMetadataEntry
+  >;
 
   const byId = new Map<number, BookInfo>();
   for (const [txtIdStr, entry] of Object.entries(content)) {

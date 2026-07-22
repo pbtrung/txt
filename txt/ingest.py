@@ -99,24 +99,10 @@ class TxtIngester(TxtOwner):
         raw_paths = [raw_path for _n, raw_path, _blob in parts]
         await asyncio.gather(*(self.r2.delete_async(p) for p in raw_paths))
 
-    @staticmethod
-    def _parse_txt_metadata_content(
-        txt_metadata_key: bytes, content_blob: bytes | None
-    ) -> dict:
-        if content_blob is None:
-            return {}
-        return json.loads(Blob.decrypt(txt_metadata_key, content_blob, compressed=True))
-
     def _load_txt_metadata(self, user_id: int, umk: bytes) -> tuple[bytes, dict]:
-        row = self.db.conn.execute(
-            "SELECT txt_metadata_key, content FROM txt_metadata WHERE user_id = ?",
-            (user_id,),
-        ).fetchone()
-        if row is None:
+        txt_metadata_key, content = self._txt_metadata_key_and_content(user_id, umk)
+        if txt_metadata_key is None:
             raise ValueError(f"no txt_metadata row for user_id={user_id}; run --init")
-        key_blob, content_blob = row
-        txt_metadata_key = Blob.decrypt(umk, key_blob)
-        content = self._parse_txt_metadata_content(txt_metadata_key, content_blob)
         return txt_metadata_key, content
 
     def _save_txt_metadata(

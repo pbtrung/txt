@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import constants as c
+from .crypto import hmac_sha3_256
 
 
 @dataclass(slots=True, frozen=True)
@@ -76,6 +77,10 @@ class Creds:
             raise ValueError("user_root_key too short")
         if not self.display_name:
             raise ValueError("display_name is required")
+
+    def username_hash(self) -> bytes:
+        """users.username_hash = HMAC-SHA3-256(username_lookup_key, username) (see data_model.md)."""
+        return hmac_sha3_256(self.username_lookup_key, self.username.encode())
 
 
 @dataclass(slots=True, frozen=True)
