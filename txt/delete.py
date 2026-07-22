@@ -1,4 +1,4 @@
-"""--txt-delete: remove every txt (and its R2 parts) owned by the account (see docs/data_model.md)."""
+"""--txt-delete/--txt-delete-id: remove txt (and its R2 parts) owned by the account (see docs/data_model.md)."""
 
 import asyncio
 import json
@@ -24,7 +24,11 @@ _JSON_BLOB_TABLES = (
 
 
 class TxtDeleter(TxtOwner):
-    """Deletes every txt owned by creds.username: its R2 parts, then its DB rows."""
+    """Deletes txt(s) owned by creds.username: their R2 parts, then their DB rows.
+
+    delete_one deletes a single txt_id, leaving the rest of the account
+    untouched; delete_all wipes every txt owned by the account.
+    """
 
     def _scrub_txt_id_entry(
         self,
@@ -85,6 +89,24 @@ class TxtDeleter(TxtOwner):
         self._delete_txt_db_rows(txt_id, user_id, umk)
         self.db.conn.commit()
         logger.info("txt_id=%d: deleted (%d part(s))", txt_id, len(raw_paths))
+
+    async def delete_one(self, txt_id: int) -> None:
+        user_id = self._owner_user_id()
+        umk = self._owner_umk(user_id)
+        if txt_id not in self._txt_ids(user_id):
+            raise ValueError(
+                f"txt_id={txt_id} not found for username={self.creds.username!r}"
+            )
+        await self._delete_txt(txt_id, user_id, umk)
+        # txt_metadata isn't in _JSON_BLOB_TABLES: delete_all nulls it out in
+        # one shot once every txt is gone (see _clear_txt_metadata) rather than
+        # paying to rewrite the whole blob per txt_id, but a single-txt delete
+        # has no such later step, so it must scrub its own entry here.
+        self._scrub_txt_id_entry(
+            "txt_metadata", "txt_metadata_key", "content", user_id, umk, txt_id
+        )
+        self.db.conn.commit()
+        logger.info("txt_id=%d: deleted", txt_id)
 
     async def delete_all(self) -> int:
         user_id = self._owner_user_id()

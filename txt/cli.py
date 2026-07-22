@@ -68,6 +68,17 @@ def _cmd_txt_delete(admin_creds_path: str, skip_confirm: bool) -> None:
     click.echo(f"Deleted {count} txt(s) and their R2 parts")
 
 
+def _cmd_txt_delete_id(admin_creds_path: str, txt_id: int, skip_confirm: bool) -> None:
+    creds = AdminCreds.load(Path(admin_creds_path))
+    _confirm_destructive(
+        f"Delete txt_id={txt_id} (and its R2 parts) for username={creds.username!r}? This cannot be undone.",
+        skip_confirm,
+    )
+    db = Database(creds)
+    asyncio.run(TxtDeleter(db, creds).delete_one(txt_id))
+    click.echo(f"Deleted txt_id={txt_id} and its R2 parts")
+
+
 def _cmd_purge_bucket(admin_creds_path: str, skip_confirm: bool) -> None:
     creds = AdminCreds.load(Path(admin_creds_path))
     _confirm_destructive(
@@ -125,6 +136,18 @@ def _cmd_txt_clean_bucket(admin_creds_path: str, skip_confirm: bool) -> None:
     help="Delete all txt and their R2 parts",
 )
 @click.option(
+    "--txt-delete-id",
+    "txt_delete_id",
+    metavar="TXT_ID",
+    type=int,
+    default=None,
+    help=(
+        "Delete a single txt_id (and its R2 parts), scrubbing it from "
+        "txt_parts, txt_shares, part_count, txt_access, bookmarks, and "
+        "txt_metadata -- leaving no trace in the DB"
+    ),
+)
+@click.option(
     "--purge-bucket",
     "do_purge_bucket",
     is_flag=True,
@@ -142,8 +165,8 @@ def _cmd_txt_clean_bucket(admin_creds_path: str, skip_confirm: bool) -> None:
     show_default=True,
     help=(
         "Credential JSON file, required by --init, --update-schema, "
-        "--txt-ingest, --txt-download, --txt-delete, --purge-bucket, "
-        "and --txt-clean-bucket"
+        "--txt-ingest, --txt-download, --txt-delete, --txt-delete-id, "
+        "--purge-bucket, and --txt-clean-bucket"
     ),
 )
 @click.option(
@@ -151,7 +174,10 @@ def _cmd_txt_clean_bucket(admin_creds_path: str, skip_confirm: bool) -> None:
     "-y",
     "skip_confirm",
     is_flag=True,
-    help="Skip the --txt-delete/--purge-bucket/--txt-clean-bucket confirmation prompt",
+    help=(
+        "Skip the --txt-delete/--txt-delete-id/--purge-bucket/"
+        "--txt-clean-bucket confirmation prompt"
+    ),
 )
 @click.option("--verbose", "-v", is_flag=True, help="Enable debug-level logging")
 def main(
@@ -160,6 +186,7 @@ def main(
     txt_ingest_dir: str | None,
     txt_download_dir: str | None,
     do_txt_delete: bool,
+    txt_delete_id: int | None,
     do_purge_bucket: bool,
     do_txt_clean_bucket: bool,
     admin_creds: str,
@@ -190,6 +217,9 @@ def main(
     if do_txt_delete:
         _cmd_txt_delete(admin_creds, skip_confirm)
         return
+    if txt_delete_id is not None:
+        _cmd_txt_delete_id(admin_creds, txt_delete_id, skip_confirm)
+        return
     if do_purge_bucket:
         _cmd_purge_bucket(admin_creds, skip_confirm)
         return
@@ -198,5 +228,6 @@ def main(
         return
     raise click.UsageError(
         "No action specified. Use --init, --update-schema, --txt-ingest DIR, "
-        "--txt-download DIR, --txt-delete, --purge-bucket, or --txt-clean-bucket."
+        "--txt-download DIR, --txt-delete, --txt-delete-id TXT_ID, "
+        "--purge-bucket, or --txt-clean-bucket."
     )
