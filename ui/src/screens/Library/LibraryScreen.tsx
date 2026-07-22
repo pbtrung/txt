@@ -235,9 +235,13 @@ export function LibraryScreen() {
 
         {/* Below lg: the book icon alone (not the "Skypiea" text) is the
             drawer toggle -- styled as a visible bordered button so it reads
-            as tappable; the wordmark text sits beside it, plain. There's no
-            fixed-width alignment cell here -- below lg there's no
-            persistent sidebar for it to line up against. */}
+            as tappable; the wordmark text sits beside it, plain, but is
+            dropped below sm entirely -- on a phone-width screen there isn't
+            room for the icon, "Skypiea", and the search box on one line, and
+            the icon (still labeled via aria-label) plus search box matter
+            more than the wordmark text there. There's no fixed-width
+            alignment cell here -- below lg there's no persistent sidebar for
+            it to line up against. */}
         <div
           ref={nav.ref}
           className="dropdown position-relative d-lg-none d-flex align-items-center gap-2 ps-2 ps-sm-3 py-2"
@@ -252,7 +256,7 @@ export function LibraryScreen() {
           >
             <i className={`bi bi-book ${nav.open ? "" : "text-primary"}`} aria-hidden="true" />
           </button>
-          <span className="fw-semibold">Skypiea</span>
+          <span className="fw-semibold d-none d-sm-inline">Skypiea</span>
           {nav.open && (
             <div
               className="dropdown-menu app-dropdown-menu app-dropdown-menu-start show p-2 d-flex flex-column"
