@@ -6,12 +6,54 @@
 // which we never want here).
 
 import { createClient } from "@libsql/client/web";
-import type { Client, Value } from "@libsql/core/api";
+import type { Client, InArgs, InStatement, Value } from "@libsql/core/api";
 
+import { verbose } from "../log";
 import type { Creds } from "./creds";
 
+/** Renders whichever execute() overload was used (bare SQL string, or an
+ * {sql, args} statement object) into one line for verbose logging. */
+function describeExecuteCall(stmtOrSql: InStatement | string, args?: InArgs): string {
+  if (typeof stmtOrSql === "string") {
+    return args === undefined ? stmtOrSql : `${stmtOrSql} ${JSON.stringify(args)}`;
+  }
+  return stmtOrSql.args === undefined ? stmtOrSql.sql : `${stmtOrSql.sql} ${JSON.stringify(stmtOrSql.args)}`;
+}
+
+/** Wraps every db.execute() call with verbose logging (see src/log.ts) --
+ * every screen's data layer (owner.ts, metadata.ts, perUserBlob.ts, ...)
+ * goes through this same client instance, so this is the one place that
+ * needs to know about logging rather than every call site. */
+function withRequestLogging(client: Client): Client {
+  return new Proxy(client, {
+    get(target, prop, receiver) {
+      if (prop !== "execute") {
+        // Bound to target, not the proxy (receiver) -- the real client's
+        // other methods may rely on `this` internally, which method-call
+        // syntax (db.close()) would otherwise bind to this proxy instead.
+        const value = Reflect.get(target, prop, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      }
+      return async (stmtOrSql: InStatement | string, args?: InArgs) => {
+        const description = describeExecuteCall(stmtOrSql, args);
+        verbose(`db.execute: ${description}`);
+        try {
+          const result =
+            typeof stmtOrSql === "string" ? await target.execute(stmtOrSql, args) : await target.execute(stmtOrSql);
+          verbose(`db.execute done: ${description} -> ${result.rows.length} row(s)`);
+          return result;
+        } catch (err) {
+          verbose(`db.execute failed: ${description}`, err);
+          throw err;
+        }
+      };
+    },
+  });
+}
+
 export function createDb(creds: Creds): Client {
-  return createClient({ url: creds.tursoDatabaseUrl, authToken: creds.tursoAuthToken });
+  const client = createClient({ url: creds.tursoDatabaseUrl, authToken: creds.tursoAuthToken });
+  return withRequestLogging(client);
 }
 
 /** A BLOB column comes back as ArrayBuffer|null; this gets it into the Uint8Array our crypto layer expects. */

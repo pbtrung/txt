@@ -25,6 +25,8 @@ import { createR2Client } from "../data/r2";
 import { parseCreds, type Creds } from "../data/creds";
 import { loadTxtMetadata, type BookInfo } from "../data/metadata";
 import type { R2Config } from "../data/r2Config";
+import { verifyAssetIntegrity } from "../integrity/verifyAssets";
+import { verbose } from "../log";
 
 export type VaultStatus = "locked" | "unlocking" | "unlocked";
 
@@ -90,26 +92,44 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       setStatus("unlocking");
       setError(null);
       try {
+        verbose("unlock: reading config file", file.name);
         const text = await file.text();
         const creds = parseCreds(JSON.parse(text));
+        verbose("unlock: config parsed for username", creds.username);
+
+        // Before touching Turso/umk at all: confirm the app currently
+        // running is the one this config's asset_sign_key/asset_hashes
+        // were signed for (see src/integrity/verifyAssets.ts).
+        verbose("unlock: verifying asset integrity");
+        await verifyAssetIntegrity(creds);
+        verbose("unlock: asset integrity OK");
 
         const db = createDb(creds);
+        verbose("unlock: resolving user id");
         const userId = await resolveUserId(db, creds);
+        verbose("unlock: resolved user id", userId);
 
+        verbose("unlock: checking password");
         const passwordOk = await checkPassword(db, userId, creds.password);
         if (!passwordOk) {
           throw new Error("Incorrect password for this account.");
         }
+        verbose("unlock: password OK");
 
+        verbose("unlock: unwrapping umk");
         const umk = await unwrapUmk(db, creds, userId);
+        verbose("unlock: fetching r2 config");
         const r2Config = await fetchR2Config(db, userId, umk);
         const r2Client = createR2Client(r2Config);
 
         // Everything the Library screen needs, loaded once here rather than
         // per-book: exactly three requests (metadata, access, bookmarks),
         // each a single row scoped to this user.
+        verbose("unlock: loading txt metadata");
         const metadataById = await loadTxtMetadata(db, userId, umk);
+        verbose("unlock: loading access map");
         const { txtAccessKey, accessMap: initialAccessMap } = await loadOrInitAccess(db, userId, umk);
+        verbose("unlock: loading bookmarks");
         const { bookmarkKey, bookmarksMap: initialBookmarksMap } = await loadOrInitBookmarks(db, userId, umk);
 
         txtKeyCache.current = new Map();
@@ -117,7 +137,9 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         setBookmarksMap(initialBookmarksMap);
         setSession({ creds, db, userId, umk, r2Config, r2Client, metadataById, txtAccessKey, bookmarkKey });
         setStatus("unlocked");
+        verbose("unlock: done");
       } catch (err) {
+        verbose("unlock: failed", err);
         setSession(null);
         setStatus("locked");
         setError(errorMessage(err) || "Failed to unlock your library.");
