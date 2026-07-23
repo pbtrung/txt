@@ -63,6 +63,15 @@ export default defineConfig({
         // merges that dynamic import into the entry chunk instead of
         // splitting it out, so there's no cross-chunk relative import left
         // to resolve incorrectly, regardless of how the entry is loaded.
+        // This option itself has no unit test -- it only affects Rollup's
+        // real `vite build` output, not anything vitest's own (unbundled)
+        // module graph goes through -- so it was verified manually: a real
+        // build produces exactly one JS file with no relative "./index-..."
+        // import left in it, and loading that build's local_index.html via
+        // file:// in a real browser mounts cleanly with an empty console.
+        // (crypto/brotli.test.ts separately covers that the isBrowser()
+        // import("brotli-wasm") branch itself still wires up correctly,
+        // which is a different, unit-testable concern from this option.)
         inlineDynamicImports: true,
       },
     },

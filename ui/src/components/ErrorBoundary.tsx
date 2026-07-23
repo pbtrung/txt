@@ -8,16 +8,21 @@
 // banner: this sits above VaultProvider (see App.tsx), so dismissing always
 // remounts it fresh (session reset, landing back on Unlock) regardless of
 // what was caught -- consistent with VaultContext's own no-persistence
-// design, not a new downside. But a React 19 reconciler edge case
-// (commitDeletionEffectsOnFiber's hostParent bookkeeping apparently getting
-// corrupted during certain error-recovery commits -- "Failed to execute
-// 'removeChild' on 'Node'"; the same symptom is widely reported against
-// other routers too, with no confirmed upstream root cause) can leave the
+// design, not a new downside. This was originally built to mitigate a
+// "Failed to execute 'removeChild' on 'Node'" crash that could leave the
 // *previous* screen's real DOM behind, still fully rendered and still
-// clickable, even once React's own tree has moved on. A small banner would
-// leave that stale, disconnected screen visible and interactive underneath
-// it; this overlay blocks it both visually and to clicks so the only way
-// forward is the button below.
+// clickable, once caught -- at the time it looked like a React 19
+// reconciler edge case with no confirmed root cause, but it turned out to
+// be a real bug elsewhere: crypto/brotli.ts's dynamic `import("brotli-wasm")`
+// was splitting into its own bundle chunk that imported a shared helper
+// back from the entry chunk, which broke local_index.html's inline
+// (`src`-less) entry script badly enough to double-mount the whole app --
+// fixed at the source by vite.config.ts's `inlineDynamicImports: true`, not
+// anything in this file. The full-viewport overlay is kept anyway as
+// generally good crash UX (a small banner would still leave whatever's
+// underneath visible and interactive, which is worse for a genuinely
+// broken screen regardless of cause), not because this specific bug class
+// is still expected.
 
 import { Component } from "react";
 import type { ErrorInfo, ReactNode } from "react";

@@ -192,13 +192,17 @@ At open time, `local_index.html`:
    `index.html`/the entry JS/CSS a second time, since doing so would reopen the
    exact gap this exists to close.
 
-**Known limitation**: only the entry JS/CSS get this full treatment. Fonts,
-`leancrypto.wasm`/`brotli_wasm`, and the one dynamically-imported JS chunk are
-still hashed once during step 2 above, but the *running app* fetches them again
-live later (via CSS `url()`, a dynamically created `<script src="/leancrypto.js">`,
-and a dynamic `import()`) without re-checking that later fetch against the
-manifest — a narrower version of today's total absence of any check, not an
-airtight guarantee.
+**Known limitation**: only the entry JS/CSS get this full treatment. Fonts and
+`leancrypto.js`/`leancrypto.wasm`/`brotli_wasm`'s own `.wasm` binary are still
+hashed once during step 2 above, but the *running app* fetches them again live
+later (via CSS `url()` and a dynamically created `<script src="/leancrypto.js">`)
+without re-checking that later fetch against the manifest — a narrower version
+of today's total absence of any check, not an airtight guarantee.
+`vite.config.ts`'s `inlineDynamicImports: true` (see its own comment) closes
+this gap for `brotli-wasm`'s browser build specifically — that used to be a
+separately dynamic-imported JS chunk with this same problem, but its code is
+now merged into the entry bundle itself, so it gets the full verify-then-mount
+treatment along with everything else in it.
 
 **Router**: `history.pushState()`/`replaceState()` (which `BrowserRouter` needs for
 every navigation) throws a `SecurityError` in a document with an opaque/null origin
