@@ -119,12 +119,13 @@ body,
 /* Any .form-control/.form-select that should match the brass theme instead
    of Bootstrap's default gray/blue -- Library's search input, Reader's
    font-size <select> and part-number <input>. Softer *-subtle tint (rather
-   than full-strength --bs-primary) and half the default control
-   border-width at rest -- these read as bordered at a glance regardless,
-   so they don't need as bold a line as a small button does to register as
-   "there". */
+   than full-strength --bs-primary) at rest, but the same border-width as a
+   bordered button (DropdownToggleButton's `border-primary`, --bs-border-width,
+   1px) rather than a thinner one of its own -- consistent line weight across
+   every bordered control in the app, at rest and (see .themed-control:focus
+   below, which doesn't touch border-width) focused alike. */
 .themed-control {
-  border-width: 0.5px;
+  border-width: var(--bs-border-width);
   border-color: var(--bs-primary-border-subtle);
 }
 
