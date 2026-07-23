@@ -9,14 +9,21 @@
 //      index.html itself unchanged.
 //   2. SHA-512s every file under dist/ (including the now-SRI-tagged
 //      index.html) into dist/manifest.json.
-//   3. Loads (or, only if absent, generates) an SLH-DSA-SHA2-256f keypair
+//   3. Writes dist/_headers (Cloudflare Pages' response-header config file --
+//      also understood by Netlify) narrowing the direct-CDN-visit CSP's
+//      connect-src from index.html's own <meta> tag's deliberately-open '*'
+//      down to 'self' plus the Turso/R2 host patterns the app actually talks
+//      to. _headers is a deploy-time config file, never itself served as a
+//      fetchable path, so it's written after buildManifest() runs, not
+//      before -- same reason manifest.json/manifest.sig are, below.
+//   4. Loads (or, only if absent, generates) an SLH-DSA-SHA2-256f keypair
 //      (@noble/post-quantum) from --admin-creds's slhdsa_256f_priv_key,
 //      signs manifest.json's literal bytes with it, and writes the raw
 //      signature to dist/manifest.sig. A freshly generated secret key gets
 //      written back into that same admin-creds file (nothing else in it is
 //      touched) -- an existing key is always reused so a rebuild doesn't
 //      silently invalidate every local_index.html copy already in the wild.
-//   4. Bundles ui/src/localIndex/main.ts (via Vite's own build API, iife
+//   5. Bundles ui/src/localIndex/main.ts (via Vite's own build API, iife
 //      format, so @noble/post-quantum and its own dependencies get inlined
 //      into one self-contained script -- no CDN/npm fetch at verify-time)
 //      with the derived public key and --admin-creds's asset_base_url baked
@@ -111,6 +118,29 @@ function buildManifest() {
   return manifest;
 }
 
+// Mirrors dist/index.html's own <meta> CSP (see that file's comment for why
+// every other directive is what it is) except connect-src, narrowed here
+// from that meta tag's deliberately-open '*' down to 'self' plus the two
+// host patterns the app actually talks to (a Turso database in the
+// aws-us-east-1 region, and R2's standard custom-domain pattern). A real
+// HTTP response header and a <meta> CSP both apply at once and combine by
+// intersection, so this tightens the effective policy for a direct CDN visit
+// without having to touch the per-account-agnostic meta tag itself.
+const DIST_CSP =
+  "default-src 'self'; " +
+  "script-src 'self' 'wasm-unsafe-eval'; " +
+  "style-src 'self' 'unsafe-inline'; " +
+  "img-src 'self' data:; " +
+  "font-src 'self' data:; " +
+  "connect-src 'self' https://*.aws-us-east-1.turso.io https://*.r2.cloudflarestorage.com; " +
+  "object-src 'none'; " +
+  "base-uri 'self'; " +
+  "form-action 'self';";
+
+function writeHeadersFile() {
+  writeFileSync(join(DIST_DIR, "_headers"), `/*\n  Content-Security-Policy: ${DIST_CSP}\n`, "utf8");
+}
+
 /** Reuses slhdsa_256f_priv_key from adminCreds if it's a non-empty base64
  * string; otherwise generates a fresh keypair. Never regenerates when a key
  * is already present. */
@@ -200,6 +230,7 @@ async function main() {
   writeFileSync(INDEX_HTML_PATH, addSri(originalHtml), "utf8");
 
   const manifest = buildManifest();
+  writeHeadersFile();
   const manifestBytes = Buffer.from(JSON.stringify(manifest), "utf8");
   writeFileSync(join(DIST_DIR, "manifest.json"), manifestBytes);
   writeFileSync(join(DIST_DIR, "manifest.sig"), Buffer.from(slh_dsa_sha2_256f.sign(manifestBytes, secretKey)));
