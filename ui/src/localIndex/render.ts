@@ -57,12 +57,17 @@ export function renderApp(assetBaseUrl: string, verified: Map<string, Uint8Array
   // Root-absolute references the app makes at runtime (CSS url(), the
   // dynamically-created <script src="/leancrypto.js"> in
   // crypto/leancryptoLoader.ts) resolve against this base's *origin* only,
-  // ignoring its path -- but the entry JS's own relative
-  // `import("./index.web-....js")` (for an inlined script with no `src`
-  // attribute) resolves against the base URL's full path. Pointing <base>
-  // at the entry JS's own directory, not assetBaseUrl's root, satisfies
-  // both at once: confirmed against a real `vite build` output, where the
-  // dynamic import is relative but every other reference is root-absolute.
+  // ignoring its path, so they'd work the same if <base> just pointed at
+  // assetBaseUrl's root. Pointing it at the entry JS's own directory
+  // instead is defense-in-depth rather than a strict requirement today:
+  // it used to also be load-bearing for a relative
+  // `import("./index.web-....js")` inside the (inline, `src`-less) entry
+  // script, back when crypto/brotli.ts's dynamic `import("brotli-wasm")`
+  // still split into its own chunk -- vite.config.ts's
+  // `inlineDynamicImports: true` merges that into the entry now, so
+  // there's no longer a real runtime relative import needing this, but
+  // matching the entry's own directory costs nothing and still covers any
+  // relative reference a future dependency might add.
   document.querySelectorAll("base").forEach((el) => el.remove());
   const base = document.createElement("base");
   base.href = `${assetBaseUrl.replace(/\/+$/, "")}/${dirOf(jsPath)}`;

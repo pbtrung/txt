@@ -1,10 +1,24 @@
 // @vitest-environment jsdom
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 // Separate file (jsdom environment) from leancryptoLoader.test.ts (node
 // environment, exercises the Node/require branch instead) -- isBrowser()
 // only picks the <script src="/leancrypto.js"> branch this covers when
 // window/document actually exist.
+
+// Independently computed (Node's own crypto, not vite.config.ts's
+// leancryptoJsIntegrity()) so this test would actually fail if that
+// function ever hashed the wrong file or a different algorithm -- checking
+// only the "sha512-" shape wouldn't catch that.
+function realLeancryptoJsIntegrity(): string {
+  const uiDir = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
+  const bytes = readFileSync(join(uiDir, "leancrypto", "leancrypto.js"));
+  return `sha512-${createHash("sha512").update(bytes).digest("base64")}`;
+}
 
 afterEach(() => {
   delete (window as unknown as { leancrypto?: unknown }).leancrypto;
@@ -21,7 +35,7 @@ describe("leancryptoLoader (browser script tag)", () => {
     // already there to inspect without waiting on anything.
     const script = document.head.querySelector<HTMLScriptElement>('script[src$="/leancrypto.js"]');
     expect(script).not.toBeNull();
-    expect(script!.integrity).toMatch(/^sha512-/);
+    expect(script!.integrity).toBe(realLeancryptoJsIntegrity());
     expect(script!.crossOrigin).toBe("anonymous");
 
     // Let the pending load settle instead of leaving it dangling -- getLeancrypto()
