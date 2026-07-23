@@ -26,6 +26,28 @@ function objectUrl(config: R2Config, key: string): string {
   return `${config.endpoint.replace(/\/+$/, "")}/${config.bucket}/${encodeURIComponent(key)}`;
 }
 
+// Under local_index.html (opened via file://), a header-signed GET
+// (Authorization/x-amz-date/x-amz-content-sha256) is a "non-simple" CORS
+// request needing a preflight OPTIONS -- and R2's CORS policy can't be
+// configured to answer one for a file:// page's null origin. A query-
+// string-signed ("presigned") URL instead, since it carries no custom
+// headers at all, is a *simple* request that never triggers a preflight in
+// the first place. Kept to a short expiry (unlike the normal header-signed
+// path, anyone who captured this exact URL during that window could reuse
+// it directly) -- see appRouter.ts's pickRouterComponent for the same
+// protocol === "file:" detection used to pick MemoryRouter.
+export const PRESIGNED_EXPIRY_SECONDS = 60;
+
+export function shouldPresign(protocol: string): boolean {
+  return protocol === "file:";
+}
+
+function presignedObjectUrl(config: R2Config, key: string): string {
+  const url = new URL(objectUrl(config, key));
+  url.searchParams.set("X-Amz-Expires", String(PRESIGNED_EXPIRY_SECONDS));
+  return url.toString();
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -50,7 +72,10 @@ export async function getObject(client: AwsClient, config: R2Config, key: string
       await sleep(RETRY_DELAYS_MS[attempt - 1]);
     }
     try {
-      const response = await client.fetch(objectUrl(config, key));
+      const response =
+        typeof location !== "undefined" && shouldPresign(location.protocol)
+          ? await client.fetch(presignedObjectUrl(config, key), { aws: { signQuery: true } })
+          : await client.fetch(objectUrl(config, key));
       if (!response.ok) {
         throw new Error(`R2 GET ${key} failed: HTTP ${response.status}`);
       }
