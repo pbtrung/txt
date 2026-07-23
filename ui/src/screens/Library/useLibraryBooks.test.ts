@@ -3,13 +3,13 @@ import type { Client } from "@libsql/core/api";
 import { describe, expect, it, vi } from "vitest";
 import { ref } from "vue";
 
-import type { BookInfo } from "../../../data/metadata";
-import { withSetup } from "../../../testUtils/withSetup";
-import * as vaultModule from "../../../state/vault";
+import type { BookInfo } from "../../data/metadata";
+import { withSetup } from "../../testUtils/withSetup";
+import * as vaultModule from "../../state/vault";
 import { useLibraryBooks } from "./useLibraryBooks";
 
-vi.mock("../../../state/vault", async () => {
-  const actual = await vi.importActual<typeof import("../../../state/vault")>("../../../state/vault");
+vi.mock("../../state/vault", async () => {
+  const actual = await vi.importActual<typeof import("../../state/vault")>("../../state/vault");
   return { ...actual, useVault: vi.fn() };
 });
 

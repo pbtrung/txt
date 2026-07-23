@@ -28,7 +28,7 @@ import DropdownToggleButton from "../../components/DropdownToggleButton.vue";
 import { useDropdown } from "../../composables/useDropdown";
 import { splitLines, truncatePreview } from "./readerModel";
 import { descriptionPlainText, sanitizeDescriptionHtml } from "./sanitizeHtml";
-import { useReaderBook } from "./composables/useReaderBook";
+import { useReaderBook } from "./useReaderBook";
 
 function lineElementId(lineNum: number): string {
   return `reader-line-${lineNum}`;

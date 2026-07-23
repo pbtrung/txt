@@ -9,11 +9,11 @@ import type { BookmarksMap } from "../../data/bookmarks";
 import type { LibraryBook } from "./libraryModel";
 
 vi.mock("../../state/vault", () => ({ useVault: vi.fn() }));
-vi.mock("./composables/useLibraryBooks", () => ({ useLibraryBooks: vi.fn() }));
+vi.mock("./useLibraryBooks", () => ({ useLibraryBooks: vi.fn() }));
 
 import LibraryScreen from "./LibraryScreen.vue";
 import * as vaultModule from "../../state/vault";
-import * as useLibraryBooksModule from "./composables/useLibraryBooks";
+import * as useLibraryBooksModule from "./useLibraryBooks";
 
 function book(overrides: Partial<LibraryBook> & { txtId: number }): LibraryBook {
   return {

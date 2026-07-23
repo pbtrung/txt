@@ -5,12 +5,12 @@ import { defineComponent, h, ref } from "vue";
 import { createMemoryHistory, createRouter, RouterView, type Router } from "vue-router";
 import { describe, expect, it, vi } from "vitest";
 
-import type { UseReaderBookResult } from "./composables/useReaderBook";
+import type { UseReaderBookResult } from "./useReaderBook";
 
-vi.mock("./composables/useReaderBook", () => ({ useReaderBook: vi.fn() }));
+vi.mock("./useReaderBook", () => ({ useReaderBook: vi.fn() }));
 
 import ReaderScreen from "./ReaderScreen.vue";
-import * as useReaderBookModule from "./composables/useReaderBook";
+import * as useReaderBookModule from "./useReaderBook";
 
 // Loosely typed on purpose -- overrides swap in plain ref()s in place of
 // fields the real composable exposes as ComputedRef (info, bookmarks, ...),

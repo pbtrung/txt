@@ -6,8 +6,9 @@ import "./index.css";
 import "./theme.css";
 
 import App from "./App.vue";
+import { createAppRouter } from "./router.ts";
 import { initTheme } from "./theme.ts";
 
 initTheme();
 
-createApp(App).mount("#root");
+createApp(App).use(createAppRouter(location.protocol)).mount("#root");
