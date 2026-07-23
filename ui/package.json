@@ -15,6 +15,7 @@
   "dependencies": {
     "@fontsource/literata": "^5.3.0",
     "@libsql/client": "^0.17.4",
+    "@noble/post-quantum": "^0.6.1",
     "aws4fetch": "^1.0.20",
     "bootstrap": "^5.3.8",
     "bootstrap-icons": "^1.13.1",
