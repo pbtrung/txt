@@ -1,5 +1,6 @@
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes } from "react-router-dom";
 
+import { pickRouterComponent } from "./appRouter";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { RequireUnlocked } from "./components/RequireUnlocked";
 import { LibraryScreen } from "./screens/Library/LibraryScreen";
@@ -7,11 +8,13 @@ import { ReaderScreen } from "./screens/Reader/ReaderScreen";
 import { UnlockScreen } from "./screens/Unlock/UnlockScreen";
 import { VaultProvider } from "./state/VaultContext";
 
+const Router = pickRouterComponent(location.protocol);
+
 function App() {
   return (
     <ErrorBoundary>
       <VaultProvider>
-        <BrowserRouter>
+        <Router>
           <Routes>
             <Route path="/" element={<UnlockScreen />} />
             <Route
@@ -32,7 +35,7 @@ function App() {
             />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
-        </BrowserRouter>
+        </Router>
       </VaultProvider>
     </ErrorBoundary>
   );
