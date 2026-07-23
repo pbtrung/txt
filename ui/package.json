@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build && rm -f dist/leancrypto.d.ts dist/package.json && node scripts/sign-assets.mjs",
+    "build": "tsc -b && vite build && rm -f dist/leancrypto.d.ts dist/package.json",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",

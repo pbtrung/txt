@@ -47,7 +47,6 @@ A fully client-side-encrypted text vault.
 - `ui/src/data/` ports `txt/creds.py`/`txt/owner.py`/`txt/download.py`/`txt/r2.py` (read-only R2 access via `aws4fetch`, Turso via `@libsql/client`'s browser-safe `/web` build).
 - The one thing this config doesn't carry that `admin_creds.json`/`user_cred_template.json` do is `r2_config` — the UI fetches and decrypts that from Turso's `r2_config` table with the account's `umk` instead (`ui/src/data/owner.ts`'s `fetchR2Config`), same wrapping pattern as `key_store.priv_key`.
 - A `VaultContext` (`ui/src/state/VaultContext.tsx`) holds the unlocked session in memory only, never persisted, so a reload always lands back on Unlock.
-- Before `unlock()` touches Turso/`umk`, `ui/src/integrity/verifyAssets.ts` checks the currently-served app against `ui/scripts/sign-assets.mjs`'s build-time signing, keyed by `asset_sign_key` — see the root [README.md](README.md#asset-integrity-check-asset_sign_keyasset_hashes): defense against tampering downstream of a legitimate build (a compromised CDN/edge, an in-flight modification), not against a compromised deploy pipeline, since the check ships as part of the same bundle it's checking.
 - `ui/src/log.ts`'s `verbose()` (on by default, `?verbose=0` to disable — see the root [README.md](README.md#verbose-logging)) logs `unlock()`'s steps and, via `ui/src/data/db.ts`'s wrapped `Client`, every screen's `db.execute()` calls.
 
 See the root [README.md](README.md#web-ui) for how to run it.

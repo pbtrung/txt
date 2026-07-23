@@ -24,13 +24,11 @@ vi.mock("../data/bookmarks", () => ({
   addBookmark: vi.fn(),
   removeBookmark: vi.fn(),
 }));
-vi.mock("../integrity/verifyAssets", () => ({ verifyAssetIntegrity: vi.fn() }));
 
 import * as accessData from "../data/access";
 import * as bookmarksData from "../data/bookmarks";
 import * as metadata from "../data/metadata";
 import * as owner from "../data/owner";
-import * as integrity from "../integrity/verifyAssets";
 
 /** Wires up the three post-auth loads (metadata/access/bookmarks) that
  * unlock() now performs, so a successful-unlock test doesn't need to spell
@@ -52,8 +50,6 @@ const CONFIG = {
   password: "hunter2",
   display_name: "Alice",
   user_root_key: btoa("x".repeat(256)),
-  asset_sign_key: btoa("x".repeat(64)),
-  asset_hashes: btoa("x".repeat(192)),
 };
 
 function fakeFile(contents: unknown): File {
@@ -99,19 +95,6 @@ describe("VaultProvider", () => {
     expect(result.current.session?.userId).toBe(42);
     expect(result.current.session?.creds.displayName).toBe("Alice");
     expect(result.current.error).toBeNull();
-  });
-
-  it("stays locked and reports an error when the asset integrity check fails", async () => {
-    vi.mocked(integrity.verifyAssetIntegrity).mockRejectedValueOnce(new Error("index.html failed its check"));
-
-    const { result } = renderVault();
-    await act(async () => {
-      await result.current.unlock(fakeFile(CONFIG));
-    });
-
-    expect(result.current.status).toBe("locked");
-    expect(result.current.session).toBeNull();
-    expect(result.current.error).toMatch(/failed its check/i);
   });
 
   it("stays locked and reports an error for an invalid config file", async () => {

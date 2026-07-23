@@ -27,19 +27,6 @@ export const USERNAME_HASH_LEN = 32;
 export const USERNAME_LOOKUP_KEY_MIN_LEN = 32;
 export const USER_ROOT_KEY_MIN_LEN = 256;
 
-// Build-time asset signing (see ui/scripts/sign-assets.mjs and
-// src/integrity/verifyAssets.ts): asset_sign_key is 64 random bytes, never
-// shipped in the built assets themselves -- only in the local config file
-// unlock() reads. HMAC-SHA512 and HMAC-SHA3-512 both produce 64-byte output.
-// asset_hashes concatenates three native HMAC-SHA512 outputs, in order:
-// index.html, then leancrypto.js, then leancrypto.wasm -- these three are
-// verified without depending on leancrypto (itself one of them), unlike
-// every other asset (verified via leancrypto's own HMAC-SHA3-512, safe once
-// leancrypto.js/.wasm are themselves confirmed).
-export const ASSET_SIGN_KEY_LEN = 64;
-export const ASSET_HMAC_LEN = 64;
-export const ASSET_HASHES_LEN = ASSET_HMAC_LEN * 3;
-
 // Composite ML-KEM-1024 + X448 (see docs/crypto.md's Composite KEM Key Sizes)
 export const KYBER1024_PK_LEN = 1568;
 export const KYBER1024_SK_LEN = 3168;
