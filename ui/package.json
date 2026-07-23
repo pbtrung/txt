@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build && rm -f dist/leancrypto.d.ts dist/package.json",
+    "build": "tsc -b && vite build && rm -f dist/leancrypto.d.ts dist/package.json && node scripts/build-integrity.mjs",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
