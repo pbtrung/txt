@@ -220,9 +220,21 @@ SecurityError's own message still describes the origin as `'null'` — Chrome fo
 Android's `location.origin` for a `content://` document apparently doesn't reliably
 serialize to that literal string the way `file://`'s does. Trying the actual
 operation sidesteps needing to know how any given browser/scheme/platform
-combination happens to report its origin. Accepted tradeoff: the address bar won't
-reflect in-app navigation, and back/forward won't move between screens, when run
-this way.
+combination happens to report its origin. The probe URL matters too, and this took
+a second empirical pass to get right: an early version used the full `location.href`
+as a "harmless no-op" -- but that's an *absolute* URL, so the browser resolves it
+without ever consulting `document.baseURI`, and comparing an opaque origin to itself
+this way doesn't throw (confirmed empirically) even though a real (relative-path)
+navigation from `BrowserRouter` absolutely would, once `render.ts` has pointed
+`<base>` at `asset_base_url`. Using a path-absolute string instead
+(`location.pathname` + `location.search` + `location.hash`, no scheme/host of its
+own) forces resolution through `document.baseURI` the same way `BrowserRouter`'s own
+calls do, so the probe fails exactly when they would -- confirmed against a real
+`<base>`-pointed-elsewhere document -- while still being a true no-op on a normal
+deployment (no `<base>` override to resolve against, so the probe reproduces
+`location.href` exactly; confirmed the address bar is unchanged before/after).
+Accepted tradeoff: the address bar won't reflect in-app navigation, and back/forward
+won't move between screens, when run this way.
 
 **Requires**: opening `local_index.html` via `file://` sends `Origin: null` on its
 cross-origin fetches to `asset_base_url`. `dist/_headers` (above) covers this

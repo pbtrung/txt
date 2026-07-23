@@ -21,20 +21,29 @@
 // location.origin for a content:// document apparently doesn't reliably
 // serialize to the literal string "null" the way file://'s does, even
 // though the browser's own error message describes the origin as opaque.
-// Trying the actual operation and catching the failure sidesteps needing to
-// know how any given browser/scheme/platform combination happens to report
-// its origin -- it can't be fooled by a serialization quirk, because it's
-// not inspecting a serialization at all.
+//
+// A first attempt at the empirical check used replaceState(state, "",
+// location.href) as the no-op probe -- but that's an *absolute* URL, so the
+// browser resolves it as-is without ever consulting document.baseURI, and
+// comparing an opaque origin to itself this way turns out not to throw
+// (confirmed empirically) even when a *relative* URL -- what react-router
+// actually passes -- absolutely would. That's exactly local_index.html's
+// case: render.ts points <base> at asset_base_url (a real http(s) origin)
+// before this ever runs, so a same-origin-as-itself absolute-URL probe
+// passed, wrongly picking BrowserRouter, which then threw for real on its
+// first actual (relative-path) navigation. Using a path-absolute string
+// instead (pathname+search+hash, no scheme/host of its own) forces
+// resolution through document.baseURI the same way react-router's own
+// calls do, so it fails exactly when they would -- and it's still a true
+// no-op on a normal deployment (no <base> override means resolving
+// pathname+search+hash against document.baseURI reproduces location.href
+// exactly, confirmed empirically: location before and after are identical).
 import type { ComponentType, ReactNode } from "react";
 import { BrowserRouter, MemoryRouter } from "react-router-dom";
 
 function historyApiUsable(): boolean {
   try {
-    // A same-URL, same-state no-op: harmless on a working origin (doesn't
-    // add an entry, doesn't fire popstate, doesn't touch the visible URL --
-    // it's already exactly this), but throws immediately on an opaque one,
-    // per the same SecurityError this function exists to detect in advance.
-    window.history.replaceState(window.history.state, "", location.href);
+    window.history.replaceState(window.history.state, "", location.pathname + location.search + location.hash);
     return true;
   } catch {
     return false;
