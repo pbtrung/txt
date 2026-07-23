@@ -158,7 +158,16 @@ At build time (`ui/scripts/build-integrity.mjs`):
   `integrity="sha512-..."` (SRI, computed with Node's built-in `crypto`, no external
   package) added — this hardens the *separate* case of someone visiting the CDN URL
   directly, bypassing `local_index.html` entirely, against a MITM/cache swapping
-  those two files while leaving `index.html` unchanged.
+  those two files while leaving `index.html` unchanged;
+- `ui/dist/_headers` (Cloudflare Pages' response-header config file, also understood
+  by Netlify) sets a real `Content-Security-Policy` header for that same direct-CDN-
+  visit case, mirroring `index.html`'s own `<meta>` CSP except `connect-src`, narrowed
+  from that meta tag's deliberately-open `*` down to `'self'` plus the Turso/R2 host
+  patterns the app actually talks to. A header and a `<meta>` CSP both apply at once
+  and combine by intersection, so this tightens the effective policy without having
+  to touch the per-account-agnostic meta tag itself. `_headers` is a deploy-time
+  config file, never itself a fetchable path, so it's excluded from
+  `manifest.json`/`local_index.html`'s own checks.
 
 At open time, `local_index.html`:
 
