@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RenderError, renderApp } from "./render";
 
@@ -29,7 +29,14 @@ function verifiedMap(overrides: Record<string, string> = {}): Map<string, Uint8A
   return map;
 }
 
+beforeEach(() => {
+  // verbose logging defaults to on (see src/log.ts) -- silence it rather
+  // than let it clutter every test run's output.
+  vi.spyOn(console, "log").mockImplementation(() => {});
+});
+
 afterEach(() => {
+  vi.restoreAllMocks();
   document.querySelectorAll("base").forEach((el) => el.remove());
   document.querySelectorAll("style").forEach((el) => el.remove());
   document.querySelectorAll("script").forEach((el) => el.remove());

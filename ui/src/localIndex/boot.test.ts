@@ -16,6 +16,9 @@ beforeEach(() => {
   // boot()'s waitForRootMount otherwise waits forever for a mutation no
   // mock ever produces.
   document.body.innerHTML = '<div id="root"><span>mounted</span></div>';
+  // verbose logging defaults to on (see src/log.ts) -- silence it rather
+  // than let it clutter every test run's output.
+  vi.spyOn(console, "log").mockImplementation(() => {});
 });
 
 afterEach(() => {

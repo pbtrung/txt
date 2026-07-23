@@ -35,6 +35,9 @@ function fakeFetch(files: Record<string, Uint8Array<ArrayBuffer>>) {
 describe("verifyAssets", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    // verbose logging defaults to on (see src/log.ts) -- silence it rather
+    // than let it clutter every test run's output.
+    vi.spyOn(console, "log").mockImplementation(() => {});
   });
   afterEach(() => {
     vi.unstubAllGlobals();

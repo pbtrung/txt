@@ -20,6 +20,7 @@
 import { slh_dsa_sha2_256f } from "@noble/post-quantum/slh-dsa.js";
 
 import { bytesToBase64 } from "../crypto/bytes";
+import { verbose } from "../log";
 
 export class VerificationError extends Error {}
 
@@ -49,6 +50,7 @@ export async function verifyAssets(
 ): Promise<Map<string, Uint8Array>> {
   onProgress("fetching-manifest");
   const base = assetBaseUrl.endsWith("/") ? assetBaseUrl : `${assetBaseUrl}/`;
+  verbose(`localIndex: fetching ${base}manifest.json + manifest.sig`);
   const [manifestBytes, sigBytes] = await Promise.all([
     fetchBytes(`${base}manifest.json`),
     fetchBytes(`${base}manifest.sig`),
@@ -56,8 +58,10 @@ export async function verifyAssets(
 
   onProgress("verifying-signature");
   if (!slh_dsa_sha2_256f.verify(sigBytes, manifestBytes, publicKey)) {
+    verbose("localIndex: manifest.json failed its SLH-DSA signature check");
     throw new VerificationError("manifest.json failed its SLH-DSA signature check -- refusing to load anything");
   }
+  verbose("localIndex: manifest.json signature OK");
 
   let manifest: Record<string, string>;
   try {
@@ -71,16 +75,20 @@ export async function verifyAssets(
   }
 
   onProgress("fetching-assets");
+  verbose(`localIndex: fetching ${paths.length} asset(s)`);
   const fetched = await Promise.all(paths.map(async (path) => [path, await fetchBytes(`${base}${path}`)] as const));
 
   onProgress("verifying-hashes");
   const verified = new Map<string, Uint8Array>();
   for (const [path, bytes] of fetched) {
+    verbose(`localIndex: verifying ${path}`);
     const actual = await sha512Base64(bytes);
     const expected = manifest[path];
     if (actual !== expected) {
+      verbose(`localIndex: ${path} failed its SHA-512 check`);
       throw new VerificationError(`${path} failed its SHA-512 check -- expected ${expected}, got ${actual}`);
     }
+    verbose(`localIndex: verified OK: ${path}`);
     verified.set(path, bytes);
   }
 
