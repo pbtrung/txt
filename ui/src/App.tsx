@@ -8,7 +8,7 @@ import { ReaderScreen } from "./screens/Reader/ReaderScreen";
 import { UnlockScreen } from "./screens/Unlock/UnlockScreen";
 import { VaultProvider } from "./state/VaultContext";
 
-const Router = pickRouterComponent(location.origin);
+const Router = pickRouterComponent();
 
 function App() {
   return (
