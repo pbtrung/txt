@@ -31,7 +31,7 @@ import {
   type LibraryBook,
   type RecentBookmarkItem,
 } from "./libraryModel";
-import { useLibraryBooks } from "./composables/useLibraryBooks";
+import { useLibraryBooks } from "./useLibraryBooks";
 import LibraryNavContent, { type View } from "./LibraryNavContent.vue";
 
 const DIMENSION_LABEL: Record<BrowseDimension, string> = {

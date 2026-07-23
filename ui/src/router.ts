@@ -1,10 +1,13 @@
-// vue-router setup: which History implementation to mount under, and the
-// guard that keeps /library and /read/:txtId behind an unlocked vault
-// session. The actual createRouter({ routes }) call (needing the real
-// screen components) is assembled once they exist -- see App.vue.
+// vue-router setup: which History implementation to mount under, the guard
+// that keeps /library and /read/:txtId behind an unlocked vault session, and
+// createAppRouter() itself, which assembles the two into the real router
+// App.vue installs.
 
-import { createMemoryHistory, createWebHistory, type RouterHistory } from "vue-router";
+import { createMemoryHistory, createRouter, createWebHistory, type Router, type RouterHistory } from "vue-router";
 
+import LibraryScreen from "./screens/Library/LibraryScreen.vue";
+import ReaderScreen from "./screens/Reader/ReaderScreen.vue";
+import UnlockScreen from "./screens/Unlock/UnlockScreen.vue";
 import { useVault } from "./state/vault";
 
 // history.pushState()/replaceState() (which createWebHistory() needs for
@@ -44,4 +47,23 @@ export function guardRedirect(path: string): string | undefined {
     return "/";
   }
   return undefined;
+}
+
+/** Assembles the app's real router -- App.vue installs this via app.use(),
+ * once at startup, passing location.protocol. */
+export function createAppRouter(protocol: string): Router {
+  const router = createRouter({
+    history: pickRouterHistory(protocol),
+    routes: [
+      { path: "/", component: UnlockScreen },
+      { path: "/library", component: LibraryScreen },
+      { path: "/read/:txtId", component: ReaderScreen },
+      // Any unmatched path (React version: <Route path="*" element={<Navigate to="/" replace />} />).
+      { path: "/:pathMatch(.*)*", redirect: "/" },
+    ],
+  });
+
+  router.beforeEach((to) => guardRedirect(to.path));
+
+  return router;
 }
