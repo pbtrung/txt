@@ -1,8 +1,4 @@
-// @vitest-environment jsdom
-import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
-import { useVault, VaultProvider } from "./VaultContext";
 
 vi.mock("../data/db", () => ({ createDb: vi.fn(() => ({ execute: vi.fn() })) }));
 vi.mock("../data/r2", () => ({ createR2Client: vi.fn(() => ({ fetch: vi.fn() })) }));
@@ -29,6 +25,7 @@ import * as accessData from "../data/access";
 import * as bookmarksData from "../data/bookmarks";
 import * as metadata from "../data/metadata";
 import * as owner from "../data/owner";
+import { useVault } from "./vault";
 
 /** Wires up the three post-auth loads (metadata/access/bookmarks) that
  * unlock() now performs, so a successful-unlock test doesn't need to spell
@@ -56,15 +53,19 @@ function fakeFile(contents: unknown): File {
   return new File([JSON.stringify(contents)], "config.json", { type: "application/json" });
 }
 
-function renderVault() {
-  return renderHook(() => useVault(), { wrapper: VaultProvider });
-}
+// state/vault.ts is a module-level singleton (see its own comment for why),
+// so -- unlike the old per-test VaultProvider instance -- its state
+// persists across test cases in this same file unless reset. lock() already
+// resets every piece of state unlock()/lock() itself touches, so reusing it
+// here is enough; no separate test-only reset export needed.
+const vault = useVault();
 
-describe("VaultProvider", () => {
-  // verbose logging defaults to on (see src/log.ts) -- unlock() logs each of
-  // its steps unconditionally, so silence that rather than let it clutter
-  // every test run's output.
+describe("vault", () => {
   beforeEach(() => {
+    vault.lock();
+    // verbose logging defaults to on (see src/log.ts) -- unlock() logs each
+    // of its steps unconditionally, so silence that rather than let it
+    // clutter every test run's output.
     vi.spyOn(console, "log").mockImplementation(() => {});
   });
   afterEach(() => {
@@ -84,42 +85,32 @@ describe("VaultProvider", () => {
     });
     mockLibraryLoads();
 
-    const { result } = renderVault();
-    expect(result.current.status).toBe("locked");
+    expect(vault.status.value).toBe("locked");
 
-    await act(async () => {
-      await result.current.unlock(fakeFile(CONFIG));
-    });
+    await vault.unlock(fakeFile(CONFIG));
 
-    await waitFor(() => expect(result.current.status).toBe("unlocked"));
-    expect(result.current.session?.userId).toBe(42);
-    expect(result.current.session?.creds.displayName).toBe("Alice");
-    expect(result.current.error).toBeNull();
+    expect(vault.status.value).toBe("unlocked");
+    expect(vault.session.value?.userId).toBe(42);
+    expect(vault.session.value?.creds.displayName).toBe("Alice");
+    expect(vault.error.value).toBeNull();
   });
 
   it("stays locked and reports an error for an invalid config file", async () => {
-    const { result } = renderVault();
+    await vault.unlock(fakeFile({ not: "a valid config" }));
 
-    await act(async () => {
-      await result.current.unlock(fakeFile({ not: "a valid config" }));
-    });
-
-    expect(result.current.status).toBe("locked");
-    expect(result.current.session).toBeNull();
-    expect(result.current.error).toBeTruthy();
+    expect(vault.status.value).toBe("locked");
+    expect(vault.session.value).toBeNull();
+    expect(vault.error.value).toBeTruthy();
   });
 
   it("stays locked when the password check fails", async () => {
     vi.mocked(owner.resolveUserId).mockResolvedValue(42);
     vi.mocked(owner.checkPassword).mockResolvedValue(false);
 
-    const { result } = renderVault();
-    await act(async () => {
-      await result.current.unlock(fakeFile(CONFIG));
-    });
+    await vault.unlock(fakeFile(CONFIG));
 
-    expect(result.current.status).toBe("locked");
-    expect(result.current.error).toMatch(/incorrect password/i);
+    expect(vault.status.value).toBe("locked");
+    expect(vault.error.value).toMatch(/incorrect password/i);
   });
 
   it("serializes concurrent bookmark additions so neither overwrites the other", async () => {
@@ -146,25 +137,16 @@ describe("VaultProvider", () => {
       },
     );
 
-    const { result } = renderVault();
-    await act(async () => {
-      await result.current.unlock(fakeFile(CONFIG));
-    });
-    await waitFor(() => expect(result.current.status).toBe("unlocked"));
+    await vault.unlock(fakeFile(CONFIG));
+    expect(vault.status.value).toBe("unlocked");
 
     // Fired back to back, neither awaited before the other starts -- exactly
-    // the "two rapid-fire calls" scenario accessMapRef/bookmarksMapRef exist
-    // to handle. Without serializing through enqueueMutation, both would read
-    // the same pre-mutation bookmarksMap and one addition would silently
-    // overwrite the other.
-    await act(async () => {
-      await Promise.all([
-        result.current.addBookmarkEntry(1, 1, 1, "first"),
-        result.current.addBookmarkEntry(1, 1, 2, "second"),
-      ]);
-    });
+    // the "two rapid-fire calls" scenario enqueueMutation exists to handle.
+    // Without serializing through it, both would read the same pre-mutation
+    // bookmarksMap and one addition would silently overwrite the other.
+    await Promise.all([vault.addBookmarkEntry(1, 1, 1, "first"), vault.addBookmarkEntry(1, 1, 2, "second")]);
 
-    expect(result.current.bookmarksMap.get(1)).toHaveLength(2);
+    expect(vault.bookmarksMap.value.get(1)).toHaveLength(2);
   });
 
   it("lock() clears the session and returns to locked", async () => {
@@ -180,15 +162,12 @@ describe("VaultProvider", () => {
     });
     mockLibraryLoads();
 
-    const { result } = renderVault();
-    await act(async () => {
-      await result.current.unlock(fakeFile(CONFIG));
-    });
-    await waitFor(() => expect(result.current.status).toBe("unlocked"));
+    await vault.unlock(fakeFile(CONFIG));
+    expect(vault.status.value).toBe("unlocked");
 
-    act(() => result.current.lock());
+    vault.lock();
 
-    expect(result.current.status).toBe("locked");
-    expect(result.current.session).toBeNull();
+    expect(vault.status.value).toBe("locked");
+    expect(vault.session.value).toBeNull();
   });
 });

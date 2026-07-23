@@ -1,11 +1,11 @@
-import { useMemo } from "react";
+import { computed, type ComputedRef } from "vue";
 
-import { useVault } from "../../state/VaultContext";
+import { useVault } from "../../state/vault";
 import { buildLibraryBooks, type LibraryBook } from "./libraryModel";
 
 export interface UseLibraryBooksResult {
-  books: LibraryBook[] | null;
-  loading: boolean;
+  books: ComputedRef<LibraryBook[] | null>;
+  loading: ComputedRef<boolean>;
 }
 
 /** Derives the Library's book list from data the session already loaded in
@@ -15,10 +15,10 @@ export interface UseLibraryBooksResult {
 export function useLibraryBooks(): UseLibraryBooksResult {
   const { session, accessMap } = useVault();
 
-  const books = useMemo(() => {
-    if (!session) return null;
-    return buildLibraryBooks(session.metadataById, accessMap);
-  }, [session, accessMap]);
+  const books = computed<LibraryBook[] | null>(() => {
+    if (!session.value) return null;
+    return buildLibraryBooks(session.value.metadataById, accessMap.value);
+  });
 
-  return { books, loading: books === null };
+  return { books, loading: computed(() => books.value === null) };
 }
