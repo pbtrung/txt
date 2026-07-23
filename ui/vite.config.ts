@@ -32,6 +32,41 @@ export default defineConfig({
   define: {
     __LEANCRYPTO_JS_INTEGRITY__: JSON.stringify(leancryptoJsIntegrity()),
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // Without this, crypto/brotli.ts's `import("brotli-wasm")` (needed
+        // to pick the browser build over the Node one -- see that file's
+        // own comment) gets split into its own chunk, which Rollup then
+        // has that chunk import a small shared helper *back* from the
+        // entry chunk via a literal relative specifier
+        // (`import ... from "./index-<hash>.js"`). That's harmless for a
+        // normal page load, where the entry has a real `src` URL the
+        // browser's module registry can key by -- but local_index.html
+        // (ui/src/localIndex/render.ts) mounts the entry as an inline
+        // `<script type="module">` with no `src` at all, so it has no
+        // stable URL there. The first time that dynamic import actually
+        // fires (which happens exactly when unlock() first needs to
+        // decompress a blob), the browser can't recognize the entry as
+        // already loaded, fetches + executes a second, independent copy of
+        // the whole app from the CDN, and mounts it on top of the first
+        // (React logs "Warning: You are calling ReactDOM.createRoot() on a
+        // container that has already been passed to createRoot() before"),
+        // corrupting both instances' fiber trees -- this is the real cause
+        // of the "Failed to execute 'removeChild'" crashes chased at
+        // length in this project's history (confirmed identical in a
+        // parallel Vue port of this same app, since both mount the entry
+        // the same inline way -- diagnosed there first by rebuilding with
+        // NODE_ENV forced to development so Vue's own dev warnings
+        // ("There is already an app instance mounted on the host
+        // container") surfaced the double mount directly). inlineDynamicImports
+        // merges that dynamic import into the entry chunk instead of
+        // splitting it out, so there's no cross-chunk relative import left
+        // to resolve incorrectly, regardless of how the entry is loaded.
+        inlineDynamicImports: true,
+      },
+    },
+  },
   test: {
     // Default to "node": crypto/data-layer tests need neither a DOM nor
     // jsdom's fake http://localhost:3000 origin (which brotli-wasm's
