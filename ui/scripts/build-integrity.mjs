@@ -10,12 +10,16 @@
 //   2. SHA-512s every file under dist/ (including the now-SRI-tagged
 //      index.html) into dist/manifest.json.
 //   3. Writes dist/_headers (Cloudflare Pages' response-header config file --
-//      also understood by Netlify) narrowing the direct-CDN-visit CSP's
+//      also understood by Netlify): narrows the direct-CDN-visit CSP's
 //      connect-src from index.html's own <meta> tag's deliberately-open '*'
 //      down to 'self' plus the Turso/R2 host patterns the app actually talks
-//      to. _headers is a deploy-time config file, never itself served as a
-//      fetchable path, so it's written after buildManifest() runs, not
-//      before -- same reason manifest.json/manifest.sig are, below.
+//      to, and sets Access-Control-Allow-Origin: null so local_index.html
+//      (opened via file://, sending Origin: null) can actually read the
+//      response bodies of its cross-origin fetches to manifest.json/
+//      manifest.sig/every other dist/ asset. _headers is a deploy-time
+//      config file, never itself served as a fetchable path, so it's
+//      written after buildManifest() runs, not before -- same reason
+//      manifest.json/manifest.sig are, below.
 //   4. Loads (or, only if absent, generates) an SLH-DSA-SHA2-256f keypair
 //      (@noble/post-quantum) from --admin-creds's slhdsa_256f_priv_key,
 //      signs manifest.json's literal bytes with it, and writes the raw
@@ -138,7 +142,15 @@ const DIST_CSP =
   "form-action 'self';";
 
 function writeHeadersFile() {
-  writeFileSync(join(DIST_DIR, "_headers"), `/*\n  Content-Security-Policy: ${DIST_CSP}\n`, "utf8");
+  // Access-Control-Allow-Origin: null -- local_index.html (opened via
+  // file://) sends Origin: null on its cross-origin fetches of
+  // manifest.json/manifest.sig/every other dist/ asset; without this,
+  // the browser blocks reading the response body even though the request
+  // itself succeeds. Safe to allow broadly: these are public, non-secret
+  // build outputs whose integrity local_index.html itself checks via
+  // SLH-DSA/SHA-512, not via keeping them cross-origin-unreadable.
+  const headers = `/*\n  Content-Security-Policy: ${DIST_CSP}\n  Access-Control-Allow-Origin: null\n`;
+  writeFileSync(join(DIST_DIR, "_headers"), headers, "utf8");
 }
 
 /** Reuses slhdsa_256f_priv_key from adminCreds if it's a non-empty base64

@@ -160,14 +160,25 @@ At build time (`ui/scripts/build-integrity.mjs`):
   directly, bypassing `local_index.html` entirely, against a MITM/cache swapping
   those two files while leaving `index.html` unchanged;
 - `ui/dist/_headers` (Cloudflare Pages' response-header config file, also understood
-  by Netlify) sets a real `Content-Security-Policy` header for that same direct-CDN-
-  visit case, mirroring `index.html`'s own `<meta>` CSP except `connect-src`, narrowed
-  from that meta tag's deliberately-open `*` down to `'self'` plus the Turso/R2 host
-  patterns the app actually talks to. A header and a `<meta>` CSP both apply at once
-  and combine by intersection, so this tightens the effective policy without having
-  to touch the per-account-agnostic meta tag itself. `_headers` is a deploy-time
-  config file, never itself a fetchable path, so it's excluded from
-  `manifest.json`/`local_index.html`'s own checks.
+  by Netlify and Cloudflare's Workers Static Assets) sets two things for every file
+  under `ui/dist/`:
+  - a real `Content-Security-Policy` header for the direct-CDN-visit case, mirroring
+    `index.html`'s own `<meta>` CSP except `connect-src`, narrowed from that meta
+    tag's deliberately-open `*` down to `'self'` plus the Turso/R2 host patterns the
+    app actually talks to. A header and a `<meta>` CSP both apply at once and combine
+    by intersection, so this tightens the effective policy without having to touch
+    the per-account-agnostic meta tag itself;
+  - `Access-Control-Allow-Origin: null`, so `local_index.html` (opened via `file://`,
+    sending `Origin: null`) can actually read the response bodies of its cross-origin
+    fetches to `manifest.json`/`manifest.sig`/every other asset — without it, those
+    fetches resolve but the browser blocks reading the body (`... has been blocked by
+    CORS policy: No 'Access-Control-Allow-Origin' header is present`).
+
+  `_headers` is a deploy-time config file, never itself a fetchable path, so it's
+  excluded from `manifest.json`/`local_index.html`'s own checks. This only takes
+  effect if whatever serves `asset_base_url` actually reads a `_headers` file
+  (Cloudflare Pages and Workers Static Assets do; a bucket served directly, with no
+  such layer in front of it, does not — see the CORS section below for that case).
 
 At open time, `local_index.html`:
 
@@ -190,9 +201,12 @@ manifest — a narrower version of today's total absence of any check, not an
 airtight guarantee.
 
 **Requires**: opening `local_index.html` via `file://` sends `Origin: null` on its
-cross-origin fetches to `asset_base_url` — add `"null"` to the R2 bucket's
-`AllowedOrigins` (see the CORS section right below) or these fetches will resolve
-but fail to read the response body.
+cross-origin fetches to `asset_base_url`. `dist/_headers` (above) covers this
+automatically when `asset_base_url` is served by Cloudflare Pages or Workers Static
+Assets. If it instead points directly at an R2 bucket's public URL with nothing in
+front of it, add `"null"` to that bucket's `AllowedOrigins` instead (see the CORS
+section right below) — either way, without one of these, the fetches resolve but
+fail to read the response body.
 
 ### R2 bucket CORS policy (required)
 
