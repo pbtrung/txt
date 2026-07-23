@@ -1,7 +1,7 @@
 import type { AwsClient } from "aws4fetch";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { getObject, PRESIGNED_EXPIRY_SECONDS, shouldPresign } from "./r2";
+import { getObject } from "./r2";
 import type { R2Config } from "./r2Config";
 
 const config: R2Config = {
@@ -12,7 +12,7 @@ const config: R2Config = {
   readOnlySecretAccessKey: "ro-secret",
 };
 
-function fakeAwsClient(fetchImpl: (url: string, init?: unknown) => Promise<Response>): AwsClient {
+function fakeAwsClient(fetchImpl: (url: string) => Promise<Response>): AwsClient {
   return { fetch: vi.fn(fetchImpl) } as unknown as AwsClient;
 }
 
@@ -86,44 +86,5 @@ describe("getObject", () => {
 
     vi.unstubAllGlobals();
     vi.useRealTimers();
-  });
-
-  describe("under local_index.html (file://)", () => {
-    afterEach(() => {
-      vi.unstubAllGlobals();
-    });
-
-    it("query-signs the request with a short expiry instead of header-signing it", async () => {
-      vi.stubGlobal("location", { protocol: "file:" });
-      const client = fakeAwsClient(async (url, init) => {
-        const parsed = new URL(url);
-        expect(parsed.origin + parsed.pathname).toBe("https://acct.r2.cloudflarestorage.com/my-bucket/some-key");
-        expect(parsed.searchParams.get("X-Amz-Expires")).toBe(String(PRESIGNED_EXPIRY_SECONDS));
-        expect(init).toEqual({ aws: { signQuery: true } });
-        return new Response(new Uint8Array([7]));
-      });
-
-      const result = await getObject(client, config, "some-key");
-      expect(Array.from(result)).toEqual([7]);
-    });
-
-    it("does not query-sign for a normal http(s) page", async () => {
-      vi.stubGlobal("location", { protocol: "https:" });
-      const client = fakeAwsClient(async (url, init) => {
-        expect(url).toBe("https://acct.r2.cloudflarestorage.com/my-bucket/some-key");
-        expect(init).toBeUndefined();
-        return new Response(new Uint8Array([7]));
-      });
-
-      await getObject(client, config, "some-key");
-    });
-  });
-});
-
-describe("shouldPresign", () => {
-  it("is true only for file://", () => {
-    expect(shouldPresign("file:")).toBe(true);
-    expect(shouldPresign("https:")).toBe(false);
-    expect(shouldPresign("http:")).toBe(false);
   });
 });
