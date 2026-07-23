@@ -200,6 +200,15 @@ and a dynamic `import()`) without re-checking that later fetch against the
 manifest — a narrower version of today's total absence of any check, not an
 airtight guarantee.
 
+**Router**: `history.pushState()`/`replaceState()` (which `BrowserRouter` needs for
+every navigation) throws a `SecurityError` in a document with an opaque/null origin
+— exactly `local_index.html`'s situation, since the real app's own bundle runs
+unmodified inside it. `ui/src/appRouter.ts`'s `pickRouterComponent()` switches to
+`MemoryRouter` (navigation kept entirely in JS, no `window.history` calls at all)
+whenever `location.protocol === "file:"`. Accepted tradeoff: the address bar won't
+reflect in-app navigation, and back/forward won't move between screens, when run
+this way.
+
 **Requires**: opening `local_index.html` via `file://` sends `Origin: null` on its
 cross-origin fetches to `asset_base_url`. `dist/_headers` (above) covers this
 automatically when `asset_base_url` is served by Cloudflare Pages or Workers Static
