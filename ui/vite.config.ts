@@ -1,12 +1,12 @@
 /// <reference types="vitest/config" />
 import { defineConfig } from "vite";
-import vue from "@vitejs/plugin-vue";
+import react from "@vitejs/plugin-react";
 
 // ui/leancrypto/ already holds the prebuilt leancrypto.js/.wasm pair (see
 // docs/ui.md / CLAUDE.md) -- pointing publicDir at it directly serves both
 // files at /leancrypto.js and /leancrypto.wasm with no copying or build step.
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [react()],
   publicDir: "leancrypto",
   test: {
     // Default to "node": crypto/data-layer tests need neither a DOM nor

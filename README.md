@@ -99,7 +99,7 @@ Unit tests live in `tests/`; `tests/test_crypto.py` covers `txt/crypto.py`'s blo
 
 ## Web UI
 
-`ui/` is a client-side-encrypted web reader (Vue 3 + TypeScript + Vite) for the same
+`ui/` is a client-side-encrypted web reader (React + TypeScript + Vite) for the same
 vault: Unlock, Library, and Reader screens per [docs/ui.md](docs/ui.md)'s design. All
 crypto and R2/Turso access happens in the browser, mirroring `txt/crypto.py`/`txt/owner.py`
 in TypeScript (`ui/src/crypto/`, `ui/src/data/`) — the same leancrypto AEAD/HKDF/KEM
@@ -121,8 +121,8 @@ npm run build -- --admin-creds ../creds/admin_creds.json    # -> ui/dist + creds
 On by default. Load the app with `?verbose=0` in the URL to turn it off for that page
 load (`ui/src/log.ts`; toggle mid-session with `setVerbose()` instead of reloading if you
 don't want to lose an in-progress session — it isn't persisted across reloads, same as
-`state/vault.ts`'s own session state). It logs `unlock()`'s steps
-(`ui/src/state/vault.ts` — parsing the config, resolving the user id, checking
+`VaultContext`'s own session state). It logs `unlock()`'s steps
+(`ui/src/state/VaultContext.tsx` — parsing the config, resolving the user id, checking
 the password, unwrapping `umk`, loading metadata/access/bookmarks) and every
 `db.execute()` call, from any screen, logs its SQL/args and either its row count or its
 error (`ui/src/data/db.ts`).
@@ -200,14 +200,14 @@ and a dynamic `import()`) without re-checking that later fetch against the
 manifest — a narrower version of today's total absence of any check, not an
 airtight guarantee.
 
-**Router**: `history.pushState()`/`replaceState()` (which `createWebHistory()` needs
-for every navigation) throws a `SecurityError` in a document with an opaque/null
-origin — exactly `local_index.html`'s situation, since the real app's own bundle runs
-unmodified inside it. `ui/src/router.ts`'s `pickRouterHistory()` switches to
-`createMemoryHistory()` (navigation kept entirely in JS, no `window.history` calls at
-all) whenever `location.protocol === "file:"`. Accepted tradeoff: the address bar
-won't reflect in-app navigation, and back/forward won't move between screens, when
-run this way.
+**Router**: `history.pushState()`/`replaceState()` (which `BrowserRouter` needs for
+every navigation) throws a `SecurityError` in a document with an opaque/null origin
+— exactly `local_index.html`'s situation, since the real app's own bundle runs
+unmodified inside it. `ui/src/appRouter.ts`'s `pickRouterComponent()` switches to
+`MemoryRouter` (navigation kept entirely in JS, no `window.history` calls at all)
+whenever `location.protocol === "file:"`. Accepted tradeoff: the address bar won't
+reflect in-app navigation, and back/forward won't move between screens, when run
+this way.
 
 **Requires**: opening `local_index.html` via `file://` sends `Origin: null` on its
 cross-origin fetches to `asset_base_url`. `dist/_headers` (above) covers this

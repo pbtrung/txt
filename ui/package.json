@@ -5,12 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vue-tsc -b && vite build && rm -f dist/leancrypto.d.ts dist/package.json && node scripts/build-integrity.mjs",
+    "build": "tsc -b && vite build && rm -f dist/leancrypto.d.ts dist/package.json && node scripts/build-integrity.mjs",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "format": "prettier --write \"src/**/*.{ts,tsx,vue}\"",
-    "format:check": "prettier --check \"src/**/*.{ts,tsx,vue}\""
+    "format": "prettier --write \"src/**/*.{ts,tsx}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx}\""
   },
   "dependencies": {
     "@fontsource/literata": "^5.3.0",
@@ -21,21 +21,22 @@
     "bootstrap-icons": "^1.13.1",
     "brotli-wasm": "^3.0.1",
     "dompurify": "^3.4.12",
-    "vue": "^3.5.40",
-    "vue-router": "^5.2.0"
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "react-router-dom": "^7.18.1"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
-    "@testing-library/vue": "^8.1.0",
     "@types/node": "^26.1.1",
-    "@vitejs/plugin-vue": "^6.0.8",
-    "@vue/test-utils": "^2.4.11",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
     "jsdom": "^29.1.1",
     "prettier": "^3.9.5",
-    "typescript": "^6.0.3",
+    "typescript": "^7.0.2",
     "vite": "^8.1.5",
-    "vitest": "^4.1.10",
-    "vue-tsc": "^3.3.8"
+    "vitest": "^4.1.10"
   }
 }
