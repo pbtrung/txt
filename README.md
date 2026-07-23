@@ -190,15 +190,25 @@ At open time, `local_index.html`:
 3. once everything verifies, mounts the app directly from those already-verified
    bytes (an inlined `<style>`/`<script type="module">`) — it never re-fetches
    `index.html`/the entry JS/CSS a second time, since doing so would reopen the
-   exact gap this exists to close.
+   exact gap this exists to close;
+4. installs an import map (`ui/src/localIndex/render.ts`'s `installChunkImportMap()`)
+   remapping every other already-verified `.js` file's real `dist/` URL to a
+   `blob:` URL built from those same verified bytes — so when the running app's
+   own code later does e.g. `import("brotli-wasm")` (a dynamic import Vite
+   compiles into its own chunk), the browser's module resolution transparently
+   swaps in the verified blob instead of hitting the network a second time,
+   unverified.
 
-**Known limitation**: only the entry JS/CSS get this full treatment. Fonts,
-`leancrypto.wasm`/`brotli_wasm`, and the one dynamically-imported JS chunk are
-still hashed once during step 2 above, but the *running app* fetches them again
-live later (via CSS `url()`, a dynamically created `<script src="/leancrypto.js">`,
-and a dynamic `import()`) without re-checking that later fetch against the
-manifest — a narrower version of today's total absence of any check, not an
-airtight guarantee.
+**Known limitation**: `leancrypto.js`/`leancrypto.wasm` and the fonts are the
+remaining exception. They're still hashed once during step 2 above, but the
+*running app* fetches them again live later (a dynamically created
+`<script src="/leancrypto.js">` in `crypto/leancryptoLoader.ts`, and CSS
+`url()`) without re-checking that later fetch against the manifest —
+`leancrypto.js` specifically can't get the same import-map treatment as other
+JS, since it's an Emscripten UMD bundle that locates its own `leancrypto.wasm`
+relative to that `<script src=...>` tag, not via an ES module import. A
+narrower version of today's total absence of any check, not an airtight
+guarantee.
 
 **Router**: `history.pushState()`/`replaceState()` (which `BrowserRouter` needs for
 every navigation) throws a `SecurityError` in a document with an opaque/null origin

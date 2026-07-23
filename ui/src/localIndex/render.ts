@@ -38,6 +38,49 @@ function extractEntryPaths(indexHtmlText: string): EntryPaths {
   return { jsPath, cssPath };
 }
 
+// leancrypto.js is deliberately excluded: it's an Emscripten UMD bundle that
+// locates its own leancrypto.wasm relative to the <script src=...> tag
+// crypto/leancryptoLoader.ts creates for it, not via an ES module import --
+// inlining/blob-mapping it here wouldn't change how (or whether) it can find
+// that wasm file, so it's simplest left on its existing live-fetch path.
+function isEmbeddableChunkPath(path: string, jsPath: string): boolean {
+  return path.endsWith(".js") && path !== jsPath && path !== "leancrypto.js";
+}
+
+/** Every other verified .js file (e.g. the chunk crypto/brotli.ts's dynamic
+ * `import("brotli-wasm")` pulls in) gets remapped, via an import map, from
+ * its real dist/ URL to a blob: URL built from bytes already verified in
+ * verify.ts -- otherwise the running app would silently re-fetch it live
+ * over the network, unverified against the manifest a second time, right
+ * after we just went to the trouble of checking it once. An import map
+ * entry must be present before the module graph that references it starts
+ * loading, so this runs before the entry <script type=module> below is ever
+ * appended. */
+function installChunkImportMap(assetBaseUrl: string, jsPath: string, verified: Map<string, Uint8Array>): void {
+  const root = `${assetBaseUrl.replace(/\/+$/, "")}/`;
+  const imports: Record<string, string> = {};
+  for (const [path, bytes] of verified) {
+    if (!isEmbeddableChunkPath(path, jsPath)) continue;
+    // Keyed by the chunk's real absolute dist/ URL -- the same one a live
+    // dynamic import() of it would resolve to (relative specifiers inside
+    // the entry module resolve against <base>, which render() below points
+    // at this same assetBaseUrl root's entry-JS directory), so the browser's
+    // own module resolution transparently swaps in the verified blob instead.
+    const url = new URL(path, root).href;
+    // new Uint8Array(bytes), not `bytes` directly: `verified`'s values are
+    // typed as Uint8Array<ArrayBufferLike>, and BlobPart only accepts a view
+    // backed by a real ArrayBuffer (not a SharedArrayBuffer) -- copying into
+    // a fresh Uint8Array always allocates a plain ArrayBuffer.
+    imports[url] = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: "text/javascript" }));
+    verbose(`localIndex: mapped ${path} to a verified blob: URL`);
+  }
+  if (Object.keys(imports).length === 0) return;
+  const script = document.createElement("script");
+  script.type = "importmap";
+  script.textContent = JSON.stringify({ imports });
+  document.head.appendChild(script);
+}
+
 /** Mounts the real app into the document from verified bytes. `verified` is
  * exactly what verify.ts's verifyAssets() returned -- every path keyed the
  * same way manifest.json (and so dist/'s own directory layout) keys it. */
@@ -68,6 +111,11 @@ export function renderApp(assetBaseUrl: string, verified: Map<string, Uint8Array
   base.href = `${assetBaseUrl.replace(/\/+$/, "")}/${dirOf(jsPath)}`;
   document.head.prepend(base);
   verbose(`localIndex: base href set to ${base.href}`);
+
+  // Before the entry module ever runs (and so before it can trigger that
+  // `import("./index.web-....js")`) -- an import map has to be in place
+  // before the module graph referencing it starts loading.
+  installChunkImportMap(assetBaseUrl, jsPath, verified);
 
   if (cssPath) {
     const cssBytes = verified.get(cssPath);
