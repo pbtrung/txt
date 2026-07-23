@@ -209,12 +209,20 @@ every navigation) throws a `SecurityError` in a document with an opaque/null ori
 — exactly `local_index.html`'s situation, since the real app's own bundle runs
 unmodified inside it. `ui/src/appRouter.ts`'s `pickRouterComponent()` switches to
 `MemoryRouter` (navigation kept entirely in JS, no `window.history` calls at all)
-whenever `location.origin === "null"` — checked via the origin rather than
-`location.protocol === "file:"`, since Android commonly opens a local file through
-a `content://` URI instead (e.g. a file manager's "Open with Chrome"), which is
-just as opaque-origin as `file://` but wouldn't match a protocol-specific check.
-Accepted tradeoff: the address bar won't reflect in-app navigation, and
-back/forward won't move between screens, when run this way.
+whenever a no-op `replaceState()` attempted in a try/catch actually throws. That's
+deliberately empirical rather than checked via `location.protocol`/`location.origin`
+— two attempts at guessing this from a string both turned out unreliable in
+practice: `protocol === "file:"` misses Android, which commonly opens a local file
+through a `content://` URI instead (e.g. a file manager's "Open with Chrome"), just
+as opaque-origin as `file://` but a different protocol string; `origin === "null"`
+*also* didn't catch that case on a real Android device, even though the resulting
+SecurityError's own message still describes the origin as `'null'` — Chrome for
+Android's `location.origin` for a `content://` document apparently doesn't reliably
+serialize to that literal string the way `file://`'s does. Trying the actual
+operation sidesteps needing to know how any given browser/scheme/platform
+combination happens to report its origin. Accepted tradeoff: the address bar won't
+reflect in-app navigation, and back/forward won't move between screens, when run
+this way.
 
 **Requires**: opening `local_index.html` via `file://` sends `Origin: null` on its
 cross-origin fetches to `asset_base_url`. `dist/_headers` (above) covers this
