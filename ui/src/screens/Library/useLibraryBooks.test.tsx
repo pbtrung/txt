@@ -1,25 +1,25 @@
 // @vitest-environment jsdom
 import type { Client } from "@libsql/core/api";
-import { describe, expect, it, vi } from "vitest";
-import { ref } from "vue";
+import { renderHook } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
+import { vi } from "vitest";
 
 import type { BookInfo } from "../../data/metadata";
-import { withSetup } from "../../testUtils/withSetup";
-import * as vaultModule from "../../state/vault";
+import * as VaultContextModule from "../../state/VaultContext";
 import { useLibraryBooks } from "./useLibraryBooks";
 
-vi.mock("../../state/vault", async () => {
-  const actual = await vi.importActual<typeof import("../../state/vault")>("../../state/vault");
+vi.mock("../../state/VaultContext", async () => {
+  const actual = await vi.importActual<typeof import("../../state/VaultContext")>("../../state/VaultContext");
   return { ...actual, useVault: vi.fn() };
 });
 
-function mockVault(session: vaultModule.VaultSession | null, accessMap = new Map()) {
-  vi.mocked(vaultModule.useVault).mockReturnValue({
-    status: ref(session ? "unlocked" : "locked"),
-    session: ref(session),
-    error: ref(null),
-    accessMap: ref(accessMap),
-    bookmarksMap: ref(new Map()),
+function mockVault(session: VaultContextModule.VaultSession | null, accessMap = new Map()) {
+  vi.mocked(VaultContextModule.useVault).mockReturnValue({
+    status: session ? "unlocked" : "locked",
+    session,
+    error: null,
+    accessMap,
+    bookmarksMap: new Map(),
     unlock: vi.fn(),
     lock: vi.fn(),
     getTxtKey: vi.fn(),
@@ -27,7 +27,7 @@ function mockVault(session: vaultModule.VaultSession | null, accessMap = new Map
     removeAccessEntry: vi.fn(),
     addBookmarkEntry: vi.fn(),
     removeBookmarkEntry: vi.fn(),
-  } as unknown as ReturnType<typeof vaultModule.useVault>);
+  });
 }
 
 const metadataById = new Map<number, BookInfo>([
@@ -35,7 +35,7 @@ const metadataById = new Map<number, BookInfo>([
   [2, { txtId: 2, name: "n2", title: "Title 2", subjects: [], rawMetadata: [] }],
 ]);
 
-const session: vaultModule.VaultSession = {
+const session: VaultContextModule.VaultSession = {
   creds: {} as never,
   db: {} as Client,
   userId: 42,
@@ -51,10 +51,10 @@ describe("useLibraryBooks", () => {
   it("derives the book list from the session's metadata/access maps, no DB calls", () => {
     mockVault(session, new Map([[1, { lastPartNum: 14, lastAccessedMs: 1000 }]]));
 
-    const { result } = withSetup(() => useLibraryBooks());
+    const { result } = renderHook(() => useLibraryBooks());
 
-    expect(result.loading.value).toBe(false);
-    expect(result.books.value).toEqual([
+    expect(result.current.loading).toBe(false);
+    expect(result.current.books).toEqual([
       { txtId: 1, info: metadataById.get(1), lastPartNum: 14, lastAccessedMs: 1000 },
       { txtId: 2, info: metadataById.get(2), lastPartNum: null, lastAccessedMs: null },
     ]);
@@ -63,9 +63,9 @@ describe("useLibraryBooks", () => {
   it("is loading with a null book list before a session exists", () => {
     mockVault(null);
 
-    const { result } = withSetup(() => useLibraryBooks());
+    const { result } = renderHook(() => useLibraryBooks());
 
-    expect(result.loading.value).toBe(true);
-    expect(result.books.value).toBeNull();
+    expect(result.current.loading).toBe(true);
+    expect(result.current.books).toBeNull();
   });
 });
