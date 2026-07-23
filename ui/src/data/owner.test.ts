@@ -40,8 +40,6 @@ const creds: Creds = {
   password: "hunter2",
   displayName: "Alice",
   userRootKey: new Uint8Array(256).fill(9),
-  assetSignKey: new Uint8Array(64).fill(3),
-  assetHashes: new Uint8Array(192).fill(4),
 };
 
 let umk: Uint8Array;

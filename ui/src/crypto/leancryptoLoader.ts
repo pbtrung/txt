@@ -211,36 +211,22 @@ export async function hkdf(ikm: Uint8Array, salt: Uint8Array, length: number): P
   }
 }
 
-async function hmac(hashType: number, outLen: number, key: Uint8Array, data: Uint8Array): Promise<Uint8Array> {
-  const { mod } = await getLeancrypto();
+/** HMAC-SHA3-256(key, data), used for username_hash. */
+export async function hmacSha3_256(key: Uint8Array, data: Uint8Array): Promise<Uint8Array> {
+  const { mod, sha3_256 } = await getLeancrypto();
+  const OUT_LEN = 32;
   const keyPtr = writeBytes(mod, key);
   const dataPtr = writeBytes(mod, data);
-  const outPtr = mod._malloc(outLen);
+  const outPtr = mod._malloc(OUT_LEN);
   try {
-    const ret = mod._lc_hmac(hashType, keyPtr, key.length, dataPtr, data.length, outPtr);
+    const ret = mod._lc_hmac(sha3_256, keyPtr, key.length, dataPtr, data.length, outPtr);
     check(ret, "lc_hmac");
-    return readBytes(mod, outPtr, outLen);
+    return readBytes(mod, outPtr, OUT_LEN);
   } finally {
     mod._free(keyPtr);
     mod._free(dataPtr);
     mod._free(outPtr);
   }
-}
-
-/** HMAC-SHA3-256(key, data), used for username_hash. */
-export async function hmacSha3_256(key: Uint8Array, data: Uint8Array): Promise<Uint8Array> {
-  const { sha3_256 } = await getLeancrypto();
-  return hmac(sha3_256, 32, key, data);
-}
-
-/** HMAC-SHA3-512(key, data), used to verify non-bootstrap assets against the
- * manifest embedded in index.html (see src/integrity/verifyAssets.ts) --
- * index.html itself and leancrypto.js/.wasm are verified with native
- * WebCrypto HMAC-SHA512 instead, since using leancrypto to verify its own
- * bytes before they're trusted would be circular. */
-export async function hmacSha3_512(key: Uint8Array, data: Uint8Array): Promise<Uint8Array> {
-  const { sha3_512 } = await getLeancrypto();
-  return hmac(sha3_512, 64, key, data);
 }
 
 /** PBKDF2-HMAC-SHA3-256(password, salt, iterations) -> keyLen bytes, used for pw_hash. */

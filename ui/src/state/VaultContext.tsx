@@ -25,7 +25,6 @@ import { createR2Client } from "../data/r2";
 import { parseCreds, type Creds } from "../data/creds";
 import { loadTxtMetadata, type BookInfo } from "../data/metadata";
 import type { R2Config } from "../data/r2Config";
-import { verifyAssetIntegrity } from "../integrity/verifyAssets";
 import { verbose } from "../log";
 
 export type VaultStatus = "locked" | "unlocking" | "unlocked";
@@ -115,13 +114,6 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         const text = await file.text();
         const creds = parseCreds(JSON.parse(text));
         verbose("unlock: config parsed for username", creds.username);
-
-        // Before touching Turso/umk at all: confirm the app currently
-        // running is the one this config's asset_sign_key/asset_hashes
-        // were signed for (see src/integrity/verifyAssets.ts).
-        verbose("unlock: verifying asset integrity");
-        await verifyAssetIntegrity(creds);
-        verbose("unlock: asset integrity OK");
 
         const db = createDb(creds);
         verbose("unlock: resolving user id");

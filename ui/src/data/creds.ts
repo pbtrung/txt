@@ -7,12 +7,7 @@
 // docs/data_model.md.
 
 import { base64ToBytes } from "../crypto/bytes";
-import {
-  ASSET_HASHES_LEN,
-  ASSET_SIGN_KEY_LEN,
-  USERNAME_LOOKUP_KEY_MIN_LEN,
-  USER_ROOT_KEY_MIN_LEN,
-} from "../crypto/constants";
+import { USERNAME_LOOKUP_KEY_MIN_LEN, USER_ROOT_KEY_MIN_LEN } from "../crypto/constants";
 
 export interface Creds {
   tursoDatabaseUrl: string;
@@ -22,15 +17,6 @@ export interface Creds {
   password: string;
   displayName: string;
   userRootKey: Uint8Array;
-  // Asset-integrity check (see src/integrity/verifyAssets.ts): assetSignKey
-  // never appears in the built assets themselves, only here -- this config
-  // file is loaded from the user's own machine, never served by whatever
-  // host serves the built app, so it's the one thing a compromised
-  // deployment can't also rewrite to match tampered content. assetHashes
-  // concatenates three native HMAC-SHA512 outputs (index.html, then
-  // leancrypto.js, then leancrypto.wasm).
-  assetSignKey: Uint8Array;
-  assetHashes: Uint8Array;
 }
 
 export class CredsError extends Error {}
@@ -58,16 +44,11 @@ export function parseCreds(json: unknown): Creds {
 
   let usernameLookupKey: Uint8Array;
   let userRootKey: Uint8Array;
-  let assetSignKey: Uint8Array;
-  let assetHashes: Uint8Array;
   try {
     usernameLookupKey = base64ToBytes(requireString(data, "username_lookup_key"));
     userRootKey = base64ToBytes(requireString(data, "user_root_key"));
-    assetSignKey = base64ToBytes(requireString(data, "asset_sign_key"));
-    assetHashes = base64ToBytes(requireString(data, "asset_hashes"));
-  } catch (err) {
-    if (err instanceof CredsError) throw err;
-    throw new CredsError("username_lookup_key/user_root_key/asset_sign_key/asset_hashes must be valid base64");
+  } catch {
+    throw new CredsError("username_lookup_key/user_root_key must be valid base64");
   }
 
   if (usernameLookupKey.length < USERNAME_LOOKUP_KEY_MIN_LEN) {
@@ -75,12 +56,6 @@ export function parseCreds(json: unknown): Creds {
   }
   if (userRootKey.length < USER_ROOT_KEY_MIN_LEN) {
     throw new CredsError("user_root_key too short");
-  }
-  if (assetSignKey.length !== ASSET_SIGN_KEY_LEN) {
-    throw new CredsError(`asset_sign_key must be ${ASSET_SIGN_KEY_LEN} bytes`);
-  }
-  if (assetHashes.length !== ASSET_HASHES_LEN) {
-    throw new CredsError(`asset_hashes must be ${ASSET_HASHES_LEN} bytes`);
   }
 
   return {
@@ -91,7 +66,5 @@ export function parseCreds(json: unknown): Creds {
     password,
     displayName,
     userRootKey,
-    assetSignKey,
-    assetHashes,
   };
 }
