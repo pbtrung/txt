@@ -40,7 +40,9 @@ Create `admin_creds.json` with the following shape:
     "region": "auto",
     "bucket": "..."
   },
-  "user_root_key": "<256+ random bytes, base64>"
+  "user_root_key": "<256+ random bytes, base64>",
+  "asset_base_url": "<public URL the UI's built assets are served from>",
+  "slhdsa_256f_priv_key": "<leave empty -- `ui`'s build step fills this in the first time it runs>"
 }
 ```
 
@@ -111,7 +113,7 @@ cd ui
 npm install
 npm run dev      # http://localhost:5173
 npm test
-npm run build    # -> ui/dist
+npm run build -- --admin-creds ../creds/admin_creds.json    # -> ui/dist + creds/local_index.html
 ```
 
 ### Verbose logging
@@ -124,6 +126,64 @@ don't want to lose an in-progress session — it isn't persisted across reloads,
 the password, unwrapping `umk`, loading metadata/access/bookmarks) and every
 `db.execute()` call, from any screen, logs its SQL/args and either its row count or its
 error (`ui/src/data/db.ts`).
+
+### Locally-verified boot (`local_index.html`)
+
+`npm run build -- --admin-creds <path>` also writes `creds/local_index.html` (never
+`ui/dist/` — it's never uploaded to the CDN). Open that file directly (e.g. via
+`file://`) instead of the deployed URL, and it cryptographically verifies every
+built asset before ever rendering the Unlock screen — a spinner and a 5-line
+progress list (`Fetching manifest` / `Verifying signature` / `Fetching assets` /
+`Verifying asset hashes` / `Loading application`) track it.
+
+This exists to fix a real gap in an earlier design this project tried: a verifier
+that shipped as part of the same CDN-served bundle it was checking could simply be
+tampered away by whatever compromised that CDN. `local_index.html` never touches
+the CDN at all *except* to fetch and verify — it embeds its own public key and its
+own copy of the verification logic (including a self-contained, inlined build of
+[`@noble/post-quantum`](https://github.com/paulmillr/noble-post-quantum)'s
+`slh_dsa_sha2_256f` — no CDN/npm fetch at verify-time), generated once at build time
+and then kept only on your machine, in `creds/` (gitignored, matching
+`admin_creds.json`).
+
+At build time (`ui/scripts/build-integrity.mjs`):
+
+- an SLH-DSA-SHA2-256f keypair is loaded from `admin_creds.json`'s
+  `slhdsa_256f_priv_key` if present, or generated once (and written back there) if
+  it's still empty — a rebuild never silently invalidates `local_index.html` copies
+  already in use, since the key doesn't change unless you clear that field yourself;
+- every file under `ui/dist/` is SHA-512'd into `dist/manifest.json`, signed with
+  that key into `dist/manifest.sig`;
+- `ui/dist/index.html`'s own `<script>`/`<link rel=stylesheet>` tags get
+  `integrity="sha512-..."` (SRI, computed with Node's built-in `crypto`, no external
+  package) added — this hardens the *separate* case of someone visiting the CDN URL
+  directly, bypassing `local_index.html` entirely, against a MITM/cache swapping
+  those two files while leaving `index.html` unchanged.
+
+At open time, `local_index.html`:
+
+1. fetches `{asset_base_url}/manifest.json` and `manifest.sig`, and verifies the
+   signature over `manifest.json`'s exact bytes with the embedded public key —
+   nothing is trusted before this passes;
+2. fetches every file the now-trusted manifest lists and SHA-512s each one (native
+   `crypto.subtle`, no external package) against its recorded digest;
+3. once everything verifies, mounts the app directly from those already-verified
+   bytes (an inlined `<style>`/`<script type="module">`) — it never re-fetches
+   `index.html`/the entry JS/CSS a second time, since doing so would reopen the
+   exact gap this exists to close.
+
+**Known limitation**: only the entry JS/CSS get this full treatment. Fonts,
+`leancrypto.wasm`/`brotli_wasm`, and the one dynamically-imported JS chunk are
+still hashed once during step 2 above, but the *running app* fetches them again
+live later (via CSS `url()`, a dynamically created `<script src="/leancrypto.js">`,
+and a dynamic `import()`) without re-checking that later fetch against the
+manifest — a narrower version of today's total absence of any check, not an
+airtight guarantee.
+
+**Requires**: opening `local_index.html` via `file://` sends `Origin: null` on its
+cross-origin fetches to `asset_base_url` — add `"null"` to the R2 bucket's
+`AllowedOrigins` (see the CORS section right below) or these fetches will resolve
+but fail to read the response body.
 
 ### R2 bucket CORS policy (required)
 
@@ -153,7 +213,8 @@ wherever the UI is served:
 Add every origin the UI is actually served from (e.g. a deployed origin, not just
 `localhost`) as another entry in `AllowedOrigins`. `AllowedHeaders: ["*"]` is the safe
 default — a narrower list has to include every header the SigV4 signature adds, or the
-preflight still fails the same way.
+preflight still fails the same way. If you're using `local_index.html` (see above),
+add the literal string `"null"` as well — that's the `Origin` a `file://` page sends.
 
 ## License
 
