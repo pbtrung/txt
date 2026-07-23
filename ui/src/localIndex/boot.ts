@@ -5,6 +5,7 @@
 // build-time-embedded public key/asset_base_url.
 
 import { base64ToBytes } from "../crypto/bytes";
+import { verbose } from "../log";
 import { mountProgressUI } from "./progress";
 import { renderApp } from "./render";
 import { verifyAssets } from "./verify";
@@ -32,6 +33,7 @@ function waitForRootMount(): Promise<void> {
 }
 
 export async function boot(assetBaseUrl: string, publicKeyB64: string): Promise<void> {
+  verbose(`localIndex: boot starting, assetBaseUrl=${assetBaseUrl}`);
   const ui = mountProgressUI();
   try {
     const publicKey = base64ToBytes(publicKeyB64);
@@ -40,7 +42,9 @@ export async function boot(assetBaseUrl: string, publicKeyB64: string): Promise<
     renderApp(assetBaseUrl, verified);
     await waitForRootMount();
     ui.remove();
+    verbose("localIndex: boot done");
   } catch (err) {
+    verbose("localIndex: boot failed", err);
     ui.fail(errorMessage(err));
   }
 }

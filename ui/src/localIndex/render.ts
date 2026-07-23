@@ -8,6 +8,8 @@
 // local_index.html. Direct-CDN visits load dist/index.html the normal way;
 // that's a separate path this file has no part in.
 
+import { verbose } from "../log";
+
 export class RenderError extends Error {}
 
 function normalizeAssetPath(path: string): string {
@@ -45,6 +47,7 @@ export function renderApp(assetBaseUrl: string, verified: Map<string, Uint8Array
     throw new RenderError("manifest.json didn't include index.html");
   }
   const { jsPath, cssPath } = extractEntryPaths(new TextDecoder().decode(indexHtmlBytes));
+  verbose(`localIndex: entry paths -- js=${jsPath}, css=${cssPath ?? "(none)"}`);
 
   const jsBytes = verified.get(jsPath);
   if (!jsBytes) {
@@ -64,6 +67,7 @@ export function renderApp(assetBaseUrl: string, verified: Map<string, Uint8Array
   const base = document.createElement("base");
   base.href = `${assetBaseUrl.replace(/\/+$/, "")}/${dirOf(jsPath)}`;
   document.head.prepend(base);
+  verbose(`localIndex: base href set to ${base.href}`);
 
   if (cssPath) {
     const cssBytes = verified.get(cssPath);
@@ -78,4 +82,5 @@ export function renderApp(assetBaseUrl: string, verified: Map<string, Uint8Array
   script.type = "module";
   script.textContent = new TextDecoder().decode(jsBytes);
   document.body.appendChild(script);
+  verbose("localIndex: mounted app from verified bytes");
 }
