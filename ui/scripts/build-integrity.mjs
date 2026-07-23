@@ -27,19 +27,18 @@
 //      written back into that same admin-creds file (nothing else in it is
 //      touched) -- an existing key is always reused so a rebuild doesn't
 //      silently invalidate every local_index.html copy already in the wild.
-//   5. EXPERIMENT (see buildInlinedLocalIndexHtml()'s own comment): reads
-//      dist/index.html's entry JS/CSS and embeds them directly as
-//      statically-present <script type="module">/<style> tags in
-//      creds/local_index.html -- never dist/, so it's never uploaded to the
-//      CDN -- plus dist/index.html's own <title>/favicon so the browser tab
-//      looks the same as a normal CDN visit. This bypasses the
-//      SLH-DSA-verified fetch-then-mount design (ui/src/localIndex/,
-//      buildLocalIndexHtml()/bundleVerifier() below, currently unused) to
-//      test whether that design's dynamic script-injection mechanism is a
-//      factor in a React removeChild/fiber-reconciler crash under
-//      investigation -- see CLAUDE.md's React->Vue migration history.
-//      leancrypto.js and brotli-wasm's dynamically-imported chunk are
-//      unaffected either way: both keep loading live from asset_base_url.
+//   5. Bundles ui/src/localIndex/main.ts (via Vite's own build API, iife
+//      format, so @noble/post-quantum and its own dependencies get inlined
+//      into one self-contained script -- no CDN/npm fetch at verify-time)
+//      with the derived public key and --admin-creds's asset_base_url baked
+//      in, plus dist/index.html's own <title>/favicon (so the browser tab
+//      looks the same throughout the whole verify-then-render lifecycle,
+//      not just after the real app mounts), and writes the result to
+//      creds/local_index.html -- never dist/, so it's never uploaded to
+//      the CDN. This is the file a user opens directly (e.g. via file://)
+//      to verify everything before the real app ever renders; see
+//      ui/src/localIndex/ for that verification logic and why it can't
+//      live inside dist/ itself.
 
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
@@ -94,12 +93,6 @@ function listFilesRecursive(dir) {
 // as posix (forward-slash) in the manifest and by the browser fetching them.
 function toPosixPath(p) {
   return process.platform === "win32" ? p.split("\\").join("/") : p;
-}
-
-/** The directory portion of a posix-style dist/ path (e.g. "assets/index-abc.js" -> "assets/"). */
-function dirOf(path) {
-  const idx = path.lastIndexOf("/");
-  return idx === -1 ? "" : path.slice(0, idx + 1);
 }
 
 /** Adds integrity="sha512-<base64>" to every tag matching tagRegex that
@@ -237,9 +230,6 @@ function extractTabIdentity(html) {
   }
 }
 
-// Currently unused (see the EXPERIMENT comment on buildInlinedLocalIndexHtml
-// below) -- kept, along with bundleVerifier(), to revert back to the
-// verify-then-mount design once the removeChild investigation concludes.
 function buildLocalIndexHtml(bundleCode, title, faviconDataUri) {
   // Escaping </script -- same reason as the old sign-assets.mjs's JSON
   // injection: bundleCode is untrusted-shape text (could in principle
@@ -261,84 +251,6 @@ function buildLocalIndexHtml(bundleCode, title, faviconDataUri) {
 `;
 }
 
-/** Same tag/attribute extraction approach as addIntegrityToTags -- match the
- * whole tag first, then pull one attribute out of just that substring, so a
- * tag with other src=.../href=... on stray leading text can't cross-match. */
-function extractAttr(tag, attrName) {
-  return new RegExp(`\\s${attrName}="([^"]+)"`).exec(tag)?.[1] ?? null;
-}
-
-/** Finds dist/index.html's entry <script type="module" src=...>/
- * <link rel="stylesheet" href=...> paths -- the two files
- * buildInlinedLocalIndexHtml() embeds directly, so it knows which dist/
- * files to read. */
-function extractEntryPaths(html) {
-  const scriptTag = /<script[^>]*\stype="module"[^>]*>/.exec(html)?.[0];
-  if (!scriptTag) {
-    throw new Error('dist/index.html has no <script type="module"> entry tag');
-  }
-  const srcAttr = extractAttr(scriptTag, "src");
-  if (!srcAttr) {
-    throw new Error('dist/index.html\'s <script type="module"> tag has no src');
-  }
-  const linkTag = /<link[^>]*\srel="stylesheet"[^>]*>/.exec(html)?.[0];
-  const hrefAttr = linkTag && extractAttr(linkTag, "href");
-  return {
-    jsPath: srcAttr.replace(/^\//, ""),
-    cssPath: hrefAttr ? hrefAttr.replace(/^\//, "") : null,
-  };
-}
-
-// EXPERIMENT (see CLAUDE.md's React->Vue migration history around the
-// removeChild/fiber-reconciler bug this is trying to isolate): produces a
-// local_index.html with the entry JS/CSS embedded as *statically present*
-// <script type="module">/<style> tags -- parsed and run by the browser
-// exactly like a normal `vite build` page load, not dynamically created and
-// appended after an async verify pass (buildLocalIndexHtml()/render.ts's
-// prior design). This deliberately drops the verify-then-mount gate for the
-// entry specifically, to test whether that dynamic-injection mechanism
-// itself is a factor in the removeChild crash -- it is NOT the permanent
-// design; see buildLocalIndexHtml()/ui/src/localIndex/ to restore the
-// SLH-DSA-verified version once that's been ruled in or out.
-//
-// leancrypto.js and brotli-wasm's own dynamically-imported chunk are
-// untouched -- both keep loading live from assetBaseUrl exactly as they do
-// today (see crypto/leancryptoLoader.ts/crypto/brotli.ts): leancrypto.js
-// locates its own .wasm relative to its <script src=...> tag rather than via
-// an ES module import, and brotli-wasm's chunk has a relative import back to
-// this very entry chunk that only resolves against a real, hierarchical
-// base URL -- inlining either would need the same base URL machinery this
-// function already sets up via <base>, so both are left alone.
-function buildInlinedLocalIndexHtml(title, faviconDataUri, assetBaseUrl, jsPath, jsCode, cssCode) {
-  const jsDir = dirOf(jsPath);
-  // <base> resolves brotli-wasm's relative `import("./index.web-....js")`
-  // (now running from this inlined script, no `src` of its own) and
-  // leancryptoLoader.ts's root-absolute <script src="/leancrypto.js">
-  // against assetBaseUrl -- same reasoning render.ts's version had, just
-  // computed at build time here since there's no runtime verify step left
-  // to compute it in.
-  const baseHref = `${assetBaseUrl.replace(/\/+$/, "")}/${jsDir}`;
-  const faviconTag = faviconDataUri ? `\n    <link rel="icon" href="${faviconDataUri}" />` : "";
-  const styleTag = cssCode ? `\n    <style>${cssCode}</style>` : "";
-  // Escaping </script -- jsCode is untrusted-shape text (could in principle
-  // contain a string literal with that sequence) that must not be able to
-  // close the surrounding <script> tag early.
-  const safeJsCode = jsCode.replace(/<\/script/gi, "<\\/script");
-  return `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />${faviconTag}
-    <base href="${baseHref}" />
-    <title>${title}</title>${styleTag}
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module">${safeJsCode}</script>
-  </body>
-</html>
-`;
-}
-
 async function main() {
   const { adminCredsPath } = parseArgs(process.argv.slice(2));
   if (!adminCredsPath) {
@@ -349,7 +261,7 @@ async function main() {
   }
   const adminCreds = loadAdminCreds(adminCredsPath);
   const assetBaseUrl = requireAssetBaseUrl(adminCreds, adminCredsPath);
-  const { secretKey, generated } = loadOrCreateKeypair(adminCreds);
+  const { secretKey, publicKey, generated } = loadOrCreateKeypair(adminCreds);
 
   const originalHtml = readFileSync(INDEX_HTML_PATH, "utf8");
   writeFileSync(INDEX_HTML_PATH, addSri(originalHtml), "utf8");
@@ -365,20 +277,15 @@ async function main() {
     writeFileSync(adminCredsPath, JSON.stringify(adminCreds, null, 2) + "\n", "utf8");
   }
 
-  const { jsPath, cssPath } = extractEntryPaths(originalHtml);
-  const jsCode = readFileSync(join(DIST_DIR, jsPath), "utf8");
-  const cssCode = cssPath ? readFileSync(join(DIST_DIR, cssPath), "utf8") : null;
+  const publicKeyB64 = Buffer.from(publicKey).toString("base64");
+  const bundleCode = await bundleVerifier(assetBaseUrl, publicKeyB64);
   const { title, faviconDataUri } = extractTabIdentity(originalHtml);
   mkdirSync(CREDS_DIR, { recursive: true });
-  writeFileSync(
-    LOCAL_INDEX_PATH,
-    buildInlinedLocalIndexHtml(title, faviconDataUri, assetBaseUrl, jsPath, jsCode, cssCode),
-    "utf8",
-  );
+  writeFileSync(LOCAL_INDEX_PATH, buildLocalIndexHtml(bundleCode, title, faviconDataUri), "utf8");
 
   const keyNote = generated ? ` (generated a new keypair, written back to ${adminCredsPath})` : "";
   console.log(`Signed ${Object.keys(manifest).length} asset(s) with SLH-DSA-SHA2-256f${keyNote}.`);
-  console.log(`Wrote ${relative(resolve(UI_DIR, ".."), LOCAL_INDEX_PATH)} (entry JS/CSS embedded inline -- EXPERIMENT, see comment on buildInlinedLocalIndexHtml)`);
+  console.log(`Wrote ${relative(resolve(UI_DIR, ".."), LOCAL_INDEX_PATH)}`);
 }
 
 main().catch((err) => {
