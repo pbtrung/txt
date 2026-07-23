@@ -31,11 +31,14 @@
 //      format, so @noble/post-quantum and its own dependencies get inlined
 //      into one self-contained script -- no CDN/npm fetch at verify-time)
 //      with the derived public key and --admin-creds's asset_base_url baked
-//      in, and writes the result to creds/local_index.html -- never dist/,
-//      so it's never uploaded to the CDN. This is the file a user opens
-//      directly (e.g. via file://) to verify everything before the real app
-//      ever renders; see ui/src/localIndex/ for that verification logic and
-//      why it can't live inside dist/ itself.
+//      in, plus dist/index.html's own <title>/favicon (so the browser tab
+//      looks the same throughout the whole verify-then-render lifecycle,
+//      not just after the real app mounts), and writes the result to
+//      creds/local_index.html -- never dist/, so it's never uploaded to
+//      the CDN. This is the file a user opens directly (e.g. via file://)
+//      to verify everything before the real app ever renders; see
+//      ui/src/localIndex/ for that verification logic and why it can't
+//      live inside dist/ itself.
 
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
@@ -206,17 +209,39 @@ async function bundleVerifier(assetBaseUrl, publicKeyB64) {
   return chunk.code;
 }
 
-function buildLocalIndexHtml(bundleCode) {
+/** Reads dist/index.html's own <title> and <link rel="icon"> so the browser
+ * tab looks the same throughout local_index.html's whole verify-then-render
+ * lifecycle, not just after the real app mounts -- derived from index.html
+ * itself rather than hardcoded, so a future title/favicon change there
+ * doesn't also need a matching edit here. The favicon gets inlined as a
+ * data: URI (self-contained, no separate fetch needed before it's even
+ * possible to trust asset_base_url) rather than referencing its dist/ path. */
+function extractTabIdentity(html) {
+  const title = /<title>([^<]*)<\/title>/i.exec(html)?.[1] ?? "Verifying…";
+  const iconTag = /<link([^>]*\srel="icon"[^>]*)>/i.exec(html)?.[1];
+  const iconHref = iconTag && /\shref="([^"]+)"/.exec(iconTag)?.[1];
+  const iconType = (iconTag && /\stype="([^"]+)"/.exec(iconTag)?.[1]) ?? "image/svg+xml";
+  if (!iconHref) return { title, faviconDataUri: null };
+  try {
+    const bytes = readFileSync(join(DIST_DIR, iconHref.replace(/^\//, "")));
+    return { title, faviconDataUri: `data:${iconType};base64,${bytes.toString("base64")}` };
+  } catch {
+    return { title, faviconDataUri: null };
+  }
+}
+
+function buildLocalIndexHtml(bundleCode, title, faviconDataUri) {
   // Escaping </script -- same reason as the old sign-assets.mjs's JSON
   // injection: bundleCode is untrusted-shape text (could in principle
   // contain a string literal with that sequence) that must not be able to
   // close the surrounding <script> tag early.
   const safeCode = bundleCode.replace(/<\/script/gi, "<\\/script");
+  const faviconTag = faviconDataUri ? `\n    <link rel="icon" href="${faviconDataUri}" />` : "";
   return `<!doctype html>
 <html lang="en">
   <head>
-    <meta charset="UTF-8" />
-    <title>Verifying…</title>
+    <meta charset="UTF-8" />${faviconTag}
+    <title>${title}</title>
   </head>
   <body>
     <div id="root"></div>
@@ -254,8 +279,9 @@ async function main() {
 
   const publicKeyB64 = Buffer.from(publicKey).toString("base64");
   const bundleCode = await bundleVerifier(assetBaseUrl, publicKeyB64);
+  const { title, faviconDataUri } = extractTabIdentity(originalHtml);
   mkdirSync(CREDS_DIR, { recursive: true });
-  writeFileSync(LOCAL_INDEX_PATH, buildLocalIndexHtml(bundleCode), "utf8");
+  writeFileSync(LOCAL_INDEX_PATH, buildLocalIndexHtml(bundleCode, title, faviconDataUri), "utf8");
 
   const keyNote = generated ? ` (generated a new keypair, written back to ${adminCredsPath})` : "";
   console.log(`Signed ${Object.keys(manifest).length} asset(s) with SLH-DSA-SHA2-256f${keyNote}.`);

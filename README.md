@@ -217,6 +217,19 @@ front of it, add `"null"` to that bucket's `AllowedOrigins` instead (see the COR
 section right below) — either way, without one of these, the fetches resolve but
 fail to read the response body.
 
+**R2 downloads**: once the real app is running (whether mounted via `local_index.html`
+or served normally), `ui/src/data/r2.ts`'s `getObject()` — every `txt_parts` read the
+Reader does — behaves differently under `local_index.html` specifically. A normal
+header-signed GET (`Authorization`/`x-amz-date`/`x-amz-content-sha256`) is a
+"non-simple" cross-origin request needing a CORS preflight, which an R2 bucket can't
+be configured to answer for a `file://` page's null origin. So under `location.protocol
+=== "file:"` only (`shouldPresign()`), `getObject()` instead uses a query-string-signed
+("presigned") URL with a 60-second `X-Amz-Expires` — no custom headers at all, so it's
+a *simple* request with no preflight. This still needs the R2 bucket's `AllowedOrigins`
+to include something that matches (see below) for the response body to be readable —
+presigning only removes the preflight, not the need for a matching origin on the actual
+GET response.
+
 ### R2 bucket CORS policy (required)
 
 Cloudflare R2 buckets ship with **no CORS policy at all** by default, which silently
@@ -245,8 +258,15 @@ wherever the UI is served:
 Add every origin the UI is actually served from (e.g. a deployed origin, not just
 `localhost`) as another entry in `AllowedOrigins`. `AllowedHeaders: ["*"]` is the safe
 default — a narrower list has to include every header the SigV4 signature adds, or the
-preflight still fails the same way. If you're using `local_index.html` (see above),
-add the literal string `"null"` as well — that's the `Origin` a `file://` page sends.
+preflight still fails the same way.
+
+If you're using `local_index.html`: `getObject()`'s presigned-URL fallback (see above)
+already avoids the preflight, but the *response* to that simple GET still needs an
+`Access-Control-Allow-Origin` matching a `file://` page's null origin, and R2 may not
+accept the literal string `"null"` as an `AllowedOrigins` entry. `"AllowedOrigins":
+["*"]` is the practical fix — these GETs carry no cookies/credentials, so a wildcard
+origin is safe here, and it's what the presigned URL's own short (60s) expiry is
+already standing in for as the actual access control.
 
 ## License
 
