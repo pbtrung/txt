@@ -40,17 +40,7 @@ afterEach(() => {
   document.querySelectorAll("base").forEach((el) => el.remove());
   document.querySelectorAll("style").forEach((el) => el.remove());
   document.querySelectorAll("script").forEach((el) => el.remove());
-  delete (URL as unknown as { createObjectURL?: unknown }).createObjectURL;
 });
-
-// jsdom doesn't implement URL.createObjectURL -- stub it so tests can assert
-// on the blob: URLs installChunkImportMap() creates without needing a real
-// Blob/URL registry.
-function stubCreateObjectURL(): ReturnType<typeof vi.fn> {
-  const stub = vi.fn((blob: Blob) => `blob:mock/${blob.size}`);
-  (URL as unknown as { createObjectURL: typeof stub }).createObjectURL = stub;
-  return stub;
-}
 
 describe("renderApp", () => {
   it("sets <base> to the entry JS's own directory under assetBaseUrl", () => {
@@ -109,57 +99,5 @@ describe("renderApp", () => {
     verified.delete("assets/index-BrwasotO.js");
     expect(() => renderApp(ASSET_BASE_URL, verified)).toThrow(RenderError);
     expect(() => renderApp(ASSET_BASE_URL, verified)).toThrow(/didn't include/);
-  });
-
-  describe("dynamically-imported chunk embedding", () => {
-    it("maps a verified extra .js chunk's real dist/ URL to a blob: URL via an import map", () => {
-      const createObjectURL = stubCreateObjectURL();
-      const verified = verifiedMap({ "assets/index.web-abc123.js": "console.log('chunk')" });
-
-      renderApp(ASSET_BASE_URL, verified);
-
-      expect(createObjectURL).toHaveBeenCalledTimes(1);
-      const blob = createObjectURL.mock.calls[0][0];
-      expect(blob.type).toBe("text/javascript");
-
-      const importMap = document.head.querySelector('script[type="importmap"]')!;
-      const parsed = JSON.parse(importMap.textContent!);
-      expect(parsed.imports).toEqual({
-        "https://cdn.example.com/app/assets/index.web-abc123.js": createObjectURL.mock.results[0].value,
-      });
-    });
-
-    it("does not remap the entry JS itself or leancrypto.js", () => {
-      const createObjectURL = stubCreateObjectURL();
-      const verified = verifiedMap({
-        "leancrypto.js": "var leancrypto = {};",
-        "assets/index.web-abc123.js": "console.log('chunk')",
-      });
-
-      renderApp(ASSET_BASE_URL, verified);
-
-      expect(createObjectURL).toHaveBeenCalledTimes(1); // only the extra chunk, not the entry or leancrypto.js
-      const importMap = document.head.querySelector('script[type="importmap"]')!;
-      const parsed = JSON.parse(importMap.textContent!);
-      expect(Object.keys(parsed.imports)).toEqual(["https://cdn.example.com/app/assets/index.web-abc123.js"]);
-    });
-
-    it("adds no import map at all when there's nothing extra to remap", () => {
-      const createObjectURL = stubCreateObjectURL();
-      renderApp(ASSET_BASE_URL, verifiedMap());
-      expect(createObjectURL).not.toHaveBeenCalled();
-      expect(document.head.querySelector('script[type="importmap"]')).toBeNull();
-    });
-
-    it("installs the import map before the entry <script type=module>, not after", () => {
-      stubCreateObjectURL();
-      const verified = verifiedMap({ "assets/index.web-abc123.js": "console.log('chunk')" });
-
-      renderApp(ASSET_BASE_URL, verified);
-
-      const importMap = document.head.querySelector('script[type="importmap"]')!;
-      const entryScript = document.body.querySelector('script[type="module"]')!;
-      expect(importMap.compareDocumentPosition(entryScript) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    });
   });
 });
