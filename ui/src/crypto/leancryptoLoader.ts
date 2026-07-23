@@ -30,10 +30,6 @@
 
 import { isBrowser } from "../env";
 
-// Baked in by vite.config.ts's `define` (a SHA-512 of ui/leancrypto/leancrypto.js
-// computed at build time) -- see loadBrowserFactory()'s use of it below.
-declare const __LEANCRYPTO_JS_INTEGRITY__: string;
-
 export interface LeancryptoModule {
   HEAPU8: Uint8Array;
   HEAPU32: Uint32Array;
@@ -106,12 +102,6 @@ function loadBrowserFactory(): Promise<LeancryptoFactory> {
       return;
     }
     const script = document.createElement("script");
-    // Set before src -- SRI is only enforced on the fetch the browser
-    // triggers once this element is inserted into the document below;
-    // integrity/crossOrigin need to already be present at that point, not
-    // added afterward.
-    script.integrity = __LEANCRYPTO_JS_INTEGRITY__;
-    script.crossOrigin = "anonymous";
     script.src = "/leancrypto.js";
     script.onload = () => {
       const factory = (window as unknown as { leancrypto?: LeancryptoFactory }).leancrypto;

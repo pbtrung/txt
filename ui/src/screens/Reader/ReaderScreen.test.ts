@@ -1,20 +1,26 @@
 // @vitest-environment jsdom
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/vue";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { defineComponent, h, ref } from "vue";
+import { createMemoryHistory, createRouter, RouterView, type Router } from "vue-router";
 import { describe, expect, it, vi } from "vitest";
 
-import { ReaderScreen } from "./ReaderScreen";
-import * as useReaderBookModule from "./useReaderBook";
 import type { UseReaderBookResult } from "./useReaderBook";
 
 vi.mock("./useReaderBook", () => ({ useReaderBook: vi.fn() }));
 
-function baseResult(overrides: Partial<UseReaderBookResult> = {}): UseReaderBookResult {
+import ReaderScreen from "./ReaderScreen.vue";
+import * as useReaderBookModule from "./useReaderBook";
+
+// Loosely typed on purpose -- overrides swap in plain ref()s in place of
+// fields the real composable exposes as ComputedRef (info, bookmarks, ...),
+// which is fine for a mock but not structurally assignable to
+// Partial<UseReaderBookResult> itself.
+function refResult(overrides: Record<string, unknown> = {}): UseReaderBookResult {
   return {
-    loading: false,
-    error: null,
-    info: {
+    loading: ref(false),
+    error: ref(null),
+    info: ref({
       txtId: 1,
       name: "white-order.epub.txt",
       title: "The White Order",
@@ -30,16 +36,16 @@ function baseResult(overrides: Partial<UseReaderBookResult> = {}): UseReaderBook
         { key: "date", values: ["1998-01-01"] },
         { key: "language", values: ["en"] },
       ],
-    },
-    partCount: 41,
-    currentPartNum: 14,
-    partText: "First paragraph of part 14.\n\nSecond paragraph.",
-    partTextLoading: false,
-    bookmarks: [
+    }),
+    partCount: ref(41),
+    currentPartNum: ref(14),
+    partText: ref("First paragraph of part 14.\n\nSecond paragraph."),
+    partTextLoading: ref(false),
+    bookmarks: ref([
       { partNum: 14, line: 1, txtPreview: "First paragraph of part 14.", createdAt: 3000 },
       { partNum: 8, line: 2, txtPreview: "Some earlier line preview", createdAt: 2000 },
-    ],
-    targetLine: null,
+    ]),
+    targetLine: ref(null),
     clearTargetLine: vi.fn(),
     goToPart: vi.fn(),
     goToBookmark: vi.fn(),
@@ -48,19 +54,27 @@ function baseResult(overrides: Partial<UseReaderBookResult> = {}): UseReaderBook
     bookmarkLine: vi.fn(),
     removeBookmark: vi.fn(),
     ...overrides,
-  };
+  } as unknown as UseReaderBookResult;
 }
 
-function renderReader(result: UseReaderBookResult) {
+const LibraryStub = defineComponent({ setup: () => () => h("div", "Library screen") });
+
+function createTestRouter(): Router {
+  return createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: "/read/:txtId", component: ReaderScreen },
+      { path: "/library", component: LibraryStub },
+    ],
+  });
+}
+
+async function renderReader(result: UseReaderBookResult) {
   vi.mocked(useReaderBookModule.useReaderBook).mockReturnValue(result);
-  return render(
-    <MemoryRouter initialEntries={["/read/1"]}>
-      <Routes>
-        <Route path="/read/:txtId" element={<ReaderScreen />} />
-        <Route path="/library" element={<div>Library screen</div>} />
-      </Routes>
-    </MemoryRouter>,
-  );
+  const router = createTestRouter();
+  await router.push("/read/1");
+  const AppStub = defineComponent({ setup: () => () => h(RouterView) });
+  return render(AppStub, { global: { plugins: [router] } });
 }
 
 async function openInfo() {
@@ -72,21 +86,21 @@ async function openBookmarks() {
 }
 
 describe("ReaderScreen", () => {
-  it("shows an icon-only back button, no 'Library' text", () => {
-    renderReader(baseResult());
+  it("shows an icon-only back button, no 'Library' text", async () => {
+    await renderReader(refResult());
     const back = screen.getByRole("button", { name: /library/i });
     expect(back).toHaveAccessibleName("Back to library");
     expect(back).not.toHaveTextContent("Library");
   });
 
-  it("renders the author as a dedicated line for small screens, alongside the inline version for larger ones", () => {
-    renderReader(baseResult());
+  it("renders the author as a dedicated line for small screens, alongside the inline version for larger ones", async () => {
+    await renderReader(refResult());
     const mobileAuthor = document.querySelector(".d-sm-none");
     expect(mobileAuthor).toHaveTextContent("L. E. Modesitt, Jr.");
   });
 
-  it("uses small (btn-sm) Previous/Next buttons, matching the top bar's buttons", () => {
-    renderReader(baseResult());
+  it("uses small (btn-sm) Previous/Next buttons, matching the top bar's buttons", async () => {
+    await renderReader(refResult());
     expect(screen.getByRole("button", { name: /previous/i })).toHaveClass("btn-sm");
     expect(screen.getByRole("button", { name: /next/i })).toHaveClass("btn-sm");
   });
@@ -96,8 +110,8 @@ describe("ReaderScreen", () => {
       return screen.getByRole("combobox", { name: /font size/i });
     }
 
-    it("offers 14/16/18/20/22/24px, defaulting to 16px", () => {
-      renderReader(baseResult());
+    it("offers 14/16/18/20/22/24px, defaulting to 16px", async () => {
+      await renderReader(refResult());
       const select = fontSizeSelect();
       expect(select).toHaveValue("16");
       expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual([
@@ -110,21 +124,21 @@ describe("ReaderScreen", () => {
       ]);
     });
 
-    it("adapts the reading column's max-width in ch, not a fixed pixel value, so line length stays ~70 characters at any font size", () => {
-      renderReader(baseResult());
+    it("adapts the reading column's max-width in ch, not a fixed pixel value, so line length stays ~70 characters at any font size", async () => {
+      await renderReader(refResult());
       const line = screen.getByText("First paragraph of part 14.").closest(".reader-font") as HTMLElement;
       expect(line.style.maxWidth).toBe("70ch");
     });
 
-    it("sits to the left of the Previous button in the bottom bar", () => {
-      renderReader(baseResult());
+    it("sits to the left of the Previous button in the bottom bar", async () => {
+      await renderReader(refResult());
       const select = fontSizeSelect();
       const previous = screen.getByRole("button", { name: /previous/i });
       expect(select.compareDocumentPosition(previous) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     });
 
     it("resizes the reading pane's text when changed", async () => {
-      renderReader(baseResult());
+      await renderReader(refResult());
       const line = screen.getByText("First paragraph of part 14.").closest(".reader-font") as HTMLElement;
       expect(line.style.fontSize).toBe("16px");
 
@@ -134,15 +148,15 @@ describe("ReaderScreen", () => {
   });
 
   describe("editable part number", () => {
-    it("shows the current part number and total", () => {
-      renderReader(baseResult());
+    it("shows the current part number and total", async () => {
+      await renderReader(refResult());
       expect(screen.getByRole("textbox", { name: /go to part/i })).toHaveValue("14");
       expect(screen.getByText("/ 41")).toBeInTheDocument();
     });
 
     it("jumps to a typed part number on Enter", async () => {
       const goToPart = vi.fn();
-      renderReader(baseResult({ goToPart }));
+      await renderReader(refResult({ goToPart }));
       const input = screen.getByRole("textbox", { name: /go to part/i });
       await userEvent.clear(input);
       await userEvent.type(input, "7{Enter}");
@@ -151,7 +165,7 @@ describe("ReaderScreen", () => {
 
     it("jumps on blur too", async () => {
       const goToPart = vi.fn();
-      renderReader(baseResult({ goToPart }));
+      await renderReader(refResult({ goToPart }));
       const input = screen.getByRole("textbox", { name: /go to part/i });
       await userEvent.clear(input);
       await userEvent.type(input, "3");
@@ -161,7 +175,7 @@ describe("ReaderScreen", () => {
 
     it("resets to the current part instead of jumping when cleared to nothing", async () => {
       const goToPart = vi.fn();
-      renderReader(baseResult({ goToPart }));
+      await renderReader(refResult({ goToPart }));
       const input = screen.getByRole("textbox", { name: /go to part/i });
       await userEvent.clear(input);
       await userEvent.click(document.body);
@@ -170,7 +184,7 @@ describe("ReaderScreen", () => {
     });
 
     it("strips non-digits and caps at partCount's own digit count while typing", async () => {
-      renderReader(baseResult()); // partCount: 41 -> 2 digits
+      await renderReader(refResult()); // partCount: 41 -> 2 digits
       const input = screen.getByRole("textbox", { name: /go to part/i });
       await userEvent.clear(input);
       await userEvent.type(input, "12a34b5");
@@ -178,7 +192,7 @@ describe("ReaderScreen", () => {
     });
 
     it("widens the cap to match a 3-digit partCount", async () => {
-      renderReader(baseResult({ partCount: 641 }));
+      await renderReader(refResult({ partCount: ref(641) }));
       const input = screen.getByRole("textbox", { name: /go to part/i });
       await userEvent.clear(input);
       await userEvent.type(input, "12a34b5");
@@ -186,21 +200,21 @@ describe("ReaderScreen", () => {
     });
   });
 
-  it("renders the current part's text, split into lines", () => {
-    renderReader(baseResult());
+  it("renders the current part's text, split into lines", async () => {
+    await renderReader(refResult());
     expect(screen.getByText("First paragraph of part 14.")).toBeInTheDocument();
     expect(screen.getByText("Second paragraph.")).toBeInTheDocument();
     expect(screen.getByText("Part 14 of 41")).toBeInTheDocument();
   });
 
   describe("About this book dropdown", () => {
-    it("is closed by default", () => {
-      renderReader(baseResult());
+    it("is closed by default", async () => {
+      await renderReader(refResult());
       expect(screen.queryByText("Saga of Recluce, #8")).not.toBeInTheDocument();
     });
 
     it("opens on click, showing series and subjects, and closes on a second click", async () => {
-      renderReader(baseResult());
+      await renderReader(refResult());
       await openInfo();
       expect(screen.getByText("Saga of Recluce, #8")).toBeInTheDocument();
       expect(screen.getByText("Fantasy")).toBeInTheDocument();
@@ -211,7 +225,7 @@ describe("ReaderScreen", () => {
     });
 
     it("closes when clicking outside it", async () => {
-      renderReader(baseResult());
+      await renderReader(refResult());
       await openInfo();
       expect(screen.getByText("Saga of Recluce, #8")).toBeInTheDocument();
 
@@ -220,14 +234,17 @@ describe("ReaderScreen", () => {
     });
 
     it("closes on Escape", async () => {
-      renderReader(baseResult());
+      await renderReader(refResult());
       await openInfo();
       await userEvent.keyboard("{Escape}");
       expect(screen.queryByText("Saga of Recluce, #8")).not.toBeInTheDocument();
     });
 
     it("renders HTML formatting in a short description (e.g. Calibre-style OPF markup)", async () => {
-      renderReader(baseResult({ info: { ...baseResult().info!, description: "<b>Bold</b> and <i>italic</i> text." } }));
+      const base = refResult();
+      await renderReader(
+        refResult({ info: ref({ ...base.info.value!, description: "<b>Bold</b> and <i>italic</i> text." }) }),
+      );
       await openInfo();
       const bold = screen.getByText("Bold");
       expect(bold.tagName).toBe("B");
@@ -236,12 +253,13 @@ describe("ReaderScreen", () => {
     });
 
     it("sanitizes a malicious description instead of executing it", async () => {
-      renderReader(
-        baseResult({
-          info: {
-            ...baseResult().info!,
+      const base = refResult();
+      await renderReader(
+        refResult({
+          info: ref({
+            ...base.info.value!,
             description: '<img src=x onerror="window.__pwned__=true">Safe text<script>window.__pwned__=true</script>',
-          },
+          }),
         }),
       );
       await openInfo();
@@ -253,7 +271,8 @@ describe("ReaderScreen", () => {
 
     it("truncates a long description to 200 characters with a Show more button", async () => {
       const longDescription = "A".repeat(250);
-      renderReader(baseResult({ info: { ...baseResult().info!, description: longDescription } }));
+      const base = refResult();
+      await renderReader(refResult({ info: ref({ ...base.info.value!, description: longDescription }) }));
       await openInfo();
 
       expect(screen.getByText(`${"A".repeat(200)}…`)).toBeInTheDocument();
@@ -267,13 +286,13 @@ describe("ReaderScreen", () => {
     });
 
     it("doesn't show a Show more button for a short description", async () => {
-      renderReader(baseResult());
+      await renderReader(refResult());
       await openInfo();
       expect(screen.queryByRole("button", { name: /show more/i })).not.toBeInTheDocument();
     });
 
     it("shows every raw metadata field from the catalog entry, not just the curated summary", async () => {
-      renderReader(baseResult());
+      await renderReader(refResult());
       await openInfo();
       expect(screen.getByText("All metadata")).toBeInTheDocument();
       expect(screen.getByText("date")).toBeInTheDocument();
@@ -283,42 +302,38 @@ describe("ReaderScreen", () => {
     });
 
     it("hides the 'All metadata' section entirely when there's none to show", async () => {
-      renderReader(baseResult({ info: { ...baseResult().info!, rawMetadata: [] } }));
+      const base = refResult();
+      await renderReader(refResult({ info: ref({ ...base.info.value!, rawMetadata: [] }) }));
       await openInfo();
       expect(screen.queryByText("All metadata")).not.toBeInTheDocument();
     });
   });
 
   describe("Bookmarks dropdown", () => {
-    it("is closed by default", () => {
-      renderReader(baseResult());
+    it("is closed by default", async () => {
+      await renderReader(refResult());
       expect(screen.queryByText("Part 14 · Line 1")).not.toBeInTheDocument();
     });
 
     it("opens upward (it's anchored in the bottom bar, not the top bar)", async () => {
-      renderReader(baseResult());
+      await renderReader(refResult());
       await openBookmarks();
       const menu = screen.getByText("Part 14 · Line 1").closest(".dropdown-menu");
       expect(menu).toHaveClass("app-dropdown-menu-up");
     });
 
-    it("shows the filled icon when the book has bookmarks, outline otherwise", () => {
-      const { rerender } = renderReader(baseResult());
+    it("shows the filled icon when the book has bookmarks", async () => {
+      await renderReader(refResult());
       expect(document.querySelector(".bi-bookmark-fill")).toBeInTheDocument();
+    });
 
-      vi.mocked(useReaderBookModule.useReaderBook).mockReturnValue(baseResult({ bookmarks: [] }));
-      rerender(
-        <MemoryRouter initialEntries={["/read/1"]}>
-          <Routes>
-            <Route path="/read/:txtId" element={<ReaderScreen />} />
-          </Routes>
-        </MemoryRouter>,
-      );
+    it("shows the outline icon when the book has no bookmarks", async () => {
+      await renderReader(refResult({ bookmarks: ref([]) }));
       expect(document.querySelector(".bi-bookmark-fill")).not.toBeInTheDocument();
     });
 
     it("opens on click, showing part/line and a text preview", async () => {
-      renderReader(baseResult());
+      await renderReader(refResult());
       await openBookmarks();
       expect(screen.getByText("Part 14 · Line 1")).toBeInTheDocument();
       expect(screen.getByText("“First paragraph of part 14.”")).toBeInTheDocument();
@@ -327,7 +342,7 @@ describe("ReaderScreen", () => {
     });
 
     it("opening it closes an already-open info dropdown, and vice versa", async () => {
-      renderReader(baseResult());
+      await renderReader(refResult());
       await openInfo();
       expect(screen.getByText("Saga of Recluce, #8")).toBeInTheDocument();
 
@@ -338,7 +353,7 @@ describe("ReaderScreen", () => {
 
     it("jumps to a bookmark's exact part and line when it's clicked", async () => {
       const goToBookmark = vi.fn();
-      renderReader(baseResult({ goToBookmark }));
+      await renderReader(refResult({ goToBookmark }));
       await openBookmarks();
       await userEvent.click(screen.getByText("Part 8 · Line 2"));
       expect(goToBookmark).toHaveBeenCalledWith(8, 2);
@@ -347,7 +362,7 @@ describe("ReaderScreen", () => {
     it("removes a bookmark via its delete button, without jumping to it", async () => {
       const goToBookmark = vi.fn();
       const removeBookmark = vi.fn();
-      renderReader(baseResult({ goToBookmark, removeBookmark }));
+      await renderReader(refResult({ goToBookmark, removeBookmark }));
       await openBookmarks();
       const row = screen.getByText("Part 8 · Line 2").closest('[role="button"]') as HTMLElement;
       await userEvent.click(within(row).getByRole("button", { name: /remove this bookmark/i }));
@@ -356,8 +371,8 @@ describe("ReaderScreen", () => {
     });
   });
 
-  it("disables Previous on the first part and Next on the last", () => {
-    renderReader(baseResult({ currentPartNum: 1, partCount: 1 }));
+  it("disables Previous on the first part and Next on the last", async () => {
+    await renderReader(refResult({ currentPartNum: ref(1), partCount: ref(1) }));
     expect(screen.getByRole("button", { name: /previous/i })).toBeDisabled();
     expect(screen.getByRole("button", { name: /next/i })).toBeDisabled();
   });
@@ -365,7 +380,7 @@ describe("ReaderScreen", () => {
   it("calls next()/previous() when their buttons are clicked", async () => {
     const next = vi.fn();
     const previous = vi.fn();
-    renderReader(baseResult({ next, previous }));
+    await renderReader(refResult({ next, previous }));
     await userEvent.click(screen.getByRole("button", { name: /next/i }));
     await userEvent.click(screen.getByRole("button", { name: /previous/i }));
     expect(next).toHaveBeenCalledTimes(1);
@@ -374,47 +389,47 @@ describe("ReaderScreen", () => {
 
   it("bookmarks a specific line via that line's own gutter button", async () => {
     const bookmarkLine = vi.fn();
-    renderReader(baseResult({ bookmarks: [], bookmarkLine }));
+    await renderReader(refResult({ bookmarks: ref([]), bookmarkLine }));
     await userEvent.click(screen.getByRole("button", { name: /bookmark line 2/i }));
     expect(bookmarkLine).toHaveBeenCalledWith(2, "Second paragraph.");
   });
 
-  it("marks an already-bookmarked line's gutter icon as pressed", () => {
-    renderReader(baseResult());
+  it("marks an already-bookmarked line's gutter icon as pressed", async () => {
+    await renderReader(refResult());
     expect(screen.getByRole("button", { name: /bookmark line 1/i })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: /bookmark line 2/i })).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("scrolls to the target line once its text is ready", () => {
+  it("scrolls to the target line once its text is ready", async () => {
     const scrollIntoView = vi.fn();
     Element.prototype.scrollIntoView = scrollIntoView;
-    renderReader(baseResult({ targetLine: 1 }));
+    await renderReader(refResult({ targetLine: ref(1) }));
     expect(scrollIntoView).toHaveBeenCalled();
   });
 
-  it("clears the target line once it's been scrolled to", () => {
+  it("clears the target line once it's been scrolled to", async () => {
     Element.prototype.scrollIntoView = vi.fn();
     const clearTargetLine = vi.fn();
-    renderReader(baseResult({ targetLine: 1, clearTargetLine }));
+    await renderReader(refResult({ targetLine: ref(1), clearTargetLine }));
     expect(clearTargetLine).toHaveBeenCalled();
   });
 
   it("navigates back to /library", async () => {
-    renderReader(baseResult());
+    await renderReader(refResult());
     await userEvent.click(screen.getByRole("button", { name: /library/i }));
     expect(await screen.findByText("Library screen")).toBeInTheDocument();
   });
 
-  it('shows "-" instead of 0 for the part box/total on first load, before partCount is known', () => {
-    renderReader(baseResult({ loading: true, partCount: 0, currentPartNum: 1 }));
+  it('shows "-" instead of 0 for the part box/total on first load, before partCount is known', async () => {
+    await renderReader(refResult({ loading: ref(true), partCount: ref(0), currentPartNum: ref(1) }));
     const input = screen.getByRole("textbox", { name: /go to part/i });
     expect(input).toHaveValue("-");
     expect(input).toBeDisabled();
     expect(screen.getByText("/ -")).toBeInTheDocument();
   });
 
-  it("shows a spinner in the reading pane while loading, but keeps the rest of the chrome", () => {
-    renderReader(baseResult({ loading: true }));
+  it("shows a spinner in the reading pane while loading, but keeps the rest of the chrome", async () => {
+    await renderReader(refResult({ loading: ref(true) }));
     expect(screen.getByRole("status")).toBeInTheDocument();
     // The top bar (back-to-library, book title fallback) renders right away
     // instead of being replaced by a full-page loading screen.
@@ -422,13 +437,13 @@ describe("ReaderScreen", () => {
     expect(screen.queryByText("First paragraph of part 14.")).not.toBeInTheDocument();
   });
 
-  it("shows a spinner in the reading pane while a part is (re)loading", () => {
-    renderReader(baseResult({ partTextLoading: true, partText: null }));
+  it("shows a spinner in the reading pane while a part is (re)loading", async () => {
+    await renderReader(refResult({ partTextLoading: ref(true), partText: ref(null) }));
     expect(screen.getByRole("status")).toBeInTheDocument();
   });
 
   it("shows an error state with a way back to the library", async () => {
-    renderReader(baseResult({ error: "boom" }));
+    await renderReader(refResult({ error: ref("boom") }));
     expect(screen.getByRole("alert")).toHaveTextContent("boom");
 
     await userEvent.click(screen.getByRole("button", { name: /back to library/i }));
