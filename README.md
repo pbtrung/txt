@@ -209,9 +209,12 @@ every navigation) throws a `SecurityError` in a document with an opaque/null ori
 — exactly `local_index.html`'s situation, since the real app's own bundle runs
 unmodified inside it. `ui/src/appRouter.ts`'s `pickRouterComponent()` switches to
 `MemoryRouter` (navigation kept entirely in JS, no `window.history` calls at all)
-whenever `location.protocol === "file:"`. Accepted tradeoff: the address bar won't
-reflect in-app navigation, and back/forward won't move between screens, when run
-this way.
+whenever `location.origin === "null"` — checked via the origin rather than
+`location.protocol === "file:"`, since Android commonly opens a local file through
+a `content://` URI instead (e.g. a file manager's "Open with Chrome"), which is
+just as opaque-origin as `file://` but wouldn't match a protocol-specific check.
+Accepted tradeoff: the address bar won't reflect in-app navigation, and
+back/forward won't move between screens, when run this way.
 
 **Requires**: opening `local_index.html` via `file://` sends `Origin: null` on its
 cross-origin fetches to `asset_base_url`. `dist/_headers` (above) covers this
