@@ -118,27 +118,28 @@ body,
 
 /* Any .form-control/.form-select that should match the brass theme instead
    of Bootstrap's default gray/blue -- Library's search input, Reader's
-   font-size <select> and part-number <input>. Softer *-subtle tint (rather
-   than full-strength --bs-primary) at rest, but the same border-width as a
-   bordered button (DropdownToggleButton's `border-primary`, --bs-border-width,
-   1px) rather than a thinner one of its own -- consistent line weight across
-   every bordered control in the app, at rest and (see .themed-control:focus
-   below, which doesn't touch border-width) focused alike. */
+   font-size <select> and part-number <input>. Same border-color and
+   border-width as a bordered button (DropdownToggleButton's
+   `border-primary`/var(--bs-primary), --bs-border-width, 1px) at rest --
+   consistent with every other bordered control in the app -- then brighter
+   still on focus (see .themed-control:focus below) so focusing one is
+   clearly distinguishable from just sitting beside a button. */
 .themed-control {
   border-width: var(--bs-border-width);
-  border-color: var(--bs-primary-border-subtle);
+  border-color: var(--bs-primary);
 }
 
 /* Bootstrap's .form-control:focus/.form-select:focus both hardcode the same
    blue border-color and glow (border-color: #86b7fe; box-shadow: 0 0 0
    0.25rem rgba(13,110,253,.25)) -- neither reads var(--bs-primary), so
    focusing one of these would otherwise flip it to stock blue regardless of
-   the brass theme. Overridden to the full-strength brass accent, with a
-   narrower glow (0.15rem, not 0.25rem) so it doesn't read as a thick border
-   the way the default does. */
+   the brass theme. Overridden to a brighter brass than the resting border
+   (--brass-focus, not --bs-primary -- see theme.css) with a matching glow,
+   narrower than Bootstrap's default (0.15rem, not 0.25rem) so it doesn't
+   read as a thick border the way the default does. */
 .themed-control:focus {
-  border-color: var(--bs-primary);
-  box-shadow: 0 0 0 0.15rem rgba(var(--bs-primary-rgb), 0.25);
+  border-color: var(--brass-focus);
+  box-shadow: 0 0 0 0.15rem rgba(var(--brass-focus-rgb), 0.25);
 }
 
 /* Bootstrap's .vr uses align-self: stretch, which only fills the flex

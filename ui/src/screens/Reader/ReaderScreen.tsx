@@ -9,7 +9,8 @@
 // gutter bookmark button, so "bookmark by line number" is just "click the
 // line's own icon" -- no separate number-entry control needed.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { UIEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 // Literata: a serif typeface designed for long-form reading (Google Fonts'
@@ -50,6 +51,17 @@ export function ReaderScreen() {
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const [fontSizePx, setFontSizePx] = useState(DEFAULT_FONT_SIZE_PX);
 
+  // Below sm, the bottom bar auto-hides on scroll-down (more room for text
+  // on a phone) and reappears on scroll-up or once back at the top -- at sm+
+  // it stays put regardless (see the bar's own d-sm-flex below, which
+  // overrides d-none there no matter what this state is). While hidden, a
+  // floating scroll-to-top button takes its place as the way back up/to the
+  // bar's controls (Bookmarks, in particular, would otherwise be
+  // unreachable without manually scrolling back).
+  const [bottomBarHidden, setBottomBarHidden] = useState(false);
+  const lastScrollTopRef = useRef(0);
+  const readingPaneRef = useRef<HTMLDivElement>(null);
+
   const {
     loading,
     error,
@@ -87,6 +99,30 @@ export function ReaderScreen() {
 
   // A fresh book starts with its description collapsed again.
   useEffect(() => setDescriptionExpanded(false), [numericTxtId]);
+
+  // A fresh book or part lands at the top of the reading pane (a new
+  // scrollable element, scrollTop 0) -- so the bar shouldn't stay hidden
+  // from wherever the *previous* one had scrolled to.
+  useEffect(() => setBottomBarHidden(false), [numericTxtId, currentPartNum]);
+
+  const SCROLL_HIDE_THRESHOLD_PX = 10;
+  function handleReadingPaneScroll(event: UIEvent<HTMLDivElement>) {
+    const scrollTop = event.currentTarget.scrollTop;
+    const delta = scrollTop - lastScrollTopRef.current;
+    if (scrollTop <= 0) {
+      setBottomBarHidden(false);
+    } else if (delta > SCROLL_HIDE_THRESHOLD_PX) {
+      setBottomBarHidden(true);
+    } else if (delta < -SCROLL_HIDE_THRESHOLD_PX) {
+      setBottomBarHidden(false);
+    }
+    lastScrollTopRef.current = scrollTop;
+  }
+
+  function scrollToTop() {
+    readingPaneRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+    setBottomBarHidden(false);
+  }
 
   const lines = useMemo(() => (partText ? splitLines(partText) : []), [partText]);
 
@@ -258,7 +294,11 @@ export function ReaderScreen() {
         </div>
       </div>
 
-      <div className="flex-grow-1 overflow-auto ps-2 ps-sm-4 pe-4 py-4">
+      <div
+        ref={readingPaneRef}
+        onScroll={handleReadingPaneScroll}
+        className="flex-grow-1 overflow-auto ps-2 ps-sm-4 pe-4 py-4"
+      >
         {/* maxWidth in `ch` (the width of "0" in this element's own font) --
             not a fixed rem value -- so the reading column's line length
             stays around 70 characters regardless of which font size is
@@ -307,7 +347,13 @@ export function ReaderScreen() {
         </div>
       </div>
 
-      <div className="border-top d-flex align-items-center gap-2 gap-sm-3 ps-2 ps-sm-3 pe-3 py-2">
+      {/* Below sm, d-none/d-flex here follows bottomBarHidden; d-sm-flex
+          always wins at sm+ regardless of it -- the auto-hide behavior (see
+          handleReadingPaneScroll) only ever applies on a phone-sized
+          screen. */}
+      <div
+        className={`border-top align-items-center gap-2 gap-sm-3 ps-2 ps-sm-3 pe-3 py-2 d-sm-flex ${bottomBarHidden ? "d-none" : "d-flex"}`}
+      >
         <select
           className="form-select form-select-sm themed-control font-size-select"
           style={{ width: "4.25rem" }}
@@ -405,6 +451,24 @@ export function ReaderScreen() {
           )}
         </div>
       </div>
+
+      {/* Takes the bottom bar's place (Bookmarks in particular) while it's
+          auto-hidden on a phone -- see bottomBarHidden above. d-sm-none is
+          belt-and-suspenders: bottomBarHidden always resets on part/book
+          change, but this keeps the button phone-only even if that timing
+          ever drifted. */}
+      {bottomBarHidden && (
+        <button
+          type="button"
+          className="btn btn-primary rounded-circle position-fixed bottom-0 end-0 m-3 d-sm-none shadow"
+          style={{ width: "3rem", height: "3rem", zIndex: 1030 }}
+          onClick={scrollToTop}
+          aria-label="Scroll to top"
+          title="Scroll to top"
+        >
+          <i className="bi bi-arrow-up" aria-hidden="true" />
+        </button>
+      )}
     </div>
   );
 }
