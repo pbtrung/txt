@@ -29,6 +29,29 @@ import { verbose } from "../log";
 
 export type VaultStatus = "locked" | "unlocking" | "unlocked";
 
+/** The current phase of an in-progress unlock()/refresh() call, for the two
+ * dynamically-updating lines shown under the Unlock/Library refresh
+ * spinners -- label is the phase itself, step/total a "Step N of M"
+ * counter. null whenever neither is running. */
+export interface VaultProgress {
+  label: string;
+  step: number;
+  total: number;
+}
+
+const UNLOCK_PHASES = [
+  "Signing you in",
+  "Unwrapping your keys",
+  "Loading your books",
+  "Loading your read progress",
+  "Loading your bookmarks",
+] as const;
+const REFRESH_PHASES = ["Loading your books", "Loading your read progress", "Loading your bookmarks"] as const;
+
+function phaseProgress(phases: readonly string[], index: number): VaultProgress {
+  return { label: phases[index], step: index + 1, total: phases.length };
+}
+
 export interface VaultSession {
   creds: Creds;
   db: Client;
@@ -48,6 +71,7 @@ export interface VaultContextValue {
   accessMap: AccessMap;
   bookmarksMap: BookmarksMap;
   refreshing: boolean;
+  progress: VaultProgress | null;
   unlock: (file: File) => Promise<void>;
   lock: () => void;
   refresh: () => Promise<void>;
@@ -71,6 +95,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   const [accessMap, setAccessMapState] = useState<AccessMap>(new Map());
   const [bookmarksMap, setBookmarksMapState] = useState<BookmarksMap>(new Map());
   const [refreshing, setRefreshing] = useState(false);
+  const [progress, setProgress] = useState<VaultProgress | null>(null);
   const txtKeyCache = useRef(new Map<number, Uint8Array>());
 
   // Mirrors of the two maps above, updated synchronously (unlike state,
@@ -112,6 +137,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     async (file: File) => {
       setStatus("unlocking");
       setError(null);
+      setProgress(null);
       try {
         verbose("unlock: reading config file", file.name);
         const text = await file.text();
@@ -119,6 +145,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         verbose("unlock: config parsed for username", creds.username);
 
         const db = createDb(creds);
+        setProgress(phaseProgress(UNLOCK_PHASES, 0));
         verbose("unlock: resolving user id");
         const userId = await resolveUserId(db, creds);
         verbose("unlock: resolved user id", userId);
@@ -130,6 +157,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         }
         verbose("unlock: password OK");
 
+        setProgress(phaseProgress(UNLOCK_PHASES, 1));
         verbose("unlock: unwrapping umk");
         const umk = await unwrapUmk(db, creds, userId);
         verbose("unlock: fetching r2 config");
@@ -139,10 +167,13 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         // Everything the Library screen needs, loaded once here rather than
         // per-book: exactly three requests (metadata, access, bookmarks),
         // each a single row scoped to this user.
+        setProgress(phaseProgress(UNLOCK_PHASES, 2));
         verbose("unlock: loading txt metadata");
         const metadataById = await loadTxtMetadata(db, userId, umk, r2Client, r2Config);
+        setProgress(phaseProgress(UNLOCK_PHASES, 3));
         verbose("unlock: loading access map");
         const { txtAccessKey, accessMap: initialAccessMap } = await loadOrInitAccess(db, userId, umk);
+        setProgress(phaseProgress(UNLOCK_PHASES, 4));
         verbose("unlock: loading bookmarks");
         const { bookmarkKey, bookmarksMap: initialBookmarksMap } = await loadOrInitBookmarks(db, userId, umk);
 
@@ -151,12 +182,14 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         setBookmarksMap(initialBookmarksMap);
         setSession({ creds, db, userId, umk, r2Config, r2Client, metadataById, txtAccessKey, bookmarkKey });
         setStatus("unlocked");
+        setProgress(null);
         verbose("unlock: done");
       } catch (err) {
         verbose("unlock: failed", err);
         setSession(null);
         setStatus("locked");
         setError(errorMessage(err) || "Failed to unlock your library.");
+        setProgress(null);
       }
     },
     [setAccessMap, setBookmarksMap],
@@ -182,6 +215,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   const refresh = useCallback(async () => {
     if (!session) throw new Error("vault is locked");
     setRefreshing(true);
+    setProgress(phaseProgress(REFRESH_PHASES, 0));
     try {
       verbose("refresh: loading txt metadata");
       const metadataById = await loadTxtMetadata(
@@ -191,12 +225,14 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         session.r2Client,
         session.r2Config,
       );
+      setProgress(phaseProgress(REFRESH_PHASES, 1));
       verbose("refresh: loading access map");
       const { txtAccessKey, accessMap: nextAccessMap } = await loadOrInitAccess(
         session.db,
         session.userId,
         session.umk,
       );
+      setProgress(phaseProgress(REFRESH_PHASES, 2));
       verbose("refresh: loading bookmarks");
       const { bookmarkKey, bookmarksMap: nextBookmarksMap } = await loadOrInitBookmarks(
         session.db,
@@ -210,6 +246,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       verbose("refresh: done");
     } finally {
       setRefreshing(false);
+      setProgress(null);
     }
   }, [session, setAccessMap, setBookmarksMap]);
 
@@ -308,6 +345,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       accessMap,
       bookmarksMap,
       refreshing,
+      progress,
       unlock,
       lock,
       refresh,
@@ -324,6 +362,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       accessMap,
       bookmarksMap,
       refreshing,
+      progress,
       unlock,
       lock,
       refresh,

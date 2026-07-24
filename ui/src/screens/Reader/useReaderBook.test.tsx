@@ -47,6 +47,7 @@ function mockVault(
     accessMap,
     bookmarksMap,
     refreshing: false,
+    progress: null,
     unlock: vi.fn(),
     lock: vi.fn(),
     refresh: vi.fn(),

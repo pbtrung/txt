@@ -32,6 +32,7 @@ function baseVaultValue(): VaultContextModule.VaultContextValue {
     accessMap: new Map(),
     bookmarksMap: new Map(),
     refreshing: false,
+    progress: null,
     unlock: vi.fn(),
     lock: vi.fn(),
     refresh: vi.fn(),
@@ -78,6 +79,21 @@ describe("UnlockScreen", () => {
     renderUnlock();
     expect(screen.getByRole("status")).toBeInTheDocument();
     expect(screen.getByText(/setting up your library/i)).toBeInTheDocument();
+  });
+
+  it("shows the current phase and a step counter under the spinner once progress is set", () => {
+    vi.mocked(VaultContextModule.useVault).mockReturnValue({
+      ...baseVaultValue(),
+      status: "unlocking",
+      progress: { label: "Unwrapping your keys", step: 2, total: 3 },
+    });
+    renderUnlock();
+    const step = screen.getByText("Step 2 of 3");
+    const label = screen.getByText(/unwrapping your keys/i);
+    // Step counter on top, phase label underneath it.
+    expect(step.compareDocumentPosition(label) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The generic fallback line is gone once a real phase label takes over.
+    expect(screen.queryByText(/setting up your library/i)).not.toBeInTheDocument();
   });
 
   it("navigates to /library once unlocked", async () => {
