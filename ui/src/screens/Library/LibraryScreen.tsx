@@ -298,6 +298,7 @@ export function LibraryScreen() {
             icon="bi-book"
             ariaLabel="Library menu"
             className="d-flex align-items-center justify-content-center"
+            disabled={refreshing}
           />
           <span className="fw-semibold d-none d-sm-inline">Skypiea</span>
           {nav.open && (
@@ -369,35 +370,38 @@ export function LibraryScreen() {
         actually truncate instead of forcing extra width).
       */}
       <div className="flex-grow-1 d-flex flex-column flex-lg-row overflow-hidden">
-        <div className="library-nav border-end p-2 d-none d-lg-flex">
-          <LibraryNavContent
-            view={view}
-            selectView={selectView}
-            recentCount={recent.length}
-            allCount={(books ?? []).length}
-            authorEntries={authorEntries}
-            subjectEntries={subjectEntries}
-            publisherEntries={publisherEntries}
-            displayName={session?.creds.displayName}
-            onLock={lock}
-            onRefresh={() => void handleRefresh()}
-            refreshing={refreshing}
-          />
-        </div>
-
-        <div className="flex-grow-1 d-flex flex-column overflow-hidden" style={{ minWidth: 0 }}>
-          {/* Refreshing replaces this whole pane (heading and list alike)
-              with a spinner -- the nav (sidebar/dropdown, top bar) stays
-              exactly as it was, so switching views or locking still works
-              mid-refresh, only the content being refreshed disappears. */}
-          {refreshing ? (
-            <div className="flex-grow-1 d-flex align-items-center justify-content-center">
-              <div className="spinner-border text-primary" role="status">
-                <span className="visually-hidden">Refreshing your library…</span>
-              </div>
+        {/* Refreshing replaces this entire region -- the lg+ sidebar
+            (everything below the "Skypiea" wordmark: nav items, account
+            footer, Lock/Refresh included) and the content pane alike --
+            with one centered spinner. Only the top bar (wordmark/toggle,
+            already-disabled search box) stays as it was; the below-lg
+            dropdown copy of the nav is untouched too, since it isn't part
+            of this persistent lg+ region at all. */}
+        {refreshing ? (
+          <div className="flex-grow-1 d-flex align-items-center justify-content-center">
+            <div className="spinner-border text-primary" role="status">
+              <span className="visually-hidden">Refreshing your library…</span>
             </div>
-          ) : (
-            <>
+          </div>
+        ) : (
+          <>
+            <div className="library-nav border-end p-2 d-none d-lg-flex">
+              <LibraryNavContent
+                view={view}
+                selectView={selectView}
+                recentCount={recent.length}
+                allCount={(books ?? []).length}
+                authorEntries={authorEntries}
+                subjectEntries={subjectEntries}
+                publisherEntries={publisherEntries}
+                displayName={session?.creds.displayName}
+                onLock={lock}
+                onRefresh={() => void handleRefresh()}
+                refreshing={refreshing}
+              />
+            </div>
+
+            <div className="flex-grow-1 d-flex flex-column overflow-hidden" style={{ minWidth: 0 }}>
               <div className="d-flex justify-content-between align-items-baseline px-3 py-2 border-bottom">
                 <h2 className="h6 mb-0">{heading}</h2>
                 <span className="small text-body-secondary">{headingDetail}</span>
@@ -483,9 +487,9 @@ export function LibraryScreen() {
                   </div>
                 )}
               </div>
-            </>
-          )}
-        </div>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

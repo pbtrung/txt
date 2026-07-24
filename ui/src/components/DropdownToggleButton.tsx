@@ -10,14 +10,24 @@ interface DropdownToggleButtonProps {
   ariaLabel: string;
   title?: string;
   className?: string;
+  disabled?: boolean;
 }
 
-export function DropdownToggleButton({ open, onClick, icon, ariaLabel, title, className }: DropdownToggleButtonProps) {
+export function DropdownToggleButton({
+  open,
+  onClick,
+  icon,
+  ariaLabel,
+  title,
+  className,
+  disabled,
+}: DropdownToggleButtonProps) {
   return (
     <button
       type="button"
       className={`btn btn-sm ${open ? "btn-primary" : "btn-outline-secondary border-primary"}${className ? ` ${className}` : ""}`}
       onClick={onClick}
+      disabled={disabled}
       aria-expanded={open}
       aria-haspopup="true"
       aria-label={ariaLabel}
