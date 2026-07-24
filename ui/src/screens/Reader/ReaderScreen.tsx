@@ -37,10 +37,24 @@ function lineElementId(lineNum: number): string {
 const DESCRIPTION_PREVIEW_LEN = 200;
 
 // The reading pane's body-text size -- a plain per-session preference (not
-// persisted, not part of the vault), so a fresh visit always starts at the
+// persisted, not part of the vault), so a fresh visit always starts at a
 // default rather than carrying over a size chosen for a different book.
+// That default itself depends on viewport size, checked once at mount (not
+// tracked live -- resizing afterward shouldn't fight a size the user may
+// have since picked themselves): a phone-sized screen defaults smaller,
+// matching the same sm breakpoint this screen already uses elsewhere
+// (bottomBarHidden's d-sm-flex) to distinguish a phone from anything
+// bigger.
 const FONT_SIZES_PX = [14, 16, 18, 20, 22, 24];
-const DEFAULT_FONT_SIZE_PX = 16;
+const SMALL_SCREEN_DEFAULT_FONT_SIZE_PX = 16;
+const FULL_SCREEN_DEFAULT_FONT_SIZE_PX = 18;
+const SMALL_SCREEN_MEDIA_QUERY = "(max-width: 575.98px)";
+
+function defaultFontSizePx(): number {
+  return window.matchMedia(SMALL_SCREEN_MEDIA_QUERY).matches
+    ? SMALL_SCREEN_DEFAULT_FONT_SIZE_PX
+    : FULL_SCREEN_DEFAULT_FONT_SIZE_PX;
+}
 
 export function ReaderScreen() {
   const { txtId } = useParams();
@@ -49,7 +63,7 @@ export function ReaderScreen() {
   const infoMenu = useDropdown();
   const bookmarksMenu = useDropdown();
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
-  const [fontSizePx, setFontSizePx] = useState(DEFAULT_FONT_SIZE_PX);
+  const [fontSizePx, setFontSizePx] = useState(defaultFontSizePx);
 
   // Below sm, the bottom bar auto-hides on scroll-down (more room for text
   // on a phone) and reappears on scroll-up or once back at the top -- at sm+
