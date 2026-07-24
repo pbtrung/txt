@@ -70,7 +70,9 @@ class TxtDeleter(TxtOwner):
         self.db.conn.execute("DELETE FROM txt WHERE id = ?", (txt_id,))
         logger.debug("txt_id=%d: deleted DB rows", txt_id)
 
-    async def _scrub_txt_metadata_entry(self, user_id: int, umk: bytes, txt_id: int) -> None:
+    async def _scrub_txt_metadata_entry(
+        self, user_id: int, umk: bytes, txt_id: int
+    ) -> None:
         # txt_metadata isn't in _JSON_BLOB_TABLES: its content lives in this
         # user's (single, reused) R2 object, not inline, so it needs its own
         # read-modify-write instead of the generic helper above (see
@@ -81,7 +83,9 @@ class TxtDeleter(TxtOwner):
         if txt_metadata_key is None or str(txt_id) not in content:
             return
         del content[str(txt_id)]
-        await self._write_txt_metadata_content(user_id, txt_metadata_key, content, raw_path)
+        await self._write_txt_metadata_content(
+            user_id, txt_metadata_key, content, raw_path
+        )
         logger.debug(
             "Removed txt_id=%d entry from txt_metadata (user_id=%d)", txt_id, user_id
         )

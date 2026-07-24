@@ -18,8 +18,8 @@ class TxtDownloader(TxtOwner):
     """Fetches, decrypts, and concatenates every txt owned by creds.username."""
 
     async def _txt_entries(self, user_id: int, umk: bytes) -> dict[int, dict]:
-        _txt_metadata_key, content, _raw_path = await self._txt_metadata_key_and_content(
-            user_id, umk
+        _txt_metadata_key, content, _raw_path = (
+            await self._txt_metadata_key_and_content(user_id, umk)
         )
         entries = {int(txt_id): entry for txt_id, entry in content.items()}
         logger.debug("Loaded %d txt_metadata entry(ies)", len(entries))
