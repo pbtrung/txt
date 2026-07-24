@@ -73,6 +73,25 @@ describe("loadTxtMetadata", () => {
     expect(result.get(3)?.name).toBe("short.txt");
   });
 
+  it("tolerates an R2 body stored uncompressed (at least one already-deployed account has one)", async () => {
+    const umk = new Uint8Array(64).fill(1);
+    const txtMetadataKey = new Uint8Array(64).fill(4);
+    const keyBlob = await blob.encrypt(umk, txtMetadataKey);
+
+    const content = { "5": { name: "uncompressed-body.txt" } };
+    // No compressed:true here -- simulates an R2 object that was never
+    // brotli-compressed, unlike what _write_txt_metadata_content produces.
+    const body = await blob.encrypt(txtMetadataKey, new TextEncoder().encode(JSON.stringify(content)));
+    const pathBlob = await blob.encrypt(txtMetadataKey, new TextEncoder().encode("another-raw-path"));
+
+    vi.mocked(r2.getObject).mockResolvedValue(body);
+
+    const db = fakeClient({ txt_metadata_key: keyBlob.buffer, content: pathBlob.buffer });
+    const result = await loadTxtMetadata(db, 42, umk, r2Client, r2Config);
+
+    expect(result.get(5)?.name).toBe("uncompressed-body.txt");
+  });
+
   it("decrypts and normalizes OPF metadata, tolerating missing fields", async () => {
     const umk = new Uint8Array(64).fill(1);
     const txtMetadataKey = new Uint8Array(64).fill(4);
