@@ -142,6 +142,20 @@ body,
   box-shadow: 0 0 0 0.15rem rgba(var(--brass-focus-rgb), 0.25);
 }
 
+/* Bootstrap's .form-control:disabled only mutes the background
+   (background-color: var(--bs-secondary-bg)) and explicitly pins
+   opacity: 1 -- so this border-color (var(--bs-primary), full-strength)
+   would otherwise stay just as bold as an enabled control right beside a
+   dimmed, disabled button (e.g. Library's search box next to its disabled
+   drawer toggle while refreshing). 0.65 matches --bs-btn-disabled-opacity
+   exactly (Bootstrap's own disabled-button dimming) -- can't reference
+   that variable directly here, since Bootstrap declares it scoped to
+   .btn itself rather than :root, so it isn't inherited onto a plain
+   .form-control that never sits inside a button. */
+.themed-control:disabled {
+  opacity: 0.65;
+}
+
 /* Bootstrap's .vr uses align-self: stretch, which only fills the flex
    line's own content height -- inside the bottom bar's py-2 padding, that
    leaves visible gaps above/below before actually reaching the bar's top
