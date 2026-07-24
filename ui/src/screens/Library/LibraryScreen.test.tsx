@@ -278,6 +278,14 @@ describe("LibraryScreen", () => {
       expect(refresh).toHaveBeenCalledTimes(1);
     });
 
+    it("closes the small-screen drawer when Refresh is clicked from inside it", async () => {
+      renderLibrary();
+      await userEvent.click(screen.getByRole("button", { name: /library menu/i }));
+      const refreshButtons = screen.getAllByRole("button", { name: /refresh library/i });
+      await userEvent.click(refreshButtons[0]); // the drawer's copy -- renders before the sidebar's in DOM order
+      expect(screen.getAllByRole("button", { name: /refresh library/i })).toHaveLength(1);
+    });
+
     it("shows a spinner and disables itself while refreshing, and disables the drawer toggle too (dropdown copy -- the lg+ sidebar's copy is gone entirely, see below)", async () => {
       // Opened *before* refreshing starts -- the toggle disables once
       // refreshing does, so a real user couldn't open it mid-refresh; this

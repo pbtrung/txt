@@ -180,14 +180,6 @@ export function LibraryScreen() {
   const [search, setSearch] = useState("");
   const [refreshError, setRefreshError] = useState<string | null>(null);
 
-  async function handleRefresh() {
-    setRefreshError(null);
-    try {
-      await refresh();
-    } catch (err) {
-      setRefreshError(err instanceof Error ? err.message : String(err));
-    }
-  }
   // Below the lg breakpoint the left nav collapses into the wordmark's
   // dropdown; picking anything in it closes it again so the chosen view
   // actually comes into view.
@@ -196,6 +188,20 @@ export function LibraryScreen() {
   function selectView(next: View) {
     setView(next);
     nav.close();
+  }
+
+  async function handleRefresh() {
+    // Below lg, refreshing is triggered from inside this same dropdown --
+    // close it right away (consistent with its toggle disabling for the
+    // duration, and with selectView above closing it too) rather than
+    // leaving it open over a drawer that's about to disappear/disable.
+    nav.close();
+    setRefreshError(null);
+    try {
+      await refresh();
+    } catch (err) {
+      setRefreshError(err instanceof Error ? err.message : String(err));
+    }
   }
 
   const authorEntries = useMemo(() => browseEntries(books ?? [], "author"), [books]);
