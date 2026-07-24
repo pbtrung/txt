@@ -50,8 +50,8 @@ Create `admin_creds.json` with the following shape:
     "bucket": "..."
   },
   "user_root_key": "<256+ random bytes, base64>",
-  "asset_base_url": "<public URL the UI's built assets are served from>",
-  "slhdsa_256f_priv_key": "<leave empty -- `ui`'s build step fills this in the first time it runs>"
+  "asset_base_url": "<public URL the assets are served from>",
+  "slhdsa_256f_priv_key": "<leave empty -- filled in on first build>"
 }
 ```
 
@@ -68,17 +68,27 @@ python3 txt.py --init --admin-creds admin_creds.json
 Ingest, download, and delete:
 
 ```sh
-python3 txt.py --txt-ingest txt_src/ --admin-creds admin_creds.json      # ingest every .txt file in a directory
-python3 txt.py --txt-download txt_out/ --admin-creds admin_creds.json    # reconstruct every txt back into files
-python3 txt.py --txt-delete --admin-creds admin_creds.json               # delete every txt (prompts unless -y/--yes)
-python3 txt.py --txt-delete-id 42 --admin-creds admin_creds.json         # delete just one txt_id
+# Ingest every .txt file in a directory
+python3 txt.py --txt-ingest txt_src/ --admin-creds admin_creds.json
+
+# Reconstruct every txt back into files
+python3 txt.py --txt-download txt_out/ --admin-creds admin_creds.json
+
+# Delete every txt (prompts for confirmation unless -y/--yes)
+python3 txt.py --txt-delete --admin-creds admin_creds.json
+
+# Delete just one txt_id
+python3 txt.py --txt-delete-id 42 --admin-creds admin_creds.json
 ```
 
 Bucket housekeeping (both prompt for confirmation unless `-y`/`--yes`):
 
 ```sh
-python3 txt.py --purge-bucket --admin-creds admin_creds.json       # delete every object in the R2 bucket
-python3 txt.py --txt-clean-bucket --admin-creds admin_creds.json   # delete only objects orphaned in the DB
+# Delete every object in the R2 bucket
+python3 txt.py --purge-bucket --admin-creds admin_creds.json
+
+# Delete only objects orphaned in the DB
+python3 txt.py --txt-clean-bucket --admin-creds admin_creds.json
 ```
 
 Add `-v`/`--verbose` to any command for debug-level logging. Run `python3 txt.py --help` for the full option list, or see [docs/cli.md](docs/cli.md) for how each command works internally.
@@ -88,8 +98,12 @@ Add `-v`/`--verbose` to any command for debug-level logging. Run `python3 txt.py
 ```sh
 cd ui
 npm install
-npm run dev      # http://localhost:5173
-npm run build -- --admin-creds ../creds/admin_creds.json    # -> ui/dist + creds/local_index.html
+
+# Runs at http://localhost:5173
+npm run dev
+
+# Writes ui/dist + creds/local_index.html
+npm run build -- --admin-creds ../creds/admin_creds.json
 ```
 
 It reads a config file shaped like `user_cred_template.json` but without `r2_config` — that's fetched from Turso's `r2_config` table and decrypted with the account's `umk` instead. A Cloudflare R2 bucket needs a CORS policy set before the UI can read from it at all (see [docs/deployment.md](docs/deployment.md)); for local development, tests, and verbose logging, see [docs/development.md](docs/development.md).

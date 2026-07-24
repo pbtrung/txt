@@ -77,23 +77,23 @@ A full-width reading pane with a part-navigation bar along the bottom. "About th
 
 ```
 ┌────────────────────────────────────────────────────────────────────┐
-│ [<]   The White Order                                        [i]   │
+│ [<]   The White Order                                          [i] │
 │       L. E. Modesitt, Jr.                                          │
 ├────────────────────────────────────────────────────────────────────┤
 │ PART 14 OF 41                                                      │
-│                                                                     │
+│                                                                    │
 │ The White Order                                                    │
-│                                                                     │
-│[bk] Powerful white mages killed Cerryl's father to protect their    │
-│    control of the world's magic. Raised by his aunt and uncle,      │
-│    Cerryl learns that he has inherited his father's magic           │
-│    abilities...                                                     │
-│                                                                     │
-│[bk] When Cerryl witnesses a white mage destroy a renegade            │
-│    magician in the market square, he understands, all at once       │
-│    and far too late, exactly what he is.                            │
+│                                                                    │
+│ [bk] Powerful white mages killed Cerryl's father to protect their  │
+│      control of the world's magic. Raised by his aunt and uncle,   │
+│      Cerryl learns that he has inherited his father's magic        │
+│      abilities...                                                  │
+│                                                                    │
+│ [bk] When Cerryl witnesses a white mage destroy a renegade         │
+│      magician in the market square, he understands, all at once   │
+│      and far too late, exactly what he is.                        │
 ├────────────────────────────────────────────────────────────────────┤
-│ [<]  [14]/ 41  [>]                                          [bk]    │
+│ [<]  [14]/ 41  [>]                                            [bk] │
 └────────────────────────────────────────────────────────────────────┘
 ```
 

@@ -7,79 +7,137 @@ Backend: Turso (libSQL/SQLite-compatible cloud). Every column that holds user co
 ```sql
 CREATE TABLE IF NOT EXISTS users (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    username_hash BLOB NOT NULL UNIQUE,  -- HMAC-SHA3-256(username_lookup_key, username)
-    pw_salt       BLOB NOT NULL,         -- 32 random bytes, fresh per user
-    pw_hash       BLOB NOT NULL          -- PBKDF2-HMAC-SHA3-256(password, pw_salt, 1000 iterations)
+    -- HMAC-SHA3-256(username_lookup_key, username)
+    username_hash BLOB NOT NULL UNIQUE,
+    -- 32 random bytes, fresh per user
+    pw_salt       BLOB NOT NULL,
+    -- PBKDF2-HMAC-SHA3-256(password, pw_salt, 1000 iterations)
+    pw_hash       BLOB NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS umk_store (
     id      INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
-    umk     BLOB    NOT NULL        -- magic||version||salt||Ascon-Keccak(umk bytes)||tag
+    user_id INTEGER NOT NULL UNIQUE
+             REFERENCES users(id) ON DELETE CASCADE,
+    -- magic||version||salt||Ascon-Keccak(umk bytes)||tag
+    umk     BLOB    NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS key_store (
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id  INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
-    pub_key  BLOB    NOT NULL,       -- lc_kyber_1024_x448 composite keypair (lc_kyber_keypair, type lc_kyber_1024_x448), raw public key, 1624 bytes
-    priv_key BLOB    NOT NULL        -- magic||version||salt||Ascon-Keccak(priv_key bytes)||tag, wrapped under owner's umk
+    user_id  INTEGER NOT NULL UNIQUE
+              REFERENCES users(id) ON DELETE CASCADE,
+    -- lc_kyber_1024_x448 composite keypair (lc_kyber_keypair, type
+    -- lc_kyber_1024_x448), raw public key, 1624 bytes
+    pub_key  BLOB    NOT NULL,
+    -- magic||version||salt||Ascon-Keccak(priv_key bytes)||tag,
+    -- wrapped under owner's umk
+    priv_key BLOB    NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS r2_config (
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id  INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
-    config   BLOB    NOT NULL        -- magic||version||salt||Ascon-Keccak(brotli(JSON))||tag, wrapped under owner's umk
+    user_id  INTEGER NOT NULL UNIQUE
+              REFERENCES users(id) ON DELETE CASCADE,
+    -- magic||version||salt||Ascon-Keccak(brotli(JSON))||tag, wrapped
+    -- under owner's umk
+    config   BLOB    NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS txt (
     id      INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    txt_key BLOB    NOT NULL        -- magic||version||salt||Ascon-Keccak(txt_key bytes)||tag, wrapped under owner's umk; txt_key itself is 64 random bytes
+    -- magic||version||salt||Ascon-Keccak(txt_key bytes)||tag, wrapped
+    -- under owner's umk; txt_key itself is 64 random bytes
+    txt_key BLOB    NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS txt_parts (
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
     txt_id   INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
     part_num INTEGER NOT NULL,
-    path     BLOB    NOT NULL        -- magic||version||salt||Ascon-Keccak(path)||tag, wrapped under this txt's txt_key; path = Crockford base32 (see txt/base32.py) of constants.RAW_PATH_LEN random bytes
+    -- magic||version||salt||Ascon-Keccak(path)||tag, wrapped under
+    -- this txt's txt_key; path = Crockford base32 (see
+    -- txt/base32.py) of constants.RAW_PATH_LEN random bytes
+    path     BLOB    NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS txt_shares (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    txt_id        INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
-    to_user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    salt_kem_ct   BLOB    NOT NULL,   -- salt (64 random bytes) || lc_kyber_1024_x448 KEM ciphertext (1624 bytes), raw (public value)
-    txt_key       BLOB    NOT NULL,   -- same txt_key bytes as txt.txt_key, wrapped for this recipient via HKDF-SHA3-512(IKM=ss, salt) -> 128-byte OKM (see crypto.md Encapsulate/Decapsulate); ss is the raw (uncombined) shared secret from lc_kyber_1024_x448_enc/_dec, never stored
+    txt_id        INTEGER NOT NULL
+                   REFERENCES txt(id) ON DELETE CASCADE,
+    to_user_id    INTEGER NOT NULL
+                   REFERENCES users(id) ON DELETE CASCADE,
+    -- salt (64 random bytes) || lc_kyber_1024_x448 KEM ciphertext
+    -- (1624 bytes), raw (public value)
+    salt_kem_ct   BLOB    NOT NULL,
+    -- same txt_key bytes as txt.txt_key, wrapped for this recipient
+    -- via HKDF-SHA3-512(IKM=ss, salt) -> 128-byte OKM (see crypto.md
+    -- Encapsulate/Decapsulate); ss is the raw (uncombined) shared
+    -- secret from lc_kyber_1024_x448_enc/_dec, never stored
+    txt_key       BLOB    NOT NULL,
     UNIQUE (txt_id, to_user_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_txt_parts_txt_id_part_num ON txt_parts(txt_id, part_num);
+CREATE INDEX IF NOT EXISTS idx_txt_parts_txt_id_part_num
+    ON txt_parts(txt_id, part_num);
 
 CREATE TABLE IF NOT EXISTS part_count (
     id     INTEGER PRIMARY KEY AUTOINCREMENT,
-    txt_id INTEGER NOT NULL UNIQUE REFERENCES txt(id) ON DELETE CASCADE,
+    txt_id INTEGER NOT NULL UNIQUE
+            REFERENCES txt(id) ON DELETE CASCADE,
     count  INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS txt_access (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id        INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
-    txt_access_key BLOB    NOT NULL,   -- magic||version||salt||Ascon-Keccak(txt_access_key bytes)||tag, wrapped under owner's umk; txt_access_key itself is 64 random bytes
-    access         BLOB    NOT NULL    -- magic||version||salt||Ascon-Keccak(brotli(JSON))||tag, wrapped under txt_access_key; JSON = {"<txt_id>": {"last_part_num": int, "last_accessed": int (unix ms)}, ...}, capped at 7 txt_ids (client evicts the entry with the oldest last_accessed before exceeding the cap — no DB-level enforcement)
+    user_id        INTEGER NOT NULL UNIQUE
+                    REFERENCES users(id) ON DELETE CASCADE,
+    -- magic||version||salt||Ascon-Keccak(txt_access_key bytes)||tag,
+    -- wrapped under owner's umk; txt_access_key itself is 64 random
+    -- bytes
+    txt_access_key BLOB    NOT NULL,
+    -- magic||version||salt||Ascon-Keccak(brotli(JSON))||tag, wrapped
+    -- under txt_access_key; JSON = {"<txt_id>": {"last_part_num":
+    -- int, "last_accessed": int (unix ms)}, ...}, capped at 7
+    -- txt_ids (client evicts the entry with the oldest
+    -- last_accessed before exceeding the cap -- no DB-level
+    -- enforcement)
+    access         BLOB    NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS bookmarks (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id      INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
-    bookmark_key BLOB    NOT NULL,   -- magic||version||salt||Ascon-Keccak(bookmark_key bytes)||tag, wrapped under owner's umk; bookmark_key itself is 64 random bytes
-    bookmark     BLOB    NOT NULL    -- magic||version||salt||Ascon-Keccak(brotli(JSON))||tag, wrapped under bookmark_key; JSON = {"<txt_id>": [{"part_num": int, "line": int, "txt_preview": str, "created_at": int (unix ms)}, ...], ...}, each txt_id's list capped at constants.BOOKMARK_LIMIT (20) entries (client evicts the entry with the oldest created_at before exceeding the cap — no DB-level enforcement)
+    user_id      INTEGER NOT NULL UNIQUE
+                  REFERENCES users(id) ON DELETE CASCADE,
+    -- magic||version||salt||Ascon-Keccak(bookmark_key bytes)||tag,
+    -- wrapped under owner's umk; bookmark_key itself is 64 random
+    -- bytes
+    bookmark_key BLOB    NOT NULL,
+    -- magic||version||salt||Ascon-Keccak(brotli(JSON))||tag, wrapped
+    -- under bookmark_key; JSON = {"<txt_id>": [{"part_num": int,
+    -- "line": int, "txt_preview": str, "created_at": int (unix
+    -- ms)}, ...], ...}, each txt_id's list capped at
+    -- constants.BOOKMARK_LIMIT (20) entries (client evicts the
+    -- entry with the oldest created_at before exceeding the cap --
+    -- no DB-level enforcement)
+    bookmark     BLOB    NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS txt_metadata (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id          INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
-    txt_metadata_key BLOB    NOT NULL,   -- magic||version||salt||Ascon-Keccak(txt_metadata_key bytes)||tag, wrapped under owner's umk; txt_metadata_key itself is 64 random bytes
-    content          BLOB                -- magic||version||salt||Ascon-Keccak(raw_path ascii)||tag -- a wrapped pointer to an R2 object holding magic||version||salt||Ascon-Keccak(brotli(JSON))||tag, same pattern as txt_parts.path; legacy accounts not yet migrated still hold the JSON blob directly here (see prose below)
+    user_id          INTEGER NOT NULL UNIQUE
+                      REFERENCES users(id) ON DELETE CASCADE,
+    -- magic||version||salt||Ascon-Keccak(txt_metadata_key
+    -- bytes)||tag, wrapped under owner's umk; txt_metadata_key
+    -- itself is 64 random bytes
+    txt_metadata_key BLOB    NOT NULL,
+    -- magic||version||salt||Ascon-Keccak(raw_path ascii)||tag -- a
+    -- wrapped pointer to an R2 object holding
+    -- magic||version||salt||Ascon-Keccak(brotli(JSON))||tag, same
+    -- pattern as txt_parts.path; legacy accounts not yet migrated
+    -- still hold the JSON blob directly here (see prose below)
+    content          BLOB
 );
 ```
 
@@ -104,47 +162,69 @@ CREATE TABLE IF NOT EXISTS txt_metadata (
 ## Key Hierarchy
 
 ```
-user_root_key (per-user config secret, ≥256 random bytes, base64; not stored in Turso)
+user_root_key
+    (per-user config secret, ≥256 random bytes, base64; not
+    stored in Turso)
     │  IKM for HKDF, wraps/unwraps —
     ▼
-umk  (umk_store.umk — 64 random bytes, generated once per user)
+umk
+    (umk_store.umk — 64 random bytes, generated once per user)
     │  used directly as IKM for HKDF, wraps/unwraps —
-    ├──▶ txt_key            (txt.txt_key — 64 random bytes, per document)
+    ├──▶ txt_key
+    │        (txt.txt_key — 64 random bytes, per document)
     │        │  used directly as IKM —
-    │        └──▶ txt_parts.path   (per document's part paths)
+    │        └──▶ txt_parts.path
+    │                 (per document's part paths)
     │
-    ├──▶ txt_metadata_key   (txt_metadata.txt_metadata_key — 64 random bytes, per user)
+    ├──▶ txt_metadata_key
+    │        (txt_metadata.txt_metadata_key — 64 random bytes,
+    │        per user)
     │        │  used directly as IKM —
     │        └──▶ txt_metadata.content
     │
-    ├──▶ txt_access_key     (txt_access.txt_access_key — 64 random bytes, per user)
+    ├──▶ txt_access_key
+    │        (txt_access.txt_access_key — 64 random bytes, per
+    │        user)
     │        │  used directly as IKM —
-    │        └──▶ txt_access.access   (read position, keyed by txt_id, for every document this user has opened)
+    │        └──▶ txt_access.access
+    │                 (read position, keyed by txt_id, for every
+    │                 document this user has opened)
     │
-    ├──▶ bookmark_key       (bookmarks.bookmark_key — 64 random bytes, per user)
+    ├──▶ bookmark_key
+    │        (bookmarks.bookmark_key — 64 random bytes, per user)
     │        │  used directly as IKM —
-    │        └──▶ bookmarks.bookmark   (bookmarks, keyed by txt_id, for every document this user has opened)
+    │        └──▶ bookmarks.bookmark
+    │                 (bookmarks, keyed by txt_id, for every
+    │                 document this user has opened)
     │
-    ├──▶ r2_config.config   (used directly as IKM, no intermediate key — same pattern as key_store.priv_key)
+    ├──▶ r2_config.config
+    │        (used directly as IKM, no intermediate key — same
+    │        pattern as key_store.priv_key)
     │
-    └──▶ key_store.{pub_key, priv_key}   (lc_kyber_1024_x448 composite keypair — per user;
-             priv_key wrapped under umk as above, pub_key stored raw/public)
+    └──▶ key_store.{pub_key, priv_key}
+             (lc_kyber_1024_x448 composite keypair — per user;
+             priv_key wrapped under umk as above, pub_key stored
+             raw/public)
              │
-             │  a document owner Encapsulates (crypto.md) against another
-             │  user's pub_key to grant that user access:
+             │  a document owner Encapsulates (crypto.md) against
+             │  another user's pub_key to grant that user access:
              ▼
-        txt_shares.{salt_kem_ct, txt_key}   (per (document, recipient) —
-             txt_key is the same bytes as txt.txt_key, wrapped for the recipient
-             instead of the owner via HKDF(IKM=ss, salt) -> 128-byte OKM;
-             salt_kem_ct = salt || lc_kyber_1024_x448_ct is the public value the
+        txt_shares.{salt_kem_ct, txt_key}
+             (per (document, recipient) — txt_key is the same
+             bytes as txt.txt_key, wrapped for the recipient
+             instead of the owner via HKDF(IKM=ss, salt) ->
+             128-byte OKM; salt_kem_ct = salt ||
+             lc_kyber_1024_x448_ct is the public value the
              recipient needs to Decapsulate down to ss)
              │
-             │  the recipient Decapsulates using their own priv_key (paired with
-             │  the pub_key the owner encapsulated against) to recover ss, then
-             │  unwraps txt_key, then reads txt_parts.path the same as the owner
-             │  (the recipient's own read position/bookmarks for this document
-             │  live under their own umk chain — txt_access_key/bookmark_key —
-             │  independent of this share)
+             │  the recipient Decapsulates using their own
+             │  priv_key (paired with the pub_key the owner
+             │  encapsulated against) to recover ss, then unwraps
+             │  txt_key, then reads txt_parts.path the same as
+             │  the owner (the recipient's own read
+             │  position/bookmarks for this document live under
+             │  their own umk chain — txt_access_key/bookmark_key
+             │  — independent of this share)
              ▼
         (recipient now holds the document's txt_key, unwrapped)
 ```
