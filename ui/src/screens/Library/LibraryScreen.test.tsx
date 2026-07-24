@@ -80,7 +80,7 @@ function CurrentPath() {
   );
 }
 
-function renderLibrary(bookmarksMap: BookmarksMap = new Map(), refreshing = false) {
+function setVaultMock(bookmarksMap: BookmarksMap, refreshing: boolean) {
   vi.mocked(VaultContextModule.useVault).mockReturnValue({
     status: "unlocked",
     session: { creds: { displayName: "Alice" } } as VaultContextModule.VaultSession,
@@ -97,16 +97,23 @@ function renderLibrary(bookmarksMap: BookmarksMap = new Map(), refreshing = fals
     addBookmarkEntry: vi.fn(),
     removeBookmarkEntry,
   });
-  vi.mocked(useLibraryBooksModule.useLibraryBooks).mockReturnValue({ books, loading: false });
+}
 
-  return render(
+function libraryTree() {
+  return (
     <MemoryRouter initialEntries={["/library"]}>
       <Routes>
         <Route path="/library" element={<LibraryScreen />} />
         <Route path="/read/:txtId" element={<CurrentPath />} />
       </Routes>
-    </MemoryRouter>,
+    </MemoryRouter>
   );
+}
+
+function renderLibrary(bookmarksMap: BookmarksMap = new Map(), refreshing = false) {
+  setVaultMock(bookmarksMap, refreshing);
+  vi.mocked(useLibraryBooksModule.useLibraryBooks).mockReturnValue({ books, loading: false });
+  return render(libraryTree());
 }
 
 describe("LibraryScreen", () => {
@@ -271,12 +278,30 @@ describe("LibraryScreen", () => {
       expect(refresh).toHaveBeenCalledTimes(1);
     });
 
-    it("shows a spinner and disables itself while refreshing", () => {
-      renderLibrary(new Map(), true);
+    it("shows a spinner and disables itself while refreshing, and disables the drawer toggle too (dropdown copy -- the lg+ sidebar's copy is gone entirely, see below)", async () => {
+      // Opened *before* refreshing starts -- the toggle disables once
+      // refreshing does, so a real user couldn't open it mid-refresh; this
+      // covers the dropdown staying open (and usable) if it already was.
+      const { rerender } = renderLibrary(new Map(), false);
+      await userEvent.click(screen.getByRole("button", { name: /library menu/i }));
+      // Two copies coexist in jsdom (no real CSS media queries to actually
+      // hide the lg+ sidebar's) -- the drawer's own renders first in DOM
+      // order, same as the "All books" duplicate-copy tests above.
+      expect(screen.getAllByRole("button", { name: /refresh library/i })[0]).toBeInTheDocument();
+
+      setVaultMock(new Map(), true);
+      rerender(libraryTree());
+
+      expect(screen.getByRole("button", { name: /library menu/i })).toBeDisabled();
       const refreshButton = screen.getByRole("button", { name: /refresh library/i });
       expect(refreshButton).toBeDisabled();
       expect(refreshButton.querySelector(".spinner-border")).not.toBeNull();
       expect(refreshButton.querySelector(".bi-arrow-clockwise")).toBeNull();
+    });
+
+    it("disables the small-screen drawer toggle while refreshing, so it can't be opened mid-refresh", () => {
+      renderLibrary(new Map(), true);
+      expect(screen.getByRole("button", { name: /library menu/i })).toBeDisabled();
     });
 
     it("disables the search box while refreshing", () => {
@@ -284,14 +309,18 @@ describe("LibraryScreen", () => {
       expect(screen.getByLabelText(/search library/i)).toBeDisabled();
     });
 
-    it("replaces the content pane with a spinner while refreshing, keeping the nav visible", () => {
+    it("replaces the whole left pane and content pane with one spinner while refreshing, keeping just the top bar", () => {
       renderLibrary(new Map(), true);
       // The heading/book-list content pane is gone...
       expect(screen.queryByRole("heading", { name: "Recent" })).not.toBeInTheDocument();
       expect(screen.queryByText("The White Order")).not.toBeInTheDocument();
+      // ...and so is the lg+ sidebar below "Skypiea" -- nav items, account
+      // footer, and its Lock/Refresh buttons included.
+      expect(screen.queryByRole("button", { name: /All books/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /^lock$/i })).not.toBeInTheDocument();
       expect(screen.getByText(/refreshing your library/i)).toBeInTheDocument();
-      // ...but the nav (sidebar) and top bar (search box) are still there.
-      expect(screen.getByRole("button", { name: /All books/ })).toBeInTheDocument();
+      // ...but the top bar (drawer toggle, search box) is still there.
+      expect(screen.getByRole("button", { name: /library menu/i })).toBeInTheDocument();
       expect(screen.getByLabelText(/search library/i)).toBeInTheDocument();
     });
   });
