@@ -28,6 +28,7 @@ vi.mock("../data/bookmarks", () => ({
 import * as accessData from "../data/access";
 import * as bookmarksData from "../data/bookmarks";
 import * as metadata from "../data/metadata";
+import type { BookInfo } from "../data/metadata";
 import * as owner from "../data/owner";
 
 /** Wires up the three post-auth loads (metadata/access/bookmarks) that
@@ -190,5 +191,83 @@ describe("VaultProvider", () => {
 
     expect(result.current.status).toBe("locked");
     expect(result.current.session).toBeNull();
+  });
+
+  describe("refresh", () => {
+    async function unlockedResult() {
+      vi.mocked(owner.resolveUserId).mockResolvedValue(42);
+      vi.mocked(owner.checkPassword).mockResolvedValue(true);
+      vi.mocked(owner.unwrapUmk).mockResolvedValue(new Uint8Array(64).fill(1));
+      vi.mocked(owner.fetchR2Config).mockResolvedValue({
+        endpoint: "https://x",
+        region: "auto",
+        bucket: "b",
+        readOnlyAccessKeyId: "id",
+        readOnlySecretAccessKey: "secret",
+      });
+      mockLibraryLoads();
+
+      const { result } = renderVault();
+      await act(async () => {
+        await result.current.unlock(fakeFile(CONFIG));
+      });
+      await waitFor(() => expect(result.current.status).toBe("unlocked"));
+      return result;
+    }
+
+    it("re-loads metadata, access, and bookmarks", async () => {
+      const result = await unlockedResult();
+      expect(result.current.session?.metadataById.size).toBe(0);
+      expect(result.current.accessMap.size).toBe(0);
+      expect(result.current.bookmarksMap.size).toBe(0);
+
+      const freshMetadata = new Map([[7, { txtId: 7 } as unknown as BookInfo]]);
+      vi.mocked(metadata.loadTxtMetadata).mockResolvedValue(freshMetadata);
+      vi.mocked(accessData.loadOrInitAccess).mockResolvedValue({
+        txtAccessKey: new Uint8Array(64),
+        accessMap: new Map([[7, { lastPartNum: 3, lastAccessedMs: 1 }]]),
+      });
+      vi.mocked(bookmarksData.loadOrInitBookmarks).mockResolvedValue({
+        bookmarkKey: new Uint8Array(64),
+        bookmarksMap: new Map([[7, [{ partNum: 3, line: 1, txtPreview: "x", createdAt: 1 }]]]),
+      });
+
+      await act(async () => {
+        await result.current.refresh();
+      });
+
+      expect(result.current.session?.metadataById).toBe(freshMetadata);
+      expect(result.current.accessMap.get(7)).toEqual({ lastPartNum: 3, lastAccessedMs: 1 });
+      expect(result.current.bookmarksMap.get(7)).toHaveLength(1);
+    });
+
+    it("toggles refreshing on for the duration of the call", async () => {
+      const result = await unlockedResult();
+      expect(result.current.refreshing).toBe(false);
+
+      let resolveMetadata: (value: Map<number, BookInfo>) => void = () => {};
+      vi.mocked(metadata.loadTxtMetadata).mockReturnValue(
+        new Promise((resolve) => {
+          resolveMetadata = resolve;
+        }),
+      );
+
+      let refreshPromise: Promise<void> = Promise.resolve();
+      act(() => {
+        refreshPromise = result.current.refresh();
+      });
+      await waitFor(() => expect(result.current.refreshing).toBe(true));
+
+      await act(async () => {
+        resolveMetadata(new Map());
+        await refreshPromise;
+      });
+      expect(result.current.refreshing).toBe(false);
+    });
+
+    it("throws when the vault is locked", async () => {
+      const { result } = renderVault();
+      await expect(result.current.refresh()).rejects.toThrow(/locked/i);
+    });
   });
 });
