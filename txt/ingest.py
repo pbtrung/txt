@@ -157,7 +157,9 @@ class TxtIngester(TxtOwner):
             user_id, umk
         )
         content[str(txt_id)] = self._metadata_entry(path)
-        await self._write_txt_metadata_content(user_id, txt_metadata_key, content, raw_path)
+        await self._write_txt_metadata_content(
+            user_id, txt_metadata_key, content, raw_path
+        )
         logger.debug(
             "Updated txt_metadata entry for txt_id=%d (user_id=%d)", txt_id, user_id
         )
@@ -231,8 +233,8 @@ class TxtIngester(TxtOwner):
         return txt_id
 
     async def _existing_names(self, user_id: int, umk: bytes) -> set[str]:
-        _txt_metadata_key, content, _raw_path = await self._txt_metadata_key_and_content(
-            user_id, umk
+        _txt_metadata_key, content, _raw_path = (
+            await self._txt_metadata_key_and_content(user_id, umk)
         )
         return {entry["name"] for entry in content.values()}
 
