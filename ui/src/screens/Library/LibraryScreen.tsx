@@ -173,7 +173,8 @@ function LibraryNavContent({
 }
 
 export function LibraryScreen() {
-  const { lock, refresh, refreshing, session, bookmarksMap, removeAccessEntry, removeBookmarkEntry } = useVault();
+  const { lock, refresh, refreshing, progress, session, bookmarksMap, removeAccessEntry, removeBookmarkEntry } =
+    useVault();
   const navigate = useNavigate();
   const { books, loading } = useLibraryBooks();
   const [view, setView] = useState<View>({ kind: "recent" });
@@ -384,10 +385,17 @@ export function LibraryScreen() {
             dropdown copy of the nav is untouched too, since it isn't part
             of this persistent lg+ region at all. */}
         {refreshing ? (
-          <div className="flex-grow-1 d-flex align-items-center justify-content-center">
-            <div className="spinner-border text-primary" role="status">
-              <span className="visually-hidden">Refreshing your library…</span>
+          // role="status" on this wrapper, not the spinner glyph itself --
+          // it's a live region, so the two text lines below get
+          // re-announced as progress updates them (mirrors Unlock's own
+          // spinner). A non-breaking space holds the first line's height
+          // even before the first phase lands.
+          <div className="flex-grow-1 d-flex flex-column align-items-center justify-content-center gap-1" role="status">
+            <div className="spinner-border text-primary mb-1" aria-hidden="true" />
+            <div className="small text-body-secondary">
+              {progress ? `Step ${progress.step} of ${progress.total}` : " "}
             </div>
+            <div className="small text-body-secondary">{progress?.label ?? "Refreshing your library"}…</div>
           </div>
         ) : (
           <>

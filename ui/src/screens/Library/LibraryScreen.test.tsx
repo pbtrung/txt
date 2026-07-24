@@ -80,7 +80,11 @@ function CurrentPath() {
   );
 }
 
-function setVaultMock(bookmarksMap: BookmarksMap, refreshing: boolean) {
+function setVaultMock(
+  bookmarksMap: BookmarksMap,
+  refreshing: boolean,
+  progress: VaultContextModule.VaultProgress | null = null,
+) {
   vi.mocked(VaultContextModule.useVault).mockReturnValue({
     status: "unlocked",
     session: { creds: { displayName: "Alice" } } as VaultContextModule.VaultSession,
@@ -88,6 +92,7 @@ function setVaultMock(bookmarksMap: BookmarksMap, refreshing: boolean) {
     accessMap: new Map(),
     bookmarksMap,
     refreshing,
+    progress,
     unlock: vi.fn(),
     lock,
     refresh,
@@ -110,8 +115,12 @@ function libraryTree() {
   );
 }
 
-function renderLibrary(bookmarksMap: BookmarksMap = new Map(), refreshing = false) {
-  setVaultMock(bookmarksMap, refreshing);
+function renderLibrary(
+  bookmarksMap: BookmarksMap = new Map(),
+  refreshing = false,
+  progress: VaultContextModule.VaultProgress | null = null,
+) {
+  setVaultMock(bookmarksMap, refreshing, progress);
   vi.mocked(useLibraryBooksModule.useLibraryBooks).mockReturnValue({ books, loading: false });
   return render(libraryTree());
 }
@@ -330,6 +339,16 @@ describe("LibraryScreen", () => {
       // ...but the top bar (drawer toggle, search box) is still there.
       expect(screen.getByRole("button", { name: /library menu/i })).toBeInTheDocument();
       expect(screen.getByLabelText(/search library/i)).toBeInTheDocument();
+    });
+
+    it("shows the current phase and a step counter under that spinner once progress is set", () => {
+      renderLibrary(new Map(), true, { label: "Loading your bookmarks", step: 3, total: 3 });
+      const step = screen.getByText("Step 3 of 3");
+      const label = screen.getByText(/loading your bookmarks/i);
+      // Step counter on top, phase label underneath it.
+      expect(step.compareDocumentPosition(label) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      // The generic fallback line is gone once a real phase label takes over.
+      expect(screen.queryByText(/^refreshing your library/i)).not.toBeInTheDocument();
     });
   });
 

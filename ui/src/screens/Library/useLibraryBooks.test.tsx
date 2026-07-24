@@ -21,6 +21,7 @@ function mockVault(session: VaultContextModule.VaultSession | null, accessMap = 
     accessMap,
     bookmarksMap: new Map(),
     refreshing: false,
+    progress: null,
     unlock: vi.fn(),
     lock: vi.fn(),
     refresh: vi.fn(),

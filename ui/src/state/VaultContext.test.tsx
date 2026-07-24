@@ -26,6 +26,7 @@ vi.mock("../data/bookmarks", () => ({
 }));
 
 import * as accessData from "../data/access";
+import type { AccessMap } from "../data/access";
 import * as bookmarksData from "../data/bookmarks";
 import * as metadata from "../data/metadata";
 import type { BookInfo } from "../data/metadata";
@@ -96,6 +97,99 @@ describe("VaultProvider", () => {
     expect(result.current.session?.userId).toBe(42);
     expect(result.current.session?.creds.displayName).toBe("Alice");
     expect(result.current.error).toBeNull();
+  });
+
+  it("moves progress through each unlock phase, then clears it", async () => {
+    vi.mocked(owner.resolveUserId).mockResolvedValue(42);
+    let resolvePasswordCheck: (ok: boolean) => void = () => {};
+    vi.mocked(owner.checkPassword).mockReturnValue(
+      new Promise((resolve) => {
+        resolvePasswordCheck = resolve;
+      }),
+    );
+    vi.mocked(owner.unwrapUmk).mockResolvedValue(new Uint8Array(64).fill(1));
+    vi.mocked(owner.fetchR2Config).mockResolvedValue({
+      endpoint: "https://x",
+      region: "auto",
+      bucket: "b",
+      readOnlyAccessKeyId: "id",
+      readOnlySecretAccessKey: "secret",
+    });
+    mockLibraryLoads();
+
+    const { result } = renderVault();
+    expect(result.current.progress).toBeNull();
+
+    let unlockPromise: Promise<void> = Promise.resolve();
+    act(() => {
+      unlockPromise = result.current.unlock(fakeFile(CONFIG));
+    });
+    // "Signing you in" covers resolveUserId + checkPassword -- stalled on
+    // the latter, so this is where progress should sit until it resolves.
+    await waitFor(() => expect(result.current.progress).toEqual({ label: "Signing you in", step: 1, total: 5 }));
+
+    await act(async () => {
+      resolvePasswordCheck(true);
+      await unlockPromise;
+    });
+
+    expect(result.current.status).toBe("unlocked");
+    expect(result.current.progress).toBeNull();
+  });
+
+  it("splits the library-loading phase into its three actual requests, not one big step", async () => {
+    vi.mocked(owner.resolveUserId).mockResolvedValue(42);
+    vi.mocked(owner.checkPassword).mockResolvedValue(true);
+    vi.mocked(owner.unwrapUmk).mockResolvedValue(new Uint8Array(64).fill(1));
+    vi.mocked(owner.fetchR2Config).mockResolvedValue({
+      endpoint: "https://x",
+      region: "auto",
+      bucket: "b",
+      readOnlyAccessKeyId: "id",
+      readOnlySecretAccessKey: "secret",
+    });
+    vi.mocked(metadata.loadTxtMetadata).mockResolvedValue(new Map());
+    let resolveAccess: (value: { txtAccessKey: Uint8Array; accessMap: AccessMap }) => void = () => {};
+    vi.mocked(accessData.loadOrInitAccess).mockReturnValue(
+      new Promise((resolve) => {
+        resolveAccess = resolve;
+      }),
+    );
+    vi.mocked(bookmarksData.loadOrInitBookmarks).mockResolvedValue({
+      bookmarkKey: new Uint8Array(64),
+      bookmarksMap: new Map(),
+    });
+
+    const { result } = renderVault();
+    let unlockPromise: Promise<void> = Promise.resolve();
+    act(() => {
+      unlockPromise = result.current.unlock(fakeFile(CONFIG));
+    });
+    // Stalled on loadOrInitAccess -- if the whole library load were still
+    // one "Loading your library" step, this would still show the
+    // metadata step's own label, not its own phase.
+    await waitFor(() =>
+      expect(result.current.progress).toEqual({ label: "Loading your read progress", step: 4, total: 5 }),
+    );
+
+    await act(async () => {
+      resolveAccess({ txtAccessKey: new Uint8Array(64), accessMap: new Map() });
+      await unlockPromise;
+    });
+    expect(result.current.status).toBe("unlocked");
+  });
+
+  it("clears progress if unlock fails", async () => {
+    vi.mocked(owner.resolveUserId).mockResolvedValue(42);
+    vi.mocked(owner.checkPassword).mockResolvedValue(false);
+
+    const { result } = renderVault();
+    await act(async () => {
+      await result.current.unlock(fakeFile(CONFIG));
+    });
+
+    expect(result.current.status).toBe("locked");
+    expect(result.current.progress).toBeNull();
   });
 
   it("stays locked and reports an error for an invalid config file", async () => {
@@ -263,6 +357,32 @@ describe("VaultProvider", () => {
         await refreshPromise;
       });
       expect(result.current.refreshing).toBe(false);
+    });
+
+    it("moves progress through each refresh phase, then clears it", async () => {
+      const result = await unlockedResult();
+      expect(result.current.progress).toBeNull();
+
+      let resolveAccess: (value: { txtAccessKey: Uint8Array; accessMap: AccessMap }) => void = () => {};
+      vi.mocked(accessData.loadOrInitAccess).mockReturnValue(
+        new Promise((resolve) => {
+          resolveAccess = resolve;
+        }),
+      );
+
+      let refreshPromise: Promise<void> = Promise.resolve();
+      act(() => {
+        refreshPromise = result.current.refresh();
+      });
+      await waitFor(() =>
+        expect(result.current.progress).toEqual({ label: "Loading your read progress", step: 2, total: 3 }),
+      );
+
+      await act(async () => {
+        resolveAccess({ txtAccessKey: new Uint8Array(64), accessMap: new Map() });
+        await refreshPromise;
+      });
+      expect(result.current.progress).toBeNull();
     });
 
     it("throws when the vault is locked", async () => {
