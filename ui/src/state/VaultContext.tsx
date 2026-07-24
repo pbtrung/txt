@@ -47,8 +47,10 @@ export interface VaultContextValue {
   error: string | null;
   accessMap: AccessMap;
   bookmarksMap: BookmarksMap;
+  refreshing: boolean;
   unlock: (file: File) => Promise<void>;
   lock: () => void;
+  refresh: () => Promise<void>;
   getTxtKey: (txtId: number) => Promise<Uint8Array>;
   recordReadPosition: (txtId: number, position: ReadPosition) => Promise<void>;
   removeAccessEntry: (txtId: number) => Promise<void>;
@@ -68,6 +70,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [accessMap, setAccessMapState] = useState<AccessMap>(new Map());
   const [bookmarksMap, setBookmarksMapState] = useState<BookmarksMap>(new Map());
+  const [refreshing, setRefreshing] = useState(false);
   const txtKeyCache = useRef(new Map<number, Uint8Array>());
 
   // Mirrors of the two maps above, updated synchronously (unlike state,
@@ -168,6 +171,48 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     setError(null);
   }, [setAccessMap, setBookmarksMap]);
 
+  // Re-loads exactly the three requests unlock() makes up front (metadata,
+  // access, bookmarks) -- for the Library screen's manual refresh button,
+  // so a book ingested/shared, or a bookmark/read-position added, from
+  // elsewhere since unlocking shows up without a full re-unlock. Rethrows
+  // on failure rather than swallowing it (unlike the best-effort per-user
+  // blob *writes* elsewhere in this file) so the Library screen's button
+  // can surface it -- the user explicitly asked for fresh data, so a
+  // silent no-op would be misleading.
+  const refresh = useCallback(async () => {
+    if (!session) throw new Error("vault is locked");
+    setRefreshing(true);
+    try {
+      verbose("refresh: loading txt metadata");
+      const metadataById = await loadTxtMetadata(
+        session.db,
+        session.userId,
+        session.umk,
+        session.r2Client,
+        session.r2Config,
+      );
+      verbose("refresh: loading access map");
+      const { txtAccessKey, accessMap: nextAccessMap } = await loadOrInitAccess(
+        session.db,
+        session.userId,
+        session.umk,
+      );
+      verbose("refresh: loading bookmarks");
+      const { bookmarkKey, bookmarksMap: nextBookmarksMap } = await loadOrInitBookmarks(
+        session.db,
+        session.userId,
+        session.umk,
+      );
+
+      setSession((prev) => (prev ? { ...prev, metadataById, txtAccessKey, bookmarkKey } : prev));
+      setAccessMap(nextAccessMap);
+      setBookmarksMap(nextBookmarksMap);
+      verbose("refresh: done");
+    } finally {
+      setRefreshing(false);
+    }
+  }, [session, setAccessMap, setBookmarksMap]);
+
   const getTxtKey = useCallback(
     async (txtId: number): Promise<Uint8Array> => {
       const cached = txtKeyCache.current.get(txtId);
@@ -262,8 +307,10 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       error,
       accessMap,
       bookmarksMap,
+      refreshing,
       unlock,
       lock,
+      refresh,
       getTxtKey,
       recordReadPosition,
       removeAccessEntry,
@@ -276,8 +323,10 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       error,
       accessMap,
       bookmarksMap,
+      refreshing,
       unlock,
       lock,
+      refresh,
       getTxtKey,
       recordReadPosition,
       removeAccessEntry,

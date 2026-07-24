@@ -78,6 +78,8 @@ function LibraryNavContent({
   publisherEntries,
   displayName,
   onLock,
+  onRefresh,
+  refreshing,
 }: {
   view: View;
   selectView: (next: View) => void;
@@ -88,6 +90,8 @@ function LibraryNavContent({
   publisherEntries: BrowseEntry[];
   displayName: string | undefined;
   onLock: () => void;
+  onRefresh: () => void;
+  refreshing: boolean;
 }) {
   return (
     <>
@@ -129,34 +133,61 @@ function LibraryNavContent({
         </div>
       </div>
 
-      {/* The account footer: who's signed in, and the (now icon-only) Lock
-          action -- moved here from the top bar so it's part of "your
-          account" rather than sitting next to the search field. */}
+      {/* The account footer: who's signed in, and the (now icon-only)
+          Refresh/Lock actions -- moved here from the top bar so they're
+          part of "your account" rather than sitting next to the search
+          field. Refresh sits to Lock's left. */}
       <div className="border-top pt-2 mt-2 d-flex align-items-center justify-content-between gap-2">
         <span className="d-flex align-items-center gap-2 text-truncate">
           <i className="bi bi-person-circle text-body-secondary flex-shrink-0" aria-hidden="true" />
           <span className="small text-body-secondary text-truncate">{displayName}</span>
         </span>
-        <button
-          type="button"
-          className="btn btn-sm btn-outline-secondary border-primary flex-shrink-0"
-          onClick={onLock}
-          aria-label="Lock"
-          title="Lock"
-        >
-          <i className="bi bi-unlock text-primary" aria-hidden="true" />
-        </button>
+        <span className="d-flex align-items-center gap-2 flex-shrink-0">
+          <button
+            type="button"
+            className="btn btn-sm btn-outline-secondary border-primary flex-shrink-0"
+            onClick={onRefresh}
+            disabled={refreshing}
+            aria-label="Refresh library"
+            title="Refresh library"
+          >
+            {refreshing ? (
+              <span className="spinner-border spinner-border-sm text-primary" role="status" aria-hidden="true" />
+            ) : (
+              <i className="bi bi-arrow-clockwise text-primary" aria-hidden="true" />
+            )}
+          </button>
+          <button
+            type="button"
+            className="btn btn-sm btn-outline-secondary border-primary flex-shrink-0"
+            onClick={onLock}
+            aria-label="Lock"
+            title="Lock"
+          >
+            <i className="bi bi-unlock text-primary" aria-hidden="true" />
+          </button>
+        </span>
       </div>
     </>
   );
 }
 
 export function LibraryScreen() {
-  const { lock, session, bookmarksMap, removeAccessEntry, removeBookmarkEntry } = useVault();
+  const { lock, refresh, refreshing, session, bookmarksMap, removeAccessEntry, removeBookmarkEntry } = useVault();
   const navigate = useNavigate();
   const { books, loading } = useLibraryBooks();
   const [view, setView] = useState<View>({ kind: "recent" });
   const [search, setSearch] = useState("");
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+
+  async function handleRefresh() {
+    setRefreshError(null);
+    try {
+      await refresh();
+    } catch (err) {
+      setRefreshError(err instanceof Error ? err.message : String(err));
+    }
+  }
   // Below the lg breakpoint the left nav collapses into the wordmark's
   // dropdown; picking anything in it closes it again so the chosen view
   // actually comes into view.
@@ -284,6 +315,8 @@ export function LibraryScreen() {
                 publisherEntries={publisherEntries}
                 displayName={session?.creds.displayName}
                 onLock={lock}
+                onRefresh={() => void handleRefresh()}
+                refreshing={refreshing}
               />
             </div>
           )}
@@ -311,11 +344,18 @@ export function LibraryScreen() {
               placeholder="Search library"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
+              disabled={refreshing}
               aria-label="Search library"
             />
           </div>
         </div>
       </div>
+
+      {refreshError && (
+        <div className="alert alert-danger m-2 py-2 px-3 mb-0" role="alert">
+          {refreshError}
+        </div>
+      )}
 
       {/*
         The sidebar only ever renders at lg+ now -- below that, the same
@@ -340,95 +380,111 @@ export function LibraryScreen() {
             publisherEntries={publisherEntries}
             displayName={session?.creds.displayName}
             onLock={lock}
+            onRefresh={() => void handleRefresh()}
+            refreshing={refreshing}
           />
         </div>
 
         <div className="flex-grow-1 d-flex flex-column overflow-hidden" style={{ minWidth: 0 }}>
-          <div className="d-flex justify-content-between align-items-baseline px-3 py-2 border-bottom">
-            <h2 className="h6 mb-0">{heading}</h2>
-            <span className="small text-body-secondary">{headingDetail}</span>
-          </div>
-
-          <div className="flex-grow-1 overflow-auto">
-            {loading && <p className="text-body-secondary p-3">Loading your library…</p>}
-
-            {!loading && view.kind === "recent" && (
-              <>
-                <div className="small text-body-secondary text-uppercase fw-semibold px-3 pt-3 pb-1">
-                  Continue Reading
-                </div>
-                <div className="list-group list-group-flush">
-                  {continueReading.map((book) => (
-                    <BookRow
-                      key={book.txtId}
-                      book={book}
-                      onClick={() => openBook(book)}
-                      onDelete={() => void removeAccessEntry(book.txtId)}
-                      hidePartNum
-                    />
-                  ))}
-                  {continueReading.length === 0 && (
-                    <p className="text-body-secondary px-3 pb-3">No books in progress yet.</p>
-                  )}
-                </div>
-
-                <div className="small text-body-secondary text-uppercase fw-semibold px-3 pt-4 pb-1">
-                  Recent Bookmarks
-                </div>
-                <div className="list-group list-group-flush">
-                  {recentBookmarkItems.map((item) => (
-                    <BookmarkRow
-                      key={`${item.txtId}-${item.createdAt}`}
-                      title={item.info.title}
-                      partNum={item.partNum}
-                      line={item.line}
-                      txtPreview={item.txtPreview}
-                      onClick={() => openBookmark(item)}
-                      onDelete={() => void removeBookmarkEntry(item.txtId, item.createdAt)}
-                      deleteAriaLabel={`Remove this bookmark in ${item.info.title}`}
-                    />
-                  ))}
-                  {recentBookmarkItems.length === 0 && (
-                    <p className="text-body-secondary px-3 pb-3">No bookmarks yet.</p>
-                  )}
-                </div>
-              </>
-            )}
-
-            {!loading && view.kind !== "recent" && browseList && (
-              <div className="list-group list-group-flush">
-                {browseList.map((entry) => (
-                  <button
-                    key={entry.value}
-                    type="button"
-                    className="list-group-item list-group-item-action d-flex justify-content-between align-items-center"
-                    onClick={() =>
-                      selectView({
-                        kind: "browseValue",
-                        dimension: (view as { dimension: BrowseDimension }).dimension,
-                        value: entry.value,
-                      })
-                    }
-                  >
-                    <span className="text-truncate" style={{ minWidth: 0 }}>
-                      {entry.value}
-                    </span>
-                    <span className="text-body-secondary flex-shrink-0 ms-2">{entry.count}</span>
-                  </button>
-                ))}
-                {browseList.length === 0 && <p className="text-body-secondary p-3">Nothing here yet.</p>}
+          {/* Refreshing replaces this whole pane (heading and list alike)
+              with a spinner -- the nav (sidebar/dropdown, top bar) stays
+              exactly as it was, so switching views or locking still works
+              mid-refresh, only the content being refreshed disappears. */}
+          {refreshing ? (
+            <div className="flex-grow-1 d-flex align-items-center justify-content-center">
+              <div className="spinner-border text-primary" role="status">
+                <span className="visually-hidden">Refreshing your library…</span>
               </div>
-            )}
-
-            {!loading && view.kind !== "recent" && bookList && (
-              <div className="list-group list-group-flush">
-                {bookList.map((book) => (
-                  <BookRow key={book.txtId} book={book} onClick={() => openBook(book)} />
-                ))}
-                {bookList.length === 0 && <p className="text-body-secondary p-3">No books match here yet.</p>}
+            </div>
+          ) : (
+            <>
+              <div className="d-flex justify-content-between align-items-baseline px-3 py-2 border-bottom">
+                <h2 className="h6 mb-0">{heading}</h2>
+                <span className="small text-body-secondary">{headingDetail}</span>
               </div>
-            )}
-          </div>
+
+              <div className="flex-grow-1 overflow-auto">
+                {loading && <p className="text-body-secondary p-3">Loading your library…</p>}
+
+                {!loading && view.kind === "recent" && (
+                  <>
+                    <div className="small text-body-secondary text-uppercase fw-semibold px-3 pt-3 pb-1">
+                      Continue Reading
+                    </div>
+                    <div className="list-group list-group-flush">
+                      {continueReading.map((book) => (
+                        <BookRow
+                          key={book.txtId}
+                          book={book}
+                          onClick={() => openBook(book)}
+                          onDelete={() => void removeAccessEntry(book.txtId)}
+                          hidePartNum
+                        />
+                      ))}
+                      {continueReading.length === 0 && (
+                        <p className="text-body-secondary px-3 pb-3">No books in progress yet.</p>
+                      )}
+                    </div>
+
+                    <div className="small text-body-secondary text-uppercase fw-semibold px-3 pt-4 pb-1">
+                      Recent Bookmarks
+                    </div>
+                    <div className="list-group list-group-flush">
+                      {recentBookmarkItems.map((item) => (
+                        <BookmarkRow
+                          key={`${item.txtId}-${item.createdAt}`}
+                          title={item.info.title}
+                          partNum={item.partNum}
+                          line={item.line}
+                          txtPreview={item.txtPreview}
+                          onClick={() => openBookmark(item)}
+                          onDelete={() => void removeBookmarkEntry(item.txtId, item.createdAt)}
+                          deleteAriaLabel={`Remove this bookmark in ${item.info.title}`}
+                        />
+                      ))}
+                      {recentBookmarkItems.length === 0 && (
+                        <p className="text-body-secondary px-3 pb-3">No bookmarks yet.</p>
+                      )}
+                    </div>
+                  </>
+                )}
+
+                {!loading && view.kind !== "recent" && browseList && (
+                  <div className="list-group list-group-flush">
+                    {browseList.map((entry) => (
+                      <button
+                        key={entry.value}
+                        type="button"
+                        className="list-group-item list-group-item-action d-flex justify-content-between align-items-center"
+                        onClick={() =>
+                          selectView({
+                            kind: "browseValue",
+                            dimension: (view as { dimension: BrowseDimension }).dimension,
+                            value: entry.value,
+                          })
+                        }
+                      >
+                        <span className="text-truncate" style={{ minWidth: 0 }}>
+                          {entry.value}
+                        </span>
+                        <span className="text-body-secondary flex-shrink-0 ms-2">{entry.count}</span>
+                      </button>
+                    ))}
+                    {browseList.length === 0 && <p className="text-body-secondary p-3">Nothing here yet.</p>}
+                  </div>
+                )}
+
+                {!loading && view.kind !== "recent" && bookList && (
+                  <div className="list-group list-group-flush">
+                    {bookList.map((book) => (
+                      <BookRow key={book.txtId} book={book} onClick={() => openBook(book)} />
+                    ))}
+                    {bookList.length === 0 && <p className="text-body-secondary p-3">No books match here yet.</p>}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>

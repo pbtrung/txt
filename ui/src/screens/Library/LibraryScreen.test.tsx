@@ -68,6 +68,7 @@ const books: LibraryBook[] = [
 const removeAccessEntry = vi.fn();
 const removeBookmarkEntry = vi.fn();
 const lock = vi.fn();
+const refresh = vi.fn();
 
 function CurrentPath() {
   const location = useLocation();
@@ -79,15 +80,17 @@ function CurrentPath() {
   );
 }
 
-function renderLibrary(bookmarksMap: BookmarksMap = new Map()) {
+function renderLibrary(bookmarksMap: BookmarksMap = new Map(), refreshing = false) {
   vi.mocked(VaultContextModule.useVault).mockReturnValue({
     status: "unlocked",
     session: { creds: { displayName: "Alice" } } as VaultContextModule.VaultSession,
     error: null,
     accessMap: new Map(),
     bookmarksMap,
+    refreshing,
     unlock: vi.fn(),
     lock,
+    refresh,
     getTxtKey: vi.fn(),
     recordReadPosition: vi.fn(),
     removeAccessEntry,
@@ -252,6 +255,44 @@ describe("LibraryScreen", () => {
       expect(screen.getAllByRole("button", { name: /^lock$/i })).toHaveLength(1);
       await userEvent.click(screen.getByRole("button", { name: /library menu/i }));
       expect(screen.getAllByRole("button", { name: /^lock$/i })).toHaveLength(2);
+    });
+
+    it("shows an icon-only Refresh button to the left of Lock", () => {
+      renderLibrary();
+      const refreshButton = screen.getByRole("button", { name: /refresh library/i });
+      expect(refreshButton).not.toHaveTextContent("Refresh");
+      const lockButton = screen.getByRole("button", { name: /^lock$/i });
+      expect(refreshButton.compareDocumentPosition(lockButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it("calls refresh() when clicked", async () => {
+      renderLibrary();
+      await userEvent.click(screen.getByRole("button", { name: /refresh library/i }));
+      expect(refresh).toHaveBeenCalledTimes(1);
+    });
+
+    it("shows a spinner and disables itself while refreshing", () => {
+      renderLibrary(new Map(), true);
+      const refreshButton = screen.getByRole("button", { name: /refresh library/i });
+      expect(refreshButton).toBeDisabled();
+      expect(refreshButton.querySelector(".spinner-border")).not.toBeNull();
+      expect(refreshButton.querySelector(".bi-arrow-clockwise")).toBeNull();
+    });
+
+    it("disables the search box while refreshing", () => {
+      renderLibrary(new Map(), true);
+      expect(screen.getByLabelText(/search library/i)).toBeDisabled();
+    });
+
+    it("replaces the content pane with a spinner while refreshing, keeping the nav visible", () => {
+      renderLibrary(new Map(), true);
+      // The heading/book-list content pane is gone...
+      expect(screen.queryByRole("heading", { name: "Recent" })).not.toBeInTheDocument();
+      expect(screen.queryByText("The White Order")).not.toBeInTheDocument();
+      expect(screen.getByText(/refreshing your library/i)).toBeInTheDocument();
+      // ...but the nav (sidebar) and top bar (search box) are still there.
+      expect(screen.getByRole("button", { name: /All books/ })).toBeInTheDocument();
+      expect(screen.getByLabelText(/search library/i)).toBeInTheDocument();
     });
   });
 
