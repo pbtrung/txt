@@ -70,6 +70,22 @@ class TxtDeleter(TxtOwner):
         self.db.conn.execute("DELETE FROM txt WHERE id = ?", (txt_id,))
         logger.debug("txt_id=%d: deleted DB rows", txt_id)
 
+    async def _scrub_txt_metadata_entry(self, user_id: int, umk: bytes, txt_id: int) -> None:
+        # txt_metadata isn't in _JSON_BLOB_TABLES: its content lives in this
+        # user's (single, reused) R2 object, not inline, so it needs its own
+        # read-modify-write instead of the generic helper above (see
+        # owner.py's _txt_metadata_key_and_content/_write_txt_metadata_content).
+        txt_metadata_key, content, raw_path = await self._txt_metadata_key_and_content(
+            user_id, umk
+        )
+        if txt_metadata_key is None or str(txt_id) not in content:
+            return
+        del content[str(txt_id)]
+        await self._write_txt_metadata_content(user_id, txt_metadata_key, content, raw_path)
+        logger.debug(
+            "Removed txt_id=%d entry from txt_metadata (user_id=%d)", txt_id, user_id
+        )
+
     def _clear_txt_metadata(self, user_id: int) -> None:
         row = self.db.conn.execute(
             "SELECT 1 FROM txt_metadata WHERE user_id = ?", (user_id,)
@@ -102,10 +118,7 @@ class TxtDeleter(TxtOwner):
         # one shot once every txt is gone (see _clear_txt_metadata) rather than
         # paying to rewrite the whole blob per txt_id, but a single-txt delete
         # has no such later step, so it must scrub its own entry here.
-        self._scrub_txt_id_entry(
-            "txt_metadata", "txt_metadata_key", "content", user_id, umk, txt_id
-        )
-        self.db.conn.commit()
+        await self._scrub_txt_metadata_entry(user_id, umk, txt_id)
         logger.info("txt_id=%d: deleted", txt_id)
 
     async def delete_all(self) -> int:
@@ -117,7 +130,13 @@ class TxtDeleter(TxtOwner):
         # than every txt's parts in flight at once.
         for txt_id in txt_ids:
             await self._delete_txt(txt_id, user_id, umk)
+        # Resolved before clearing, and only deleted from R2 after the NULL
+        # is safely committed -- deleting first and failing the commit would
+        # leave txt_metadata.content pointing at a now-gone R2 object.
+        metadata_raw_path = self._txt_metadata_raw_path(user_id, umk)
         self._clear_txt_metadata(user_id)
         self.db.conn.commit()
+        if metadata_raw_path is not None:
+            await self.r2.delete_async(metadata_raw_path)
         logger.info("Finished deleting %d txt(s)", len(txt_ids))
         return len(txt_ids)

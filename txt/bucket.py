@@ -52,6 +52,12 @@ class TxtBucketCleaner(TxtOwner):
                 len(txt_ids),
                 len(raw_paths),
             )
+        # This account's single txt_metadata object (if it's been migrated to
+        # the R2-backed format) -- otherwise still-live content would look
+        # orphaned and get deleted below.
+        metadata_raw_path = self._txt_metadata_raw_path(user_id, umk)
+        if metadata_raw_path is not None:
+            known.add(metadata_raw_path)
         return known
 
     async def clean_bucket(self) -> int:

@@ -1,8 +1,22 @@
+import type { AwsClient } from "aws4fetch";
 import type { Client } from "@libsql/core/api";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import * as blob from "../crypto/blob";
 import { loadTxtMetadata } from "./metadata";
+import * as r2 from "./r2";
+import type { R2Config } from "./r2Config";
+
+vi.mock("./r2", () => ({ getObject: vi.fn() }));
+
+const r2Client = {} as AwsClient;
+const r2Config: R2Config = {
+  endpoint: "https://example",
+  region: "auto",
+  bucket: "bucket",
+  readOnlyAccessKeyId: "id",
+  readOnlySecretAccessKey: "secret",
+};
 
 function fakeClient(row: Record<string, unknown> | undefined): Client {
   return {
@@ -20,18 +34,43 @@ function fakeClient(row: Record<string, unknown> | undefined): Client {
 }
 
 describe("loadTxtMetadata", () => {
+  afterEach(() => {
+    vi.mocked(r2.getObject).mockReset();
+  });
+
   it("returns an empty map when txt_metadata.content is null", async () => {
     const umk = new Uint8Array(64).fill(1);
     const keyBlob = await blob.encrypt(umk, new Uint8Array(64).fill(2));
     const db = fakeClient({ txt_metadata_key: keyBlob.buffer, content: null });
-    const result = await loadTxtMetadata(db, 42, umk);
+    const result = await loadTxtMetadata(db, 42, umk, r2Client, r2Config);
     expect(result.size).toBe(0);
   });
 
   it("returns an empty map when there is no txt_metadata row at all", async () => {
     const db = fakeClient(undefined);
-    const result = await loadTxtMetadata(db, 42, new Uint8Array(64));
+    const result = await loadTxtMetadata(db, 42, new Uint8Array(64), r2Client, r2Config);
     expect(result.size).toBe(0);
+  });
+
+  it("fetches content from R2 when txt_metadata.content is a wrapped path (new format)", async () => {
+    const umk = new Uint8Array(64).fill(1);
+    const txtMetadataKey = new Uint8Array(64).fill(4);
+    const keyBlob = await blob.encrypt(umk, txtMetadataKey);
+
+    const content = { "3": { name: "short.txt" } };
+    const body = await blob.encrypt(txtMetadataKey, new TextEncoder().encode(JSON.stringify(content)), {
+      compressed: true,
+    });
+    const pathBlob = await blob.encrypt(txtMetadataKey, new TextEncoder().encode("some-raw-path"));
+    expect(pathBlob.length).toBeLessThan(200); // must land under TXT_METADATA_LEGACY_THRESHOLD to hit this branch
+
+    vi.mocked(r2.getObject).mockResolvedValue(body);
+
+    const db = fakeClient({ txt_metadata_key: keyBlob.buffer, content: pathBlob.buffer });
+    const result = await loadTxtMetadata(db, 42, umk, r2Client, r2Config);
+
+    expect(r2.getObject).toHaveBeenCalledWith(r2Client, r2Config, "some-raw-path");
+    expect(result.get(3)?.name).toBe("short.txt");
   });
 
   it("decrypts and normalizes OPF metadata, tolerating missing fields", async () => {
@@ -61,7 +100,7 @@ describe("loadTxtMetadata", () => {
     });
 
     const db = fakeClient({ txt_metadata_key: keyBlob.buffer, content: contentBlob.buffer });
-    const result = await loadTxtMetadata(db, 42, umk);
+    const result = await loadTxtMetadata(db, 42, umk, r2Client, r2Config);
 
     expect(result.size).toBe(2);
     expect(result.get(7)).toEqual({
@@ -117,7 +156,7 @@ describe("loadTxtMetadata", () => {
     });
 
     const db = fakeClient({ txt_metadata_key: keyBlob.buffer, content: contentBlob.buffer });
-    const result = await loadTxtMetadata(db, 42, umk);
+    const result = await loadTxtMetadata(db, 42, umk, r2Client, r2Config);
 
     expect(result.get(9)?.rawMetadata).toEqual([
       { key: "title", values: ["Some Book"] },
@@ -132,12 +171,19 @@ describe("loadTxtMetadata", () => {
       const umk = new Uint8Array(64).fill(1);
       const txtMetadataKey = new Uint8Array(64).fill(4);
       const keyBlob = await blob.encrypt(umk, txtMetadataKey);
-      const content = { "1": { name: "book.epub.txt", metadata } };
+      // Padded with an unrelated sibling entry so the encrypted+compressed
+      // content blob reliably lands above TXT_METADATA_LEGACY_THRESHOLD --
+      // otherwise these single-field fixtures are small enough to be
+      // misread as the new wrapped-path format instead of inline JSON.
+      const content = {
+        "1": { name: "book.epub.txt", metadata },
+        "999": { name: "padding-padding-padding-padding-padding-padding-padding.txt" },
+      };
       const contentBlob = await blob.encrypt(txtMetadataKey, new TextEncoder().encode(JSON.stringify(content)), {
         compressed: true,
       });
       const db = fakeClient({ txt_metadata_key: keyBlob.buffer, content: contentBlob.buffer });
-      const result = await loadTxtMetadata(db, 42, umk);
+      const result = await loadTxtMetadata(db, 42, umk, r2Client, r2Config);
       return result.get(1)?.rawMetadata ?? [];
     }
 
@@ -189,7 +235,7 @@ describe("loadTxtMetadata", () => {
     });
 
     const db = fakeClient({ txt_metadata_key: keyBlob.buffer, content: contentBlob.buffer });
-    const result = await loadTxtMetadata(db, 42, umk);
+    const result = await loadTxtMetadata(db, 42, umk, r2Client, r2Config);
 
     expect(result.get(1)?.rawMetadata).toEqual([{ key: "title", values: ["Some Book"] }]);
   });

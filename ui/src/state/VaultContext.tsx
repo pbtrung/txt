@@ -137,7 +137,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         // per-book: exactly three requests (metadata, access, bookmarks),
         // each a single row scoped to this user.
         verbose("unlock: loading txt metadata");
-        const metadataById = await loadTxtMetadata(db, userId, umk);
+        const metadataById = await loadTxtMetadata(db, userId, umk, r2Client, r2Config);
         verbose("unlock: loading access map");
         const { txtAccessKey, accessMap: initialAccessMap } = await loadOrInitAccess(db, userId, umk);
         verbose("unlock: loading bookmarks");

@@ -1,7 +1,6 @@
 """--txt-ingest: ingest .txt files from a directory into the vault (see docs/data_model.md)."""
 
 import asyncio
-import json
 import logging
 import os
 from pathlib import Path
@@ -26,9 +25,27 @@ class TxtIngester(TxtOwner):
     expire after ~10s of inactivity (unrecoverable once expired -- see
     https://github.com/tursodatabase/libsql/issues/985), so this DB connection
     must never sit idle across something as slow as R2 uploads-with-retries:
-    _persist_txt writes the txt row, its parts, and its metadata entry as one
-    uninterrupted, synchronous burst right after uploads finish, instead of
-    creating the txt row up front and leaving the connection idle throughout.
+    _persist_txt writes the txt row and its parts as one uninterrupted,
+    synchronous burst right after part uploads finish, instead of creating
+    the txt row up front and leaving the connection idle throughout.
+
+    The txt_metadata update happens after that, as a separate step: its
+    content is keyed by txt_id, which doesn't exist until _persist_txt's
+    INSERT runs, so it can't be uploaded to R2 ahead of the burst the way
+    parts are -- and uploading it *during* the burst would reintroduce
+    exactly the idle-stream risk the burst exists to avoid. In the common
+    case (this account already has a txt_metadata R2 object -- true for
+    every ingest after its first ever) that step is just one R2 PUT
+    overwriting that same object in place, no DB write at all (see
+    owner.py's _write_txt_metadata_content); only the very first write for
+    an account (a brand new one, or one migrating off the pre-R2-indirection
+    inline format) needs to establish+commit a path, with its own
+    rollback/cleanup if that commit fails. Either way, if the metadata step
+    fails, the txt itself is already durable and downloadable (download.py
+    falls back to a generic name when no metadata entry exists) -- the only
+    cost is that a rerun of --txt-ingest on the same directory won't
+    recognize this file as already-ingested (dedup is by name in
+    txt_metadata) and may re-ingest it as a duplicate txt.
     """
 
     @staticmethod
@@ -99,37 +116,15 @@ class TxtIngester(TxtOwner):
         raw_paths = [raw_path for _n, raw_path, _blob in parts]
         await asyncio.gather(*(self.r2.delete_async(p) for p in raw_paths))
 
-    def _load_txt_metadata(self, user_id: int, umk: bytes) -> tuple[bytes, dict]:
-        txt_metadata_key, content = self._txt_metadata_key_and_content(user_id, umk)
+    async def _load_current_metadata(
+        self, user_id: int, umk: bytes
+    ) -> tuple[bytes, dict, str | None]:
+        txt_metadata_key, content, raw_path = await self._txt_metadata_key_and_content(
+            user_id, umk
+        )
         if txt_metadata_key is None:
             raise ValueError(f"no txt_metadata row for user_id={user_id}; run --init")
-        return txt_metadata_key, content
-
-    def _save_txt_metadata(
-        self, user_id: int, txt_metadata_key: bytes, content: dict
-    ) -> None:
-        content_blob = Blob.encrypt(
-            txt_metadata_key, json.dumps(content).encode(), compressed=True
-        )
-        self.db.conn.execute(
-            "UPDATE txt_metadata SET content = ? WHERE user_id = ?",
-            (content_blob, user_id),
-        )
-
-    def _update_txt_metadata_entry(
-        self, user_id: int, umk: bytes, txt_id: int, name: str, metadata: dict | None
-    ) -> None:
-        # txt_metadata is one encrypted JSON blob per user, not one row per
-        # doc (see docs/data_model.md) -- every update rewrites it whole.
-        txt_metadata_key, content = self._load_txt_metadata(user_id, umk)
-        entry = {"name": name}
-        if metadata:
-            entry["metadata"] = metadata
-        content[str(txt_id)] = entry
-        self._save_txt_metadata(user_id, txt_metadata_key, content)
-        logger.debug(
-            "Updated txt_metadata entry for txt_id=%d (user_id=%d)", txt_id, user_id
-        )
+        return txt_metadata_key, content, raw_path
 
     @staticmethod
     def _resolve_opf_metadata(path: Path) -> dict | None:
@@ -142,11 +137,30 @@ class TxtIngester(TxtOwner):
         )
         return metadata
 
-    def _update_metadata_for_file(
+    def _metadata_entry(self, path: Path) -> dict:
+        entry = {"name": path.name}
+        metadata = self._resolve_opf_metadata(path)
+        if metadata:
+            entry["metadata"] = metadata
+        return entry
+
+    async def _persist_metadata_update(
         self, user_id: int, umk: bytes, txt_id: int, path: Path
     ) -> None:
-        metadata = self._resolve_opf_metadata(path)
-        self._update_txt_metadata_entry(user_id, umk, txt_id, path.name, metadata)
+        # txt_metadata is one encrypted JSON blob per user, not one row per
+        # doc (see docs/data_model.md) -- every update rewrites it whole, now
+        # via this user's (single, reused) R2 object rather than inline (see
+        # class docstring for why this is a separate step from _persist_txt's
+        # burst, and owner.py's _write_txt_metadata_content for how reuse
+        # avoids a DB write on every update after the first).
+        txt_metadata_key, content, raw_path = await self._load_current_metadata(
+            user_id, umk
+        )
+        content[str(txt_id)] = self._metadata_entry(path)
+        await self._write_txt_metadata_content(user_id, txt_metadata_key, content, raw_path)
+        logger.debug(
+            "Updated txt_metadata entry for txt_id=%d (user_id=%d)", txt_id, user_id
+        )
 
     async def _gather_uploads(
         self, path: Path, txt_key: bytes, raw_parts: list[bytes]
@@ -164,15 +178,6 @@ class TxtIngester(TxtOwner):
         uploaded = [r for r in results if not isinstance(r, BaseException)]
         failures = [r for r in results if isinstance(r, BaseException)]
         return uploaded, failures
-
-    def _safe_rollback(self, label: str) -> None:
-        # rollback() can itself raise (e.g. the same broken Hrana stream that
-        # caused the failure being handled) -- never let that skip the R2
-        # cleanup below, or parts get orphaned in the bucket.
-        try:
-            self.db.conn.rollback()
-        except Exception as exc:
-            logger.warning("%s: rollback failed: %s", label, exc)
 
     async def _abort_ingest(
         self, path: Path, raw_parts: list, uploaded: list, failures: list
@@ -197,7 +202,6 @@ class TxtIngester(TxtOwner):
         try:
             txt_id = self._insert_txt_row(user_id, umk, txt_key)
             self._insert_part_rows(txt_id, parts)
-            self._update_metadata_for_file(user_id, umk, txt_id, path)
             self.db.conn.commit()
             return txt_id
         except Exception:
@@ -222,11 +226,14 @@ class TxtIngester(TxtOwner):
         if failures:
             await self._abort_ingest(path, raw_parts, uploaded, failures)
         txt_id = await self._persist_txt(user_id, umk, txt_key, path, uploaded)
+        await self._persist_metadata_update(user_id, umk, txt_id, path)
         self._log_ingested(path, txt_id, len(raw_parts))
         return txt_id
 
-    def _existing_names(self, user_id: int, umk: bytes) -> set[str]:
-        _txt_metadata_key, content = self._load_txt_metadata(user_id, umk)
+    async def _existing_names(self, user_id: int, umk: bytes) -> set[str]:
+        _txt_metadata_key, content, _raw_path = await self._txt_metadata_key_and_content(
+            user_id, umk
+        )
         return {entry["name"] for entry in content.values()}
 
     @staticmethod
@@ -237,13 +244,13 @@ class TxtIngester(TxtOwner):
         skipped = [p.name for p in files if p.name in existing_names]
         return to_ingest, skipped
 
-    def _files_to_ingest(self, src: Path, user_id: int, umk: bytes) -> list[Path]:
+    async def _files_to_ingest(self, src: Path, user_id: int, umk: bytes) -> list[Path]:
         files = sorted(
             p for p in src.iterdir() if p.is_file() and p.suffix.lower() == ".txt"
         )
         # Skip filenames already recorded in txt_metadata.content -- re-running
         # --txt-ingest on the same directory shouldn't re-ingest duplicates.
-        existing_names = self._existing_names(user_id, umk)
+        existing_names = await self._existing_names(user_id, umk)
         to_ingest, skipped = self._filter_new_files(files, existing_names)
         if skipped:
             logger.info(
@@ -254,7 +261,7 @@ class TxtIngester(TxtOwner):
     async def add_dir(self, src: Path) -> list[int]:
         user_id = self._owner_user_id()
         umk = self._owner_umk(user_id)
-        files = self._files_to_ingest(src, user_id, umk)
+        files = await self._files_to_ingest(src, user_id, umk)
         logger.info("Found %d .txt file(s) to ingest in %s", len(files), src)
         # One file at a time -- its parts still upload concurrently -- rather
         # than every file's parts in flight at once.

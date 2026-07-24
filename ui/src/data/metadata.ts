@@ -3,12 +3,22 @@
 // name/content` pairs, repeated tags collapsed into a list -- see
 // docs/data_model.md's txt_metadata) into a tolerant BookInfo, mirroring
 // txt/download.py's _txt_names but keeping the full metadata, not just name.
+//
+// content is a wrapped R2 path (like txt_parts.path), not the JSON directly,
+// for any account that's been migrated -- see docs/data_model.md and
+// txt/owner.py's _txt_metadata_key_and_content, which this mirrors: content
+// blobs at/above TXT_METADATA_LEGACY_THRESHOLD bytes are assumed to be an
+// account not yet migrated off the old inline-JSON format.
 
+import type { AwsClient } from "aws4fetch";
 import type { Client } from "@libsql/core/api";
 
 import * as blob from "../crypto/blob";
+import * as c from "../crypto/constants";
 import { decryptJson } from "./decryptJson";
 import { requireBlobBytes } from "./db";
+import { getObject } from "./r2";
+import type { R2Config } from "./r2Config";
 
 export interface MetadataField {
   key: string;
@@ -138,7 +148,13 @@ function toBookInfo(txtId: number, entry: TxtMetadataEntry): BookInfo {
 }
 
 /** All of this account's book metadata, keyed by txt_id. Empty if the account has no txt yet. */
-export async function loadTxtMetadata(db: Client, userId: number, umk: Uint8Array): Promise<Map<number, BookInfo>> {
+export async function loadTxtMetadata(
+  db: Client,
+  userId: number,
+  umk: Uint8Array,
+  r2Client: AwsClient,
+  r2Config: R2Config,
+): Promise<Map<number, BookInfo>> {
   const result = await db.execute({
     sql: "SELECT txt_metadata_key, content FROM txt_metadata WHERE user_id = ?",
     args: [userId],
@@ -151,10 +167,16 @@ export async function loadTxtMetadata(db: Client, userId: number, umk: Uint8Arra
     umk,
     requireBlobBytes(row.txt_metadata_key, "txt_metadata.txt_metadata_key"),
   );
-  const content = (await decryptJson(txtMetadataKey, requireBlobBytes(row.content, "txt_metadata.content"))) as Record<
-    string,
-    TxtMetadataEntry
-  >;
+  const contentBlob = requireBlobBytes(row.content, "txt_metadata.content");
+  const content = (
+    contentBlob.length >= c.TXT_METADATA_LEGACY_THRESHOLD
+      ? await decryptJson(txtMetadataKey, contentBlob)
+      : await (async () => {
+          const rawPath = new TextDecoder().decode(await blob.decrypt(txtMetadataKey, contentBlob));
+          const body = await getObject(r2Client, r2Config, rawPath);
+          return decryptJson(txtMetadataKey, body);
+        })()
+  ) as Record<string, TxtMetadataEntry>;
 
   const byId = new Map<number, BookInfo>();
   for (const [txtIdStr, entry] of Object.entries(content)) {
@@ -169,8 +191,10 @@ export async function getBookInfo(
   db: Client,
   userId: number,
   umk: Uint8Array,
+  r2Client: AwsClient,
+  r2Config: R2Config,
   txtId: number,
 ): Promise<BookInfo | null> {
-  const byId = await loadTxtMetadata(db, userId, umk);
+  const byId = await loadTxtMetadata(db, userId, umk, r2Client, r2Config);
   return byId.get(txtId) ?? null;
 }
