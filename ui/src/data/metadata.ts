@@ -147,6 +147,30 @@ function toBookInfo(txtId: number, entry: TxtMetadataEntry): BookInfo {
   };
 }
 
+/** txt_metadata.content, once migrated, wraps a raw_path (plain ascii, never
+ * compressed -- same as txt_parts.path wrapping a part's raw_path) pointing
+ * at an R2 object holding the actual JSON. That R2 object is *supposed* to
+ * be brotli-compressed (txt/owner.py's _write_txt_metadata_content always
+ * writes it that way), but at least one already-deployed account's object
+ * was actually uncompressed -- so this tolerates both rather than assuming
+ * the documented one and failing decode for objects that predate it holding
+ * true. */
+async function readPathContent(
+  txtMetadataKey: Uint8Array,
+  contentBlob: Uint8Array,
+  r2Client: AwsClient,
+  r2Config: R2Config,
+): Promise<unknown> {
+  const rawPath = new TextDecoder().decode(await blob.decrypt(txtMetadataKey, contentBlob));
+  const body = await getObject(r2Client, r2Config, rawPath);
+  try {
+    return await decryptJson(txtMetadataKey, body);
+  } catch {
+    const plaintext = await blob.decrypt(txtMetadataKey, body, false);
+    return JSON.parse(new TextDecoder().decode(plaintext));
+  }
+}
+
 /** All of this account's book metadata, keyed by txt_id. Empty if the account has no txt yet. */
 export async function loadTxtMetadata(
   db: Client,
@@ -171,11 +195,7 @@ export async function loadTxtMetadata(
   const content = (
     contentBlob.length >= c.TXT_METADATA_LEGACY_THRESHOLD
       ? await decryptJson(txtMetadataKey, contentBlob)
-      : await (async () => {
-          const rawPath = new TextDecoder().decode(await blob.decrypt(txtMetadataKey, contentBlob));
-          const body = await getObject(r2Client, r2Config, rawPath);
-          return decryptJson(txtMetadataKey, body);
-        })()
+      : await readPathContent(txtMetadataKey, contentBlob, r2Client, r2Config)
   ) as Record<string, TxtMetadataEntry>;
 
   const byId = new Map<number, BookInfo>();
