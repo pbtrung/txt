@@ -460,13 +460,23 @@ export function ReaderScreen() {
       {bottomBarHidden && (
         <button
           type="button"
-          className="btn btn-primary rounded-circle position-fixed bottom-0 end-0 m-3 d-sm-none shadow"
-          style={{ width: "3rem", height: "3rem", zIndex: 1030 }}
+          className="btn btn-primary btn-sm rounded-circle position-fixed bottom-0 end-0 m-3 d-sm-none shadow d-flex align-items-center justify-content-center p-0"
+          style={{ width: "2.75rem", height: "2.75rem", zIndex: 1030 }}
           onClick={scrollToTop}
           aria-label="Scroll to top"
           title="Scroll to top"
         >
-          <i className="bi bi-arrow-up" aria-hidden="true" />
+          {/* Bootstrap's stock white icon color reads fine against light
+              mode's dark fill but washes out against dark mode's much
+              lighter gold one -- --brass-icon-on-fill picks the right
+              color per theme instead (theme.css). Sized up a bit from the
+              button's own font-size so the arrow itself reads clearly at
+              this button's small footprint. */}
+          <i
+            className="bi bi-arrow-up"
+            style={{ color: "var(--brass-icon-on-fill)", fontSize: "1.2rem" }}
+            aria-hidden="true"
+          />
         </button>
       )}
     </div>

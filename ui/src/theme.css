@@ -40,6 +40,13 @@
      button's) rather than just repeating it. */
   --brass-focus: #b8931f;
   --brass-focus-rgb: 184, 147, 31;
+  /* Reader's floating scroll-to-top button (btn-primary, filled with
+     --bs-primary) needs an icon color chosen for contrast against *that*
+     fill specifically -- not Bootstrap's stock white, which reads fine
+     against light mode's dark-olive fill but washes out against dark
+     mode's much lighter gold one (see the dark-mode block below). White
+     is exactly right here, since this mode's fill is dark. */
+  --brass-icon-on-fill: #fff;
 }
 
 [data-bs-theme="dark"] {
@@ -62,6 +69,12 @@
      this. */
   --brass-focus: #f0da85;
   --brass-focus-rgb: 240, 218, 133;
+  /* See the light-mode block above -- dark mode's --bs-primary fill is a
+     bright gold, light enough that the stock white icon color barely
+     shows up against it, so this needs a dark tone instead (the opposite
+     direction from light mode, since the fill itself already flips
+     lightness between the two modes). */
+  --brass-icon-on-fill: #2b2408;
 }
 
 /* .progress-bar and the active .list-group-item/.nav-pills item read these
