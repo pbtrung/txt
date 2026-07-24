@@ -43,6 +43,14 @@ BOOKMARK_LIMIT = 20
 PART_TARGET = 222 * 1024
 RAW_PATH_LEN = 32  # random bytes for each part's R2 object key (see txt/ingest.py)
 
+# txt_metadata.content is always a wrapped R2 path now (never inline JSON) --
+# a wrapped path blob is BLOB_MIN_LEN (132) + a ~52-char base32 raw_path, so
+# ~184 bytes. Anything at/above this threshold is a not-yet-migrated account
+# still holding content inline from before this format existed; the next
+# --txt-ingest (or --txt-delete-id) migrates it by reading it the old way
+# (direct Blob.decrypt, compressed=True) and rewriting it in the new format.
+TXT_METADATA_LEGACY_THRESHOLD = 200
+
 R2_NUM_THREADS = 10  # max concurrent R2 upload/download threads (see txt/r2.py)
 
 BROTLI_QUALITY = 11  # max brotli compression level (see txt/crypto.py's Blob.encrypt)

@@ -17,8 +17,10 @@ logger = logging.getLogger(__name__)
 class TxtDownloader(TxtOwner):
     """Fetches, decrypts, and concatenates every txt owned by creds.username."""
 
-    def _txt_entries(self, user_id: int, umk: bytes) -> dict[int, dict]:
-        _txt_metadata_key, content = self._txt_metadata_key_and_content(user_id, umk)
+    async def _txt_entries(self, user_id: int, umk: bytes) -> dict[int, dict]:
+        _txt_metadata_key, content, _raw_path = await self._txt_metadata_key_and_content(
+            user_id, umk
+        )
         entries = {int(txt_id): entry for txt_id, entry in content.items()}
         logger.debug("Loaded %d txt_metadata entry(ies)", len(entries))
         return entries
@@ -110,7 +112,7 @@ class TxtDownloader(TxtOwner):
         dst.mkdir(parents=True, exist_ok=True)
         user_id = self._owner_user_id()
         umk = self._owner_umk(user_id)
-        entries = self._txt_entries(user_id, umk)
+        entries = await self._txt_entries(user_id, umk)
         txt_ids = self._txt_ids(user_id)
         logger.info("Found %d txt(s) for user_id=%d", len(txt_ids), user_id)
         # One txt at a time -- its parts still fetch concurrently -- rather than

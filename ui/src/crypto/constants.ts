@@ -47,6 +47,11 @@ export const TXT_ACCESS_LIMIT = 7;
 export const PART_TARGET = 222 * 1024;
 export const RAW_PATH_LEN = 32; // random bytes for each part's R2 object key
 
+// txt_metadata.content is a wrapped R2 path (~184 bytes: BLOB_MIN_LEN + a
+// ~52-char base32 path) once migrated; anything at/above this length is
+// still the pre-migration inline-JSON format (see docs/data_model.md).
+export const TXT_METADATA_LEGACY_THRESHOLD = 200;
+
 export const R2_NUM_THREADS = 10; // max concurrent R2 fetches (see src/data/r2.ts)
 
 export const BROTLI_QUALITY = 11; // max brotli compression level (see src/crypto/brotli.ts)
