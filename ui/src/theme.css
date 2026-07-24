@@ -33,6 +33,13 @@
 
   --brass-hover: #79621f;
   --brass-active: #6e591c;
+  /* A brighter, more saturated brass than --bs-primary itself -- for
+     .themed-control:focus (Library's search field, Reader's font-size
+     select and part-number box), which needs to stand out from those same
+     controls' resting border (var(--bs-primary), matching a bordered
+     button's) rather than just repeating it. */
+  --brass-focus: #b8931f;
+  --brass-focus-rgb: 184, 147, 31;
 }
 
 [data-bs-theme="dark"] {
@@ -48,6 +55,13 @@
 
   --brass-hover: #bb9a30;
   --brass-active: #aa8c2c;
+  /* See the light-mode block above -- brighter/more saturated than
+     --bs-primary again, just lifted further in this direction (dark mode's
+     base is already fairly light) rather than reusing
+     --bs-primary-text-emphasis, which is tuned for text contrast, not
+     this. */
+  --brass-focus: #f0da85;
+  --brass-focus-rgb: 240, 218, 133;
 }
 
 /* .progress-bar and the active .list-group-item/.nav-pills item read these
