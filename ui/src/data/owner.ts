@@ -74,8 +74,20 @@ export async function listTxtIds(db: Client, userId: number): Promise<number[]> 
   return result.rows.map((row) => Number(row.id));
 }
 
-export async function unwrapTxtKey(db: Client, txtId: number, umk: Uint8Array): Promise<Uint8Array> {
-  const result = await db.execute({ sql: "SELECT txt_key FROM txt WHERE id = ?", args: [txtId] });
+// Scoped by user_id, not just id: unlike every other unscoped-by-id lookup
+// in this file (which only ever runs with a txtId this same session already
+// resolved via listTxtIds), this one is reachable from a client-supplied
+// route param (Reader's /read/:txtId) with no prior ownership check -- an
+// unscoped query would let anyone distinguish "txt_id exists" from "does
+// not" (via a decrypt failure vs. a not-found error) for *any* account's
+// documents, an existence oracle Turso's lack of row-level security doesn't
+// otherwise close. Scoping here means a foreign-but-existing txt_id and a
+// genuinely nonexistent one both hit the exact same not-found branch.
+export async function unwrapTxtKey(db: Client, txtId: number, userId: number, umk: Uint8Array): Promise<Uint8Array> {
+  const result = await db.execute({
+    sql: "SELECT txt_key FROM txt WHERE id = ? AND user_id = ?",
+    args: [txtId, userId],
+  });
   const row = result.rows[0];
   if (!row) {
     throw new OwnerError(`no txt row for txt_id=${txtId}`);

@@ -138,7 +138,7 @@ describe("listTxtIds / unwrapTxtKey / partRawPaths / partCount", () => {
 
     expect(await owner.listTxtIds(db, 42)).toEqual([7, 8]);
 
-    const unwrapped = await owner.unwrapTxtKey(db, 7, umk);
+    const unwrapped = await owner.unwrapTxtKey(db, 7, 42, umk);
     expect(Array.from(unwrapped)).toEqual(Array.from(txtKey));
 
     expect(await owner.partRawPaths(db, 7, txtKey)).toEqual([
@@ -147,5 +147,37 @@ describe("listTxtIds / unwrapTxtKey / partRawPaths / partCount", () => {
     ]);
 
     expect(await owner.partCount(db, 7)).toBe(2);
+  });
+
+  it("unwrapTxtKey scopes its query by user_id, not just txt_id", async () => {
+    // Reader's /read/:txtId comes straight from a client-supplied route
+    // param, with no prior ownership check -- unlike every other lookup in
+    // this file, txtId here isn't already known to belong to this session.
+    // An unscoped "WHERE id = ?" would let a signed-in user distinguish "this
+    // txt_id exists (for someone else)" from "it doesn't" via a decrypt
+    // failure vs. a not-found error, an existence oracle across accounts.
+    // Asserting the executed SQL/args here (rather than just its return
+    // value) is what actually catches a regression that silently drops the
+    // predicate again.
+    let executedSql = "";
+    let executedArgs: unknown[] = [];
+    const db = {
+      async execute({ sql, args }: { sql: string; args?: unknown[] }) {
+        executedSql = sql;
+        executedArgs = args ?? [];
+        return {
+          rows: [],
+          columns: [],
+          columnTypes: [],
+          rowsAffected: 0,
+          lastInsertRowid: undefined,
+          toJSON: () => ({}),
+        };
+      },
+    } as unknown as Client;
+
+    await expect(owner.unwrapTxtKey(db, 7, 42, umk)).rejects.toThrow(owner.OwnerError);
+    expect(executedSql).toMatch(/WHERE id = \? AND user_id = \?/);
+    expect(executedArgs).toEqual([7, 42]);
   });
 });

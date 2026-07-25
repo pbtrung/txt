@@ -257,7 +257,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       if (!session) {
         throw new Error("vault is locked");
       }
-      const txtKey = await unwrapTxtKey(session.db, txtId, session.umk);
+      const txtKey = await unwrapTxtKey(session.db, txtId, session.userId, session.umk);
       txtKeyCache.current.set(txtId, txtKey);
       return txtKey;
     },
