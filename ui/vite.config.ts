@@ -72,7 +72,11 @@ export default defineConfig({
         // (crypto/brotli.test.ts separately covers that the isBrowser()
         // import("brotli-wasm") branch itself still wires up correctly,
         // which is a different, unit-testable concern from this option.)
-        inlineDynamicImports: true,
+        // codeSplitting: false is Rolldown's (Vite's Rust bundler) spelling
+        // of the same thing -- it resolves to the identical
+        // inlineDynamicImports: true internally, just under the name Vite
+        // now emits a deprecation warning for.
+        codeSplitting: false,
       },
     },
   },
