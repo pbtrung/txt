@@ -27,12 +27,31 @@ if (typeof window !== "undefined" && !window.matchMedia) {
   };
 }
 
+// jsdom never actually lays anything out, so every element's offsetWidth/
+// offsetHeight are 0 (jsdom *does* define these -- as getters that always
+// return 0, not just leave them undefined, so a "only patch if missing"
+// guard would never fire here) -- @tanstack/virtual-core's default
+// element-size reader (getRect(), see its source) reads exactly those two
+// properties, not clientHeight or getBoundingClientRect(), to decide which
+// rows are "visible" at all. Left unmocked, every virtualized list
+// (Library's book/browse lists) computes an empty visible range regardless
+// of overscan and renders zero rows in every test. A fixed non-zero size
+// (desktop-sized, comfortably more than any test fixture list needs) makes
+// small fixture lists render in full like before virtualization existed,
+// while still leaving a large synthetic list (e.g. 500 items) rendering
+// only a bounded window around it -- the thing that actually proves
+// virtualization is working, not just wired up.
+if (typeof window !== "undefined") {
+  Object.defineProperty(HTMLElement.prototype, "offsetHeight", { configurable: true, value: 800 });
+  Object.defineProperty(HTMLElement.prototype, "offsetWidth", { configurable: true, value: 800 });
+}
+
 // jsdom doesn't implement ResizeObserver at all (throws "ResizeObserver is
-// not defined") -- @tanstack/react-virtual (Library's virtualized lists)
-// uses one to notice when its scroll container resizes. A fully inert stub
-// is enough for tests: the virtualizer also recalculates on scroll/mount,
-// and jsdom never actually resizes anything anyway, so there's nothing a
-// real observer would ever have to report here.
+// not defined") -- @tanstack/react-virtual's default element-measuring
+// strategy still creates one (for *future* resizes; the initial size above
+// is read synchronously via offsetWidth/offsetHeight before this ever gets
+// used), so it needs to exist even though jsdom never actually fires a
+// real resize for this stub to forward.
 if (typeof window !== "undefined" && !window.ResizeObserver) {
   window.ResizeObserver = class {
     observe() {}

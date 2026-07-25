@@ -195,6 +195,37 @@ describe("LibraryScreen", () => {
     expect(removeAccessEntry).toHaveBeenCalledWith(1);
   });
 
+  describe("virtualization", () => {
+    function renderLibraryWithBooks(manyBooks: LibraryBook[]) {
+      setVaultMock(new Map(), false);
+      vi.mocked(useLibraryBooksModule.useLibraryBooks).mockReturnValue({ books: manyBooks, loading: false });
+      return render(libraryTree());
+    }
+
+    it("renders only a bounded window of rows for a large 'All books' list, not all of them", async () => {
+      const manyBooks = Array.from({ length: 500 }, (_, i) => book({ txtId: i + 1 }));
+      renderLibraryWithBooks(manyBooks);
+
+      await userEvent.click(screen.getByRole("button", { name: /All books/ }));
+      expect(screen.getByText("500 books")).toBeInTheDocument();
+
+      const rows = screen.getAllByRole("button", { name: /^Title \d+$/ });
+      expect(rows.length).toBeGreaterThan(0);
+      expect(rows.length).toBeLessThan(100); // well under the full 500 -- proves the window is bounded
+    });
+
+    it("renders only a bounded window of rows for a large Continue Reading list, not all of them", () => {
+      const manyBooks = Array.from({ length: 500 }, (_, i) =>
+        book({ txtId: i + 1, lastPartNum: 1, lastAccessedMs: i }),
+      );
+      renderLibraryWithBooks(manyBooks);
+
+      const rows = screen.getAllByRole("button", { name: /^Title \d+$/ });
+      expect(rows.length).toBeGreaterThan(0);
+      expect(rows.length).toBeLessThan(100);
+    });
+  });
+
   describe("small-screen nav drawer (merged into the wordmark)", () => {
     it("is closed by default -- only the lg+ sidebar's nav items exist", () => {
       renderLibrary();

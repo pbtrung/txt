@@ -16,6 +16,7 @@ import { useNavigate } from "react-router-dom";
 import { BookmarkRow } from "../../components/BookmarkRow";
 import { BookRow } from "../../components/BookRow";
 import { DropdownToggleButton } from "../../components/DropdownToggleButton";
+import { VirtualizedListGroup } from "../../components/VirtualizedListGroup";
 import { Wordmark } from "../../components/Wordmark";
 import { useDropdown } from "../../hooks/useDropdown";
 import { useVault } from "../../state/VaultContext";
@@ -44,6 +45,13 @@ const DIMENSION_LABEL: Record<BrowseDimension, string> = {
   subject: "Subjects",
   publisher: "Publishers",
 };
+
+// BookRow's rendered height (py-3 padding + its two-line title/subtitle) --
+// a plain constant rather than measured per-row, since every field it
+// shows is text-truncate'd (never wraps), so the real height is already
+// constant regardless of content. Used for both of BookRow's virtualized
+// lists (Continue Reading, and All books/browse-value).
+const BOOK_ROW_HEIGHT = 80;
 
 function NavItem({
   active,
@@ -432,7 +440,17 @@ export function LibraryScreen() {
                 <span className="small text-body-secondary">{headingDetail}</span>
               </div>
 
-              <div className="flex-grow-1 overflow-auto">
+              {/* d-flex flex-column, not overflow-auto itself -- each branch
+                  below owns its own bounded, independently-scrolling region
+                  instead of sharing one ambient page scroll, since
+                  VirtualizedListGroup needs a concrete viewport to compute
+                  which rows are visible. Recent's two sections
+                  (flex-grow-1 each, minHeight:0 so they can actually
+                  shrink/scroll inside a flex column) split the available
+                  height evenly, each scrolling on its own -- a visible
+                  change from the single continuous page-scroll this used
+                  to be, traded for both staying cheap regardless of size. */}
+              <div className="flex-grow-1 d-flex flex-column overflow-hidden">
                 {loading && <p className="text-body-secondary p-3">Loading your library…</p>}
 
                 {!loading && view.kind === "recent" && (
@@ -440,76 +458,88 @@ export function LibraryScreen() {
                     <div className="small text-body-secondary text-uppercase fw-semibold px-3 pt-3 pb-1">
                       Continue Reading
                     </div>
-                    <div className="list-group list-group-flush">
-                      {continueReading.map((book) => (
+                    <VirtualizedListGroup
+                      className="flex-grow-1"
+                      items={continueReading}
+                      getKey={(book) => book.txtId}
+                      estimateRowHeight={BOOK_ROW_HEIGHT}
+                      emptyMessage="No books in progress yet."
+                      renderRow={(book) => (
                         <BookRow
-                          key={book.txtId}
                           book={book}
                           onClick={() => openBook(book)}
                           onDelete={() => void removeAccessEntry(book.txtId)}
                           hidePartNum
                         />
-                      ))}
-                      {continueReading.length === 0 && (
-                        <p className="text-body-secondary px-3 pb-3">No books in progress yet.</p>
                       )}
-                    </div>
+                    />
 
                     <div className="small text-body-secondary text-uppercase fw-semibold px-3 pt-4 pb-1">
                       Recent Bookmarks
                     </div>
-                    <div className="list-group list-group-flush">
-                      {recentBookmarkItems.map((item) => (
-                        <BookmarkRow
-                          key={`${item.txtId}-${item.createdAt}`}
-                          title={item.info.title}
-                          partNum={item.partNum}
-                          line={item.line}
-                          txtPreview={item.txtPreview}
-                          onClick={() => openBookmark(item)}
-                          onDelete={() => void removeBookmarkEntry(item.txtId, item.createdAt)}
-                          deleteAriaLabel={`Remove this bookmark in ${item.info.title}`}
-                        />
-                      ))}
-                      {recentBookmarkItems.length === 0 && (
-                        <p className="text-body-secondary px-3 pb-3">No bookmarks yet.</p>
-                      )}
+                    {/* Not yet virtualized -- bounded/independently-scrolling
+                        like its sibling above, but still a plain .map() for
+                        now (see the follow-up step that swaps this over to
+                        VirtualizedListGroup too). */}
+                    <div className="flex-grow-1 overflow-auto" style={{ minHeight: 0 }}>
+                      <div className="list-group list-group-flush">
+                        {recentBookmarkItems.map((item) => (
+                          <BookmarkRow
+                            key={`${item.txtId}-${item.createdAt}`}
+                            title={item.info.title}
+                            partNum={item.partNum}
+                            line={item.line}
+                            txtPreview={item.txtPreview}
+                            onClick={() => openBookmark(item)}
+                            onDelete={() => void removeBookmarkEntry(item.txtId, item.createdAt)}
+                            deleteAriaLabel={`Remove this bookmark in ${item.info.title}`}
+                          />
+                        ))}
+                        {recentBookmarkItems.length === 0 && (
+                          <p className="text-body-secondary px-3 pb-3">No bookmarks yet.</p>
+                        )}
+                      </div>
                     </div>
                   </>
                 )}
 
+                {/* Not yet virtualized -- see the follow-up step. */}
                 {!loading && view.kind !== "recent" && browseList && (
-                  <div className="list-group list-group-flush">
-                    {browseList.map((entry) => (
-                      <button
-                        key={entry.value}
-                        type="button"
-                        className="list-group-item list-group-item-action d-flex justify-content-between align-items-center"
-                        onClick={() =>
-                          selectView({
-                            kind: "browseValue",
-                            dimension: (view as { dimension: BrowseDimension }).dimension,
-                            value: entry.value,
-                          })
-                        }
-                      >
-                        <span className="text-truncate" style={{ minWidth: 0 }}>
-                          {entry.value}
-                        </span>
-                        <span className="text-body-secondary flex-shrink-0 ms-2">{entry.count}</span>
-                      </button>
-                    ))}
-                    {browseList.length === 0 && <p className="text-body-secondary p-3">Nothing here yet.</p>}
+                  <div className="flex-grow-1 overflow-auto" style={{ minHeight: 0 }}>
+                    <div className="list-group list-group-flush">
+                      {browseList.map((entry) => (
+                        <button
+                          key={entry.value}
+                          type="button"
+                          className="list-group-item list-group-item-action d-flex justify-content-between align-items-center"
+                          onClick={() =>
+                            selectView({
+                              kind: "browseValue",
+                              dimension: (view as { dimension: BrowseDimension }).dimension,
+                              value: entry.value,
+                            })
+                          }
+                        >
+                          <span className="text-truncate" style={{ minWidth: 0 }}>
+                            {entry.value}
+                          </span>
+                          <span className="text-body-secondary flex-shrink-0 ms-2">{entry.count}</span>
+                        </button>
+                      ))}
+                      {browseList.length === 0 && <p className="text-body-secondary p-3">Nothing here yet.</p>}
+                    </div>
                   </div>
                 )}
 
                 {!loading && view.kind !== "recent" && bookList && (
-                  <div className="list-group list-group-flush">
-                    {bookList.map((book) => (
-                      <BookRow key={book.txtId} book={book} onClick={() => openBook(book)} />
-                    ))}
-                    {bookList.length === 0 && <p className="text-body-secondary p-3">No books match here yet.</p>}
-                  </div>
+                  <VirtualizedListGroup
+                    className="flex-grow-1"
+                    items={bookList}
+                    getKey={(book) => book.txtId}
+                    estimateRowHeight={BOOK_ROW_HEIGHT}
+                    emptyMessage="No books match here yet."
+                    renderRow={(book) => <BookRow book={book} onClick={() => openBook(book)} />}
+                  />
                 )}
               </div>
             </div>
