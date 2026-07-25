@@ -80,29 +80,47 @@ export function mountProgressUI(container: HTMLElement = document.body): Progres
   inner.style.cssText = "max-width: 24rem; width: 100%; padding: 0 1.5rem; text-align: center; box-sizing: border-box;";
 
   // Matches Wordmark size="lg" (`d-inline-flex align-items-center gap-2
-  // fs-2`) inside UnlockScreen.tsx's `<div className="mb-4">`.
+  // fs-2`) inside UnlockScreen.tsx's `<div className="mb-4">`. Bootstrap's
+  // own .fs-2 isn't just the calc() below -- it's overridden to a flat 2rem
+  // at its xl breakpoint (min-width: 1200px, bootstrap.css) -- so a plain
+  // inline style (which can't express a media query) would keep growing
+  // past that width instead of capping the way the real Wordmark does; the
+  // class+<style> rule below carries both halves of that same rule.
   const wordmarkWrap = document.createElement("div");
   wordmarkWrap.style.cssText = "margin-bottom: 1.5rem;";
   const wordmark = document.createElement("div");
+  wordmark.className = "boot-wordmark";
   wordmark.style.cssText =
     "display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; " +
-    // Bootstrap's own .fs-2 formula verbatim (bootstrap.css), not a flat
-    // rem value -- it's viewport-responsive (a flat 2rem only once
-    // min-width: 1200px), so hardcoding one px number would only match at
-    // some widths.
-    "font-size: calc(1.325rem + 0.9vw); font-weight: 600; line-height: 1;";
+    "font-weight: 600; line-height: 1;";
   wordmark.innerHTML =
     `<svg width="1em" height="1em" viewBox="0 0 16 16" fill="${BRASS}" aria-hidden="true">` +
     `<path d="${BOOK_ICON_PATH}"/></svg>` +
     `<span>Skypiea</span>`;
   wordmarkWrap.appendChild(wordmark);
 
+  // UnlockScreen.tsx's button (px-3 py-2, containing a fs-5 icon beside a
+  // two-line lh-sm text block) has no equivalent action here -- there's
+  // nothing to click while verifying -- but it still occupies real layout
+  // height there, which this file used to just skip. Since both screens
+  // center their box vertically as a whole, skipping it made this box
+  // shorter than the real one, which shifted the wordmark down from where
+  // it sits on Unlock (a real, empirically-confirmed few-dozen-px gap, not
+  // a rounding error). This invisible placeholder reserves that same
+  // height (py-2's 0.5rem top/bottom padding + the two lh-sm(1.25) small
+  // (0.875rem) lines' content height, 2 * 0.875 * 1.25 = 2.1875rem) so the
+  // wordmark ends up at the same position as Unlock's, not just visually
+  // similar spacing.
+  const buttonSpacer = document.createElement("div");
+  buttonSpacer.style.cssText = "height: 3.1875rem;"; // 0.5rem + 0.5rem + 2.1875rem
+  buttonSpacer.setAttribute("aria-hidden", "true");
+
   // Matches UnlockScreen.tsx's `mt-4 d-flex flex-column align-items-center
-  // gap-1` progress block (no button in between here, unlike Unlock's own --
-  // there's nothing to click while verifying -- so the wordmark's own mb-4
-  // above stands in for that same vertical rhythm).
+  // gap-1` progress block, including that mt-4 margin (the button above no
+  // longer stands in for it -- see buttonSpacer above).
   const progress = document.createElement("div");
-  progress.style.cssText = "display: flex; flex-direction: column; align-items: center; gap: 0.25rem;";
+  progress.style.cssText =
+    "margin-top: 1.5rem; display: flex; flex-direction: column; align-items: center; gap: 0.25rem;";
 
   // Matches `spinner-border spinner-border-sm text-primary mb-1` exactly:
   // 1rem square, 0.2em border, the trailing edge transparent (Bootstrap's
@@ -113,8 +131,14 @@ export function mountProgressUI(container: HTMLElement = document.body): Progres
   spinner.style.cssText =
     "display: inline-block; width: 1rem; height: 1rem; margin-bottom: 0.25rem; border-radius: 50%; " +
     `border: 0.2em solid ${BRASS}; border-right-color: transparent; animation: boot-spin 0.75s linear infinite;`;
-  const keyframes = document.createElement("style");
-  keyframes.textContent = "@keyframes boot-spin { to { transform: rotate(360deg); } }";
+  const styles = document.createElement("style");
+  styles.textContent =
+    "@keyframes boot-spin { to { transform: rotate(360deg); } } " +
+    // Bootstrap's own .fs-2 rule verbatim (bootstrap.css): the calc()
+    // formula normally, but overridden to a flat 2rem from its xl
+    // breakpoint up, not still growing with vw past that width.
+    ".boot-wordmark { font-size: calc(1.325rem + 0.9vw); } " +
+    "@media (min-width: 1200px) { .boot-wordmark { font-size: 2rem; } }";
 
   // Matches `small text-body-secondary` (0.875rem, Bootstrap's secondary text color).
   const stepCounter = document.createElement("div");
@@ -137,7 +161,7 @@ export function mountProgressUI(container: HTMLElement = document.body): Progres
     "font-size: 0.875rem; white-space: pre-wrap; text-align: left;";
   error.hidden = true;
 
-  inner.append(wordmarkWrap, keyframes, progress, error);
+  inner.append(wordmarkWrap, buttonSpacer, styles, progress, error);
   root.appendChild(inner);
   container.appendChild(root);
 
