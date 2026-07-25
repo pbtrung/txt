@@ -16,9 +16,11 @@ import {
 import {
   addBookmark as addBookmarkData,
   loadOrInitBookmarks,
+  removeAllBookmarksForTxt,
   removeBookmark as removeBookmarkData,
   type BookmarksMap,
 } from "../data/bookmarks";
+import { deleteTxtRows } from "../data/adminTxt";
 import { isAdminToken } from "../crypto/jwt";
 import { checkPassword, fetchR2Config, resolveUserId, unwrapTxtKey, unwrapUmk } from "../data/owner";
 import { createDb } from "../data/db";
@@ -86,6 +88,11 @@ export interface VaultContextValue {
   removeAccessEntry: (txtId: number) => Promise<void>;
   addBookmarkEntry: (txtId: number, partNum: number, line: number, txtPreview: string) => Promise<void>;
   removeBookmarkEntry: (txtId: number, createdAt: number) => Promise<void>;
+  /** Admin Manage screen: deletes one of the admin's own txt (Turso rows
+   * only -- see data/adminTxt.ts). Scrubs this txt_id's txt_access/bookmarks
+   * entries too, then drops it from the in-memory metadataById so the
+   * screen reflects the deletion immediately. */
+  deleteTxt: (txtId: number) => Promise<void>;
 }
 
 const VaultContext = createContext<VaultContextValue | null>(null);
@@ -344,6 +351,39 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     [session, setBookmarksMap, enqueueMutation],
   );
 
+  const deleteTxt = useCallback(
+    async (txtId: number) => {
+      if (!session) throw new Error("vault is locked");
+      await enqueueMutation(async () => {
+        await deleteTxtRows(session.db, txtId);
+        const nextAccess = await removeAccessEntryData(
+          session.db,
+          session.userId,
+          session.txtAccessKey,
+          accessMapRef.current,
+          txtId,
+        );
+        setAccessMap(nextAccess);
+        const nextBookmarks = await removeAllBookmarksForTxt(
+          session.db,
+          session.userId,
+          session.bookmarkKey,
+          bookmarksMapRef.current,
+          txtId,
+        );
+        setBookmarksMap(nextBookmarks);
+        txtKeyCache.current.delete(txtId);
+        setSession((prev) => {
+          if (!prev) return prev;
+          const nextMetadataById = new Map(prev.metadataById);
+          nextMetadataById.delete(txtId);
+          return { ...prev, metadataById: nextMetadataById };
+        });
+      });
+    },
+    [session, setAccessMap, setBookmarksMap, enqueueMutation],
+  );
+
   const value = useMemo<VaultContextValue>(
     () => ({
       status,
@@ -361,6 +401,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       removeAccessEntry,
       addBookmarkEntry,
       removeBookmarkEntry,
+      deleteTxt,
     }),
     [
       status,
@@ -378,6 +419,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       removeAccessEntry,
       addBookmarkEntry,
       removeBookmarkEntry,
+      deleteTxt,
     ],
   );
 

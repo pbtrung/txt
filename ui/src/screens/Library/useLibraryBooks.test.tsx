@@ -30,6 +30,7 @@ function mockVault(session: VaultContextModule.VaultSession | null, accessMap = 
     removeAccessEntry: vi.fn(),
     addBookmarkEntry: vi.fn(),
     removeBookmarkEntry: vi.fn(),
+    deleteTxt: vi.fn(),
   });
 }
 

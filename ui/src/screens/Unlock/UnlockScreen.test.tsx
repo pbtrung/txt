@@ -41,6 +41,7 @@ function baseVaultValue(): VaultContextModule.VaultContextValue {
     removeAccessEntry: vi.fn(),
     addBookmarkEntry: vi.fn(),
     removeBookmarkEntry: vi.fn(),
+    deleteTxt: vi.fn(),
   };
 }
 

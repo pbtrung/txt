@@ -110,6 +110,26 @@ export async function addBookmark(
   return next;
 }
 
+/** Removes every bookmark for one txt_id at once (e.g. that txt is being
+ * deleted entirely), rather than one at a time by createdAt. Returns the
+ * updated map regardless of whether the write succeeded (best-effort). */
+export async function removeAllBookmarksForTxt(
+  db: Client,
+  userId: number,
+  bookmarkKey: Uint8Array,
+  currentMap: BookmarksMap,
+  txtId: number,
+): Promise<BookmarksMap> {
+  const next = new Map(currentMap);
+  next.delete(txtId);
+  try {
+    await saveBookmarks(db, userId, bookmarkKey, next);
+  } catch (err) {
+    console.warn(`bookmark removal skipped for txt_id=${txtId}: ${String(err)}`);
+  }
+  return next;
+}
+
 /** Removes one bookmark, identified by (txtId, createdAt) -- good enough
  * uniqueness for a user-triggered action. Drops the txt_id key entirely once
  * its list is empty. Returns the updated map regardless of whether the write

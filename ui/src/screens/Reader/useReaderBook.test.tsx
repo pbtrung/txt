@@ -57,6 +57,7 @@ function mockVault(
     removeAccessEntry: vi.fn(),
     addBookmarkEntry,
     removeBookmarkEntry,
+    deleteTxt: vi.fn(),
   });
   return session;
 }

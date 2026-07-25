@@ -23,10 +23,13 @@ vi.mock("../data/bookmarks", () => ({
   loadOrInitBookmarks: vi.fn(),
   addBookmark: vi.fn(),
   removeBookmark: vi.fn(),
+  removeAllBookmarksForTxt: vi.fn(),
 }));
+vi.mock("../data/adminTxt", () => ({ deleteTxtRows: vi.fn() }));
 
 import * as accessData from "../data/access";
 import type { AccessMap } from "../data/access";
+import * as adminTxt from "../data/adminTxt";
 import * as bookmarksData from "../data/bookmarks";
 import * as metadata from "../data/metadata";
 import type { BookInfo } from "../data/metadata";
@@ -260,6 +263,70 @@ describe("VaultProvider", () => {
     });
 
     expect(result.current.bookmarksMap.get(1)).toHaveLength(2);
+  });
+
+  it("deleteTxt removes the txt's rows, access/bookmarks entries, and its in-memory metadata", async () => {
+    vi.mocked(owner.resolveUserId).mockResolvedValue(42);
+    vi.mocked(owner.checkPassword).mockResolvedValue(true);
+    vi.mocked(owner.unwrapUmk).mockResolvedValue(new Uint8Array(64).fill(1));
+    vi.mocked(owner.fetchR2Config).mockResolvedValue({
+      endpoint: "https://x",
+      region: "auto",
+      bucket: "b",
+      readOnlyAccessKeyId: "id",
+      readOnlySecretAccessKey: "secret",
+    });
+    const bookInfo = { txtId: 7, name: "book.txt", title: "Book", subjects: [], rawMetadata: [] } as BookInfo;
+    vi.mocked(metadata.loadTxtMetadata).mockResolvedValue(new Map([[7, bookInfo]]));
+    vi.mocked(accessData.loadOrInitAccess).mockResolvedValue({
+      txtAccessKey: new Uint8Array(64),
+      accessMap: new Map([[7, { lastPartNum: 1, lastAccessedMs: 100 }]]),
+    });
+    vi.mocked(bookmarksData.loadOrInitBookmarks).mockResolvedValue({
+      bookmarkKey: new Uint8Array(64),
+      bookmarksMap: new Map(),
+    });
+    vi.mocked(adminTxt.deleteTxtRows).mockResolvedValue(undefined);
+    vi.mocked(accessData.removeAccessEntry).mockImplementation(async (_db, _userId, _key, currentMap, txtId) => {
+      const next = new Map(currentMap);
+      next.delete(txtId);
+      return next;
+    });
+    vi.mocked(bookmarksData.removeAllBookmarksForTxt).mockResolvedValue(new Map());
+
+    const { result } = renderVault();
+    await act(async () => {
+      await result.current.unlock(fakeFile(CONFIG));
+    });
+    await waitFor(() => expect(result.current.status).toBe("unlocked"));
+    expect(result.current.session?.metadataById.has(7)).toBe(true);
+
+    await act(async () => {
+      await result.current.deleteTxt(7);
+    });
+
+    expect(adminTxt.deleteTxtRows).toHaveBeenCalledWith(expect.anything(), 7);
+    expect(accessData.removeAccessEntry).toHaveBeenCalledWith(
+      expect.anything(),
+      42,
+      expect.anything(),
+      expect.anything(),
+      7,
+    );
+    expect(bookmarksData.removeAllBookmarksForTxt).toHaveBeenCalledWith(
+      expect.anything(),
+      42,
+      expect.anything(),
+      expect.anything(),
+      7,
+    );
+    expect(result.current.accessMap.has(7)).toBe(false);
+    expect(result.current.session?.metadataById.has(7)).toBe(false);
+  });
+
+  it("deleteTxt throws when the vault is locked", async () => {
+    const { result } = renderVault();
+    await expect(result.current.deleteTxt(7)).rejects.toThrow("vault is locked");
   });
 
   it("lock() clears the session and returns to locked", async () => {

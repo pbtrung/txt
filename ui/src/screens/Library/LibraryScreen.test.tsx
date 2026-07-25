@@ -101,6 +101,7 @@ function setVaultMock(
     removeAccessEntry,
     addBookmarkEntry: vi.fn(),
     removeBookmarkEntry,
+    deleteTxt: vi.fn(),
   });
 }
 

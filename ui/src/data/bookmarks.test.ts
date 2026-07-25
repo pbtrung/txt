@@ -3,7 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as blob from "../crypto/blob";
 import { BOOKMARK_LIMIT } from "../crypto/constants";
-import { addBookmark, loadOrInitBookmarks, removeBookmark, type BookmarksMap } from "./bookmarks";
+import {
+  addBookmark,
+  loadOrInitBookmarks,
+  removeAllBookmarksForTxt,
+  removeBookmark,
+  type BookmarksMap,
+} from "./bookmarks";
 
 function emptyResult() {
   return { rows: [], columns: [], columnTypes: [], rowsAffected: 0, lastInsertRowid: undefined, toJSON: () => ({}) };
@@ -154,5 +160,40 @@ describe("removeBookmark", () => {
     const call = execute.mock.calls[0][0] as { sql: string; args: unknown[] };
     const decrypted = await blob.decrypt(bookmarkKey, call.args[0] as Uint8Array, true);
     expect(JSON.parse(new TextDecoder().decode(decrypted))).toEqual({});
+  });
+});
+
+describe("removeAllBookmarksForTxt", () => {
+  it("drops every bookmark for that txt_id at once, leaving other txt_ids untouched", async () => {
+    const execute = vi.fn().mockResolvedValue(emptyResult());
+    const db = { execute } as unknown as Client;
+    const bookmarkKey = new Uint8Array(64).fill(8);
+    const currentMap: BookmarksMap = new Map([
+      [
+        7,
+        [
+          { partNum: 14, line: 3, txtPreview: "a", createdAt: 100 },
+          { partNum: 8, line: 1, txtPreview: "b", createdAt: 200 },
+        ],
+      ],
+      [9, [{ partNum: 1, line: 1, txtPreview: "c", createdAt: 300 }]],
+    ]);
+
+    const next = await removeAllBookmarksForTxt(db, 42, bookmarkKey, currentMap, 7);
+
+    expect(next.has(7)).toBe(false);
+    expect(next.get(9)).toEqual([{ partNum: 1, line: 1, txtPreview: "c", createdAt: 300 }]);
+  });
+
+  it("is a no-op (still persists) when the txt_id has no bookmarks", async () => {
+    const execute = vi.fn().mockResolvedValue(emptyResult());
+    const db = { execute } as unknown as Client;
+    const bookmarkKey = new Uint8Array(64).fill(8);
+    const currentMap: BookmarksMap = new Map();
+
+    const next = await removeAllBookmarksForTxt(db, 42, bookmarkKey, currentMap, 7);
+
+    expect(next.size).toBe(0);
+    expect(execute).toHaveBeenCalledTimes(1);
   });
 });
