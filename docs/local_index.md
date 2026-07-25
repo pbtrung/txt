@@ -3,9 +3,15 @@
 `npm run build -- --admin-creds <path>` writes `creds/local_index.html` (never
 `ui/dist/` — it's never uploaded to the CDN). Open that file directly (e.g. via
 `file://`) instead of the deployed URL, and it cryptographically verifies every
-built asset before ever rendering the Unlock screen — a spinner and a 5-line
-progress list (`Fetching manifest` / `Verifying signature` / `Fetching assets` /
-`Verifying asset hashes` / `Loading application`) track it.
+built asset before ever rendering the Unlock screen — a wordmark, spinner, and
+a "Step N of 5" counter with the current phase's label underneath (`Fetching
+manifest` / `Verifying signature` / `Fetching assets` / `Verifying asset
+hashes` / `Loading application`) track it, styled to match the real Unlock
+screen's own unlock spinner (`ui/src/localIndex/progress.ts`) rather than a
+different look for this one screen — dependency-free inline DOM/CSS
+throughout, including the wordmark's book glyph (an inlined SVG path, not
+Bootstrap Icons' font), since this can't rely on anything served by the CDN
+it's about to verify, including the app's own stylesheet and icon font.
 
 This exists to fix a real gap in an earlier design this project tried: a verifier
 that shipped as part of the same CDN-served bundle it was checking could simply be

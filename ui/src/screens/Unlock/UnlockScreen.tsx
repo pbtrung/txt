@@ -38,13 +38,13 @@ export function UnlockScreen() {
 
         <button
           type="button"
-          className="btn btn-primary btn-lg d-flex align-items-center gap-3 px-4 py-3 mx-auto"
+          className="btn btn-primary d-flex align-items-center gap-2 px-3 py-2 mx-auto"
           onClick={() => inputRef.current?.click()}
           disabled={unlocking}
         >
-          <i className="bi bi-file-earmark fs-2" aria-hidden="true" />
+          <i className="bi bi-file-earmark fs-5" aria-hidden="true" />
           <span className="text-start lh-sm">
-            <span className="d-block fw-semibold">{unlocking ? "Unlocking…" : "Choose File"}</span>
+            <span className="d-block fw-semibold small">{unlocking ? "Unlocking…" : "Choose File"}</span>
             <span className="d-block small fw-normal">to unlock your library</span>
           </span>
         </button>

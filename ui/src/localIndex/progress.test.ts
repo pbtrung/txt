@@ -16,43 +16,39 @@ afterEach(() => {
   container.remove();
 });
 
-function stepText(step: string): string | null {
-  return container.querySelector(`li[data-step="${step}"]`)?.textContent ?? null;
-}
-
-function stepStatus(step: string): string | undefined {
-  return (container.querySelector(`li[data-step="${step}"]`) as HTMLElement | null)?.dataset.status;
-}
-
 describe("mountProgressUI", () => {
-  it("renders all five steps pending, in order", () => {
-    const items = Array.from(container.querySelectorAll("li"));
-    expect(items.map((li) => li.dataset.step)).toEqual([
-      "fetching-manifest",
-      "verifying-signature",
-      "fetching-assets",
-      "verifying-hashes",
-      "loading-application",
-    ]);
-    expect(stepText("fetching-manifest")).toContain("Fetching manifest");
-    expect(stepStatus("fetching-manifest")).toBeUndefined();
+  it("shows the Skypiea wordmark", () => {
+    expect(container.textContent).toContain("Skypiea");
+    expect(container.querySelector("svg")).not.toBeNull();
   });
 
-  it("advance() marks earlier steps done and the given step active", () => {
+  it("shows no step counter/label before the first advance()", () => {
+    expect(container.textContent).not.toContain("Step");
+  });
+
+  it("advance() shows the step counter and that step's label", () => {
     ui.advance("fetching-assets");
-
-    expect(stepStatus("fetching-manifest")).toBe("done");
-    expect(stepStatus("verifying-signature")).toBe("done");
-    expect(stepStatus("fetching-assets")).toBe("active");
-    expect(stepStatus("verifying-hashes")).toBeUndefined();
-    expect(stepStatus("loading-application")).toBeUndefined();
+    expect(container.textContent).toContain("Step 3 of 5");
+    expect(container.textContent).toContain("Fetching assets");
   });
 
-  it("fail() marks the current step failed and shows the message", () => {
+  it("advance() updates the counter/label on each call, not accumulating a list", () => {
+    ui.advance("fetching-manifest");
+    expect(container.textContent).toContain("Step 1 of 5");
+    expect(container.textContent).toContain("Fetching manifest");
+
+    ui.advance("verifying-hashes");
+    expect(container.textContent).toContain("Step 4 of 5");
+    expect(container.textContent).toContain("Verifying asset hashes");
+    expect(container.textContent).not.toContain("Fetching manifest");
+  });
+
+  it("fail() stops the spinner and shows the message", () => {
     ui.advance("verifying-signature");
     ui.fail("manifest.json failed its SLH-DSA signature check");
 
-    expect(stepStatus("verifying-signature")).toBe("failed");
+    const spinner = container.querySelector('[role="status"]') as HTMLElement;
+    expect(spinner.style.display).toBe("none");
     const error = container.querySelector("p")!;
     expect(error.hidden).toBe(false);
     expect(error.textContent).toBe("manifest.json failed its SLH-DSA signature check");
