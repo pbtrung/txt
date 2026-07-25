@@ -217,6 +217,17 @@ export function LibraryScreen() {
   const metadataById = useMemo(() => new Map((books ?? []).map((b) => [b.txtId, b.info])), [books]);
   const recentBookmarkItems = useMemo(() => recentBookmarks(bookmarksMap, metadataById), [bookmarksMap, metadataById]);
 
+  // The "all"/"browseValue" views' book list, sorted (and for browseValue,
+  // dimension-filtered) -- memoized separately from the search-query
+  // filter below, so typing in the search box only re-runs a cheap linear
+  // scan over this already-sorted list rather than re-sorting the entire
+  // library on every keystroke.
+  const baseBookList = useMemo<LibraryBook[] | null>(() => {
+    if (view.kind === "all") return allBooksSorted(books ?? []);
+    if (view.kind === "browseValue") return booksForDimensionValue(books ?? [], view.dimension, view.value);
+    return null;
+  }, [books, view]);
+
   function openBook(book: LibraryBook) {
     navigate(`/read/${book.txtId}`);
   }
@@ -237,7 +248,7 @@ export function LibraryScreen() {
     // see libraryModel.ts's buildLibraryBooks), so this is just its count.
     headingDetail = `${recent.length} in progress`;
   } else if (view.kind === "all") {
-    const all = allBooksSorted(books ?? []);
+    const all = baseBookList ?? [];
     heading = "All books";
     headingDetail = `${all.length} book${all.length === 1 ? "" : "s"}`;
     bookList = all;
@@ -247,7 +258,7 @@ export function LibraryScreen() {
     headingDetail = `${entries.length}`;
     browseList = entries;
   } else {
-    const filtered = booksForDimensionValue(books ?? [], view.dimension, view.value);
+    const filtered = baseBookList ?? [];
     heading = view.value;
     headingDetail = `${filtered.length} book${filtered.length === 1 ? "" : "s"}`;
     bookList = filtered;
