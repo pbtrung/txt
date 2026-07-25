@@ -30,6 +30,31 @@ Turso auth tokens aren't limited to whole-database read-only/read-write — its 
 
 An `AdminCreds` token gets every verb on every table (`-p all:data_read,data_add,data_update,data_delete,schema_add,schema_update,schema_delete`) — the same role that already needs full R2 read-write, since `txt.py --init`/`--txt-ingest`/etc. provision accounts and schema directly.
 
+### Minting each role's token
+
+```bash
+# Admin: every verb, every table.
+turso db tokens create <db-name> \
+  -p all:data_read,data_add,data_update,data_delete,schema_add,schema_update,schema_delete
+
+# Regular user: read-only everywhere, except read+write (no delete, no
+# schema changes) on the two tables a browser session writes to itself.
+turso db tokens create <db-name> \
+  -p users:data_read \
+  -p umk_store:data_read \
+  -p r2_config:data_read \
+  -p txt:data_read \
+  -p txt_parts:data_read \
+  -p part_count:data_read \
+  -p txt_metadata:data_read \
+  -p key_store:data_read \
+  -p txt_shares:data_read \
+  -p txt_access:data_read,data_add,data_update \
+  -p bookmarks:data_read,data_add,data_update
+```
+
+The admin command uses `all:` since every table gets the same full verb set — no reason to enumerate them individually. The user command instead lists every table by name, one `-p` per table, rather than starting from `all:data_read` and layering `txt_access`/`bookmarks`-specific overrides on top: Turso's docs don't specify how overlapping `-p` rules for the same table resolve, so spelling out each table's exact verb set once avoids depending on undocumented precedence. Neither token grants `data_delete` or any `schema_*` verb on `txt_access`/`bookmarks` — row deletion for those (via `--txt-delete`) and all schema changes are `AdminCreds`-only.
+
 **This scopes tables, not rows.** Turso's own docs are explicit that fine-grained permissions have no row-level dimension — a `UserCreds` token with `data_read` on `txt` can read *any* row in that table, not just rows belonging to the account the token was minted for. Row-level isolation still depends entirely on the app's own `WHERE user_id = ?` (or `WHERE id = ? AND user_id = ?`) predicates in every query, plus the envelope-encryption key hierarchy underneath — a scoped-but-unfiltered read still can't decrypt another user's content, since it's wrapped under a key this token's own `umk` can't unwrap. Neither layer is optional: the token narrows which *tables* a compromised credential file can touch at all; the query scoping and encryption narrow what it can actually see and use within an allowed table.
 
 ## How a client knows its own role
