@@ -224,6 +224,50 @@ describe("LibraryScreen", () => {
       expect(rows.length).toBeGreaterThan(0);
       expect(rows.length).toBeLessThan(100);
     });
+
+    it("renders only a bounded window of rows for a large Authors browse-entry list, not all of them", async () => {
+      const manyBooks = Array.from({ length: 500 }, (_, i) =>
+        book({
+          txtId: i + 1,
+          info: {
+            txtId: i + 1,
+            name: `n${i + 1}`,
+            title: `Title ${i + 1}`,
+            author: `Author ${i + 1}`,
+            subjects: [],
+            rawMetadata: [],
+          },
+        }),
+      );
+      renderLibraryWithBooks(manyBooks);
+
+      await userEvent.click(screen.getByRole("button", { name: /Authors/ }));
+
+      const rows = screen.getAllByRole("button", { name: /^Author \d+/ });
+      expect(rows.length).toBeGreaterThan(0);
+      expect(rows.length).toBeLessThan(100);
+    });
+
+    it("renders only a bounded window of rows for a large Recent Bookmarks list, not all of them", () => {
+      const manyBookmarks: BookmarksMap = new Map([
+        [
+          1,
+          Array.from({ length: 500 }, (_, i) => ({
+            partNum: 1,
+            line: i + 1,
+            txtPreview: `Preview line ${i}`,
+            createdAt: i,
+          })),
+        ],
+      ]);
+      setVaultMock(manyBookmarks, false);
+      vi.mocked(useLibraryBooksModule.useLibraryBooks).mockReturnValue({ books: [books[0]], loading: false });
+      render(libraryTree());
+
+      const rows = screen.getAllByText(/Preview line \d+/);
+      expect(rows.length).toBeGreaterThan(0);
+      expect(rows.length).toBeLessThan(100);
+    });
   });
 
   describe("small-screen nav drawer (merged into the wordmark)", () => {

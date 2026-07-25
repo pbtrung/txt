@@ -52,6 +52,13 @@ const DIMENSION_LABEL: Record<BrowseDimension, string> = {
 // constant regardless of content. Used for both of BookRow's virtualized
 // lists (Continue Reading, and All books/browse-value).
 const BOOK_ROW_HEIGHT = 80;
+// BookmarkRow's rendered height (py-3 padding + its three-line title/
+// part-line/preview) -- one line taller than BookRow, same text-truncate
+// reasoning for why a fixed constant is safe here.
+const BOOKMARK_ROW_HEIGHT = 100;
+// The Authors/Subjects/Publishers browse-entry row's height -- a plain,
+// single-line Bootstrap .list-group-item with no extra padding classes.
+const BROWSE_ENTRY_ROW_HEIGHT = 44;
 
 function NavItem({
   active,
@@ -477,58 +484,53 @@ export function LibraryScreen() {
                     <div className="small text-body-secondary text-uppercase fw-semibold px-3 pt-4 pb-1">
                       Recent Bookmarks
                     </div>
-                    {/* Not yet virtualized -- bounded/independently-scrolling
-                        like its sibling above, but still a plain .map() for
-                        now (see the follow-up step that swaps this over to
-                        VirtualizedListGroup too). */}
-                    <div className="flex-grow-1 overflow-auto" style={{ minHeight: 0 }}>
-                      <div className="list-group list-group-flush">
-                        {recentBookmarkItems.map((item) => (
-                          <BookmarkRow
-                            key={`${item.txtId}-${item.createdAt}`}
-                            title={item.info.title}
-                            partNum={item.partNum}
-                            line={item.line}
-                            txtPreview={item.txtPreview}
-                            onClick={() => openBookmark(item)}
-                            onDelete={() => void removeBookmarkEntry(item.txtId, item.createdAt)}
-                            deleteAriaLabel={`Remove this bookmark in ${item.info.title}`}
-                          />
-                        ))}
-                        {recentBookmarkItems.length === 0 && (
-                          <p className="text-body-secondary px-3 pb-3">No bookmarks yet.</p>
-                        )}
-                      </div>
-                    </div>
+                    <VirtualizedListGroup
+                      className="flex-grow-1"
+                      items={recentBookmarkItems}
+                      getKey={(item) => `${item.txtId}-${item.createdAt}`}
+                      estimateRowHeight={BOOKMARK_ROW_HEIGHT}
+                      emptyMessage="No bookmarks yet."
+                      renderRow={(item) => (
+                        <BookmarkRow
+                          title={item.info.title}
+                          partNum={item.partNum}
+                          line={item.line}
+                          txtPreview={item.txtPreview}
+                          onClick={() => openBookmark(item)}
+                          onDelete={() => void removeBookmarkEntry(item.txtId, item.createdAt)}
+                          deleteAriaLabel={`Remove this bookmark in ${item.info.title}`}
+                        />
+                      )}
+                    />
                   </>
                 )}
 
-                {/* Not yet virtualized -- see the follow-up step. */}
                 {!loading && view.kind !== "recent" && browseList && (
-                  <div className="flex-grow-1 overflow-auto" style={{ minHeight: 0 }}>
-                    <div className="list-group list-group-flush">
-                      {browseList.map((entry) => (
-                        <button
-                          key={entry.value}
-                          type="button"
-                          className="list-group-item list-group-item-action d-flex justify-content-between align-items-center"
-                          onClick={() =>
-                            selectView({
-                              kind: "browseValue",
-                              dimension: (view as { dimension: BrowseDimension }).dimension,
-                              value: entry.value,
-                            })
-                          }
-                        >
-                          <span className="text-truncate" style={{ minWidth: 0 }}>
-                            {entry.value}
-                          </span>
-                          <span className="text-body-secondary flex-shrink-0 ms-2">{entry.count}</span>
-                        </button>
-                      ))}
-                      {browseList.length === 0 && <p className="text-body-secondary p-3">Nothing here yet.</p>}
-                    </div>
-                  </div>
+                  <VirtualizedListGroup
+                    className="flex-grow-1"
+                    items={browseList}
+                    getKey={(entry) => entry.value}
+                    estimateRowHeight={BROWSE_ENTRY_ROW_HEIGHT}
+                    emptyMessage="Nothing here yet."
+                    renderRow={(entry) => (
+                      <button
+                        type="button"
+                        className="list-group-item list-group-item-action d-flex justify-content-between align-items-center w-100"
+                        onClick={() =>
+                          selectView({
+                            kind: "browseValue",
+                            dimension: (view as { dimension: BrowseDimension }).dimension,
+                            value: entry.value,
+                          })
+                        }
+                      >
+                        <span className="text-truncate" style={{ minWidth: 0 }}>
+                          {entry.value}
+                        </span>
+                        <span className="text-body-secondary flex-shrink-0 ms-2">{entry.count}</span>
+                      </button>
+                    )}
+                  />
                 )}
 
                 {!loading && view.kind !== "recent" && bookList && (
