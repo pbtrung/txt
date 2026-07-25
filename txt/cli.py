@@ -13,6 +13,7 @@ from .db import Database
 from .delete import TxtDeleter
 from .download import TxtDownloader
 from .ingest import TxtIngester
+from .r2_config_update import R2ConfigUpdater
 from .schema_update import SchemaUpdater
 
 
@@ -41,6 +42,13 @@ def _cmd_update_schema(admin_creds_path: str) -> None:
         f"current tables, and backfilled txt_access_key/bookmark_key for "
         f"user_id={user_id}"
     )
+
+
+def _cmd_update_r2_config(admin_creds_path: str) -> None:
+    creds = AdminCreds.load(Path(admin_creds_path))
+    db = Database(creds)
+    user_id = R2ConfigUpdater(db, creds).run()
+    click.echo(f"Updated r2_config for user_id={user_id} to include read-write keys")
 
 
 def _cmd_txt_ingest(admin_creds_path: str, src: str) -> None:
@@ -116,6 +124,15 @@ def _cmd_txt_clean_bucket(admin_creds_path: str, skip_confirm: bool) -> None:
     ),
 )
 @click.option(
+    "--update-r2-config",
+    "do_update_r2_config",
+    is_flag=True,
+    help=(
+        "Persist read-write R2 keys from --admin-creds into the admin's own "
+        "r2_config row (normally only the read-only pair is ever stored there)"
+    ),
+)
+@click.option(
     "--txt-ingest",
     "txt_ingest_dir",
     metavar="DIR",
@@ -165,8 +182,8 @@ def _cmd_txt_clean_bucket(admin_creds_path: str, skip_confirm: bool) -> None:
     show_default=True,
     help=(
         "Credential JSON file, required by --init, --update-schema, "
-        "--txt-ingest, --txt-download, --txt-delete, --txt-delete-id, "
-        "--purge-bucket, and --txt-clean-bucket"
+        "--update-r2-config, --txt-ingest, --txt-download, --txt-delete, "
+        "--txt-delete-id, --purge-bucket, and --txt-clean-bucket"
     ),
 )
 @click.option(
@@ -183,6 +200,7 @@ def _cmd_txt_clean_bucket(admin_creds_path: str, skip_confirm: bool) -> None:
 def main(
     do_init: bool,
     do_update_schema: bool,
+    do_update_r2_config: bool,
     txt_ingest_dir: str | None,
     txt_download_dir: str | None,
     do_txt_delete: bool,
@@ -208,6 +226,9 @@ def main(
     if do_update_schema:
         _cmd_update_schema(admin_creds)
         return
+    if do_update_r2_config:
+        _cmd_update_r2_config(admin_creds)
+        return
     if txt_ingest_dir is not None:
         _cmd_txt_ingest(admin_creds, txt_ingest_dir)
         return
@@ -227,7 +248,7 @@ def main(
         _cmd_txt_clean_bucket(admin_creds, skip_confirm)
         return
     raise click.UsageError(
-        "No action specified. Use --init, --update-schema, --txt-ingest DIR, "
-        "--txt-download DIR, --txt-delete, --txt-delete-id TXT_ID, "
-        "--purge-bucket, or --txt-clean-bucket."
+        "No action specified. Use --init, --update-schema, --update-r2-config, "
+        "--txt-ingest DIR, --txt-download DIR, --txt-delete, --txt-delete-id "
+        "TXT_ID, --purge-bucket, or --txt-clean-bucket."
     )

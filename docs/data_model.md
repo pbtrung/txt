@@ -12,7 +12,12 @@ CREATE TABLE IF NOT EXISTS users (
     -- 32 random bytes, fresh per user
     pw_salt       BLOB NOT NULL,
     -- PBKDF2-HMAC-SHA3-256(password, pw_salt, 1000 iterations)
-    pw_hash       BLOB NOT NULL
+    pw_hash       BLOB NOT NULL,
+    -- NULL for the admin's own row; for a regular user, magic||version||
+    -- salt||Ascon-Keccak(brotli(JSON))||tag -- that user's own credential
+    -- JSON (user_cred_template.json, filled in), wrapped under the
+    -- *admin's* umk, not this row's own account (see prose below)
+    creds         BLOB
 );
 
 CREATE TABLE IF NOT EXISTS umk_store (
@@ -143,9 +148,9 @@ CREATE TABLE IF NOT EXISTS txt_metadata (
 
 ### Tables
 
-- **`users`** — one row per account. `username_hash` is a keyed HMAC (not a general-purpose hash) so the username lookup key can be rotated independently of the password KDF; it's what the login query looks up by, never the plaintext username. `pw_salt`/`pw_hash` are login-verification material only — they authenticate the user to the server and are not part of the encryption key chain (see Key Hierarchy).
+- **`users`** — one row per account. `username_hash` is a keyed HMAC (not a general-purpose hash) so the username lookup key can be rotated independently of the password KDF; it's what the login query looks up by, never the plaintext username. `pw_salt`/`pw_hash` are login-verification material only — they authenticate the user to the server and are not part of the encryption key chain (see Key Hierarchy). `creds` is `NULL` for the admin's own row; for every other (regular-user) row, it holds that account's full credential JSON (the same shape as `user_cred_template.json`, filled in), wrapped under the *admin's* own `umk` rather than the row's own account's — the one place in this schema a column isn't wrapped under its own row's key, since the whole point is letting the admin retrieve/re-download a user's credential file later without needing that user's `user_root_key` (which, unlike everything else here, the admin doesn't otherwise have any way to reconstruct if it's lost).
 - **`umk_store`** — one row per user, holding that user's master key (`umk`), itself encrypted at rest.
-- **`r2_config`** — one row per user: `config` (wrapped under the owner's `umk`, same pattern as `key_store.priv_key`) is a single encrypted JSON blob holding that user's R2 bucket/credentials configuration needed to read/write `txt_parts.path` objects. Which R2 keys a given user's config may hold (read-only only, vs. read-write too) depends on their role — see [credentials.md](credentials.md).
+- **`r2_config`** — one row per user: `config` (wrapped under the owner's `umk`, same pattern as `key_store.priv_key`) is a single encrypted JSON blob holding that user's R2 bucket/credentials configuration needed to read/write `txt_parts.path` objects. Which R2 keys a given user's config may hold (read-only only, vs. read-write too) depends on their role — see [credentials.md](credentials.md). Every account's row holds only the read-only pair when first created (`txt/admin.py`'s `_ensure_r2_config`), regardless of role — the one documented exception is the admin's own row, which `txt.py --update-r2-config` can update in place to also include the read-write pair, opt-in and admin-only (see [cli.md](cli.md)).
 - **`key_store`** — one row per user, holding that user's `lc_kyber_1024_x448` composite keypair (`lc_kyber_keypair`, type `lc_kyber_1024_x448`; see crypto.md's Composite KEM Key Sizes). `pub_key` is stored raw (1624 bytes) since it isn't sensitive; `priv_key` is wrapped under the owner's `umk`, same pattern as `txt.txt_key`. This keypair exists so other users can share a document with this user without knowing their `umk` — see `txt_shares`.
 - **`txt`** — one row per document (a "txt"). `txt_key` is the document's own key material, wrapped under the owner's `umk`.
 - **`txt_parts`** — a document's content, chunked into ordered parts (`part_num`, target ~200 KB per part — see `constants.PART_TARGET`) so large documents aren't loaded/decrypted as a single blob. The actual content lives in R2 object storage, not Turso: the R2 object body is `Blob.encrypt(txt_key, brotli(cleaned part text))`, and its key is `raw_path = crockford_base32(os.urandom(constants.RAW_PATH_LEN))` (`txt/base32.py` — the human-readable variant that excludes visually ambiguous I/L/O/U, no padding) — a fresh random key per part, unrelated to its content. `path` stores that `raw_path`, itself wrapped under the owning `txt`'s `txt_key` (`Blob.encrypt(txt_key, raw_path)`) — so the object key is never visible to Turso either, only to whoever unwraps `path`. `idx_txt_parts_txt_id_part_num` supports fetching a specific part or range in order. See `txt/ingest.py` (`--txt-ingest`) for how raw `.txt` files are cleaned (`txt/textproc.py`), split, and uploaded.

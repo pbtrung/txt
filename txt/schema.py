@@ -13,7 +13,8 @@ CREATE TABLE IF NOT EXISTS users (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     username_hash BLOB NOT NULL UNIQUE,
     pw_salt       BLOB NOT NULL,
-    pw_hash       BLOB NOT NULL
+    pw_hash       BLOB NOT NULL,
+    creds         BLOB
 );
 CREATE TABLE IF NOT EXISTS umk_store (
     id      INTEGER PRIMARY KEY AUTOINCREMENT,
