@@ -49,22 +49,29 @@ export function UnlockScreen() {
           </span>
         </button>
 
-        {unlocking && (
-          // role="status" on the wrapper, not the (otherwise unlabeled)
-          // spinner glyph itself -- it's a live region, so the two text
-          // lines below get re-announced as progress updates them, and the
-          // spinner stays purely decorative next to them. A non-breaking
-          // space holds the first line's height even before the first
-          // phase lands, so the block doesn't visibly grow by a line
-          // moments after appearing.
-          <div className="mt-4 d-flex flex-column align-items-center gap-1" role="status">
-            <div className="spinner-border spinner-border-sm text-primary mb-1" aria-hidden="true" />
-            <div className="small text-body-secondary">
-              {progress ? `Step ${progress.step} of ${progress.total}` : " "}
-            </div>
-            <div className="small text-body-secondary">{progress?.label ?? "Setting up your library"}…</div>
+        {/* role="status" on the wrapper, not the (otherwise unlabeled)
+            spinner glyph itself -- it's a live region, so the two text
+            lines below get re-announced as progress updates them, and the
+            spinner stays purely decorative next to them. A non-breaking
+            space holds the first line's height even before the first
+            phase lands, so the block doesn't visibly grow by a line
+            moments after appearing. Always rendered (not `unlocking &&`),
+            just hidden via visibility rather than unmounted -- unmounting
+            it would let the wordmark/button above shift when the outer
+            box's own vertical centering recalculates around this block's
+            height appearing/disappearing; reserving its space up front
+            keeps them anchored in place regardless. */}
+        <div
+          className="mt-4 d-flex flex-column align-items-center gap-1"
+          role="status"
+          style={{ visibility: unlocking ? "visible" : "hidden" }}
+        >
+          <div className="spinner-border spinner-border-sm text-primary mb-1" aria-hidden="true" />
+          <div className="small text-body-secondary">
+            {progress ? `Step ${progress.step} of ${progress.total}` : " "}
           </div>
-        )}
+          <div className="small text-body-secondary">{progress?.label ?? "Setting up your library"}…</div>
+        </div>
 
         {error && (
           <div className="alert alert-danger mt-4" role="alert">
