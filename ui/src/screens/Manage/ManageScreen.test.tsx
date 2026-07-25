@@ -17,7 +17,7 @@ vi.mock("../../data/adminUsers", async () => {
   return {
     ...actual,
     createUser: vi.fn(),
-    listUsers: vi.fn(),
+    listUsersWithInfo: vi.fn(),
     updateUserPassword: vi.fn(),
     rotateUserRootKey: vi.fn(),
     deleteUser: vi.fn(),
@@ -81,19 +81,31 @@ function setup(refreshing = false, metadataByIdOverride: Map<number, BookInfo> =
   );
 }
 
-function userRow(id: number): HTMLElement {
-  return screen.getByText(`User #${id}`, { exact: false }).closest("button") as HTMLElement;
+// UserRow is a ClickableRow (a <div role="button">, not a real <button> --
+// it needs to nest its own row-level actions elsewhere, same reasoning as
+// Library's BookRow), so this looks it up by its accessible name (the
+// display name text) directly instead of via .closest("button").
+function userRow(name: string): HTMLElement {
+  return screen.getByRole("button", { name: new RegExp(`^${name}`) });
 }
 
 beforeEach(() => {
-  vi.mocked(adminUsers.listUsers).mockResolvedValue([1, 2]);
+  vi.mocked(adminUsers.listUsersWithInfo).mockResolvedValue([
+    { id: 1, displayName: "Alice", bookCount: 0 },
+    { id: 2, displayName: "Bob", bookCount: 0 },
+  ]);
   vi.mocked(adminShares.listShares).mockResolvedValue([]);
 });
 
 describe("ManageScreen", () => {
   it("shows a back-to-library link and the same wordmark/search top bar as Library", async () => {
     setup();
-    expect(screen.getByRole("link", { name: /library/i })).toHaveAttribute("href", "/library");
+    // Two back-to-Library links exist at once (the persistent lg+ sidebar's
+    // and the below-lg drawer row's) -- only one is ever visible at a given
+    // viewport width, but jsdom doesn't apply that media-query hiding.
+    const libraryLinks = screen.getAllByRole("link", { name: /library/i });
+    expect(libraryLinks.length).toBeGreaterThan(0);
+    for (const link of libraryLinks) expect(link).toHaveAttribute("href", "/library");
     expect(screen.getAllByText("Skypiea").length).toBeGreaterThan(0);
     await waitFor(() => expect(screen.getByLabelText(/search users/i)).toBeInTheDocument());
   });
@@ -121,16 +133,30 @@ describe("ManageScreen", () => {
   describe("Users", () => {
     it("lists every user with a count in the nav, selecting one enables Edit but not Delete for the admin's own row", async () => {
       setup();
-      await waitFor(() => expect(userRow(1)).toBeInTheDocument());
-      expect(userRow(2)).toBeInTheDocument();
+      await waitFor(() => expect(userRow("Alice")).toBeInTheDocument());
+      expect(userRow("Bob")).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /^Users/ })).toHaveTextContent("2");
 
-      await userEvent.click(userRow(1));
+      await userEvent.click(userRow("Alice"));
       expect(screen.getByRole("button", { name: "Edit" })).toBeEnabled();
       expect(screen.queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
 
-      await userEvent.click(userRow(2));
+      await userEvent.click(userRow("Bob"));
       expect(screen.getByRole("button", { name: "Delete" })).toBeEnabled();
+    });
+
+    it("shows the admin's own session display name on their own row, not the 'Unnamed user' fallback", async () => {
+      // users.creds is always NULL for the admin's own row (see
+      // adminUsers.ts), so listUsersWithInfo can never recover a
+      // displayName for it from decryption -- the screen has to patch in
+      // session.creds.displayName itself instead of showing the fallback.
+      vi.mocked(adminUsers.listUsersWithInfo).mockResolvedValue([
+        { id: 1, displayName: undefined, bookCount: 0 },
+        { id: 2, displayName: "Bob", bookCount: 0 },
+      ]);
+      setup();
+      await waitFor(() => expect(userRow("Alice")).toBeInTheDocument());
+      expect(screen.queryByText("Unnamed user", { exact: false })).not.toBeInTheDocument();
     });
 
     it("creates a user via the Create panel and reloads the list", async () => {
@@ -144,8 +170,12 @@ describe("ManageScreen", () => {
         user_root_key: "b",
       });
       setup();
-      await waitFor(() => expect(userRow(1)).toBeInTheDocument());
-      vi.mocked(adminUsers.listUsers).mockResolvedValue([1, 2, 3]);
+      await waitFor(() => expect(userRow("Alice")).toBeInTheDocument());
+      vi.mocked(adminUsers.listUsersWithInfo).mockResolvedValue([
+        { id: 1, displayName: "Alice", bookCount: 0 },
+        { id: 2, displayName: "Bob", bookCount: 0 },
+        { id: 3, displayName: "Carol", bookCount: 0 },
+      ]);
 
       await userEvent.click(screen.getByRole("button", { name: "Create" }));
       await userEvent.type(screen.getByLabelText("Username"), "carol");
@@ -157,18 +187,19 @@ describe("ManageScreen", () => {
       await waitFor(() =>
         expect(adminUsers.createUser).toHaveBeenCalledWith(
           {},
+          undefined,
           "libsql://example",
           expect.objectContaining({ endpoint: "https://x" }),
           { username: "carol", password: "hunter2", displayName: "Carol", userTursoAuthToken: "user-token" },
         ),
       );
-      await waitFor(() => expect(userRow(3)).toBeInTheDocument());
+      await waitFor(() => expect(userRow("Carol")).toBeInTheDocument());
     });
 
     it("requires the row's own id typed in before enabling Confirm delete, then deletes", async () => {
       setup();
-      await waitFor(() => expect(userRow(2)).toBeInTheDocument());
-      await userEvent.click(userRow(2));
+      await waitFor(() => expect(userRow("Bob")).toBeInTheDocument());
+      await userEvent.click(userRow("Bob"));
       await userEvent.click(screen.getByRole("button", { name: "Delete" }));
 
       const confirmButton = screen.getByRole("button", { name: "Confirm delete" });
@@ -183,8 +214,8 @@ describe("ManageScreen", () => {
     it("resets a password and rotates a root key from the Edit panel", async () => {
       vi.mocked(adminUsers.rotateUserRootKey).mockResolvedValue("new-root-key-b64");
       setup();
-      await waitFor(() => expect(userRow(2)).toBeInTheDocument());
-      await userEvent.click(userRow(2));
+      await waitFor(() => expect(userRow("Bob")).toBeInTheDocument());
+      await userEvent.click(userRow("Bob"));
       await userEvent.click(screen.getByRole("button", { name: "Edit" }));
 
       await userEvent.type(screen.getByLabelText("New password"), "new-password");
@@ -281,15 +312,34 @@ describe("ManageScreen", () => {
   });
 
   describe("search", () => {
-    it("filters the Users list by id", async () => {
-      vi.mocked(adminUsers.listUsers).mockResolvedValue([1, 2, 22]);
+    it("filters the Users list by display name", async () => {
+      vi.mocked(adminUsers.listUsersWithInfo).mockResolvedValue([
+        { id: 1, displayName: "Alice", bookCount: 0 },
+        { id: 2, displayName: "Bob", bookCount: 0 },
+        { id: 22, displayName: "Zoe", bookCount: 0 },
+      ]);
       setup();
-      await waitFor(() => expect(userRow(22)).toBeInTheDocument());
+      await waitFor(() => expect(userRow("Zoe")).toBeInTheDocument());
+
+      await userEvent.type(screen.getByLabelText(/search users/i), "zoe");
+
+      expect(userRow("Zoe")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /^Alice/ })).not.toBeInTheDocument();
+    });
+
+    it("filters the Users list by id", async () => {
+      vi.mocked(adminUsers.listUsersWithInfo).mockResolvedValue([
+        { id: 1, displayName: "Alice", bookCount: 0 },
+        { id: 2, displayName: "Bob", bookCount: 0 },
+        { id: 22, displayName: "Zoe", bookCount: 0 },
+      ]);
+      setup();
+      await waitFor(() => expect(userRow("Zoe")).toBeInTheDocument());
 
       await userEvent.type(screen.getByLabelText(/search users/i), "22");
 
-      expect(userRow(22)).toBeInTheDocument();
-      expect(screen.queryByText("User #1", { exact: false })).not.toBeInTheDocument();
+      expect(userRow("Zoe")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /^Alice/ })).not.toBeInTheDocument();
     });
 
     it("filters the Books list by title", async () => {
@@ -306,11 +356,13 @@ describe("ManageScreen", () => {
 
   describe("virtualization", () => {
     it("renders only a bounded window of rows for a large Users list, not all of them", async () => {
-      vi.mocked(adminUsers.listUsers).mockResolvedValue(Array.from({ length: 500 }, (_, i) => i + 1));
+      vi.mocked(adminUsers.listUsersWithInfo).mockResolvedValue(
+        Array.from({ length: 500 }, (_, i) => ({ id: i + 1, displayName: `Person ${i + 1}`, bookCount: 0 })),
+      );
       setup();
 
-      await waitFor(() => expect(screen.getAllByRole("button", { name: /^User #\d+/ }).length).toBeGreaterThan(0));
-      const rows = screen.getAllByRole("button", { name: /^User #\d+/ });
+      await waitFor(() => expect(screen.getAllByRole("button", { name: /^Person \d+/ }).length).toBeGreaterThan(0));
+      const rows = screen.getAllByRole("button", { name: /^Person \d+/ });
       expect(rows.length).toBeLessThan(100); // well under the full 500 -- proves the window is bounded
     });
 

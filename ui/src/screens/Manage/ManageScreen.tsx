@@ -41,14 +41,16 @@ import {
   AdminUsersError,
   createUser,
   deleteUser,
-  listUsers,
+  listUsersWithInfo,
   rotateUserRootKey,
   updateUserPassword,
+  type UserSummary,
 } from "../../data/adminUsers";
 import { grantShare, listShares, revokeShare, type ShareEntry } from "../../data/adminShares";
 import type { BookInfo } from "../../data/metadata";
 import { allBooksSorted, matchesSearch } from "../Library/libraryModel";
 import { useLibraryBooks } from "../Library/useLibraryBooks";
+import { UserRow, USER_ROW_HEIGHT } from "./UserRow";
 import { useVault, type VaultSession } from "../../state/VaultContext";
 
 type Section = "users" | "books" | "shares";
@@ -114,12 +116,6 @@ function ManageNavContent({
   return (
     <>
       <div className="flex-grow-1 overflow-auto">
-        <div className="list-group list-group-flush mb-3">
-          <Link to="/library" className="list-group-item list-group-item-action d-flex align-items-center gap-2">
-            <i className="bi bi-arrow-left" aria-hidden="true" />
-            <span>Library</span>
-          </Link>
-        </div>
         <div className="list-group list-group-flush">
           <NavItem
             active={section === "users"}
@@ -328,7 +324,7 @@ function CreateUserForm({
     setBusy(true);
     setError(null);
     try {
-      const creds = await createUser(session.db, session.creds.tursoDatabaseUrl, session.r2Config, {
+      const creds = await createUser(session.db, session.umk, session.creds.tursoDatabaseUrl, session.r2Config, {
         username,
         password,
         displayName,
@@ -546,22 +542,33 @@ type UsersMode = "none" | "create" | "edit" | "delete";
 
 function UsersSection({
   session,
-  userIds,
+  users,
   search,
   onChanged,
 }: {
   session: VaultSession;
-  userIds: number[];
+  users: UserSummary[];
   search: string;
   onChanged: () => void;
 }) {
   const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
   const [mode, setMode] = useState<UsersMode>("none");
 
+  // users.creds can never hold the admin's own display name (it's always
+  // NULL for that row -- see adminUsers.ts), but the admin's session already
+  // carries it (same value the nav footer shows), so patch it in here --
+  // once, ahead of both search and rendering -- rather than showing the
+  // "Unnamed user" fallback for the one row that could actually be named.
+  const withSelfName = useMemo(
+    () => users.map((u) => (u.id === session.userId ? { ...u, displayName: session.creds.displayName } : u)),
+    [users, session.userId, session.creds.displayName],
+  );
+
   const filtered = useMemo(() => {
-    const q = search.trim();
-    return q ? userIds.filter((id) => String(id).includes(q)) : userIds;
-  }, [userIds, search]);
+    const q = search.trim().toLowerCase();
+    if (!q) return withSelfName;
+    return withSelfName.filter((u) => String(u.id).includes(q) || (u.displayName ?? "").toLowerCase().includes(q));
+  }, [withSelfName, search]);
 
   function selectRow(id: number) {
     setSelectedUserId(id);
@@ -616,14 +623,16 @@ function UsersSection({
       <VirtualizedListGroup
         className="flex-grow-1"
         items={filtered}
-        getKey={(id) => id}
-        estimateRowHeight={ROW_HEIGHT}
+        getKey={(user) => user.id}
+        estimateRowHeight={USER_ROW_HEIGHT}
         emptyMessage="No users match here yet."
-        renderRow={(id) => (
-          <SelectableRow icon="bi-person-circle" selected={selectedUserId === id} onClick={() => selectRow(id)}>
-            User #{id}
-            {id === session.userId && <span className="text-body-secondary small ms-2">(you)</span>}
-          </SelectableRow>
+        renderRow={(user) => (
+          <UserRow
+            user={user}
+            isSelf={user.id === session.userId}
+            selected={selectedUserId === user.id}
+            onClick={() => selectRow(user.id)}
+          />
         )}
       />
     </div>
@@ -1036,12 +1045,12 @@ export function ManageScreen() {
     nav.close();
   }
 
-  const [userIds, setUserIds] = useState<number[] | null>(null);
+  const [users, setUsers] = useState<UserSummary[] | null>(null);
   const [usersError, setUsersError] = useState<string | null>(null);
   const loadUsers = useCallback(async () => {
     if (!session) return;
     try {
-      setUserIds(await listUsers(session.db));
+      setUsers(await listUsersWithInfo(session.db, session.umk));
     } catch (err) {
       setUsersError(errorMessage(err));
     }
@@ -1084,7 +1093,22 @@ export function ManageScreen() {
   return (
     <div className="shell-60 d-flex flex-column vh-100">
       <div className="border-bottom d-flex flex-nowrap align-items-stretch">
-        <div className="library-nav border-end p-2 d-none d-lg-flex align-items-center justify-content-center">
+        {/* Just the arrow is the back-to-Library link here (Manage is the
+            one screen that isn't Library) -- the wordmark itself stays
+            plain/centered, same as Library's own top bar, instead of a
+            separate "<- Library" nav row above Users/Books/Shares. Below lg
+            (no persistent sidebar to hold the arrow), it sits beside the
+            drawer toggle instead, so going back to Library is always one
+            tap away regardless of screen size. */}
+        <div className="library-nav border-end p-2 d-none d-lg-flex align-items-center justify-content-center position-relative">
+          <Link
+            to="/library"
+            className="position-absolute top-50 start-0 translate-middle-y ms-2 d-flex align-items-center text-decoration-none"
+            aria-label="Back to Library"
+            title="Back to Library"
+          >
+            <i className="bi bi-arrow-left text-body-secondary" aria-hidden="true" />
+          </Link>
           <Wordmark />
         </div>
 
@@ -1092,6 +1116,14 @@ export function ManageScreen() {
           ref={nav.ref}
           className="dropdown position-relative d-lg-none d-flex align-items-center gap-2 ps-2 ps-sm-3 py-2"
         >
+          <Link
+            to="/library"
+            className="d-flex align-items-center text-decoration-none"
+            aria-label="Back to Library"
+            title="Back to Library"
+          >
+            <i className="bi bi-arrow-left text-body-secondary" aria-hidden="true" />
+          </Link>
           <DropdownToggleButton
             open={nav.open}
             onClick={nav.toggle}
@@ -1109,7 +1141,7 @@ export function ManageScreen() {
               <ManageNavContent
                 section={section}
                 selectSection={selectSection}
-                usersCount={userIds?.length ?? 0}
+                usersCount={users?.length ?? 0}
                 booksCount={books.length}
                 sharesCount={shares?.length ?? 0}
                 displayName={session.creds.displayName}
@@ -1152,7 +1184,7 @@ export function ManageScreen() {
               <ManageNavContent
                 section={section}
                 selectSection={selectSection}
-                usersCount={userIds?.length ?? 0}
+                usersCount={users?.length ?? 0}
                 booksCount={books.length}
                 sharesCount={shares?.length ?? 0}
                 displayName={session.creds.displayName}
@@ -1177,7 +1209,7 @@ export function ManageScreen() {
               {section === "users" && (
                 <UsersSection
                   session={session}
-                  userIds={userIds ?? []}
+                  users={users ?? []}
                   search={search}
                   onChanged={() => void loadUsers()}
                 />

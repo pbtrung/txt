@@ -184,3 +184,25 @@ body,
   --bs-btn-padding-x: 0.35rem;
   --bs-btn-font-size: 0.7rem;
 }
+
+/* Modal.tsx's backdrop/dialog: a quick fade (+ subtle rise/scale for the
+   dialog) instead of both just snapping into place, since a hand-rolled
+   modal has no Bootstrap JS transition classes (.fade/.show) to fall back
+   on. Kept short (0.15s) so it reads as responsive, not sluggish. */
+@keyframes modal-backdrop-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes modal-dialog-rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.75rem) scale(0.97);
+  }
+}
+.modal-backdrop-anim {
+  animation: modal-backdrop-fade-in 0.15s ease-out;
+}
+.modal-dialog-anim {
+  animation: modal-dialog-rise-in 0.18s ease-out;
+}

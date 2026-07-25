@@ -39,7 +39,8 @@ describe("createUser", () => {
     });
     const db = { execute } as unknown as Client;
 
-    const creds = await adminUsers.createUser(db, "libsql://example", ADMIN_R2_CONFIG, {
+    const adminUmk = new Uint8Array(64).fill(9);
+    const creds = await adminUsers.createUser(db, adminUmk, "libsql://example", ADMIN_R2_CONFIG, {
       username: "bob",
       password: "hunter2",
       displayName: "Bob",
@@ -57,7 +58,8 @@ describe("createUser", () => {
     expect(usernameLookupKey.length).toBeGreaterThanOrEqual(32);
     expect(userRootKey.length).toBeGreaterThanOrEqual(256);
 
-    const tableNames = calls.map((c) => c.sql.match(/INTO (\w+)/)?.[1]);
+    // 7 INSERTs, then the users.creds UPDATE asserted separately below.
+    const tableNames = calls.slice(0, 7).map((c) => c.sql.match(/INTO (\w+)/)?.[1]);
     expect(tableNames).toEqual([
       "users",
       "umk_store",
@@ -107,14 +109,64 @@ describe("createUser", () => {
       const value = await blob.decrypt(key, call.args[2] as Uint8Array, true);
       expect(JSON.parse(new TextDecoder().decode(value))).toEqual({});
     }
+
+    // users.creds: the returned credential JSON, wrapped under the admin's
+    // own umk (not the new user's) -- an UPDATE, not one of the seven INSERTs above.
+    const updateCall = calls[7];
+    expect(updateCall.sql).toContain("UPDATE users SET creds");
+    const credsPlain = await blob.decrypt(adminUmk, updateCall.args[0] as Uint8Array, true);
+    expect(JSON.parse(new TextDecoder().decode(credsPlain))).toEqual(creds);
   });
 });
 
-describe("listUsers", () => {
-  it("returns every user id", async () => {
-    const execute = vi.fn().mockResolvedValue(rowsResult([{ id: 1 }, { id: 2 }, { id: 5 }]));
+describe("listUsersWithInfo", () => {
+  it("returns each user's id, recovered display name, and txt count", async () => {
+    const adminUmk = new Uint8Array(64).fill(9);
+    const credsJson = { display_name: "Bob", username: "bob" };
+    const credsBlob = await blob.encrypt(adminUmk, new TextEncoder().encode(JSON.stringify(credsJson)), {
+      compressed: true,
+    });
+    const execute = vi.fn(async ({ sql }: { sql: string }) => {
+      if (sql.startsWith("SELECT id, creds")) {
+        return rowsResult([
+          { id: 1, creds: null }, // the admin's own row -- always NULL
+          { id: 2, creds: credsBlob.buffer },
+          { id: 3, creds: null }, // never populated (e.g. predates this feature)
+        ]);
+      }
+      if (sql.includes("GROUP BY user_id")) {
+        return rowsResult([
+          { user_id: 1, count: 5 },
+          { user_id: 2, count: 0 },
+        ]);
+      }
+      return emptyResult();
+    });
     const db = { execute } as unknown as Client;
-    expect(await adminUsers.listUsers(db)).toEqual([1, 2, 5]);
+
+    const result = await adminUsers.listUsersWithInfo(db, adminUmk);
+
+    expect(result).toEqual([
+      { id: 1, displayName: undefined, bookCount: 5 },
+      { id: 2, displayName: "Bob", bookCount: 0 },
+      { id: 3, displayName: undefined, bookCount: 0 },
+    ]);
+  });
+
+  it("leaves displayName undefined (not throwing) when creds can't be decrypted", async () => {
+    const adminUmk = new Uint8Array(64).fill(9);
+    const wrongKeyBlob = await blob.encrypt(new Uint8Array(64).fill(1), new TextEncoder().encode("{}"), {
+      compressed: true,
+    });
+    const execute = vi.fn(async ({ sql }: { sql: string }) => {
+      if (sql.startsWith("SELECT id, creds")) return rowsResult([{ id: 2, creds: wrongKeyBlob.buffer }]);
+      return emptyResult();
+    });
+    const db = { execute } as unknown as Client;
+
+    const result = await adminUsers.listUsersWithInfo(db, adminUmk);
+
+    expect(result).toEqual([{ id: 2, displayName: undefined, bookCount: 0 }]);
   });
 });
 

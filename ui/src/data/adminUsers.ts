@@ -6,11 +6,15 @@
 // admin's own single account; this is what lets an admin provision (and
 // tear down) *other* accounts from the browser instead.
 //
-// No users.display_name column exists (out of scope for this feature, see
-// the plan) -- listUsers only ever returns plain numeric ids. displayName
-// here is purely a field in createUser's returned, downloadable credential
-// JSON, exactly like every other credential file's "just a UI label" (see
-// docs/credentials.md) -- never written to Turso.
+// There's still no users.display_name column (a plaintext label wasn't
+// worth a schema change on its own), but users.creds now exists (see
+// docs/data_model.md): a regular user's full credential JSON, wrapped under
+// the *admin's* own umk rather than that row's own account. createUser
+// writes it there right after generating it, and listUsersWithInfo reads it
+// back to recover displayName for the Users list -- the admin's own umk is
+// already unwrapped in their session, so this needs no new secret, unlike
+// trying to read anything wrapped under a *regular* user's own umk (which
+// the admin genuinely can't do -- see rotateUserRootKey below).
 //
 // Every regular user's Turso token is the same pre-minted, restricted token
 // (docs/credentials.md's "Minting each role's token" -- Turso's fine-grained
@@ -58,9 +62,13 @@ export interface DownloadableUserCreds {
  * txt/admin.py's AdminInitializer.run() -- generalized to a target
  * username/password instead of always being self-referential. r2_config's
  * read-only key *values* are copied from the admin's own (already-fetched)
- * R2Config, since every account shares the same read-only R2 credentials. */
+ * R2Config, since every account shares the same read-only R2 credentials.
+ * Also writes the generated credential JSON into the new row's own
+ * users.creds, wrapped under the *admin's* umk (adminUmk) -- see file
+ * comment -- so listUsersWithInfo can recover displayName later. */
 export async function createUser(
   db: Client,
+  adminUmk: Uint8Array,
   adminTursoDatabaseUrl: string,
   adminR2Config: R2Config,
   input: NewUserInput,
@@ -132,7 +140,7 @@ export async function createUser(
     ],
   });
 
-  return {
+  const credsJson: DownloadableUserCreds = {
     turso_database_url: adminTursoDatabaseUrl,
     turso_auth_token: input.userTursoAuthToken,
     username: input.username,
@@ -141,13 +149,62 @@ export async function createUser(
     display_name: input.displayName,
     user_root_key: bytesToBase64(userRootKey),
   };
+  await db.execute({
+    sql: "UPDATE users SET creds = ? WHERE id = ?",
+    args: [
+      await blob.encrypt(adminUmk, new TextEncoder().encode(JSON.stringify(credsJson)), { compressed: true }),
+      userId,
+    ],
+  });
+
+  return credsJson;
 }
 
-/** Every account's id -- plain numeric, no human-readable label available
- * without a schema change (see file comment). */
-export async function listUsers(db: Client): Promise<number[]> {
-  const result = await db.execute({ sql: "SELECT id FROM users ORDER BY id ASC", args: [] });
-  return result.rows.map((row) => Number(row.id));
+export interface UserSummary {
+  id: number;
+  /** Recovered from users.creds (see file comment) -- undefined for the
+   * admin's own row (creds is always NULL there) and for any row whose
+   * creds can't be decrypted/parsed (e.g. one created before this existed). */
+  displayName?: string;
+  /** How many txt this account owns -- almost always 0 for a regular user
+   * (only the admin ever holds any, per the plan this screen was built
+   * from), except the admin's own row. */
+  bookCount: number;
+}
+
+/** Every account's id, recovered display name (if any), and txt count.
+ * Two queries total regardless of how many accounts exist: one for
+ * id+creds, one grouped count of txt rows by owner -- rather than a query
+ * per account for either. */
+export async function listUsersWithInfo(db: Client, adminUmk: Uint8Array): Promise<UserSummary[]> {
+  const usersResult = await db.execute({ sql: "SELECT id, creds FROM users ORDER BY id ASC", args: [] });
+  const countsResult = await db.execute({
+    sql: "SELECT user_id, COUNT(*) as count FROM txt GROUP BY user_id",
+    args: [],
+  });
+  const countByUserId = new Map<number, number>();
+  for (const row of countsResult.rows) {
+    countByUserId.set(Number(row.user_id), Number(row.count));
+  }
+
+  return Promise.all(
+    usersResult.rows.map(async (row): Promise<UserSummary> => {
+      const id = Number(row.id);
+      let displayName: string | undefined;
+      if (row.creds !== null) {
+        try {
+          const decrypted = await blob.decrypt(adminUmk, requireBlobBytes(row.creds, "users.creds"), true);
+          const parsed = JSON.parse(new TextDecoder().decode(decrypted)) as { display_name?: string };
+          displayName = parsed.display_name;
+        } catch {
+          // Leave displayName undefined -- shows just the id, same as
+          // before this info existed (e.g. a row created before creds was
+          // populated, or wrapped under a since-rotated admin umk).
+        }
+      }
+      return { id, displayName, bookCount: countByUserId.get(id) ?? 0 };
+    }),
+  );
 }
 
 /** Resets a user's login password -- pw_hash/pw_salt sit outside the umk
