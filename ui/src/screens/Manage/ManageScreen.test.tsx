@@ -41,7 +41,7 @@ const getTxtKey = vi.fn().mockResolvedValue(new Uint8Array(64).fill(3));
 const lock = vi.fn();
 const refresh = vi.fn().mockResolvedValue(undefined);
 
-function setup(refreshing = false) {
+function setup(refreshing = false, metadataByIdOverride: Map<number, BookInfo> = metadataById) {
   vi.mocked(VaultContextModule.useVault).mockReturnValue({
     status: "unlocked",
     session: {
@@ -55,7 +55,7 @@ function setup(refreshing = false) {
         readOnlyAccessKeyId: "ro-id",
         readOnlySecretAccessKey: "ro-secret",
       },
-      metadataById,
+      metadataById: metadataByIdOverride,
       isAdmin: true,
     } as unknown as VaultContextModule.VaultSession,
     error: null,
@@ -311,6 +311,21 @@ describe("ManageScreen", () => {
 
       await waitFor(() => expect(screen.getAllByRole("button", { name: /^User #\d+/ }).length).toBeGreaterThan(0));
       const rows = screen.getAllByRole("button", { name: /^User #\d+/ });
+      expect(rows.length).toBeLessThan(100); // well under the full 500 -- proves the window is bounded
+    });
+
+    it("renders only a bounded window of rows for a large Books list, not all of them", async () => {
+      const manyBooks = new Map<number, BookInfo>(
+        Array.from({ length: 500 }, (_, i) => [
+          i + 1,
+          { txtId: i + 1, name: `n${i + 1}`, title: `Title ${i + 1}`, subjects: [], rawMetadata: [] },
+        ]),
+      );
+      setup(false, manyBooks);
+      await userEvent.click(screen.getByRole("button", { name: /^Books/ }));
+
+      const rows = screen.getAllByRole("button", { name: /^Title \d+$/ });
+      expect(rows.length).toBeGreaterThan(0);
       expect(rows.length).toBeLessThan(100); // well under the full 500 -- proves the window is bounded
     });
   });

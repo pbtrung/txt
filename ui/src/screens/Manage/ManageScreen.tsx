@@ -11,9 +11,10 @@
 //
 // Three sections, each a select-a-row-then-act toolbar (Create/Edit/Delete,
 // only the actions that actually apply), every action opening the same
-// kind of panel -- a bordered, shaded card directly under the toolbar, one
-// vertically-stacked labeled field per row, capped at a readable width --
-// rather than each form inventing its own layout:
+// kind of popup (components/Modal.tsx -- no Bootstrap JS in this project,
+// so it's hand-rolled the same way useDropdown.ts is), one vertically-
+// stacked labeled field per row, rather than each form inventing its own
+// layout or living inline in the page flow:
 // - Users: create/list/edit (password reset + root-key rotation, both in
 //   one panel)/delete. Delete is hidden for the admin's own row -- an admin
 //   can never delete themselves through this screen.
@@ -30,7 +31,9 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 
+import { BookRow, BOOK_ROW_HEIGHT } from "../../components/BookRow";
 import { DropdownToggleButton } from "../../components/DropdownToggleButton";
+import { Modal } from "../../components/Modal";
 import { VirtualizedListGroup } from "../../components/VirtualizedListGroup";
 import { Wordmark } from "../../components/Wordmark";
 import { useDropdown } from "../../hooks/useDropdown";
@@ -44,6 +47,8 @@ import {
 } from "../../data/adminUsers";
 import { grantShare, listShares, revokeShare, type ShareEntry } from "../../data/adminShares";
 import type { BookInfo } from "../../data/metadata";
+import { allBooksSorted, matchesSearch } from "../Library/libraryModel";
+import { useLibraryBooks } from "../Library/useLibraryBooks";
 import { useVault, type VaultSession } from "../../state/VaultContext";
 
 type Section = "users" | "books" | "shares";
@@ -207,18 +212,6 @@ function ToolbarButton({
   );
 }
 
-/** The card every Create/Edit/Delete action panel opens into, directly
- * under the toolbar -- one consistent container/heading style instead of
- * each form inventing its own. */
-function Panel({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <div className="p-3 border-bottom bg-body-tertiary">
-      <h3 className="h6 mb-3">{title}</h3>
-      {children}
-    </div>
-  );
-}
-
 /** One labeled field, stacked label-above-input -- the one field layout
  * every form in this screen uses, instead of some forms stacking fields
  * and others laying them out in a row. */
@@ -314,7 +307,15 @@ function SelectableRow({
   );
 }
 
-function CreateUserForm({ session, onCreated }: { session: VaultSession; onCreated: () => void }) {
+function CreateUserForm({
+  session,
+  onCreated,
+  onClose,
+}: {
+  session: VaultSession;
+  onCreated: () => void;
+  onClose: () => void;
+}) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
@@ -347,7 +348,7 @@ function CreateUserForm({ session, onCreated }: { session: VaultSession; onCreat
   }
 
   return (
-    <Panel title="Create user">
+    <Modal title="Create user" onClose={onClose}>
       <form onSubmit={(e) => void handleSubmit(e)} style={FORM_WIDTH}>
         <FormField label="Username" htmlFor="manage-new-username">
           <input
@@ -394,11 +395,11 @@ function CreateUserForm({ session, onCreated }: { session: VaultSession; onCreat
         </button>
         {error && <div className="text-danger small mt-2">{error}</div>}
       </form>
-    </Panel>
+    </Modal>
   );
 }
 
-function EditUserPanel({ session, userId }: { session: VaultSession; userId: number }) {
+function EditUserPanel({ session, userId, onClose }: { session: VaultSession; userId: number; onClose: () => void }) {
   const [newPassword, setNewPassword] = useState("");
   const [resetBusy, setResetBusy] = useState(false);
   const [resetError, setResetError] = useState<string | null>(null);
@@ -441,62 +442,58 @@ function EditUserPanel({ session, userId }: { session: VaultSession; userId: num
   }
 
   return (
-    <Panel title={`Edit user #${userId}`}>
-      <div className="row g-4" style={{ maxWidth: "40rem" }}>
-        <div className="col-12 col-sm-6">
-          <h4 className="h6 small text-body-secondary text-uppercase mb-2">Reset password</h4>
-          <form onSubmit={(e) => void handleResetPassword(e)}>
-            <FormField label="New password" htmlFor="manage-edit-password">
-              <input
-                id="manage-edit-password"
-                type="password"
-                className="form-control form-control-sm themed-control"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                required
-              />
-            </FormField>
-            <button type="submit" className="btn btn-sm btn-primary" disabled={resetBusy}>
-              Save
-            </button>
-            {resetDone && <div className="text-success small mt-2">Password updated.</div>}
-            {resetError && <div className="text-danger small mt-2">{resetError}</div>}
-          </form>
-        </div>
+    <Modal title={`Edit user #${userId}`} onClose={onClose}>
+      <div style={FORM_WIDTH}>
+        <h4 className="h6 small text-body-secondary text-uppercase mb-2">Reset password</h4>
+        <form onSubmit={(e) => void handleResetPassword(e)}>
+          <FormField label="New password" htmlFor="manage-edit-password">
+            <input
+              id="manage-edit-password"
+              type="password"
+              className="form-control form-control-sm themed-control"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              required
+            />
+          </FormField>
+          <button type="submit" className="btn btn-sm btn-primary" disabled={resetBusy}>
+            Save
+          </button>
+          {resetDone && <div className="text-success small mt-2">Password updated.</div>}
+          {resetError && <div className="text-danger small mt-2">{resetError}</div>}
+        </form>
 
-        <div className="col-12 col-sm-6">
-          <h4 className="h6 small text-body-secondary text-uppercase mb-2">Rotate root key</h4>
-          <form onSubmit={(e) => void handleRotate(e)}>
-            <FormField label="Current root key (base64)" htmlFor="manage-edit-root-key">
-              <input
-                id="manage-edit-root-key"
-                type="text"
-                className="form-control form-control-sm themed-control"
-                value={oldRootKey}
-                onChange={(e) => setOldRootKey(e.target.value)}
-                required
-              />
-            </FormField>
-            <button type="submit" className="btn btn-sm btn-primary" disabled={rotateBusy}>
-              Rotate
-            </button>
-            {rotateError && <div className="text-danger small mt-2">{rotateError}</div>}
-            {newRootKey && (
-              <div className="small mt-2">
-                New key: <code className="text-break">{newRootKey}</code>
-                <button
-                  type="button"
-                  className="btn btn-sm btn-link p-0 ms-2"
-                  onClick={() => downloadJson(`user_${userId}_root_key.json`, { user_root_key: newRootKey })}
-                >
-                  Download
-                </button>
-              </div>
-            )}
-          </form>
-        </div>
+        <h4 className="h6 small text-body-secondary text-uppercase mb-2 mt-4">Rotate root key</h4>
+        <form onSubmit={(e) => void handleRotate(e)}>
+          <FormField label="Current root key (base64)" htmlFor="manage-edit-root-key">
+            <input
+              id="manage-edit-root-key"
+              type="text"
+              className="form-control form-control-sm themed-control"
+              value={oldRootKey}
+              onChange={(e) => setOldRootKey(e.target.value)}
+              required
+            />
+          </FormField>
+          <button type="submit" className="btn btn-sm btn-primary" disabled={rotateBusy}>
+            Rotate
+          </button>
+          {rotateError && <div className="text-danger small mt-2">{rotateError}</div>}
+          {newRootKey && (
+            <div className="small mt-2">
+              New key: <code className="text-break">{newRootKey}</code>
+              <button
+                type="button"
+                className="btn btn-sm btn-link p-0 ms-2"
+                onClick={() => downloadJson(`user_${userId}_root_key.json`, { user_root_key: newRootKey })}
+              >
+                Download
+              </button>
+            </div>
+          )}
+        </form>
       </div>
-    </Panel>
+    </Modal>
   );
 }
 
@@ -504,10 +501,12 @@ function DeleteUserPanel({
   session,
   userId,
   onDeleted,
+  onClose,
 }: {
   session: VaultSession;
   userId: number;
   onDeleted: () => void;
+  onClose: () => void;
 }) {
   const [confirmText, setConfirmText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -526,7 +525,7 @@ function DeleteUserPanel({
   }
 
   return (
-    <Panel title={`Delete user #${userId}`}>
+    <Modal title={`Delete user #${userId}`} onClose={onClose}>
       <p className="small text-body-secondary" style={FORM_WIDTH}>
         This deletes user #{userId}&apos;s entire account: every txt they own, their shares, and their read
         position/bookmarks. Type <strong>{userId}</strong> to confirm.
@@ -539,7 +538,7 @@ function DeleteUserPanel({
         busy={busy}
       />
       {error && <div className="text-danger small mt-2">{error}</div>}
-    </Panel>
+    </Modal>
   );
 }
 
@@ -599,10 +598,19 @@ function UsersSection({
         )}
       </Toolbar>
 
-      {mode === "create" && <CreateUserForm session={session} onCreated={afterChange} />}
-      {mode === "edit" && selectedUserId !== null && <EditUserPanel session={session} userId={selectedUserId} />}
+      {mode === "create" && (
+        <CreateUserForm session={session} onCreated={afterChange} onClose={() => setMode("none")} />
+      )}
+      {mode === "edit" && selectedUserId !== null && (
+        <EditUserPanel session={session} userId={selectedUserId} onClose={() => setMode("none")} />
+      )}
       {mode === "delete" && selectedUserId !== null && (
-        <DeleteUserPanel session={session} userId={selectedUserId} onDeleted={afterChange} />
+        <DeleteUserPanel
+          session={session}
+          userId={selectedUserId}
+          onDeleted={afterChange}
+          onClose={() => setMode("none")}
+        />
       )}
 
       <VirtualizedListGroup
@@ -635,9 +643,11 @@ interface BookMetadataFormValues {
 function EditBookPanel({
   book,
   onSaved,
+  onClose,
 }: {
   book: BookInfo;
   onSaved: (edits: BookMetadataFormValues) => Promise<void>;
+  onClose: () => void;
 }) {
   const [title, setTitle] = useState(book.title);
   const [author, setAuthor] = useState(book.author ?? "");
@@ -670,7 +680,7 @@ function EditBookPanel({
   }
 
   return (
-    <Panel title={`Edit metadata -- ${book.title}`}>
+    <Modal title={`Edit metadata -- ${book.title}`} onClose={onClose}>
       <form onSubmit={(e) => void handleSubmit(e)} style={FORM_WIDTH}>
         <FormField label="Title" htmlFor="manage-book-title">
           <input
@@ -722,11 +732,19 @@ function EditBookPanel({
         </button>
         {error && <div className="text-danger small mt-2">{error}</div>}
       </form>
-    </Panel>
+    </Modal>
   );
 }
 
-function DeleteBookPanel({ book, onDeleted }: { book: BookInfo; onDeleted: () => Promise<void> }) {
+function DeleteBookPanel({
+  book,
+  onDeleted,
+  onClose,
+}: {
+  book: BookInfo;
+  onDeleted: () => Promise<void>;
+  onClose: () => void;
+}) {
   const [confirmText, setConfirmText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -743,7 +761,7 @@ function DeleteBookPanel({ book, onDeleted }: { book: BookInfo; onDeleted: () =>
   }
 
   return (
-    <Panel title={`Delete "${book.title}"`}>
+    <Modal title={`Delete "${book.title}"`} onClose={onClose}>
       <p className="small text-body-secondary" style={FORM_WIDTH}>
         This permanently deletes &ldquo;{book.title}&rdquo; and its stored content. Type <strong>{book.txtId}</strong>{" "}
         to confirm.
@@ -756,25 +774,29 @@ function DeleteBookPanel({ book, onDeleted }: { book: BookInfo; onDeleted: () =>
         busy={busy}
       />
       {error && <div className="text-danger small mt-2">{error}</div>}
-    </Panel>
+    </Modal>
   );
 }
 
 type BooksMode = "none" | "edit" | "delete";
 
-function BooksSection({ books, search }: { books: BookInfo[]; search: string }) {
+function BooksSection({ search }: { search: string }) {
   const { deleteTxt, updateBookMetadata } = useVault();
+  // Same data/shape Library's own "All books" view uses (buildLibraryBooks
+  // via this shared hook, then allBooksSorted/matchesSearch) -- so Books
+  // here looks and searches exactly like Library's list, not a separate
+  // approximation of it.
+  const { books } = useLibraryBooks();
   const [selectedTxtId, setSelectedTxtId] = useState<number | null>(null);
   const [mode, setMode] = useState<BooksMode>("none");
 
-  const sorted = useMemo(() => [...books].sort((a, b) => a.title.localeCompare(b.title)), [books]);
+  const sorted = useMemo(() => allBooksSorted(books ?? []), [books]);
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return sorted;
-    return sorted.filter((b) => b.title.toLowerCase().includes(q) || (b.author ?? "").toLowerCase().includes(q));
+    if (!search.trim()) return sorted;
+    return sorted.filter((b) => matchesSearch(b, search));
   }, [sorted, search]);
 
-  const selectedBook = selectedTxtId !== null ? books.find((b) => b.txtId === selectedTxtId) : undefined;
+  const selectedBook = selectedTxtId !== null ? (books ?? []).find((b) => b.txtId === selectedTxtId) : undefined;
 
   function selectRow(txtId: number) {
     setSelectedTxtId(txtId);
@@ -803,21 +825,23 @@ function BooksSection({ books, search }: { books: BookInfo[]; search: string }) 
 
       {mode === "edit" && selectedBook && (
         <EditBookPanel
-          book={selectedBook}
+          book={selectedBook.info}
           onSaved={async (edits) => {
             await updateBookMetadata(selectedBook.txtId, edits);
             setMode("none");
           }}
+          onClose={() => setMode("none")}
         />
       )}
       {mode === "delete" && selectedBook && (
         <DeleteBookPanel
-          book={selectedBook}
+          book={selectedBook.info}
           onDeleted={async () => {
             await deleteTxt(selectedBook.txtId);
             setMode("none");
             setSelectedTxtId(null);
           }}
+          onClose={() => setMode("none")}
         />
       )}
 
@@ -825,12 +849,10 @@ function BooksSection({ books, search }: { books: BookInfo[]; search: string }) 
         className="flex-grow-1"
         items={filtered}
         getKey={(book) => book.txtId}
-        estimateRowHeight={ROW_HEIGHT}
+        estimateRowHeight={BOOK_ROW_HEIGHT}
         emptyMessage="No books match here yet."
         renderRow={(book) => (
-          <SelectableRow icon="bi-book" selected={selectedTxtId === book.txtId} onClick={() => selectRow(book.txtId)}>
-            {book.title}
-          </SelectableRow>
+          <BookRow book={book} selected={selectedTxtId === book.txtId} onClick={() => selectRow(book.txtId)} />
         )}
       />
     </div>
@@ -843,10 +865,12 @@ function GrantShareForm({
   session,
   books,
   onGranted,
+  onClose,
 }: {
   session: VaultSession;
   books: BookInfo[];
   onGranted: () => void;
+  onClose: () => void;
 }) {
   const { getTxtKey } = useVault();
   const [txtId, setTxtId] = useState("");
@@ -872,7 +896,7 @@ function GrantShareForm({
   }
 
   return (
-    <Panel title="Grant a share">
+    <Modal title="Grant a share" onClose={onClose}>
       <form onSubmit={(e) => void handleSubmit(e)} style={FORM_WIDTH}>
         <FormField label="Txt" htmlFor="manage-grant-txt">
           <select
@@ -907,7 +931,7 @@ function GrantShareForm({
         </button>
         {error && <div className="text-danger small mt-2">{error}</div>}
       </form>
-    </Panel>
+    </Modal>
   );
 }
 
@@ -974,6 +998,7 @@ function SharesSection({
             setCreating(false);
             onChanged();
           }}
+          onClose={() => setCreating(false)}
         />
       )}
 
@@ -1138,10 +1163,6 @@ export function ManageScreen() {
             </div>
 
             <div className="flex-grow-1 d-flex flex-column overflow-hidden" style={{ minWidth: 0 }}>
-              <div className="px-3 py-2 border-bottom">
-                <h2 className="h6 mb-0">{heading}</h2>
-              </div>
-
               {usersError && section === "users" && (
                 <div className="alert alert-danger m-2 py-2 px-3" role="alert">
                   {usersError}
@@ -1161,7 +1182,7 @@ export function ManageScreen() {
                   onChanged={() => void loadUsers()}
                 />
               )}
-              {section === "books" && <BooksSection books={books} search={search} />}
+              {section === "books" && <BooksSection search={search} />}
               {section === "shares" && (
                 <SharesSection
                   session={session}

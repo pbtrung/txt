@@ -14,7 +14,7 @@ import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
 import { BookmarkRow } from "../../components/BookmarkRow";
-import { BookRow } from "../../components/BookRow";
+import { BookRow, BOOK_ROW_HEIGHT } from "../../components/BookRow";
 import { DropdownToggleButton } from "../../components/DropdownToggleButton";
 import { VirtualizedListGroup } from "../../components/VirtualizedListGroup";
 import { Wordmark } from "../../components/Wordmark";
@@ -46,12 +46,6 @@ const DIMENSION_LABEL: Record<BrowseDimension, string> = {
   publisher: "Publishers",
 };
 
-// BookRow's rendered height (py-3 padding + its two-line title/subtitle) --
-// a plain constant rather than measured per-row, since every field it
-// shows is text-truncate'd (never wraps), so the real height is already
-// constant regardless of content. Used for both of BookRow's virtualized
-// lists (Continue Reading, and All books/browse-value).
-const BOOK_ROW_HEIGHT = 80;
 // BookmarkRow's rendered height (py-3 padding + its three-line title/
 // part-line/preview) -- one line taller than BookRow, same text-truncate
 // reasoning for why a fixed constant is safe here.
