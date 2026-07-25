@@ -2,13 +2,18 @@
 // account name in Library's nav footer, gated by RequireAdmin (session.isAdmin,
 // see crypto/jwt.ts). Mirrors Library's own two-pane shell exactly (same top
 // bar: wordmark + search field; same lg+ persistent sidebar / below-lg
-// dropdown split) rather than inventing a different layout for one more
-// screen -- the nav here just has different content: a "Library" link back,
-// then Users/Books/Shares. The search field filters whichever section is
-// currently selected, not a fixed list the way Library's does.
+// dropdown split; same account footer at the bottom of the nav, display_name
+// just never a link here since this screen already *is* where that link
+// would go) rather than inventing a different layout for one more screen --
+// the nav's own content differs: a "Library" link back, then Users/Books/
+// Shares. The search field filters whichever section is currently
+// selected, not a fixed list the way Library's does.
 //
 // Three sections, each a select-a-row-then-act toolbar (Create/Edit/Delete,
-// only the actions that actually apply):
+// only the actions that actually apply), every action opening the same
+// kind of panel -- a bordered, shaded card directly under the toolbar, one
+// vertically-stacked labeled field per row, capped at a readable width --
+// rather than each form inventing its own layout:
 // - Users: create/list/edit (password reset + root-key rotation, both in
 //   one panel)/delete. Delete is hidden for the admin's own row -- an admin
 //   can never delete themselves through this screen.
@@ -86,38 +91,196 @@ function ManageNavContent({
   usersCount,
   booksCount,
   sharesCount,
+  displayName,
+  onLock,
+  onRefresh,
+  refreshing,
 }: {
   section: Section;
   selectSection: (next: Section) => void;
   usersCount: number;
   booksCount: number;
   sharesCount: number;
+  displayName: string | undefined;
+  onLock: () => void;
+  onRefresh: () => void;
+  refreshing: boolean;
 }) {
   return (
-    <div className="flex-grow-1 overflow-auto">
-      <div className="list-group list-group-flush mb-3">
-        <Link to="/library" className="list-group-item list-group-item-action d-flex align-items-center gap-2">
-          <i className="bi bi-arrow-left" aria-hidden="true" />
-          <span>Library</span>
-        </Link>
+    <>
+      <div className="flex-grow-1 overflow-auto">
+        <div className="list-group list-group-flush mb-3">
+          <Link to="/library" className="list-group-item list-group-item-action d-flex align-items-center gap-2">
+            <i className="bi bi-arrow-left" aria-hidden="true" />
+            <span>Library</span>
+          </Link>
+        </div>
+        <div className="list-group list-group-flush">
+          <NavItem
+            active={section === "users"}
+            label="Users"
+            count={usersCount}
+            onClick={() => selectSection("users")}
+          />
+          <NavItem
+            active={section === "books"}
+            label="Books"
+            count={booksCount}
+            onClick={() => selectSection("books")}
+          />
+          <NavItem
+            active={section === "shares"}
+            label="Shares"
+            count={sharesCount}
+            onClick={() => selectSection("shares")}
+          />
+        </div>
       </div>
-      <div className="list-group list-group-flush">
-        <NavItem active={section === "users"} label="Users" count={usersCount} onClick={() => selectSection("users")} />
-        <NavItem active={section === "books"} label="Books" count={booksCount} onClick={() => selectSection("books")} />
-        <NavItem
-          active={section === "shares"}
-          label="Shares"
-          count={sharesCount}
-          onClick={() => selectSection("shares")}
-        />
+
+      {/* Same account footer as Library's own nav -- person icon, display
+          name, Refresh/Lock -- except display_name is never a link here
+          (this screen already *is* where that link would go). */}
+      <div className="border-top pt-2 mt-2 d-flex align-items-center justify-content-between gap-2">
+        <span className="d-flex align-items-center gap-2 text-truncate">
+          <i className="bi bi-person-circle text-body-secondary flex-shrink-0" aria-hidden="true" />
+          <span className="small text-body-secondary text-truncate">{displayName}</span>
+        </span>
+        <span className="d-flex align-items-center gap-2 flex-shrink-0">
+          <button
+            type="button"
+            className="btn btn-sm btn-outline-secondary border-primary flex-shrink-0"
+            onClick={onRefresh}
+            disabled={refreshing}
+            aria-label="Refresh"
+            title="Refresh"
+          >
+            {refreshing ? (
+              <span className="spinner-border spinner-border-sm text-primary" role="status" aria-hidden="true" />
+            ) : (
+              <i className="bi bi-arrow-clockwise text-primary" aria-hidden="true" />
+            )}
+          </button>
+          <button
+            type="button"
+            className="btn btn-sm btn-outline-secondary border-primary flex-shrink-0"
+            onClick={onLock}
+            aria-label="Lock"
+            title="Lock"
+          >
+            <i className="bi bi-unlock text-primary" aria-hidden="true" />
+          </button>
+        </span>
       </div>
-    </div>
+    </>
   );
 }
+
+// ------------------------------------------------------------- Shared UI ---
 
 function Toolbar({ children }: { children: ReactNode }) {
   return <div className="d-flex gap-2 px-3 py-2 border-bottom">{children}</div>;
 }
+
+function ToolbarButton({
+  icon,
+  variant = "secondary",
+  disabled,
+  onClick,
+  children,
+}: {
+  icon: string;
+  variant?: "secondary" | "danger";
+  disabled?: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      className={`btn btn-sm btn-outline-${variant} d-flex align-items-center gap-1`}
+      disabled={disabled}
+      onClick={onClick}
+    >
+      <i className={`bi ${icon}`} aria-hidden="true" />
+      {children}
+    </button>
+  );
+}
+
+/** The card every Create/Edit/Delete action panel opens into, directly
+ * under the toolbar -- one consistent container/heading style instead of
+ * each form inventing its own. */
+function Panel({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="p-3 border-bottom bg-body-tertiary">
+      <h3 className="h6 mb-3">{title}</h3>
+      {children}
+    </div>
+  );
+}
+
+/** One labeled field, stacked label-above-input -- the one field layout
+ * every form in this screen uses, instead of some forms stacking fields
+ * and others laying them out in a row. */
+function FormField({
+  label,
+  htmlFor,
+  style,
+  children,
+}: {
+  label: string;
+  htmlFor: string;
+  style?: CSSProperties;
+  children: ReactNode;
+}) {
+  return (
+    <div className="mb-2" style={style}>
+      <label htmlFor={htmlFor} className="form-label small mb-1">
+        {label}
+      </label>
+      {children}
+    </div>
+  );
+}
+
+const FORM_WIDTH = { maxWidth: "26rem" };
+
+function ConfirmDeleteField({
+  idToMatch,
+  confirmText,
+  onConfirmTextChange,
+  onConfirm,
+  busy,
+}: {
+  idToMatch: number;
+  confirmText: string;
+  onConfirmTextChange: (value: string) => void;
+  onConfirm: () => void;
+  busy: boolean;
+}) {
+  return (
+    <div className="d-flex gap-2 align-items-center">
+      <input
+        type="text"
+        className="form-control form-control-sm themed-control"
+        style={{ maxWidth: "8rem" }}
+        value={confirmText}
+        onChange={(e) => onConfirmTextChange(e.target.value)}
+        aria-label={`Type ${idToMatch} to confirm`}
+      />
+      <button
+        type="button"
+        className="btn btn-sm btn-danger"
+        disabled={confirmText !== String(idToMatch) || busy}
+        onClick={onConfirm}
+      >
+        Confirm delete
+      </button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- Users ---
 
 // Every row here is a single, text-truncate'd line (a user id, a book
 // title, or a txt-title-to-recipient-id share) -- same reasoning as
@@ -126,11 +289,13 @@ function Toolbar({ children }: { children: ReactNode }) {
 const ROW_HEIGHT = 44;
 
 function SelectableRow({
+  icon,
   selected,
   onClick,
   children,
   style,
 }: {
+  icon: string;
   selected: boolean;
   onClick: () => void;
   children: ReactNode;
@@ -140,15 +305,14 @@ function SelectableRow({
     <button
       type="button"
       style={style}
-      className={`list-group-item list-group-item-action text-start ${selected ? "active" : ""}`}
+      className={`list-group-item list-group-item-action d-flex align-items-center gap-2 text-start ${selected ? "active" : ""}`}
       onClick={onClick}
     >
-      {children}
+      <i className={`bi ${icon} ${selected ? "" : "text-body-secondary"} flex-shrink-0`} aria-hidden="true" />
+      <span className="text-truncate">{children}</span>
     </button>
   );
 }
-
-// ---------------------------------------------------------------- Users ---
 
 function CreateUserForm({ session, onCreated }: { session: VaultSession; onCreated: () => void }) {
   const [username, setUsername] = useState("");
@@ -183,12 +347,9 @@ function CreateUserForm({ session, onCreated }: { session: VaultSession; onCreat
   }
 
   return (
-    <form onSubmit={(e) => void handleSubmit(e)} className="p-3 border-bottom">
-      <div className="row row-cols-auto g-2 align-items-end">
-        <div className="col">
-          <label htmlFor="manage-new-username" className="form-label small mb-1">
-            Username
-          </label>
+    <Panel title="Create user">
+      <form onSubmit={(e) => void handleSubmit(e)} style={FORM_WIDTH}>
+        <FormField label="Username" htmlFor="manage-new-username">
           <input
             id="manage-new-username"
             type="text"
@@ -197,11 +358,8 @@ function CreateUserForm({ session, onCreated }: { session: VaultSession; onCreat
             onChange={(e) => setUsername(e.target.value)}
             required
           />
-        </div>
-        <div className="col">
-          <label htmlFor="manage-new-password" className="form-label small mb-1">
-            Password
-          </label>
+        </FormField>
+        <FormField label="Password" htmlFor="manage-new-password">
           <input
             id="manage-new-password"
             type="password"
@@ -210,11 +368,8 @@ function CreateUserForm({ session, onCreated }: { session: VaultSession; onCreat
             onChange={(e) => setPassword(e.target.value)}
             required
           />
-        </div>
-        <div className="col">
-          <label htmlFor="manage-new-display-name" className="form-label small mb-1">
-            Display name
-          </label>
+        </FormField>
+        <FormField label="Display name" htmlFor="manage-new-display-name">
           <input
             id="manage-new-display-name"
             type="text"
@@ -223,29 +378,23 @@ function CreateUserForm({ session, onCreated }: { session: VaultSession; onCreat
             onChange={(e) => setDisplayName(e.target.value)}
             required
           />
-        </div>
-        <div className="col">
-          <label htmlFor="manage-new-user-token" className="form-label small mb-1">
-            Regular-user Turso token
-          </label>
+        </FormField>
+        <FormField label="Regular-user Turso token" htmlFor="manage-new-user-token">
           <input
             id="manage-new-user-token"
             type="text"
             className="form-control form-control-sm themed-control"
-            style={{ minWidth: "16rem" }}
             value={userTursoAuthToken}
             onChange={(e) => setUserTursoAuthToken(e.target.value)}
             required
           />
-        </div>
-        <div className="col">
-          <button type="submit" className="btn btn-sm btn-primary" disabled={busy}>
-            Create user
-          </button>
-        </div>
-      </div>
-      {error && <div className="text-danger small mt-2">{error}</div>}
-    </form>
+        </FormField>
+        <button type="submit" className="btn btn-sm btn-primary mt-1" disabled={busy}>
+          Create user
+        </button>
+        {error && <div className="text-danger small mt-2">{error}</div>}
+      </form>
+    </Panel>
   );
 }
 
@@ -292,63 +441,62 @@ function EditUserPanel({ session, userId }: { session: VaultSession; userId: num
   }
 
   return (
-    <div className="p-3 border-bottom">
-      <h3 className="h6">Edit user #{userId}</h3>
+    <Panel title={`Edit user #${userId}`}>
+      <div className="row g-4" style={{ maxWidth: "40rem" }}>
+        <div className="col-12 col-sm-6">
+          <h4 className="h6 small text-body-secondary text-uppercase mb-2">Reset password</h4>
+          <form onSubmit={(e) => void handleResetPassword(e)}>
+            <FormField label="New password" htmlFor="manage-edit-password">
+              <input
+                id="manage-edit-password"
+                type="password"
+                className="form-control form-control-sm themed-control"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                required
+              />
+            </FormField>
+            <button type="submit" className="btn btn-sm btn-primary" disabled={resetBusy}>
+              Save
+            </button>
+            {resetDone && <div className="text-success small mt-2">Password updated.</div>}
+            {resetError && <div className="text-danger small mt-2">{resetError}</div>}
+          </form>
+        </div>
 
-      <form onSubmit={(e) => void handleResetPassword(e)} className="d-flex gap-2 align-items-end mb-3">
-        <div>
-          <label htmlFor="manage-edit-password" className="form-label small mb-1">
-            New password
-          </label>
-          <input
-            id="manage-edit-password"
-            type="password"
-            className="form-control form-control-sm themed-control"
-            value={newPassword}
-            onChange={(e) => setNewPassword(e.target.value)}
-            required
-          />
+        <div className="col-12 col-sm-6">
+          <h4 className="h6 small text-body-secondary text-uppercase mb-2">Rotate root key</h4>
+          <form onSubmit={(e) => void handleRotate(e)}>
+            <FormField label="Current root key (base64)" htmlFor="manage-edit-root-key">
+              <input
+                id="manage-edit-root-key"
+                type="text"
+                className="form-control form-control-sm themed-control"
+                value={oldRootKey}
+                onChange={(e) => setOldRootKey(e.target.value)}
+                required
+              />
+            </FormField>
+            <button type="submit" className="btn btn-sm btn-primary" disabled={rotateBusy}>
+              Rotate
+            </button>
+            {rotateError && <div className="text-danger small mt-2">{rotateError}</div>}
+            {newRootKey && (
+              <div className="small mt-2">
+                New key: <code className="text-break">{newRootKey}</code>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-link p-0 ms-2"
+                  onClick={() => downloadJson(`user_${userId}_root_key.json`, { user_root_key: newRootKey })}
+                >
+                  Download
+                </button>
+              </div>
+            )}
+          </form>
         </div>
-        <button type="submit" className="btn btn-sm btn-primary" disabled={resetBusy}>
-          Save
-        </button>
-        {resetDone && <span className="text-success small">Password updated.</span>}
-        {resetError && <span className="text-danger small">{resetError}</span>}
-      </form>
-
-      <form onSubmit={(e) => void handleRotate(e)} className="d-flex gap-2 align-items-end">
-        <div>
-          <label htmlFor="manage-edit-root-key" className="form-label small mb-1">
-            Current root key (base64)
-          </label>
-          <input
-            id="manage-edit-root-key"
-            type="text"
-            className="form-control form-control-sm themed-control"
-            style={{ minWidth: "20rem" }}
-            value={oldRootKey}
-            onChange={(e) => setOldRootKey(e.target.value)}
-            required
-          />
-        </div>
-        <button type="submit" className="btn btn-sm btn-primary" disabled={rotateBusy}>
-          Rotate
-        </button>
-      </form>
-      {rotateError && <div className="text-danger small mt-1">{rotateError}</div>}
-      {newRootKey && (
-        <div className="small mt-1">
-          New root key: <code>{newRootKey}</code>{" "}
-          <button
-            type="button"
-            className="btn btn-sm btn-link p-0"
-            onClick={() => downloadJson(`user_${userId}_root_key.json`, { user_root_key: newRootKey })}
-          >
-            Download
-          </button>
-        </div>
-      )}
-    </div>
+      </div>
+    </Panel>
   );
 }
 
@@ -378,30 +526,20 @@ function DeleteUserPanel({
   }
 
   return (
-    <div className="p-3 border-bottom">
-      <p className="small text-body-secondary mb-1">
+    <Panel title={`Delete user #${userId}`}>
+      <p className="small text-body-secondary" style={FORM_WIDTH}>
         This deletes user #{userId}&apos;s entire account: every txt they own, their shares, and their read
         position/bookmarks. Type <strong>{userId}</strong> to confirm.
       </p>
-      <div className="d-flex gap-2 align-items-center">
-        <input
-          type="text"
-          className="form-control form-control-sm themed-control"
-          style={{ maxWidth: "8rem" }}
-          value={confirmText}
-          onChange={(e) => setConfirmText(e.target.value)}
-        />
-        <button
-          type="button"
-          className="btn btn-sm btn-danger"
-          disabled={confirmText !== String(userId) || busy}
-          onClick={() => void handleDelete()}
-        >
-          Confirm delete
-        </button>
-      </div>
-      {error && <div className="text-danger small mt-1">{error}</div>}
-    </div>
+      <ConfirmDeleteField
+        idToMatch={userId}
+        confirmText={confirmText}
+        onConfirmTextChange={setConfirmText}
+        onConfirm={() => void handleDelete()}
+        busy={busy}
+      />
+      {error && <div className="text-danger small mt-2">{error}</div>}
+    </Panel>
   );
 }
 
@@ -440,29 +578,24 @@ function UsersSection({
   return (
     <div className="d-flex flex-column flex-grow-1 overflow-hidden">
       <Toolbar>
-        <button
-          type="button"
-          className="btn btn-sm btn-outline-secondary"
-          onClick={() => setMode(mode === "create" ? "none" : "create")}
-        >
+        <ToolbarButton icon="bi-plus-lg" onClick={() => setMode(mode === "create" ? "none" : "create")}>
           Create
-        </button>
-        <button
-          type="button"
-          className="btn btn-sm btn-outline-secondary"
+        </ToolbarButton>
+        <ToolbarButton
+          icon="bi-pencil"
           disabled={selectedUserId === null}
           onClick={() => setMode(mode === "edit" ? "none" : "edit")}
         >
           Edit
-        </button>
+        </ToolbarButton>
         {selectedUserId !== null && selectedUserId !== session.userId && (
-          <button
-            type="button"
-            className="btn btn-sm btn-outline-danger"
+          <ToolbarButton
+            icon="bi-trash"
+            variant="danger"
             onClick={() => setMode(mode === "delete" ? "none" : "delete")}
           >
             Delete
-          </button>
+          </ToolbarButton>
         )}
       </Toolbar>
 
@@ -479,7 +612,7 @@ function UsersSection({
         estimateRowHeight={ROW_HEIGHT}
         emptyMessage="No users match here yet."
         renderRow={(id) => (
-          <SelectableRow selected={selectedUserId === id} onClick={() => selectRow(id)}>
+          <SelectableRow icon="bi-person-circle" selected={selectedUserId === id} onClick={() => selectRow(id)}>
             User #{id}
             {id === session.userId && <span className="text-body-secondary small ms-2">(you)</span>}
           </SelectableRow>
@@ -490,6 +623,14 @@ function UsersSection({
 }
 
 // ---------------------------------------------------------------- Books ---
+
+interface BookMetadataFormValues {
+  title?: string;
+  author?: string;
+  publisher?: string;
+  subjects: string[];
+  description?: string;
+}
 
 function EditBookPanel({
   book,
@@ -529,13 +670,9 @@ function EditBookPanel({
   }
 
   return (
-    <form onSubmit={(e) => void handleSubmit(e)} className="p-3 border-bottom">
-      <h3 className="h6">Edit metadata -- {book.title}</h3>
-      <div className="row g-2" style={{ maxWidth: "36rem" }}>
-        <div className="col-12">
-          <label htmlFor="manage-book-title" className="form-label small mb-1">
-            Title
-          </label>
+    <Panel title={`Edit metadata -- ${book.title}`}>
+      <form onSubmit={(e) => void handleSubmit(e)} style={FORM_WIDTH}>
+        <FormField label="Title" htmlFor="manage-book-title">
           <input
             id="manage-book-title"
             type="text"
@@ -543,11 +680,8 @@ function EditBookPanel({
             value={title}
             onChange={(e) => setTitle(e.target.value)}
           />
-        </div>
-        <div className="col-12">
-          <label htmlFor="manage-book-author" className="form-label small mb-1">
-            Author
-          </label>
+        </FormField>
+        <FormField label="Author" htmlFor="manage-book-author">
           <input
             id="manage-book-author"
             type="text"
@@ -555,11 +689,8 @@ function EditBookPanel({
             value={author}
             onChange={(e) => setAuthor(e.target.value)}
           />
-        </div>
-        <div className="col-12">
-          <label htmlFor="manage-book-publisher" className="form-label small mb-1">
-            Publisher
-          </label>
+        </FormField>
+        <FormField label="Publisher" htmlFor="manage-book-publisher">
           <input
             id="manage-book-publisher"
             type="text"
@@ -567,11 +698,8 @@ function EditBookPanel({
             value={publisher}
             onChange={(e) => setPublisher(e.target.value)}
           />
-        </div>
-        <div className="col-12">
-          <label htmlFor="manage-book-subjects" className="form-label small mb-1">
-            Subjects (comma-separated)
-          </label>
+        </FormField>
+        <FormField label="Subjects (comma-separated)" htmlFor="manage-book-subjects">
           <input
             id="manage-book-subjects"
             type="text"
@@ -579,11 +707,8 @@ function EditBookPanel({
             value={subjects}
             onChange={(e) => setSubjects(e.target.value)}
           />
-        </div>
-        <div className="col-12">
-          <label htmlFor="manage-book-description" className="form-label small mb-1">
-            Description
-          </label>
+        </FormField>
+        <FormField label="Description" htmlFor="manage-book-description">
           <textarea
             id="manage-book-description"
             className="form-control form-control-sm themed-control"
@@ -591,22 +716,14 @@ function EditBookPanel({
             value={description}
             onChange={(e) => setDescription(e.target.value)}
           />
-        </div>
-      </div>
-      <button type="submit" className="btn btn-sm btn-primary mt-2" disabled={busy}>
-        Save
-      </button>
-      {error && <div className="text-danger small mt-2">{error}</div>}
-    </form>
+        </FormField>
+        <button type="submit" className="btn btn-sm btn-primary mt-1" disabled={busy}>
+          Save
+        </button>
+        {error && <div className="text-danger small mt-2">{error}</div>}
+      </form>
+    </Panel>
   );
-}
-
-interface BookMetadataFormValues {
-  title?: string;
-  author?: string;
-  publisher?: string;
-  subjects: string[];
-  description?: string;
 }
 
 function DeleteBookPanel({ book, onDeleted }: { book: BookInfo; onDeleted: () => Promise<void> }) {
@@ -626,30 +743,20 @@ function DeleteBookPanel({ book, onDeleted }: { book: BookInfo; onDeleted: () =>
   }
 
   return (
-    <div className="p-3 border-bottom">
-      <p className="small text-body-secondary mb-1">
+    <Panel title={`Delete "${book.title}"`}>
+      <p className="small text-body-secondary" style={FORM_WIDTH}>
         This permanently deletes &ldquo;{book.title}&rdquo; and its stored content. Type <strong>{book.txtId}</strong>{" "}
         to confirm.
       </p>
-      <div className="d-flex gap-2 align-items-center">
-        <input
-          type="text"
-          className="form-control form-control-sm themed-control"
-          style={{ maxWidth: "8rem" }}
-          value={confirmText}
-          onChange={(e) => setConfirmText(e.target.value)}
-        />
-        <button
-          type="button"
-          className="btn btn-sm btn-danger"
-          disabled={confirmText !== String(book.txtId) || busy}
-          onClick={() => void handleDelete()}
-        >
-          Confirm delete
-        </button>
-      </div>
-      {error && <div className="text-danger small mt-1">{error}</div>}
-    </div>
+      <ConfirmDeleteField
+        idToMatch={book.txtId}
+        confirmText={confirmText}
+        onConfirmTextChange={setConfirmText}
+        onConfirm={() => void handleDelete()}
+        busy={busy}
+      />
+      {error && <div className="text-danger small mt-2">{error}</div>}
+    </Panel>
   );
 }
 
@@ -677,22 +784,21 @@ function BooksSection({ books, search }: { books: BookInfo[]; search: string }) 
   return (
     <div className="d-flex flex-column flex-grow-1 overflow-hidden">
       <Toolbar>
-        <button
-          type="button"
-          className="btn btn-sm btn-outline-secondary"
+        <ToolbarButton
+          icon="bi-pencil"
           disabled={!selectedBook}
           onClick={() => setMode(mode === "edit" ? "none" : "edit")}
         >
           Edit
-        </button>
-        <button
-          type="button"
-          className="btn btn-sm btn-outline-danger"
+        </ToolbarButton>
+        <ToolbarButton
+          icon="bi-trash"
+          variant="danger"
           disabled={!selectedBook}
           onClick={() => setMode(mode === "delete" ? "none" : "delete")}
         >
           Delete
-        </button>
+        </ToolbarButton>
       </Toolbar>
 
       {mode === "edit" && selectedBook && (
@@ -722,8 +828,8 @@ function BooksSection({ books, search }: { books: BookInfo[]; search: string }) 
         estimateRowHeight={ROW_HEIGHT}
         emptyMessage="No books match here yet."
         renderRow={(book) => (
-          <SelectableRow selected={selectedTxtId === book.txtId} onClick={() => selectRow(book.txtId)}>
-            <span className="text-truncate d-block">{book.title}</span>
+          <SelectableRow icon="bi-book" selected={selectedTxtId === book.txtId} onClick={() => selectRow(book.txtId)}>
+            {book.title}
           </SelectableRow>
         )}
       />
@@ -766,12 +872,9 @@ function GrantShareForm({
   }
 
   return (
-    <form onSubmit={(e) => void handleSubmit(e)} className="p-3 border-bottom">
-      <div className="row row-cols-auto g-2 align-items-end">
-        <div className="col">
-          <label htmlFor="manage-grant-txt" className="form-label small mb-1">
-            Txt
-          </label>
+    <Panel title="Grant a share">
+      <form onSubmit={(e) => void handleSubmit(e)} style={FORM_WIDTH}>
+        <FormField label="Txt" htmlFor="manage-grant-txt">
           <select
             id="manage-grant-txt"
             className="form-select form-select-sm themed-control"
@@ -788,11 +891,8 @@ function GrantShareForm({
               </option>
             ))}
           </select>
-        </div>
-        <div className="col">
-          <label htmlFor="manage-grant-recipient" className="form-label small mb-1">
-            Recipient user id
-          </label>
+        </FormField>
+        <FormField label="Recipient user id" htmlFor="manage-grant-recipient">
           <input
             id="manage-grant-recipient"
             type="number"
@@ -801,15 +901,13 @@ function GrantShareForm({
             onChange={(e) => setRecipientUserId(e.target.value)}
             required
           />
-        </div>
-        <div className="col">
-          <button type="submit" className="btn btn-sm btn-primary" disabled={busy}>
-            Grant share
-          </button>
-        </div>
-      </div>
-      {error && <div className="text-danger small mt-2">{error}</div>}
-    </form>
+        </FormField>
+        <button type="submit" className="btn btn-sm btn-primary mt-1" disabled={busy}>
+          Grant share
+        </button>
+        {error && <div className="text-danger small mt-2">{error}</div>}
+      </form>
+    </Panel>
   );
 }
 
@@ -854,17 +952,17 @@ function SharesSection({
   return (
     <div className="d-flex flex-column flex-grow-1 overflow-hidden">
       <Toolbar>
-        <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => setCreating((v) => !v)}>
+        <ToolbarButton icon="bi-plus-lg" onClick={() => setCreating((v) => !v)}>
           Create
-        </button>
-        <button
-          type="button"
-          className="btn btn-sm btn-outline-danger"
+        </ToolbarButton>
+        <ToolbarButton
+          icon="bi-trash"
+          variant="danger"
           disabled={selectedShareId === null}
           onClick={() => void handleRevoke()}
         >
           Delete
-        </button>
+        </ToolbarButton>
         {revokeError && <span className="text-danger small align-self-center">{revokeError}</span>}
       </Toolbar>
 
@@ -886,10 +984,12 @@ function SharesSection({
         estimateRowHeight={ROW_HEIGHT}
         emptyMessage="No shares match here yet."
         renderRow={(share) => (
-          <SelectableRow selected={selectedShareId === share.id} onClick={() => setSelectedShareId(share.id)}>
-            <span className="text-truncate d-block">
-              {session.metadataById.get(share.txtId)?.title ?? `txt #${share.txtId}`} &rarr; user #{share.toUserId}
-            </span>
+          <SelectableRow
+            icon="bi-share"
+            selected={selectedShareId === share.id}
+            onClick={() => setSelectedShareId(share.id)}
+          >
+            {session.metadataById.get(share.txtId)?.title ?? `txt #${share.txtId}`} &rarr; user #{share.toUserId}
           </SelectableRow>
         )}
       />
@@ -900,7 +1000,7 @@ function SharesSection({
 // ---------------------------------------------------------------- Shell ---
 
 export function ManageScreen() {
-  const { session } = useVault();
+  const { session, lock, refresh, refreshing } = useVault();
   const [section, setSection] = useState<Section>("users");
   const [search, setSearch] = useState("");
   const nav = useDropdown();
@@ -942,6 +1042,16 @@ export function ManageScreen() {
     void loadShares();
   }, [loadShares]);
 
+  // Refreshing re-loads the vault's own data (session.metadataById, via
+  // VaultContext's refresh()) *and* this screen's own Users/Shares lists --
+  // Library's Refresh only needs the former, but here all three can drift
+  // out of date the same way.
+  async function handleRefresh() {
+    nav.close();
+    await refresh();
+    await Promise.all([loadUsers(), loadShares()]);
+  }
+
   if (!session) return null;
 
   const heading = { users: "Users", books: "Books", shares: "Shares" }[section];
@@ -963,6 +1073,7 @@ export function ManageScreen() {
             icon="bi-book"
             ariaLabel="Manage menu"
             className="d-flex align-items-center justify-content-center"
+            disabled={refreshing}
           />
           <span className="fw-semibold d-none d-sm-inline">Skypiea</span>
           {nav.open && (
@@ -976,6 +1087,10 @@ export function ManageScreen() {
                 usersCount={userIds?.length ?? 0}
                 booksCount={books.length}
                 sharesCount={shares?.length ?? 0}
+                displayName={session.creds.displayName}
+                onLock={lock}
+                onRefresh={() => void handleRefresh()}
+                refreshing={refreshing}
               />
             </div>
           )}
@@ -993,6 +1108,7 @@ export function ManageScreen() {
               placeholder={`Search ${heading.toLowerCase()}`}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
+              disabled={refreshing}
               aria-label={`Search ${heading.toLowerCase()}`}
             />
           </div>
@@ -1000,51 +1116,64 @@ export function ManageScreen() {
       </div>
 
       <div className="flex-grow-1 d-flex flex-column flex-lg-row overflow-hidden">
-        <div className="library-nav border-end p-2 d-none d-lg-flex">
-          <ManageNavContent
-            section={section}
-            selectSection={selectSection}
-            usersCount={userIds?.length ?? 0}
-            booksCount={books.length}
-            sharesCount={shares?.length ?? 0}
-          />
-        </div>
-
-        <div className="flex-grow-1 d-flex flex-column overflow-hidden" style={{ minWidth: 0 }}>
-          <div className="px-3 py-2 border-bottom">
-            <h2 className="h6 mb-0">{heading}</h2>
+        {refreshing ? (
+          <div className="flex-grow-1 d-flex flex-column align-items-center justify-content-center gap-1" role="status">
+            <div className="spinner-border text-primary mb-1" aria-hidden="true" />
+            <div className="small text-body-secondary">Refreshing…</div>
           </div>
-
-          {usersError && section === "users" && (
-            <div className="alert alert-danger m-2 py-2 px-3" role="alert">
-              {usersError}
+        ) : (
+          <>
+            <div className="library-nav border-end p-2 d-none d-lg-flex">
+              <ManageNavContent
+                section={section}
+                selectSection={selectSection}
+                usersCount={userIds?.length ?? 0}
+                booksCount={books.length}
+                sharesCount={shares?.length ?? 0}
+                displayName={session.creds.displayName}
+                onLock={lock}
+                onRefresh={() => void handleRefresh()}
+                refreshing={refreshing}
+              />
             </div>
-          )}
-          {sharesError && section === "shares" && (
-            <div className="alert alert-danger m-2 py-2 px-3" role="alert">
-              {sharesError}
-            </div>
-          )}
 
-          {section === "users" && (
-            <UsersSection
-              session={session}
-              userIds={userIds ?? []}
-              search={search}
-              onChanged={() => void loadUsers()}
-            />
-          )}
-          {section === "books" && <BooksSection books={books} search={search} />}
-          {section === "shares" && (
-            <SharesSection
-              session={session}
-              books={books}
-              shares={shares ?? []}
-              search={search}
-              onChanged={() => void loadShares()}
-            />
-          )}
-        </div>
+            <div className="flex-grow-1 d-flex flex-column overflow-hidden" style={{ minWidth: 0 }}>
+              <div className="px-3 py-2 border-bottom">
+                <h2 className="h6 mb-0">{heading}</h2>
+              </div>
+
+              {usersError && section === "users" && (
+                <div className="alert alert-danger m-2 py-2 px-3" role="alert">
+                  {usersError}
+                </div>
+              )}
+              {sharesError && section === "shares" && (
+                <div className="alert alert-danger m-2 py-2 px-3" role="alert">
+                  {sharesError}
+                </div>
+              )}
+
+              {section === "users" && (
+                <UsersSection
+                  session={session}
+                  userIds={userIds ?? []}
+                  search={search}
+                  onChanged={() => void loadUsers()}
+                />
+              )}
+              {section === "books" && <BooksSection books={books} search={search} />}
+              {section === "shares" && (
+                <SharesSection
+                  session={session}
+                  books={books}
+                  shares={shares ?? []}
+                  search={search}
+                  onChanged={() => void loadShares()}
+                />
+              )}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

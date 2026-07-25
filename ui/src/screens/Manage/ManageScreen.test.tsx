@@ -38,12 +38,14 @@ const metadataById = new Map<number, BookInfo>([
 const deleteTxt = vi.fn().mockResolvedValue(undefined);
 const updateBookMetadata = vi.fn().mockResolvedValue(undefined);
 const getTxtKey = vi.fn().mockResolvedValue(new Uint8Array(64).fill(3));
+const lock = vi.fn();
+const refresh = vi.fn().mockResolvedValue(undefined);
 
-function setup() {
+function setup(refreshing = false) {
   vi.mocked(VaultContextModule.useVault).mockReturnValue({
     status: "unlocked",
     session: {
-      creds: { tursoDatabaseUrl: "libsql://example" },
+      creds: { tursoDatabaseUrl: "libsql://example", displayName: "Alice" },
       db: {} as never,
       userId: 1,
       r2Config: {
@@ -59,11 +61,11 @@ function setup() {
     error: null,
     accessMap: new Map(),
     bookmarksMap: new Map(),
-    refreshing: false,
+    refreshing,
     progress: null,
     unlock: vi.fn(),
-    lock: vi.fn(),
-    refresh: vi.fn(),
+    lock,
+    refresh,
     getTxtKey,
     recordReadPosition: vi.fn(),
     removeAccessEntry: vi.fn(),
@@ -94,6 +96,26 @@ describe("ManageScreen", () => {
     expect(screen.getByRole("link", { name: /library/i })).toHaveAttribute("href", "/library");
     expect(screen.getAllByText("Skypiea").length).toBeGreaterThan(0);
     await waitFor(() => expect(screen.getByLabelText(/search users/i)).toBeInTheDocument());
+  });
+
+  describe("account footer", () => {
+    it("shows the display name as plain text, not a link, and wires Refresh/Lock", async () => {
+      setup();
+      expect(screen.getByText("Alice")).toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "Alice" })).not.toBeInTheDocument();
+
+      await userEvent.click(screen.getByRole("button", { name: "Lock" }));
+      expect(lock).toHaveBeenCalled();
+
+      await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
+      expect(refresh).toHaveBeenCalled();
+    });
+
+    it("replaces the sidebar and content pane with a single spinner while refreshing", () => {
+      setup(true);
+      expect(screen.queryByText("Alice")).not.toBeInTheDocument();
+      expect(screen.getByText("Refreshing…")).toBeInTheDocument();
+    });
   });
 
   describe("Users", () => {
