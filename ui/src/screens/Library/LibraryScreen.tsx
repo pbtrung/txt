@@ -451,12 +451,12 @@ export function LibraryScreen() {
                   below owns its own bounded, independently-scrolling region
                   instead of sharing one ambient page scroll, since
                   VirtualizedListGroup needs a concrete viewport to compute
-                  which rows are visible. Recent's two sections
-                  (flex-grow-1 each, minHeight:0 so they can actually
-                  shrink/scroll inside a flex column) split the available
-                  height evenly, each scrolling on its own -- a visible
-                  change from the single continuous page-scroll this used
-                  to be, traded for both staying cheap regardless of size. */}
+                  which rows are visible. Recent's two sections size to
+                  their own content (no flex-grow) capped at maxHeight:50%
+                  each, rather than always splitting the available height
+                  evenly -- a short Continue Reading no longer leaves a gap
+                  above Recent Bookmarks the way an equal, content-agnostic
+                  split would. */}
               <div className="flex-grow-1 d-flex flex-column overflow-hidden">
                 {loading && <p className="text-body-secondary p-3">Loading your library…</p>}
 
@@ -466,7 +466,7 @@ export function LibraryScreen() {
                       Continue Reading
                     </div>
                     <VirtualizedListGroup
-                      className="flex-grow-1"
+                      style={{ maxHeight: "50%" }}
                       items={continueReading}
                       getKey={(book) => book.txtId}
                       estimateRowHeight={BOOK_ROW_HEIGHT}
@@ -485,7 +485,7 @@ export function LibraryScreen() {
                       Recent Bookmarks
                     </div>
                     <VirtualizedListGroup
-                      className="flex-grow-1"
+                      style={{ maxHeight: "50%" }}
                       items={recentBookmarkItems}
                       getKey={(item) => `${item.txtId}-${item.createdAt}`}
                       estimateRowHeight={BOOKMARK_ROW_HEIGHT}

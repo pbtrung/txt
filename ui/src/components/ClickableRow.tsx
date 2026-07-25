@@ -3,15 +3,16 @@
 // <button> can't contain another button, so this plays the button role on a
 // div instead, wiring up Enter/Space the same way a real button would.
 
-import type { KeyboardEvent, ReactNode } from "react";
+import type { CSSProperties, KeyboardEvent, ReactNode } from "react";
 
 interface ClickableRowProps {
   onClick: () => void;
   className: string;
+  style?: CSSProperties;
   children: ReactNode;
 }
 
-export function ClickableRow({ onClick, className, children }: ClickableRowProps) {
+export function ClickableRow({ onClick, className, style, children }: ClickableRowProps) {
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
@@ -20,7 +21,7 @@ export function ClickableRow({ onClick, className, children }: ClickableRowProps
   }
 
   return (
-    <div role="button" tabIndex={0} className={className} onClick={onClick} onKeyDown={handleKeyDown}>
+    <div role="button" tabIndex={0} className={className} style={style} onClick={onClick} onKeyDown={handleKeyDown}>
       {children}
     </div>
   );

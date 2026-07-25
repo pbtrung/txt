@@ -17,17 +17,28 @@
 // text-truncate/overflow-hidden rather than wrapping, so its rendered
 // height is already constant regardless of content -- no need for
 // @tanstack/react-virtual's dynamic measureElement path.
+//
+// Each visible row is positioned by cloning renderRow's returned element
+// with an injected style (rather than wrapping it in an extra div): the
+// row components (BookRow/BookmarkRow, both via ClickableRow; the raw
+// browse-entry <button>) already render the actual `.list-group-item`
+// element as their own root, so cloning keeps that element a direct child
+// of `.list-group-flush` -- an intervening wrapper div would instead make
+// it a grandchild, breaking Bootstrap's `.list-group-flush > .list-group-item`
+// and `.list-group-item + .list-group-item` selectors (the borders between
+// rows) since those rely on direct-child/adjacent-sibling relationships.
 
-import { useRef, type ReactNode } from "react";
+import { cloneElement, useRef, type CSSProperties, type ReactElement } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
 interface VirtualizedListGroupProps<T> {
   items: T[];
   getKey: (item: T) => string | number;
-  renderRow: (item: T) => ReactNode;
+  renderRow: (item: T) => ReactElement<{ style?: CSSProperties }>;
   estimateRowHeight: number;
   emptyMessage: string;
   className?: string;
+  style?: CSSProperties;
 }
 
 export function VirtualizedListGroup<T>({
@@ -37,6 +48,7 @@ export function VirtualizedListGroup<T>({
   estimateRowHeight,
   emptyMessage,
   className,
+  style,
 }: VirtualizedListGroupProps<T>) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -52,17 +64,22 @@ export function VirtualizedListGroup<T>({
   }
 
   return (
-    <div ref={scrollRef} className={`overflow-auto ${className ?? ""}`} style={{ minHeight: 0 }}>
+    <div ref={scrollRef} className={`overflow-auto ${className ?? ""}`} style={{ minHeight: 0, ...style }}>
       <div className="list-group list-group-flush position-relative" style={{ height: virtualizer.getTotalSize() }}>
-        {virtualizer.getVirtualItems().map((virtualRow) => (
-          <div
-            key={getKey(items[virtualRow.index])}
-            className="position-absolute top-0 start-0 w-100"
-            style={{ transform: `translateY(${virtualRow.start}px)`, height: virtualRow.size }}
-          >
-            {renderRow(items[virtualRow.index])}
-          </div>
-        ))}
+        {virtualizer.getVirtualItems().map((virtualRow) => {
+          const item = items[virtualRow.index];
+          return cloneElement(renderRow(item), {
+            key: getKey(item),
+            style: {
+              position: "absolute",
+              top: 0,
+              left: 0,
+              width: "100%",
+              height: virtualRow.size,
+              transform: `translateY(${virtualRow.start}px)`,
+            },
+          });
+        })}
       </div>
     </div>
   );

@@ -5,6 +5,7 @@
 // view's Continue Reading section doesn't show it). An optional onDelete
 // renders a trailing "x" (also just Continue Reading).
 
+import type { CSSProperties } from "react";
 import { ClickableRow } from "./ClickableRow";
 import { DeleteButton } from "./DeleteButton";
 import { bookStatus, type LibraryBook } from "../screens/Library/libraryModel";
@@ -14,9 +15,10 @@ interface BookRowProps {
   onClick: () => void;
   onDelete?: () => void;
   hidePartNum?: boolean;
+  style?: CSSProperties;
 }
 
-export function BookRow({ book, onClick, onDelete, hidePartNum }: BookRowProps) {
+export function BookRow({ book, onClick, onDelete, hidePartNum, style }: BookRowProps) {
   const status = bookStatus(book);
   const subtitle = [book.info.author, book.info.subjects.join(", "), book.info.publisher]
     .filter((part): part is string => Boolean(part))
@@ -25,6 +27,7 @@ export function BookRow({ book, onClick, onDelete, hidePartNum }: BookRowProps) 
   return (
     <ClickableRow
       onClick={onClick}
+      style={style}
       className="list-group-item list-group-item-action d-flex justify-content-between align-items-center gap-3 py-3"
     >
       {/* minWidth:0 lets a long title/subtitle actually truncate instead of

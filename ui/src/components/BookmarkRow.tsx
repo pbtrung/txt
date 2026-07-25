@@ -5,6 +5,7 @@
 // omitted, and it isn't inside a .list-group -- className lets it supply its
 // own plain row styling instead).
 
+import type { CSSProperties } from "react";
 import { ClickableRow } from "./ClickableRow";
 import { DeleteButton } from "./DeleteButton";
 
@@ -19,6 +20,7 @@ interface BookmarkRowProps {
   onDelete: () => void;
   deleteAriaLabel: string;
   className?: string;
+  style?: CSSProperties;
 }
 
 export function BookmarkRow({
@@ -30,9 +32,10 @@ export function BookmarkRow({
   onDelete,
   deleteAriaLabel,
   className = DEFAULT_CLASS_NAME,
+  style,
 }: BookmarkRowProps) {
   return (
-    <ClickableRow onClick={onClick} className={className}>
+    <ClickableRow onClick={onClick} className={className} style={style}>
       <i className="bi bi-bookmark-fill text-primary mt-1 flex-shrink-0" aria-hidden="true" />
       <span className="overflow-hidden flex-grow-1" style={{ minWidth: 0 }}>
         {title && <span className="d-block fw-semibold text-truncate">{title}</span>}
