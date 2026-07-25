@@ -1,15 +1,22 @@
 // The wordmark + spinner + current-step overlay shown while local_index.html
 // verifies everything (see verify.ts/render.ts) before it ever renders the
-// real app -- styled to match the real Unlock screen's own spinner
-// (Wordmark, then a spinner with a "Step N of 5" counter and the current
-// phase's label underneath, same as UnlockScreen.tsx/VaultContext's
-// progress -- see docs/ui.md's Screen 1), rather than a different look for
-// this one screen. Deliberately dependency-free inline DOM/CSS (including
-// the wordmark's book glyph, an inlined SVG path rather than Bootstrap
-// Icons' font) -- this file gets bundled straight into local_index.html
-// (see ui/scripts/build-integrity.mjs), which by design can't rely on
-// anything served by the CDN it's about to verify, including the app's own
-// Bootstrap stylesheet and icon font.
+// real app. Deliberately built to exactly match the real Unlock screen's own
+// layout (UnlockScreen.tsx) rather than a different look for this one
+// screen -- same outer full-viewport centering, the same Wordmark size/
+// spacing, and the same spinner-border-sm + "Step N of 5" + phase-label
+// block, down to Bootstrap's own pixel values (spinner-border-sm is exactly
+// 1rem/0.2em border with the right edge transparent, not a generic
+// two-tone ring) and its alert-danger styling for the failure state --
+// reproduced here as literal inline CSS rather than actual Bootstrap
+// classes, since this file is bundled straight into local_index.html (see
+// ui/scripts/build-integrity.mjs), which by design can't rely on anything
+// served by the CDN it's about to verify, including the app's own
+// stylesheet and icon font. The wordmark's book glyph is an inlined SVG
+// path (Bootstrap Icons' own "book" glyph shape, copied as raw path data,
+// sized in `em` so it scales with the wordmark's font-size exactly the way
+// an icon-font glyph does) rather than the icon font itself, and the brass
+// accent color is a literal hex value rather than a CSS custom property,
+// since neither theme.css nor the icon font is loaded pre-verification.
 
 export type ProgressStepId =
   "fetching-manifest" | "verifying-signature" | "fetching-assets" | "verifying-hashes" | "loading-application";
@@ -22,23 +29,32 @@ const STEPS: { id: ProgressStepId; label: string }[] = [
   { id: "loading-application", label: "Loading application" },
 ];
 
-// Bootstrap Icons' own "book" glyph, as a raw path -- copied as SVG path
-// data (not the icon font glyph itself), so this renders identically to
-// the real Wordmark component without needing that font file loaded.
+// Bootstrap Icons' own "book" glyph -- the plain outline icon (Wordmark.tsx
+// uses `bi bi-book`, not the filled `bi-book-fill`) -- copied verbatim from
+// node_modules/bootstrap-icons/icons/book.svg's <path>, so this renders
+// identically to the real Wordmark component without needing that font
+// file loaded.
 const BOOK_ICON_PATH =
-  "M8 2.75C7.146 2.3 5.958 2.005 4.71 2c-1.283 0-2.516.29-3.51.858A.5.5 0 0 0 .5 3.5v9.5a.5.5 0 0 0 .5.5c.166 0 " +
-  "1.5-.833 3.5-.833 1.5 0 2.5.5 3.5 1v-9.5c-.29-.29-1-.917-1-1.417zm8.99.108a.5.5 0 0 0-.99.017v9.5c0 1.5-1 " +
-  "1.833-3.5 1.833-2 0-3.334.833-3.5.833V3.5c1-.5 2-1 3.5-1 1.248.005 2.436.3 3.29.75z";
+  "M1 2.828c.885-.37 2.154-.769 3.388-.893 1.33-.134 2.458.063 3.112.752v9.746c-.935-.53-2.12-.603-3.213-.493-1.18." +
+  "12-2.37.461-3.287.811zm7.5-.141c.654-.689 1.782-.886 3.112-.752 1.234.124 2.503.523 3.388.893v9.923c-.918-.35-" +
+  "2.107-.692-3.287-.81-1.094-.111-2.278-.039-3.213.492zM8 1.783C7.015.936 5.587.81 4.287.94c-1.514.153-3.042.672" +
+  "-3.994 1.105A.5.5 0 0 0 0 2.5v11a.5.5 0 0 0 .707.455c.882-.4 2.303-.881 3.68-1.02 1.409-.142 2.59.087 3.223.87" +
+  "7a.5.5 0 0 0 .78 0c.633-.79 1.814-1.019 3.222-.877 1.378.139 2.8.62 3.681 1.02A.5.5 0 0 0 16 13.5v-11a.5.5 0 0" +
+  " 0-.293-.455c-.952-.433-2.48-.952-3.994-1.105C10.413.809 8.985.936 8 1.783";
 
-// The brass accent color (theme.css's --bs-primary), inlined as a literal
-// hex value rather than a CSS custom property -- theme.css itself isn't
-// loaded here either.
+// theme.css's light-mode --bs-primary (the brass accent) and Bootstrap's
+// own body text/secondary-text/alert-danger colors, inlined as literal hex
+// values -- theme.css itself isn't loaded here, and this overlay is shown
+// before the app (and its own dark-mode handling) ever mounts, so it always
+// renders in this one fixed palette rather than following the OS theme.
 const BRASS = "#8a6f23";
+const BODY_COLOR = "#212529";
+const SECONDARY_COLOR = "#6c757d";
 
 export interface ProgressUI {
   /** Shows "Step N of 5" and that step's label. */
   advance(step: ProgressStepId): void;
-  /** Stops the spinner and shows `message` in its place. */
+  /** Stops the spinner and shows `message` in an alert-danger-styled box. */
   fail(message: string): void;
   /** Removes the whole overlay once the real app has taken over. */
   remove(): void;
@@ -48,41 +64,81 @@ export interface ProgressUI {
  * (defaults to document.body). Returns handles to drive it as verify.ts/
  * render.ts progress. */
 export function mountProgressUI(container: HTMLElement = document.body): ProgressUI {
+  // Matches UnlockScreen.tsx's outer `d-flex align-items-center
+  // justify-content-center vh-100` -- fixed rather than relying on
+  // vh-100/body height, so it centers correctly regardless of the host
+  // document's own margin/height (this file can't assume index.css's reset
+  // is present, unlike the real app).
   const root = document.createElement("div");
   root.id = "boot-status";
   root.style.cssText =
-    "font-family: system-ui, sans-serif; max-width: 24rem; margin: 6rem auto; padding: 1.5rem; text-align: center;";
+    "position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; " +
+    `font-family: system-ui, -apple-system, sans-serif; color: ${BODY_COLOR};`;
 
+  // Matches UnlockScreen.tsx's inner `text-center` box, `style={{ maxWidth: "24rem" }}`.
+  const inner = document.createElement("div");
+  inner.style.cssText = "max-width: 24rem; width: 100%; padding: 0 1.5rem; text-align: center; box-sizing: border-box;";
+
+  // Matches Wordmark size="lg" (`d-inline-flex align-items-center gap-2
+  // fs-2`) inside UnlockScreen.tsx's `<div className="mb-4">`.
+  const wordmarkWrap = document.createElement("div");
+  wordmarkWrap.style.cssText = "margin-bottom: 1.5rem;";
   const wordmark = document.createElement("div");
   wordmark.style.cssText =
-    "display: flex; align-items: center; justify-content: center; gap: 0.5rem; margin-bottom: 2rem; " +
-    "font-size: 1.5rem; font-weight: 600; color: #212529;";
+    "display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; " +
+    // Bootstrap's own .fs-2 formula verbatim (bootstrap.css), not a flat
+    // rem value -- it's viewport-responsive (a flat 2rem only once
+    // min-width: 1200px), so hardcoding one px number would only match at
+    // some widths.
+    "font-size: calc(1.325rem + 0.9vw); font-weight: 600; line-height: 1;";
   wordmark.innerHTML =
-    `<svg width="28" height="28" viewBox="0 0 16 16" fill="${BRASS}" aria-hidden="true">` +
+    `<svg width="1em" height="1em" viewBox="0 0 16 16" fill="${BRASS}" aria-hidden="true">` +
     `<path d="${BOOK_ICON_PATH}"/></svg>` +
     `<span>Skypiea</span>`;
+  wordmarkWrap.appendChild(wordmark);
 
+  // Matches UnlockScreen.tsx's `mt-4 d-flex flex-column align-items-center
+  // gap-1` progress block (no button in between here, unlike Unlock's own --
+  // there's nothing to click while verifying -- so the wordmark's own mb-4
+  // above stands in for that same vertical rhythm).
+  const progress = document.createElement("div");
+  progress.style.cssText = "display: flex; flex-direction: column; align-items: center; gap: 0.25rem;";
+
+  // Matches `spinner-border spinner-border-sm text-primary mb-1` exactly:
+  // 1rem square, 0.2em border, the trailing edge transparent (Bootstrap's
+  // actual technique for the spin, not a plain two-tone ring), 0.75s linear.
   const spinner = document.createElement("div");
   spinner.setAttribute("role", "status");
   spinner.setAttribute("aria-label", "Verifying");
   spinner.style.cssText =
-    "width: 2rem; height: 2rem; margin: 0 auto 1rem; border-radius: 50%; " +
-    `border: 0.2rem solid #ccc; border-top-color: ${BRASS}; animation: boot-spin 0.8s linear infinite;`;
+    "display: inline-block; width: 1rem; height: 1rem; margin-bottom: 0.25rem; border-radius: 50%; " +
+    `border: 0.2em solid ${BRASS}; border-right-color: transparent; animation: boot-spin 0.75s linear infinite;`;
   const keyframes = document.createElement("style");
   keyframes.textContent = "@keyframes boot-spin { to { transform: rotate(360deg); } }";
 
+  // Matches `small text-body-secondary` (0.875rem, Bootstrap's secondary text color).
   const stepCounter = document.createElement("div");
-  stepCounter.style.cssText = "font-size: 0.875rem; color: #6c757d;";
-  stepCounter.textContent = " "; // holds the line's height before the first advance()
+  stepCounter.style.cssText = `font-size: 0.875rem; color: ${SECONDARY_COLOR};`;
+  stepCounter.textContent = " "; // holds the line's height before the first advance(), same as Unlock's own fallback
 
   const stepLabel = document.createElement("div");
-  stepLabel.style.cssText = "font-size: 0.875rem; color: #6c757d;";
+  stepLabel.style.cssText = `font-size: 0.875rem; color: ${SECONDARY_COLOR};`;
 
+  progress.append(spinner, stepCounter, stepLabel);
+
+  // Matches `alert alert-danger mt-4` exactly (Bootstrap's own alert-danger
+  // palette/padding/border-radius), shown in place of the progress block on
+  // failure -- not just plain red text.
   const error = document.createElement("p");
-  error.style.cssText = "color: #b00020; margin-top: 1rem; white-space: pre-wrap; font-size: 0.875rem;";
+  error.setAttribute("role", "alert");
+  error.style.cssText =
+    "margin-top: 1.5rem; padding: 0.75rem 1.25rem; border-radius: 0.375rem; " +
+    "background-color: #f8d7da; border: 1px solid #f5c2c7; color: #842029; " +
+    "font-size: 0.875rem; white-space: pre-wrap; text-align: left;";
   error.hidden = true;
 
-  root.append(wordmark, keyframes, spinner, stepCounter, stepLabel, error);
+  inner.append(wordmarkWrap, keyframes, progress, error);
+  root.appendChild(inner);
   container.appendChild(root);
 
   return {
