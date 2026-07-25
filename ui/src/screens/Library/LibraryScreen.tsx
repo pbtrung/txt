@@ -11,7 +11,7 @@
 // button next to it.
 
 import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
 import { BookmarkRow } from "../../components/BookmarkRow";
 import { BookRow } from "../../components/BookRow";
@@ -92,6 +92,7 @@ function LibraryNavContent({
   subjectEntries,
   publisherEntries,
   displayName,
+  isAdmin,
   onLock,
   onRefresh,
   refreshing,
@@ -104,6 +105,7 @@ function LibraryNavContent({
   subjectEntries: BrowseEntry[];
   publisherEntries: BrowseEntry[];
   displayName: string | undefined;
+  isAdmin: boolean;
   onLock: () => void;
   onRefresh: () => void;
   refreshing: boolean;
@@ -151,11 +153,20 @@ function LibraryNavContent({
       {/* The account footer: who's signed in, and the (now icon-only)
           Refresh/Lock actions -- moved here from the top bar so they're
           part of "your account" rather than sitting next to the search
-          field. Refresh sits to Lock's left. */}
+          field. Refresh sits to Lock's left. For an admin session, the name
+          itself is a link to the Manage screen (RequireAdmin guards the
+          route too, so this is purely "don't offer it" for a regular user,
+          not the actual enforcement -- that's Turso's own token grants). */}
       <div className="border-top pt-2 mt-2 d-flex align-items-center justify-content-between gap-2">
         <span className="d-flex align-items-center gap-2 text-truncate">
           <i className="bi bi-person-circle text-body-secondary flex-shrink-0" aria-hidden="true" />
-          <span className="small text-body-secondary text-truncate">{displayName}</span>
+          {isAdmin ? (
+            <Link to="/manage" className="small text-truncate">
+              {displayName}
+            </Link>
+          ) : (
+            <span className="small text-body-secondary text-truncate">{displayName}</span>
+          )}
         </span>
         <span className="d-flex align-items-center gap-2 flex-shrink-0">
           <button
@@ -348,6 +359,7 @@ export function LibraryScreen() {
                 subjectEntries={subjectEntries}
                 publisherEntries={publisherEntries}
                 displayName={session?.creds.displayName}
+                isAdmin={session?.isAdmin ?? false}
                 onLock={lock}
                 onRefresh={() => void handleRefresh()}
                 refreshing={refreshing}
@@ -435,6 +447,7 @@ export function LibraryScreen() {
                 subjectEntries={subjectEntries}
                 publisherEntries={publisherEntries}
                 displayName={session?.creds.displayName}
+                isAdmin={session?.isAdmin ?? false}
                 onLock={lock}
                 onRefresh={() => void handleRefresh()}
                 refreshing={refreshing}

@@ -84,10 +84,11 @@ function setVaultMock(
   bookmarksMap: BookmarksMap,
   refreshing: boolean,
   progress: VaultContextModule.VaultProgress | null = null,
+  isAdmin = false,
 ) {
   vi.mocked(VaultContextModule.useVault).mockReturnValue({
     status: "unlocked",
-    session: { creds: { displayName: "Alice" } } as VaultContextModule.VaultSession,
+    session: { creds: { displayName: "Alice" }, isAdmin } as VaultContextModule.VaultSession,
     error: null,
     accessMap: new Map(),
     bookmarksMap,
@@ -451,6 +452,23 @@ describe("LibraryScreen", () => {
       const row = screen.getByText(/Powerful white mages killed/).closest('[role="button"]') as HTMLElement;
       await userEvent.click(within(row).getByRole("button", { name: /remove this bookmark/i }));
       expect(removeBookmarkEntry).toHaveBeenCalledWith(1, 1000);
+    });
+  });
+
+  describe("account footer", () => {
+    it("is a link to /manage for an admin session", () => {
+      setVaultMock(new Map(), false, null, true);
+      vi.mocked(useLibraryBooksModule.useLibraryBooks).mockReturnValue({ books, loading: false });
+      render(libraryTree());
+      expect(screen.getByRole("link", { name: "Alice" })).toHaveAttribute("href", "/manage");
+    });
+
+    it("is plain text, not a link, for a regular-user session", () => {
+      setVaultMock(new Map(), false, null, false);
+      vi.mocked(useLibraryBooksModule.useLibraryBooks).mockReturnValue({ books, loading: false });
+      render(libraryTree());
+      expect(screen.queryByRole("link", { name: "Alice" })).not.toBeInTheDocument();
+      expect(screen.getByText("Alice")).toBeInTheDocument();
     });
   });
 });
