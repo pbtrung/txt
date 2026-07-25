@@ -195,14 +195,20 @@ function ToolbarButton({
   onClick: () => void;
   children: ReactNode;
 }) {
+  // "secondary" (Create/Edit) matches the same brass-bordered, brass-icon
+  // language as every other bordered button in the app (Refresh/Lock,
+  // the drawer toggle -- docs/ui.md) instead of Bootstrap's plain gray
+  // outline-secondary. "danger" (Delete) stays Bootstrap's own red --
+  // destructive actions are the one deliberate exception to the brass theme.
+  const isDanger = variant === "danger";
   return (
     <button
       type="button"
-      className={`btn btn-sm btn-outline-${variant} d-flex align-items-center gap-1`}
+      className={`btn btn-sm d-flex align-items-center gap-1 ${isDanger ? "btn-outline-danger" : "btn-outline-secondary border-primary"}`}
       disabled={disabled}
       onClick={onClick}
     >
-      <i className={`bi ${icon}`} aria-hidden="true" />
+      <i className={`bi ${icon} ${isDanger ? "" : "text-primary"}`} aria-hidden="true" />
       {children}
     </button>
   );
