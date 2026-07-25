@@ -26,3 +26,17 @@ if (typeof window !== "undefined" && !window.matchMedia) {
     } as MediaQueryList;
   };
 }
+
+// jsdom doesn't implement ResizeObserver at all (throws "ResizeObserver is
+// not defined") -- @tanstack/react-virtual (Library's virtualized lists)
+// uses one to notice when its scroll container resizes. A fully inert stub
+// is enough for tests: the virtualizer also recalculates on scroll/mount,
+// and jsdom never actually resizes anything anyway, so there's nothing a
+// real observer would ever have to report here.
+if (typeof window !== "undefined" && !window.ResizeObserver) {
+  window.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+}
