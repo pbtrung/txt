@@ -205,7 +205,17 @@ export function ManageScreen() {
         onClick: () => void handleRevokeShare(),
       },
     ];
-  }, [session, section, usersSelectedId, usersMode, booksSelectedId, booksMode, sharesSelectedId, sharesMode]);
+  }, [
+    session,
+    section,
+    usersSelectedId,
+    usersMode,
+    booksSelectedId,
+    booksMode,
+    sharesSelectedId,
+    sharesMode,
+    handleRevokeShare,
+  ]);
 
   if (!session) return null;
 

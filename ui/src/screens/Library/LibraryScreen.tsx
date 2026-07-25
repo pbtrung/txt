@@ -11,11 +11,13 @@
 // button next to it.
 
 import { useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 
+import { AccountFooter } from "../../components/AccountFooter";
 import { BookmarkRow } from "../../components/BookmarkRow";
 import { BookRow, BOOK_ROW_HEIGHT } from "../../components/BookRow";
 import { DropdownToggleButton } from "../../components/DropdownToggleButton";
+import { NavItem } from "../../components/NavItem";
 import { VirtualizedListGroup } from "../../components/VirtualizedListGroup";
 import { Wordmark } from "../../components/Wordmark";
 import { useDropdown } from "../../hooks/useDropdown";
@@ -53,29 +55,6 @@ const BOOKMARK_ROW_HEIGHT = 100;
 // The Authors/Subjects/Publishers browse-entry row's height -- a plain,
 // single-line Bootstrap .list-group-item with no extra padding classes.
 const BROWSE_ENTRY_ROW_HEIGHT = 44;
-
-function NavItem({
-  active,
-  label,
-  count,
-  onClick,
-}: {
-  active: boolean;
-  label: string;
-  count: number;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      className={`list-group-item list-group-item-action d-flex justify-content-between align-items-center gap-2 ${active ? "active" : ""}`}
-      onClick={onClick}
-    >
-      <span className="text-truncate">{label}</span>
-      <span className={`flex-shrink-0 ${active ? "" : "text-body-secondary"}`}>{count}</span>
-    </button>
-  );
-}
 
 function LibraryNavContent({
   view,
@@ -144,50 +123,21 @@ function LibraryNavContent({
         </div>
       </div>
 
-      {/* The account footer: who's signed in, and the (now icon-only)
-          Refresh/Lock actions -- moved here from the top bar so they're
-          part of "your account" rather than sitting next to the search
-          field. Refresh sits to Lock's left. For an admin session, the name
-          itself is a link to the Manage screen (RequireAdmin guards the
-          route too, so this is purely "don't offer it" for a regular user,
-          not the actual enforcement -- that's Turso's own token grants). */}
-      <div className="border-top pt-2 mt-2 d-flex align-items-center justify-content-between gap-2">
-        <span className="d-flex align-items-center gap-2 text-truncate">
-          <i className="bi bi-person-circle text-body-secondary flex-shrink-0" aria-hidden="true" />
-          {isAdmin ? (
-            <Link to="/manage" className="small text-truncate">
-              {displayName}
-            </Link>
-          ) : (
-            <span className="small text-body-secondary text-truncate">{displayName}</span>
-          )}
-        </span>
-        <span className="d-flex align-items-center gap-2 flex-shrink-0">
-          <button
-            type="button"
-            className="btn btn-sm btn-outline-secondary border-primary flex-shrink-0"
-            onClick={onRefresh}
-            disabled={refreshing}
-            aria-label="Refresh library"
-            title="Refresh library"
-          >
-            {refreshing ? (
-              <span className="spinner-border spinner-border-sm text-primary" role="status" aria-hidden="true" />
-            ) : (
-              <i className="bi bi-arrow-clockwise text-primary" aria-hidden="true" />
-            )}
-          </button>
-          <button
-            type="button"
-            className="btn btn-sm btn-outline-secondary border-primary flex-shrink-0"
-            onClick={onLock}
-            aria-label="Lock"
-            title="Lock"
-          >
-            <i className="bi bi-unlock text-primary" aria-hidden="true" />
-          </button>
-        </span>
-      </div>
+      {/* Who's signed in, and the (now icon-only) Refresh/Lock actions --
+          moved here from the top bar so they're part of "your account"
+          rather than sitting next to the search field. For an admin
+          session, the name itself is a link to the Manage screen
+          (RequireAdmin guards the route too, so this is purely "don't
+          offer it" for a regular user, not the actual enforcement --
+          that's Turso's own token grants). */}
+      <AccountFooter
+        displayName={displayName}
+        manageLink={isAdmin}
+        onRefresh={onRefresh}
+        onLock={onLock}
+        refreshing={refreshing}
+        refreshAriaLabel="Refresh library"
+      />
     </>
   );
 }

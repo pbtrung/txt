@@ -1,5 +1,5 @@
-// Shared wordmark used on the Unlock screen and the Library top bar
-// (docs/ui.md's "[library] Skypiea").
+// Shared wordmark used on the Unlock screen and the Library/Manage top
+// bars (docs/ui.md's "[library] Skypiea").
 
 interface WordmarkProps {
   size?: "md" | "lg";
