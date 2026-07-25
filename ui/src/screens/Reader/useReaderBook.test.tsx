@@ -39,6 +39,7 @@ function mockVault(
     metadataById,
     txtAccessKey: new Uint8Array(64),
     bookmarkKey: new Uint8Array(64),
+    isAdmin: false,
   };
   vi.mocked(VaultContextModule.useVault).mockReturnValue({
     status: "unlocked",

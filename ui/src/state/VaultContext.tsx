@@ -19,6 +19,7 @@ import {
   removeBookmark as removeBookmarkData,
   type BookmarksMap,
 } from "../data/bookmarks";
+import { isAdminToken } from "../crypto/jwt";
 import { checkPassword, fetchR2Config, resolveUserId, unwrapTxtKey, unwrapUmk } from "../data/owner";
 import { createDb } from "../data/db";
 import { createR2Client } from "../data/r2";
@@ -62,6 +63,11 @@ export interface VaultSession {
   metadataById: Map<number, BookInfo>;
   txtAccessKey: Uint8Array;
   bookmarkKey: Uint8Array;
+  /** Whether creds.tursoAuthToken is an admin-shaped token (see
+   * crypto/jwt.ts's isAdminToken) -- a client-local, load-time fact, not
+   * something looked up from the database (docs/credentials.md's "How a
+   * client knows its own role"). Gates the Manage screen. */
+  isAdmin: boolean;
 }
 
 export interface VaultContextValue {
@@ -180,7 +186,8 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         txtKeyCache.current = new Map();
         setAccessMap(initialAccessMap);
         setBookmarksMap(initialBookmarksMap);
-        setSession({ creds, db, userId, umk, r2Config, r2Client, metadataById, txtAccessKey, bookmarkKey });
+        const isAdmin = isAdminToken(creds.tursoAuthToken);
+        setSession({ creds, db, userId, umk, r2Config, r2Client, metadataById, txtAccessKey, bookmarkKey, isAdmin });
         setStatus("unlocked");
         setProgress(null);
         verbose("unlock: done");
