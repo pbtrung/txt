@@ -13,11 +13,13 @@
 import type { AwsClient } from "aws4fetch";
 import type { Client } from "@libsql/core/api";
 
+import * as base32 from "./base32";
 import * as blob from "../crypto/blob";
+import { randomBytes } from "../crypto/bytes";
 import * as c from "../crypto/constants";
 import { decryptJson } from "./decryptJson";
 import { requireBlobBytes } from "./db";
-import { getObject } from "./r2";
+import { getObject, putObject } from "./r2";
 import type { R2Config } from "./r2Config";
 
 export interface MetadataField {
@@ -147,28 +149,64 @@ function toBookInfo(txtId: number, entry: TxtMetadataEntry): BookInfo {
   };
 }
 
-/** txt_metadata.content, once migrated, wraps a raw_path (plain ascii, never
- * compressed -- same as txt_parts.path wrapping a part's raw_path) pointing
- * at an R2 object holding the actual JSON. That R2 object is *supposed* to
- * be brotli-compressed (txt/owner.py's _write_txt_metadata_content always
- * writes it that way), but at least one already-deployed account's object
- * was actually uncompressed -- so this tolerates both rather than assuming
- * the documented one and failing decode for objects that predate it holding
- * true. */
-async function readPathContent(
-  txtMetadataKey: Uint8Array,
-  contentBlob: Uint8Array,
-  r2Client: AwsClient,
-  r2Config: R2Config,
-): Promise<unknown> {
-  const rawPath = new TextDecoder().decode(await blob.decrypt(txtMetadataKey, contentBlob));
-  const body = await getObject(r2Client, r2Config, rawPath);
+interface RawMetadataState {
+  txtMetadataKey: Uint8Array;
+  content: Record<string, TxtMetadataEntry>;
+  /** The current R2 raw_path, once migrated -- null if there's no content
+   * yet, or the account is still on the pre-R2-indirection inline-JSON
+   * format (see txt/owner.py's _txt_metadata_key_and_content, which this
+   * mirrors). Writers (persistMetadataContent) use this to decide whether
+   * to reuse an existing path in place or establish a fresh one. */
+  rawPath: string | null;
+}
+
+/** Tolerates an R2-hosted metadata body that's *supposed* to be
+ * brotli-compressed (txt/owner.py's _write_txt_metadata_content always
+ * writes it that way) but, for at least one already-deployed account,
+ * wasn't -- rather than assuming the documented shape and failing decode
+ * for objects that predate it holding true. */
+async function tolerantDecryptJson(key: Uint8Array, body: Uint8Array): Promise<unknown> {
   try {
-    return await decryptJson(txtMetadataKey, body);
+    return await decryptJson(key, body);
   } catch {
-    const plaintext = await blob.decrypt(txtMetadataKey, body, false);
+    const plaintext = await blob.decrypt(key, body, false);
     return JSON.parse(new TextDecoder().decode(plaintext));
   }
+}
+
+/** Resolves this account's txt_metadata_key, decrypted content, and current
+ * R2 raw_path (if any) -- the shared read path behind loadTxtMetadata and
+ * every write below, so both agree on what "the current content" is and a
+ * write always starts from a fresh read rather than stale in-memory state. */
+async function loadRawMetadataState(
+  db: Client,
+  userId: number,
+  umk: Uint8Array,
+  r2Client: AwsClient,
+  r2Config: R2Config,
+): Promise<RawMetadataState | null> {
+  const result = await db.execute({
+    sql: "SELECT txt_metadata_key, content FROM txt_metadata WHERE user_id = ?",
+    args: [userId],
+  });
+  const row = result.rows[0];
+  if (!row) return null;
+  const txtMetadataKey = await blob.decrypt(
+    umk,
+    requireBlobBytes(row.txt_metadata_key, "txt_metadata.txt_metadata_key"),
+  );
+  if (row.content === null) {
+    return { txtMetadataKey, content: {}, rawPath: null };
+  }
+  const contentBlob = requireBlobBytes(row.content, "txt_metadata.content");
+  if (contentBlob.length >= c.TXT_METADATA_LEGACY_THRESHOLD) {
+    const content = (await decryptJson(txtMetadataKey, contentBlob)) as Record<string, TxtMetadataEntry>;
+    return { txtMetadataKey, content, rawPath: null };
+  }
+  const rawPath = new TextDecoder().decode(await blob.decrypt(txtMetadataKey, contentBlob));
+  const body = await getObject(r2Client, r2Config, rawPath);
+  const content = (await tolerantDecryptJson(txtMetadataKey, body)) as Record<string, TxtMetadataEntry>;
+  return { txtMetadataKey, content, rawPath };
 }
 
 /** All of this account's book metadata, keyed by txt_id. Empty if the account has no txt yet. */
@@ -179,27 +217,10 @@ export async function loadTxtMetadata(
   r2Client: AwsClient,
   r2Config: R2Config,
 ): Promise<Map<number, BookInfo>> {
-  const result = await db.execute({
-    sql: "SELECT txt_metadata_key, content FROM txt_metadata WHERE user_id = ?",
-    args: [userId],
-  });
-  const row = result.rows[0];
-  if (!row || row.content === null) {
-    return new Map();
-  }
-  const txtMetadataKey = await blob.decrypt(
-    umk,
-    requireBlobBytes(row.txt_metadata_key, "txt_metadata.txt_metadata_key"),
-  );
-  const contentBlob = requireBlobBytes(row.content, "txt_metadata.content");
-  const content = (
-    contentBlob.length >= c.TXT_METADATA_LEGACY_THRESHOLD
-      ? await decryptJson(txtMetadataKey, contentBlob)
-      : await readPathContent(txtMetadataKey, contentBlob, r2Client, r2Config)
-  ) as Record<string, TxtMetadataEntry>;
-
+  const state = await loadRawMetadataState(db, userId, umk, r2Client, r2Config);
+  if (!state) return new Map();
   const byId = new Map<number, BookInfo>();
-  for (const [txtIdStr, entry] of Object.entries(content)) {
+  for (const [txtIdStr, entry] of Object.entries(state.content)) {
     const txtId = Number(txtIdStr);
     byId.set(txtId, toBookInfo(txtId, entry));
   }
@@ -217,4 +238,106 @@ export async function getBookInfo(
 ): Promise<BookInfo | null> {
   const byId = await loadTxtMetadata(db, userId, umk, r2Client, r2Config);
   return byId.get(txtId) ?? null;
+}
+
+/** Persists `content` back to this account's txt_metadata: reuses the
+ * existing R2-backed path in place if there is one (an R2 PUT overwriting
+ * it, no DB write at all -- the common case for any account that's already
+ * ingested something), otherwise establishes a fresh path (a brand-new
+ * account, or one migrating off the pre-R2-indirection inline-JSON format)
+ * and points txt_metadata.content at it. Mirrors txt/owner.py's
+ * _write_txt_metadata_content -- except a failed UPDATE here has no
+ * rollback to fall back on (there's no transaction/rollback concept exposed
+ * by this browser client, see db.ts): worst case, a newly-uploaded R2
+ * object is left unpointed-to until the next successful write reestablishes
+ * a pointer, the same class of harmless leftover this app already accepts
+ * elsewhere (e.g. deleteTxt's orphaned part objects). Requires a
+ * write-capable r2Client (see r2.ts's createR2Client) -- only ever true for
+ * an admin session today (see docs/credentials.md). */
+async function persistMetadataContent(
+  db: Client,
+  userId: number,
+  txtMetadataKey: Uint8Array,
+  content: Record<string, TxtMetadataEntry>,
+  rawPath: string | null,
+  r2Client: AwsClient,
+  r2Config: R2Config,
+): Promise<void> {
+  const body = await blob.encrypt(txtMetadataKey, new TextEncoder().encode(JSON.stringify(content)), {
+    compressed: true,
+  });
+  if (rawPath !== null) {
+    await putObject(r2Client, r2Config, rawPath, body);
+    return;
+  }
+  const newRawPath = base32.encode(randomBytes(c.RAW_PATH_LEN));
+  await putObject(r2Client, r2Config, newRawPath, body);
+  const pathBlob = await blob.encrypt(txtMetadataKey, new TextEncoder().encode(newRawPath));
+  await db.execute({ sql: "UPDATE txt_metadata SET content = ? WHERE user_id = ?", args: [pathBlob, userId] });
+}
+
+/** The curated metadata fields the admin Manage screen's Books section lets
+ * an admin edit -- the same subset BookRow/Reader's summary already show,
+ * not the full raw OPF/Calibre field list. */
+export interface BookMetadataEdits {
+  title?: string;
+  author?: string;
+  publisher?: string;
+  subjects: string[];
+  description?: string;
+}
+
+/** Admin Manage screen: overwrites one txt's curated metadata fields,
+ * preserving its ingested `name` and any other OPF/Calibre field verbatim.
+ * Throws if there's no existing txt_metadata entry for txtId at all. */
+export async function saveBookMetadata(
+  db: Client,
+  userId: number,
+  umk: Uint8Array,
+  r2Client: AwsClient,
+  r2Config: R2Config,
+  txtId: number,
+  edits: BookMetadataEdits,
+): Promise<void> {
+  const state = await loadRawMetadataState(db, userId, umk, r2Client, r2Config);
+  if (!state) {
+    throw new Error(`no txt_metadata row for user_id=${userId}`);
+  }
+  const existing = state.content[String(txtId)];
+  if (!existing) {
+    throw new Error(`no txt_metadata entry for txt_id=${txtId}`);
+  }
+  const metadata: OpfMetadata = { ...(existing.metadata ?? {}) };
+  const setOrDelete = (key: string, value: string | undefined) => {
+    if (value) metadata[key] = value;
+    else delete metadata[key];
+  };
+  setOrDelete("title", edits.title);
+  setOrDelete("creator", edits.author);
+  setOrDelete("publisher", edits.publisher);
+  if (edits.subjects.length > 0) metadata.subject = edits.subjects;
+  else delete metadata.subject;
+  setOrDelete("description", edits.description);
+
+  const nextContent = { ...state.content, [String(txtId)]: { name: existing.name, metadata } };
+  await persistMetadataContent(db, userId, state.txtMetadataKey, nextContent, state.rawPath, r2Client, r2Config);
+}
+
+/** Admin Manage screen: removes one txt's entry entirely (its txt row is
+ * being deleted). A no-op if there's no txt_metadata row, or no entry for
+ * txtId, at all -- deleteTxt calls this unconditionally rather than
+ * checking first. */
+export async function removeTxtMetadataEntry(
+  db: Client,
+  userId: number,
+  umk: Uint8Array,
+  r2Client: AwsClient,
+  r2Config: R2Config,
+  txtId: number,
+): Promise<void> {
+  const state = await loadRawMetadataState(db, userId, umk, r2Client, r2Config);
+  if (!state || !(String(txtId) in state.content)) return;
+  const nextContent = { ...state.content };
+  delete nextContent[String(txtId)];
+  await persistMetadataContent(db, userId, state.txtMetadataKey, nextContent, state.rawPath, r2Client, r2Config);
 }

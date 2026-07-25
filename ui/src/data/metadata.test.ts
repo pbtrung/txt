@@ -3,11 +3,11 @@ import type { Client } from "@libsql/core/api";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import * as blob from "../crypto/blob";
-import { loadTxtMetadata } from "./metadata";
+import { loadTxtMetadata, removeTxtMetadataEntry, saveBookMetadata } from "./metadata";
 import * as r2 from "./r2";
 import type { R2Config } from "./r2Config";
 
-vi.mock("./r2", () => ({ getObject: vi.fn() }));
+vi.mock("./r2", () => ({ getObject: vi.fn(), putObject: vi.fn() }));
 
 const r2Client = {} as AwsClient;
 const r2Config: R2Config = {
@@ -257,5 +257,176 @@ describe("loadTxtMetadata", () => {
     const result = await loadTxtMetadata(db, 42, umk, r2Client, r2Config);
 
     expect(result.get(1)?.rawMetadata).toEqual([{ key: "title", values: ["Some Book"] }]);
+  });
+});
+
+function fakeClientWithCapture(selectRow: Record<string, unknown> | undefined) {
+  const calls: { sql: string; args: unknown[] }[] = [];
+  const emptyResult = {
+    rows: [],
+    columns: [],
+    columnTypes: [],
+    rowsAffected: 0,
+    lastInsertRowid: undefined,
+    toJSON: () => ({}),
+  };
+  const db = {
+    async execute({ sql, args }: { sql: string; args?: unknown[] }) {
+      calls.push({ sql, args: args ?? [] });
+      if (sql.startsWith("SELECT")) {
+        return { ...emptyResult, rows: selectRow ? [selectRow] : [] };
+      }
+      return emptyResult;
+    },
+  } as unknown as Client;
+  return { db, calls };
+}
+
+describe("saveBookMetadata", () => {
+  afterEach(() => {
+    vi.mocked(r2.getObject).mockReset();
+    vi.mocked(r2.putObject).mockReset();
+  });
+
+  it("reuses the existing R2 path in place, overwriting the curated fields and preserving name/other fields", async () => {
+    const umk = new Uint8Array(64).fill(1);
+    const txtMetadataKey = new Uint8Array(64).fill(4);
+    const keyBlob = await blob.encrypt(umk, txtMetadataKey);
+    const content = {
+      "7": { name: "book.txt", metadata: { title: "Old Title", creator: "Old Author", "calibre:series": "Saga" } },
+    };
+    const existingBody = await blob.encrypt(txtMetadataKey, new TextEncoder().encode(JSON.stringify(content)), {
+      compressed: true,
+    });
+    const pathBlob = await blob.encrypt(txtMetadataKey, new TextEncoder().encode("existing-path"));
+    vi.mocked(r2.getObject).mockResolvedValue(existingBody);
+    let putBody: Uint8Array | null = null;
+    vi.mocked(r2.putObject).mockImplementation(async (_client, _config, _key, body) => {
+      putBody = body;
+    });
+
+    const { db, calls } = fakeClientWithCapture({ txt_metadata_key: keyBlob.buffer, content: pathBlob.buffer });
+
+    await saveBookMetadata(db, 42, umk, r2Client, r2Config, 7, {
+      title: "New Title",
+      author: undefined,
+      publisher: "Pub",
+      subjects: ["A", "B"],
+      description: "Desc",
+    });
+
+    expect(r2.putObject).toHaveBeenCalledWith(r2Client, r2Config, "existing-path", expect.anything());
+    expect(calls.some((c) => c.sql.startsWith("UPDATE"))).toBe(false);
+
+    const decrypted = await blob.decrypt(txtMetadataKey, putBody!, true);
+    const nextContent = JSON.parse(new TextDecoder().decode(decrypted));
+    expect(nextContent["7"]).toEqual({
+      name: "book.txt",
+      metadata: {
+        title: "New Title",
+        publisher: "Pub",
+        subject: ["A", "B"],
+        description: "Desc",
+        "calibre:series": "Saga",
+      },
+    });
+  });
+
+  it("establishes a fresh R2 path (migrating off the legacy inline format) and updates the DB pointer", async () => {
+    const umk = new Uint8Array(64).fill(1);
+    const txtMetadataKey = new Uint8Array(64).fill(4);
+    const keyBlob = await blob.encrypt(umk, txtMetadataKey);
+    const content = {
+      "7": { name: "book.txt", metadata: { title: "Old Title" } },
+      "999": { name: "padding-padding-padding-padding-padding-padding-padding.txt" },
+    };
+    const inlineBlob = await blob.encrypt(txtMetadataKey, new TextEncoder().encode(JSON.stringify(content)), {
+      compressed: true,
+    });
+    expect(inlineBlob.length).toBeGreaterThanOrEqual(200); // must land at/above TXT_METADATA_LEGACY_THRESHOLD
+
+    let putBody: Uint8Array | null = null;
+    vi.mocked(r2.putObject).mockImplementation(async (_client, _config, _key, body) => {
+      putBody = body;
+    });
+    const { db, calls } = fakeClientWithCapture({ txt_metadata_key: keyBlob.buffer, content: inlineBlob.buffer });
+
+    await saveBookMetadata(db, 42, umk, r2Client, r2Config, 7, {
+      title: "New Title",
+      subjects: [],
+    });
+
+    expect(r2.putObject).toHaveBeenCalledTimes(1);
+    const updateCall = calls.find((c) => c.sql.startsWith("UPDATE"));
+    expect(updateCall).toBeDefined();
+    expect(updateCall!.args[1]).toBe(42);
+    const decrypted = await blob.decrypt(txtMetadataKey, putBody!, true);
+    const nextContent = JSON.parse(new TextDecoder().decode(decrypted));
+    expect(nextContent["7"]).toEqual({ name: "book.txt", metadata: { title: "New Title" } });
+    expect(nextContent["999"]).toEqual(content["999"]);
+  });
+
+  it("throws when there is no txt_metadata row at all", async () => {
+    const { db } = fakeClientWithCapture(undefined);
+    await expect(saveBookMetadata(db, 42, new Uint8Array(64), r2Client, r2Config, 7, { subjects: [] })).rejects.toThrow(
+      "no txt_metadata row",
+    );
+  });
+
+  it("throws when there is no entry for txtId", async () => {
+    const umk = new Uint8Array(64).fill(1);
+    const txtMetadataKey = new Uint8Array(64).fill(4);
+    const keyBlob = await blob.encrypt(umk, txtMetadataKey);
+    const { db } = fakeClientWithCapture({ txt_metadata_key: keyBlob.buffer, content: null });
+    await expect(saveBookMetadata(db, 42, umk, r2Client, r2Config, 7, { subjects: [] })).rejects.toThrow(
+      "no txt_metadata entry for txt_id=7",
+    );
+  });
+});
+
+describe("removeTxtMetadataEntry", () => {
+  afterEach(() => {
+    vi.mocked(r2.getObject).mockReset();
+    vi.mocked(r2.putObject).mockReset();
+  });
+
+  it("removes the entry and reuses the existing path in place", async () => {
+    const umk = new Uint8Array(64).fill(1);
+    const txtMetadataKey = new Uint8Array(64).fill(4);
+    const keyBlob = await blob.encrypt(umk, txtMetadataKey);
+    const content = { "7": { name: "book.txt" }, "8": { name: "other.txt" } };
+    const existingBody = await blob.encrypt(txtMetadataKey, new TextEncoder().encode(JSON.stringify(content)), {
+      compressed: true,
+    });
+    const pathBlob = await blob.encrypt(txtMetadataKey, new TextEncoder().encode("existing-path"));
+    vi.mocked(r2.getObject).mockResolvedValue(existingBody);
+    let putBody: Uint8Array | null = null;
+    vi.mocked(r2.putObject).mockImplementation(async (_client, _config, _key, body) => {
+      putBody = body;
+    });
+    const { db } = fakeClientWithCapture({ txt_metadata_key: keyBlob.buffer, content: pathBlob.buffer });
+
+    await removeTxtMetadataEntry(db, 42, umk, r2Client, r2Config, 7);
+
+    const decrypted = await blob.decrypt(txtMetadataKey, putBody!, true);
+    const nextContent = JSON.parse(new TextDecoder().decode(decrypted));
+    expect(nextContent).toEqual({ "8": { name: "other.txt" } });
+  });
+
+  it("is a no-op when there is no txt_metadata row", async () => {
+    const { db } = fakeClientWithCapture(undefined);
+    await removeTxtMetadataEntry(db, 42, new Uint8Array(64), r2Client, r2Config, 7);
+    expect(r2.putObject).not.toHaveBeenCalled();
+  });
+
+  it("is a no-op when the entry doesn't exist", async () => {
+    const umk = new Uint8Array(64).fill(1);
+    const txtMetadataKey = new Uint8Array(64).fill(4);
+    const keyBlob = await blob.encrypt(umk, txtMetadataKey);
+    const { db } = fakeClientWithCapture({ txt_metadata_key: keyBlob.buffer, content: null });
+
+    await removeTxtMetadataEntry(db, 42, umk, r2Client, r2Config, 7);
+
+    expect(r2.putObject).not.toHaveBeenCalled();
   });
 });

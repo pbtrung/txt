@@ -5,15 +5,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useVault, VaultProvider } from "./VaultContext";
 
 vi.mock("../data/db", () => ({ createDb: vi.fn(() => ({ execute: vi.fn() })) }));
-vi.mock("../data/r2", () => ({ createR2Client: vi.fn(() => ({ fetch: vi.fn() })) }));
+vi.mock("../data/r2", () => ({ createR2Client: vi.fn(() => ({ fetch: vi.fn() })), deleteObject: vi.fn() }));
 vi.mock("../data/owner", () => ({
   resolveUserId: vi.fn(),
   checkPassword: vi.fn(),
   unwrapUmk: vi.fn(),
   unwrapTxtKey: vi.fn(),
   fetchR2Config: vi.fn(),
+  partRawPaths: vi.fn(),
 }));
-vi.mock("../data/metadata", () => ({ loadTxtMetadata: vi.fn() }));
+vi.mock("../data/metadata", () => ({
+  loadTxtMetadata: vi.fn(),
+  getBookInfo: vi.fn(),
+  saveBookMetadata: vi.fn(),
+  removeTxtMetadataEntry: vi.fn(),
+}));
 vi.mock("../data/access", () => ({
   loadOrInitAccess: vi.fn(),
   setReadPosition: vi.fn(),
@@ -34,6 +40,7 @@ import * as bookmarksData from "../data/bookmarks";
 import * as metadata from "../data/metadata";
 import type { BookInfo } from "../data/metadata";
 import * as owner from "../data/owner";
+import * as r2 from "../data/r2";
 
 /** Wires up the three post-auth loads (metadata/access/bookmarks) that
  * unlock() now performs, so a successful-unlock test doesn't need to spell
@@ -287,6 +294,10 @@ describe("VaultProvider", () => {
       bookmarksMap: new Map(),
     });
     vi.mocked(adminTxt.deleteTxtRows).mockResolvedValue(undefined);
+    vi.mocked(owner.unwrapTxtKey).mockResolvedValue(new Uint8Array(64).fill(9));
+    vi.mocked(owner.partRawPaths).mockResolvedValue(["path-1", "path-2"]);
+    vi.mocked(r2.deleteObject).mockResolvedValue(undefined);
+    vi.mocked(metadata.removeTxtMetadataEntry).mockResolvedValue(undefined);
     vi.mocked(accessData.removeAccessEntry).mockImplementation(async (_db, _userId, _key, currentMap, txtId) => {
       const next = new Map(currentMap);
       next.delete(txtId);
@@ -305,7 +316,19 @@ describe("VaultProvider", () => {
       await result.current.deleteTxt(7);
     });
 
+    expect(owner.partRawPaths).toHaveBeenCalledWith(expect.anything(), 7, expect.any(Uint8Array));
+    expect(r2.deleteObject).toHaveBeenCalledTimes(2);
+    expect(r2.deleteObject).toHaveBeenCalledWith(expect.anything(), expect.anything(), "path-1");
+    expect(r2.deleteObject).toHaveBeenCalledWith(expect.anything(), expect.anything(), "path-2");
     expect(adminTxt.deleteTxtRows).toHaveBeenCalledWith(expect.anything(), 7);
+    expect(metadata.removeTxtMetadataEntry).toHaveBeenCalledWith(
+      expect.anything(),
+      42,
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      7,
+    );
     expect(accessData.removeAccessEntry).toHaveBeenCalledWith(
       expect.anything(),
       42,

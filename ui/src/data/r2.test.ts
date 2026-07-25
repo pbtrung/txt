@@ -1,7 +1,7 @@
 import type { AwsClient } from "aws4fetch";
 import { describe, expect, it, vi } from "vitest";
 
-import { getObject } from "./r2";
+import { createR2Client, deleteObject, getObject, putObject } from "./r2";
 import type { R2Config } from "./r2Config";
 
 const config: R2Config = {
@@ -12,7 +12,7 @@ const config: R2Config = {
   readOnlySecretAccessKey: "ro-secret",
 };
 
-function fakeAwsClient(fetchImpl: (url: string) => Promise<Response>): AwsClient {
+function fakeAwsClient(fetchImpl: (url: string, init?: RequestInit) => Promise<Response>): AwsClient {
   return { fetch: vi.fn(fetchImpl) } as unknown as AwsClient;
 }
 
@@ -86,5 +86,67 @@ describe("getObject", () => {
 
     vi.unstubAllGlobals();
     vi.useRealTimers();
+  });
+});
+
+describe("putObject", () => {
+  it("signs and PUTs the object body", async () => {
+    const body = new Uint8Array([5, 6, 7]);
+    const client = fakeAwsClient(async (url, init) => {
+      expect(url).toBe("https://acct.r2.cloudflarestorage.com/my-bucket/some-key");
+      expect((init as RequestInit).method).toBe("PUT");
+      expect((init as RequestInit).body).toBe(body);
+      return new Response(null, { status: 200 });
+    });
+    await expect(putObject(client, config, "some-key", body)).resolves.toBeUndefined();
+  });
+
+  it("throws after exhausting all retries", async () => {
+    vi.useFakeTimers();
+    const client = fakeAwsClient(async () => new Response("nope", { status: 500 }));
+    const promise = putObject(client, config, "some-key", new Uint8Array());
+    const expectation = expect(promise).rejects.toThrow("failed after 4 attempt(s)");
+    await vi.runAllTimersAsync();
+    await expectation;
+    vi.useRealTimers();
+  });
+});
+
+describe("deleteObject", () => {
+  it("signs and DELETEs the object", async () => {
+    const client = fakeAwsClient(async (url, init) => {
+      expect(url).toBe("https://acct.r2.cloudflarestorage.com/my-bucket/some-key");
+      expect((init as RequestInit).method).toBe("DELETE");
+      return new Response(null, { status: 200 });
+    });
+    await expect(deleteObject(client, config, "some-key")).resolves.toBeUndefined();
+  });
+
+  it("throws after exhausting all retries", async () => {
+    vi.useFakeTimers();
+    const client = fakeAwsClient(async () => new Response("nope", { status: 500 }));
+    const promise = deleteObject(client, config, "some-key");
+    const expectation = expect(promise).rejects.toThrow("failed after 4 attempt(s)");
+    await vi.runAllTimersAsync();
+    await expectation;
+    vi.useRealTimers();
+  });
+});
+
+describe("createR2Client", () => {
+  it("uses the read-only key pair when no read-write keys are present", () => {
+    const client = createR2Client(config);
+    expect(client.accessKeyId).toBe("ro-id");
+    expect(client.secretAccessKey).toBe("ro-secret");
+  });
+
+  it("prefers the read-write key pair when present (the admin's row, post --update-r2-config)", () => {
+    const client = createR2Client({
+      ...config,
+      readWriteAccessKeyId: "rw-id",
+      readWriteSecretAccessKey: "rw-secret",
+    });
+    expect(client.accessKeyId).toBe("rw-id");
+    expect(client.secretAccessKey).toBe("rw-secret");
   });
 });

@@ -22,11 +22,18 @@ import {
 } from "../data/bookmarks";
 import { deleteTxtRows } from "../data/adminTxt";
 import { isAdminToken } from "../crypto/jwt";
-import { checkPassword, fetchR2Config, resolveUserId, unwrapTxtKey, unwrapUmk } from "../data/owner";
+import { checkPassword, fetchR2Config, partRawPaths, resolveUserId, unwrapTxtKey, unwrapUmk } from "../data/owner";
 import { createDb } from "../data/db";
-import { createR2Client } from "../data/r2";
+import { createR2Client, deleteObject } from "../data/r2";
 import { parseCreds, type Creds } from "../data/creds";
-import { loadTxtMetadata, type BookInfo } from "../data/metadata";
+import {
+  getBookInfo,
+  loadTxtMetadata,
+  removeTxtMetadataEntry,
+  saveBookMetadata,
+  type BookInfo,
+  type BookMetadataEdits,
+} from "../data/metadata";
 import type { R2Config } from "../data/r2Config";
 import { verbose } from "../log";
 
@@ -88,11 +95,17 @@ export interface VaultContextValue {
   removeAccessEntry: (txtId: number) => Promise<void>;
   addBookmarkEntry: (txtId: number, partNum: number, line: number, txtPreview: string) => Promise<void>;
   removeBookmarkEntry: (txtId: number, createdAt: number) => Promise<void>;
-  /** Admin Manage screen: deletes one of the admin's own txt (Turso rows
-   * only -- see data/adminTxt.ts). Scrubs this txt_id's txt_access/bookmarks
-   * entries too, then drops it from the in-memory metadataById so the
-   * screen reflects the deletion immediately. */
+  /** Admin Manage screen: deletes one of the admin's own txt -- its R2 part
+   * objects, its Turso rows (data/adminTxt.ts), and its txt_metadata entry
+   * -- then scrubs this txt_id's txt_access/bookmarks entries and drops it
+   * from the in-memory metadataById so the screen reflects the deletion
+   * immediately. Requires a write-capable r2Client (see r2.ts). */
   deleteTxt: (txtId: number) => Promise<void>;
+  /** Admin Manage screen: overwrites one of the admin's own txt's curated
+   * metadata fields (data/metadata.ts's saveBookMetadata), then refreshes
+   * its entry in the in-memory metadataById. Requires a write-capable
+   * r2Client. */
+  updateBookMetadata: (txtId: number, edits: BookMetadataEdits) => Promise<void>;
 }
 
 const VaultContext = createContext<VaultContextValue | null>(null);
@@ -355,7 +368,23 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     async (txtId: number) => {
       if (!session) throw new Error("vault is locked");
       await enqueueMutation(async () => {
+        // R2 parts first, then Turso rows -- same order as txt/delete.py's
+        // TxtDeleter, so a failure partway through never leaves a Turso row
+        // pointing at parts that are already gone. Requires a write-capable
+        // r2Client (see r2.ts's createR2Client) -- only ever true for an
+        // admin session with read-write keys in r2_config today.
+        const txtKey = await getTxtKey(txtId);
+        const rawPaths = await partRawPaths(session.db, txtId, txtKey);
+        await Promise.all(rawPaths.map((rawPath) => deleteObject(session.r2Client, session.r2Config, rawPath)));
         await deleteTxtRows(session.db, txtId);
+        await removeTxtMetadataEntry(
+          session.db,
+          session.userId,
+          session.umk,
+          session.r2Client,
+          session.r2Config,
+          txtId,
+        );
         const nextAccess = await removeAccessEntryData(
           session.db,
           session.userId,
@@ -381,7 +410,43 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         });
       });
     },
-    [session, setAccessMap, setBookmarksMap, enqueueMutation],
+    [session, setAccessMap, setBookmarksMap, enqueueMutation, getTxtKey],
+  );
+
+  const updateBookMetadata = useCallback(
+    async (txtId: number, edits: BookMetadataEdits) => {
+      if (!session) throw new Error("vault is locked");
+      await enqueueMutation(async () => {
+        await saveBookMetadata(
+          session.db,
+          session.userId,
+          session.umk,
+          session.r2Client,
+          session.r2Config,
+          txtId,
+          edits,
+        );
+        // Re-reads rather than patching the in-memory BookInfo by hand, so
+        // title/rawMetadata/etc. stay derived the same way toBookInfo()
+        // already does it, instead of a second, easily-drifting copy of
+        // that logic living here too.
+        const nextInfo = await getBookInfo(
+          session.db,
+          session.userId,
+          session.umk,
+          session.r2Client,
+          session.r2Config,
+          txtId,
+        );
+        setSession((prev) => {
+          if (!prev || !nextInfo) return prev;
+          const nextMetadataById = new Map(prev.metadataById);
+          nextMetadataById.set(txtId, nextInfo);
+          return { ...prev, metadataById: nextMetadataById };
+        });
+      });
+    },
+    [session, enqueueMutation],
   );
 
   const value = useMemo<VaultContextValue>(
@@ -402,6 +467,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       addBookmarkEntry,
       removeBookmarkEntry,
       deleteTxt,
+      updateBookMetadata,
     }),
     [
       status,
@@ -420,6 +486,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       addBookmarkEntry,
       removeBookmarkEntry,
       deleteTxt,
+      updateBookMetadata,
     ],
   );
 
