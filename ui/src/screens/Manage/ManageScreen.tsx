@@ -48,6 +48,13 @@ import { ManageToolbar, errorMessage, type ToolbarButtonConfig } from "./manageS
 import { SharesSection, type SharesMode } from "./SharesSection";
 import { UsersSection, type UsersMode } from "./UsersSection";
 
+// Shown as the initial-load gate's step labels (see initialLoadStep
+// below) -- same "Step N of M" + phase-label shape VaultContext's own
+// UNLOCK_PHASES/REFRESH_PHASES drive on Unlock/Library, kept local here
+// since Users/Shares are Manage-specific data, not part of the vault
+// session those funnel through.
+const INITIAL_LOAD_PHASES = ["Loading users", "Loading shares"] as const;
+
 export function ManageScreen() {
   const { session, lock, refresh, refreshing } = useVault();
   const [section, setSection] = useState<Section>("users");
@@ -91,9 +98,6 @@ export function ManageScreen() {
       setUsersError(errorMessage(err));
     }
   }, [session]);
-  useEffect(() => {
-    void loadUsers();
-  }, [loadUsers]);
 
   const books = useMemo(() => (session ? Array.from(session.metadataById.values()) : []), [session]);
   const ownTxtIds = useMemo(() => (session ? Array.from(session.metadataById.keys()) : []), [session]);
@@ -108,9 +112,35 @@ export function ManageScreen() {
       setSharesError(errorMessage(err));
     }
   }, [session, ownTxtIds]);
+
+  // The first load (only -- Create/Edit/Delete's own onChanged and
+  // handleRefresh below reload a single list directly, without this gate)
+  // walks Users then Shares one at a time, showing a step counter for
+  // each -- the same "Step N of M" + phase-label shape Unlock/Library's
+  // own refresh spinner use -- instead of the shell appearing immediately
+  // with both lists empty for the brief moment before they resolve.
+  const [initialLoadStep, setInitialLoadStep] = useState<number | null>(0);
   useEffect(() => {
-    void loadShares();
-  }, [loadShares]);
+    if (!session) return;
+    let cancelled = false;
+    async function loadInitial() {
+      setInitialLoadStep(0);
+      await loadUsers();
+      if (cancelled) return;
+      setInitialLoadStep(1);
+      await loadShares();
+      if (cancelled) return;
+      setInitialLoadStep(null);
+    }
+    void loadInitial();
+    return () => {
+      cancelled = true;
+    };
+    // Keyed on `session` alone -- this should only re-run for a genuinely
+    // new session (a fresh unlock), not every time loadUsers/loadShares
+    // are recreated (e.g. ownTxtIds changing after a refresh).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session]);
 
   // Revoking a share needs no confirm step (unlike Users/Books' Delete) --
   // it fires directly from the toolbar button instead of opening a panel.
@@ -137,6 +167,11 @@ export function ManageScreen() {
   }
 
   const heading = { users: "Users", books: "Books", shares: "Shares" }[section];
+
+  // Either a refresh is in flight, or this is the very first load -- both
+  // replace the sidebar+content region with a spinner instead of showing
+  // it prematurely (empty lists, a toolbar with nothing to act on).
+  const isLoadingGate = refreshing || initialLoadStep !== null;
 
   // Which Create/Edit/Delete buttons apply to the current section, given
   // its current selection -- rendered as one button group beside the
@@ -259,7 +294,7 @@ export function ManageScreen() {
             icon="bi-book"
             ariaLabel="Manage menu"
             className="d-flex align-items-center justify-content-center"
-            disabled={refreshing}
+            disabled={isLoadingGate}
           />
           <span className="fw-semibold d-none d-sm-inline">Skypiea</span>
           {nav.open && (
@@ -276,7 +311,7 @@ export function ManageScreen() {
                 displayName={session.creds.displayName}
                 onLock={lock}
                 onRefresh={() => void handleRefresh()}
-                refreshing={refreshing}
+                refreshing={isLoadingGate}
               />
             </div>
           )}
@@ -308,7 +343,7 @@ export function ManageScreen() {
               placeholder={`Search ${heading.toLowerCase()}`}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              disabled={refreshing}
+              disabled={isLoadingGate}
               aria-label={`Search ${heading.toLowerCase()}`}
             />
             <i
@@ -316,16 +351,28 @@ export function ManageScreen() {
               style={{ zIndex: 6 }}
               aria-hidden="true"
             />
-            {!refreshing && <ManageToolbar buttons={toolbarButtons} />}
+            {!isLoadingGate && <ManageToolbar buttons={toolbarButtons} />}
           </div>
         </div>
       </div>
 
       <div className="flex-grow-1 d-flex flex-column flex-lg-row overflow-hidden">
-        {refreshing ? (
+        {isLoadingGate ? (
           <div className="flex-grow-1 d-flex flex-column align-items-center justify-content-center gap-1" role="status">
             <div className="spinner-border text-primary mb-1" aria-hidden="true" />
-            <div className="small text-body-secondary">Refreshing…</div>
+            {/* An explicit refresh (handleRefresh) takes priority in the
+                label over the initial-load step count -- the two are
+                mutually exclusive in real usage (Refresh isn't clickable
+                until the initial load has already finished), but checking
+                refreshing first keeps that assumption from mattering. */}
+            <div className="small text-body-secondary">
+              {!refreshing && initialLoadStep !== null
+                ? `Step ${initialLoadStep + 1} of ${INITIAL_LOAD_PHASES.length}`
+                : " "}
+            </div>
+            <div className="small text-body-secondary">
+              {!refreshing && initialLoadStep !== null ? INITIAL_LOAD_PHASES[initialLoadStep] : "Refreshing"}…
+            </div>
           </div>
         ) : (
           <>
@@ -339,7 +386,7 @@ export function ManageScreen() {
                 displayName={session.creds.displayName}
                 onLock={lock}
                 onRefresh={() => void handleRefresh()}
-                refreshing={refreshing}
+                refreshing={isLoadingGate}
               />
             </div>
 

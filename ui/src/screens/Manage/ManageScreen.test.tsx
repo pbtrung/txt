@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -113,7 +113,11 @@ describe("ManageScreen", () => {
   describe("account footer", () => {
     it("shows the display name as plain text, not a link, and wires Refresh/Lock", async () => {
       setup();
-      expect(screen.getByText("Alice")).toBeInTheDocument();
+      await waitFor(() => expect(screen.getByRole("button", { name: "Lock" })).toBeInTheDocument());
+      // Scoped to the account footer -- "Alice" also appears, unrelated,
+      // as the admin's own row in the Users list once loaded.
+      const footer = screen.getByRole("button", { name: "Lock" }).closest("div.border-top") as HTMLElement;
+      expect(within(footer).getByText("Alice")).toBeInTheDocument();
       expect(screen.queryByRole("link", { name: "Alice" })).not.toBeInTheDocument();
 
       await userEvent.click(screen.getByRole("button", { name: "Lock" }));
@@ -231,6 +235,7 @@ describe("ManageScreen", () => {
 
   describe("Books", () => {
     async function goToBooks() {
+      await waitFor(() => expect(screen.getByRole("button", { name: /^Books/ })).toBeInTheDocument());
       await userEvent.click(screen.getByRole("button", { name: /^Books/ }));
     }
 
@@ -283,6 +288,7 @@ describe("ManageScreen", () => {
 
   describe("Shares", () => {
     async function goToShares() {
+      await waitFor(() => expect(screen.getByRole("button", { name: /^Shares/ })).toBeInTheDocument());
       await userEvent.click(screen.getByRole("button", { name: /^Shares/ }));
     }
 
@@ -344,6 +350,7 @@ describe("ManageScreen", () => {
 
     it("filters the Books list by title", async () => {
       setup();
+      await waitFor(() => expect(screen.getByRole("button", { name: /^Books/ })).toBeInTheDocument());
       await userEvent.click(screen.getByRole("button", { name: /^Books/ }));
       await waitFor(() => expect(screen.getByLabelText(/search books/i)).toBeInTheDocument());
 
@@ -374,6 +381,7 @@ describe("ManageScreen", () => {
         ]),
       );
       setup(false, manyBooks);
+      await waitFor(() => expect(screen.getByRole("button", { name: /^Books/ })).toBeInTheDocument());
       await userEvent.click(screen.getByRole("button", { name: /^Books/ }));
 
       const rows = screen.getAllByRole("button", { name: /^Title \d+$/ });
