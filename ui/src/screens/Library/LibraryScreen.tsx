@@ -330,7 +330,7 @@ export function LibraryScreen() {
             />
             <input
               type="search"
-              className="form-control themed-control ps-5"
+              className="form-control form-control-sm themed-control ps-5"
               placeholder="Search library"
               value={search}
               onChange={(e) => setSearch(e.target.value)}

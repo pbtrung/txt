@@ -45,14 +45,14 @@ function ToolbarButton({ icon, label, variant = "secondary", disabled, onClick }
   // the drawer toggle -- docs/ui.md) instead of Bootstrap's plain gray
   // outline-secondary. "danger" (Delete) stays Bootstrap's own red --
   // destructive actions are the one deliberate exception to the brass theme.
-  // No btn-sm here -- these sit flush against the search box inside the
-  // same .input-group (see ManageToolbar), so they need its default .btn
-  // height to actually match it, not a shorter one.
+  // btn-sm matches the search box's own form-control-sm (see
+  // ManageToolbar) -- both flush children of the same .input-group, so
+  // they need to agree on height, and small keeps the top bar compact.
   const isDanger = variant === "danger";
   return (
     <button
       type="button"
-      className={`btn d-flex align-items-center gap-1 ${isDanger ? "btn-outline-danger" : "btn-outline-secondary border-primary"}`}
+      className={`btn btn-sm d-flex align-items-center gap-1 ${isDanger ? "btn-outline-danger" : "btn-outline-secondary border-primary"}`}
       disabled={disabled}
       onClick={onClick}
       title={label}

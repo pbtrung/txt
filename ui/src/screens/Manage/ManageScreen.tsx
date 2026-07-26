@@ -339,7 +339,7 @@ export function ManageScreen() {
           <div className="input-group search-bar-width position-relative">
             <input
               type="search"
-              className="form-control themed-control ps-5"
+              className="form-control form-control-sm themed-control ps-5"
               placeholder={`Search ${heading.toLowerCase()}`}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
