@@ -106,31 +106,29 @@ export function mountProgressUI(container: HTMLElement = document.body): Progres
   // center their box vertically as a whole, skipping it made this box
   // shorter than the real one, which shifted the wordmark down from where
   // it sits on Unlock (a real, empirically-confirmed few-dozen-px gap, not
-  // a rounding error). This invisible placeholder reserves that same
-  // height (py-2's 0.5rem top/bottom padding + the two lh-sm(1.25) small
-  // (0.875rem) lines' content height, 2 * 0.875 * 1.25 = 2.1875rem) so the
-  // wordmark ends up at the same position as Unlock's, not just visually
-  // similar spacing.
-  const buttonSpacer = document.createElement("div");
-  buttonSpacer.style.cssText = "height: 3.1875rem;"; // 0.5rem + 0.5rem + 2.1875rem
-  buttonSpacer.setAttribute("aria-hidden", "true");
+  // a rounding error). This placeholder reserves that same height (py-2's
+  // 0.5rem top/bottom padding + the two lh-sm(1.25) small (0.875rem)
+  // lines' content height, 2 * 0.875 * 1.25 = 2.1875rem) so the wordmark
+  // ends up at the same position as Unlock's -- but rather than sitting
+  // empty with the spinner shown further down in the status block below
+  // (correct for matching Unlock's own during-unlock layout, but odd here,
+  // since this screen has no button to spin in place of), the spinner
+  // itself sits centered in this slot -- there's nothing else this screen
+  // could show in the button's place anyway.
+  const spinnerSlot = document.createElement("div");
+  spinnerSlot.style.cssText = "height: 3.1875rem; display: flex; align-items: center; justify-content: center;"; // 0.5rem + 0.5rem + 2.1875rem
 
-  // Matches UnlockScreen.tsx's `mt-4 d-flex flex-column align-items-center
-  // gap-1` progress block, including that mt-4 margin (the button above no
-  // longer stands in for it -- see buttonSpacer above).
-  const progress = document.createElement("div");
-  progress.style.cssText =
-    "margin-top: 1.5rem; display: flex; flex-direction: column; align-items: center; gap: 0.25rem;";
-
-  // Matches `spinner-border spinner-border-sm text-primary mb-1` exactly:
-  // 1rem square, 0.2em border, the trailing edge transparent (Bootstrap's
+  // Matches `spinner-border spinner-border-sm text-primary` exactly: 1rem
+  // square, 0.2em border, the trailing edge transparent (Bootstrap's
   // actual technique for the spin, not a plain two-tone ring), 0.75s linear.
   const spinner = document.createElement("div");
   spinner.setAttribute("role", "status");
   spinner.setAttribute("aria-label", "Verifying");
   spinner.style.cssText =
-    "display: inline-block; width: 1rem; height: 1rem; margin-bottom: 0.25rem; border-radius: 50%; " +
+    "display: inline-block; width: 1rem; height: 1rem; border-radius: 50%; " +
     `border: 0.2em solid ${BRASS}; border-right-color: transparent; animation: boot-spin 0.75s linear infinite;`;
+  spinnerSlot.appendChild(spinner);
+
   const styles = document.createElement("style");
   styles.textContent =
     "@keyframes boot-spin { to { transform: rotate(360deg); } } " +
@@ -140,6 +138,13 @@ export function mountProgressUI(container: HTMLElement = document.body): Progres
     ".boot-wordmark { font-size: calc(1.325rem + 0.9vw); } " +
     "@media (min-width: 1200px) { .boot-wordmark { font-size: 2rem; } }";
 
+  // Matches UnlockScreen.tsx's `mt-4 d-flex flex-column align-items-center
+  // gap-1` progress block's own margin -- minus the spinner it'd otherwise
+  // lead with, which now lives in spinnerSlot above instead.
+  const progress = document.createElement("div");
+  progress.style.cssText =
+    "margin-top: 1.5rem; display: flex; flex-direction: column; align-items: center; gap: 0.25rem;";
+
   // Matches `small text-body-secondary` (0.875rem, Bootstrap's secondary text color).
   const stepCounter = document.createElement("div");
   stepCounter.style.cssText = `font-size: 0.875rem; color: ${SECONDARY_COLOR};`;
@@ -148,7 +153,7 @@ export function mountProgressUI(container: HTMLElement = document.body): Progres
   const stepLabel = document.createElement("div");
   stepLabel.style.cssText = `font-size: 0.875rem; color: ${SECONDARY_COLOR};`;
 
-  progress.append(spinner, stepCounter, stepLabel);
+  progress.append(stepCounter, stepLabel);
 
   // Matches `alert alert-danger mt-4` exactly (Bootstrap's own alert-danger
   // palette/padding/border-radius), shown in place of the progress block on
@@ -161,7 +166,7 @@ export function mountProgressUI(container: HTMLElement = document.body): Progres
     "font-size: 0.875rem; white-space: pre-wrap; text-align: left;";
   error.hidden = true;
 
-  inner.append(wordmarkWrap, buttonSpacer, styles, progress, error);
+  inner.append(wordmarkWrap, spinnerSlot, styles, progress, error);
   root.appendChild(inner);
   container.appendChild(root);
 
