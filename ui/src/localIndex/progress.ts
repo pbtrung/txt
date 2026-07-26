@@ -141,7 +141,7 @@ export function mountProgressUI(container: HTMLElement = document.body): Progres
   progress.append(spinner, stepCounter, stepLabel);
 
   // UnlockScreen.tsx's button (px-3 py-2, containing a fs-5 icon beside a
-  // two-line lh-sm text block) plus its status block's own mt-4 have no
+  // two-line lh-sm text block) plus its status block's own mt-2 have no
   // equivalent here -- there's nothing to click while verifying, and the
   // spinner already stands in for the button above -- but they still
   // occupy real layout height on Unlock, which this file used to just
@@ -151,12 +151,12 @@ export function mountProgressUI(container: HTMLElement = document.body): Progres
   // confirmed few-dozen-px gap, not a rounding error). This invisible,
   // trailing spacer reserves that same height (button: 0.5rem + 0.5rem
   // padding + 2 * 0.875rem * 1.25 lh-sm content = 3.1875rem; status
-  // block's own mt-4 = 1.5rem; total 4.6875rem) after the visible content
+  // block's own mt-2 = 0.5rem; total 3.6875rem) after the visible content
   // instead of wedged in the middle of it, so the spinner/text keep
   // their natural tight spacing and the wordmark still ends up at the
   // same position as Unlock's.
   const trailingSpacer = document.createElement("div");
-  trailingSpacer.style.cssText = "height: 4.6875rem;";
+  trailingSpacer.style.cssText = "height: 3.6875rem;";
 
   // Matches `alert alert-danger mt-4` exactly (Bootstrap's own alert-danger
   // palette/padding/border-radius), shown in place of the progress block on

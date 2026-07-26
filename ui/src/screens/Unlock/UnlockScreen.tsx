@@ -62,7 +62,7 @@ export function UnlockScreen() {
             height appearing/disappearing; reserving its space up front
             keeps them anchored in place regardless. */}
         <div
-          className="mt-4 d-flex flex-column align-items-center gap-1"
+          className="mt-2 d-flex flex-column align-items-center gap-1"
           role="status"
           style={{ visibility: unlocking ? "visible" : "hidden" }}
         >
