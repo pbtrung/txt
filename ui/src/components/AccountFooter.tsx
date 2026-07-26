@@ -42,7 +42,7 @@ export function AccountFooter({
       <span className="d-flex align-items-center gap-2 flex-shrink-0">
         <button
           type="button"
-          className="btn btn-outline-secondary border-primary flex-shrink-0"
+          className="btn btn-sm btn-outline-secondary border-primary flex-shrink-0"
           onClick={onRefresh}
           disabled={refreshing}
           aria-label={refreshAriaLabel}
@@ -56,7 +56,7 @@ export function AccountFooter({
         </button>
         <button
           type="button"
-          className="btn btn-outline-secondary border-primary flex-shrink-0"
+          className="btn btn-sm btn-outline-secondary border-primary flex-shrink-0"
           onClick={onLock}
           aria-label="Lock"
           title="Lock"
