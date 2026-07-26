@@ -13,10 +13,11 @@ import {
   deleteUser,
   rotateUserRootKey,
   updateUserPassword,
+  type DownloadableUserCreds,
   type UserSummary,
 } from "../../data/adminUsers";
 import type { VaultSession } from "../../state/VaultContext";
-import { ConfirmDeleteField, FORM_WIDTH, FormField, downloadJson, errorMessage } from "./manageShared";
+import { ConfirmDeleteField, FORM_WIDTH, FormField, downloadJson, errorMessage, yieldToPaint } from "./manageShared";
 import { UserRow, USER_ROW_HEIGHT } from "./UserRow";
 
 function CreateUserForm({
@@ -28,30 +29,35 @@ function CreateUserForm({
   onCreated: () => void;
   onClose: () => void;
 }) {
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
+  const [tursoDatabaseUrl, setTursoDatabaseUrl] = useState(session.creds.tursoDatabaseUrl);
   const [displayName, setDisplayName] = useState("");
   const [userTursoAuthToken, setUserTursoAuthToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Set once creation succeeds. While non-null, the modal shows the
+  // downloadable credential JSON instead of the form, and can only be
+  // closed via the explicit "I've saved this" button below -- its Modal's
+  // onClose becomes a no-op meanwhile (not the ×/backdrop-click/Escape it
+  // normally responds to), since this is the one chance to save the
+  // generated password/user_root_key, neither of which is ever held
+  // anywhere in a retrievable form again afterward.
+  const [createdCreds, setCreatedCreds] = useState<DownloadableUserCreds | null>(null);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setBusy(true);
     setError(null);
+    // Lets the spinner/disabled state actually paint before createUser's
+    // own synchronous compress+encrypt work blocks the main thread.
+    await yieldToPaint();
     try {
-      const creds = await createUser(session.db, session.umk, session.creds.tursoDatabaseUrl, session.r2Config, {
-        username,
-        password,
-        displayName,
-        userTursoAuthToken,
-      });
-      downloadJson(`${username}_creds.json`, creds);
-      setUsername("");
-      setPassword("");
-      setDisplayName("");
-      setUserTursoAuthToken("");
-      onCreated();
+      setCreatedCreds(
+        await createUser(session.db, session.umk, session.r2Config, {
+          tursoDatabaseUrl,
+          displayName,
+          userTursoAuthToken,
+        }),
+      );
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -59,26 +65,47 @@ function CreateUserForm({
     }
   }
 
+  if (createdCreds) {
+    return (
+      <Modal title="Save this user's credentials" onClose={() => {}}>
+        <div style={FORM_WIDTH}>
+          <p className="small text-body-secondary">
+            This is the only time the password and root key are ever shown -- download or copy this now, then confirm
+            below. Neither can be recovered afterward.
+          </p>
+          <pre
+            className="small bg-body-tertiary border rounded p-2"
+            style={{ maxHeight: "16rem", overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all" }}
+          >
+            {JSON.stringify(createdCreds, null, 2)}
+          </pre>
+          <div className="d-flex gap-2 mt-2">
+            <button
+              type="button"
+              className="btn btn-outline-secondary"
+              onClick={() => downloadJson(`${createdCreds.username}_creds.json`, createdCreds)}
+            >
+              Download
+            </button>
+            <button type="button" className="btn btn-primary" onClick={onCreated}>
+              I&apos;ve saved this -- close
+            </button>
+          </div>
+        </div>
+      </Modal>
+    );
+  }
+
   return (
     <Modal title="Create user" onClose={onClose}>
       <form onSubmit={(e) => void handleSubmit(e)} style={FORM_WIDTH}>
-        <FormField label="Username" htmlFor="manage-new-username">
+        <FormField label="Turso database URL" htmlFor="manage-new-turso-url">
           <input
-            id="manage-new-username"
+            id="manage-new-turso-url"
             type="text"
             className="form-control themed-control"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            required
-          />
-        </FormField>
-        <FormField label="Password" htmlFor="manage-new-password">
-          <input
-            id="manage-new-password"
-            type="password"
-            className="form-control themed-control"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            value={tursoDatabaseUrl}
+            onChange={(e) => setTursoDatabaseUrl(e.target.value)}
             required
           />
         </FormField>
@@ -102,7 +129,8 @@ function CreateUserForm({
             required
           />
         </FormField>
-        <button type="submit" className="btn btn-primary mt-1" disabled={busy}>
+        <button type="submit" className="btn btn-primary mt-1 d-flex align-items-center gap-2" disabled={busy}>
+          {busy && <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true" />}
           Create user
         </button>
         {error && <div className="text-danger small mt-2">{error}</div>}

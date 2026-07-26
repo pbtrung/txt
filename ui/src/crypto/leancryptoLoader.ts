@@ -3,8 +3,9 @@
 // ctypes (see txt/leancrypto.py): AEAD, HKDF, HMAC, PBKDF2, and the
 // lc_kyber_1024_x448 composite KEM.
 //
-// Two non-obvious things this file has to get right (see docs/ui.md's
-// implementation plan for how these were found):
+// Three non-obvious things this file (and, for the third, the vendored
+// leancrypto.js itself) has to get right (see docs/ui.md's implementation
+// plan for how these were found):
 //
 // 1. leancrypto.js is a UMD/CJS bundle (`module.exports = leancrypto`, no
 //    `export` keyword) so it can't be `import`-ed as a native ES module in
@@ -27,6 +28,20 @@
 //    "hash type" argument to lc_hkdf/lc_hmac/lc_pbkdf2/lc_ak_alloc_taglen (or
 //    lc_seeded_rng before lc_kyber_1024_x448_keypair) -- skipping it crashes
 //    with "RuntimeError: table index is out of bounds".
+//
+// 3. `ui/leancrypto/leancrypto.js` carries one hand-applied patch on top of
+//    its stock Emscripten output: `_random_get` (the WASI import backing
+//    lc_kyber_1024_x448_keypair's internal getentropy() call, hit the first
+//    time this module's own RNG -- not our randomBytes() -- is used, i.e.
+//    the first keypair() call in a session) originally called
+//    `randomFill(HEAPU8.subarray(buffer,buffer+size))`, handing
+//    crypto.getRandomValues a view straight into wasm linear memory. Modern
+//    Chrome rejects that outright ("The provided ArrayBufferView value must
+//    not be resizable") since a growable WebAssembly.Memory's buffer is
+//    itself a resizable ArrayBuffer, and getRandomValues no longer accepts
+//    those. Patched to fill a fresh, ordinary (non-resizable) Uint8Array via
+//    randomFill and copy that into the heap with HEAPU8.set(...) instead.
+//    Re-apply this if leancrypto.js is ever regenerated from source.
 
 import { isBrowser } from "../env";
 

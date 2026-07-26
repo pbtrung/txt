@@ -13,7 +13,7 @@ import type { BookInfo } from "../../data/metadata";
 import { useVault } from "../../state/VaultContext";
 import { allBooksSorted, matchesSearch } from "../Library/libraryModel";
 import { useLibraryBooks } from "../Library/useLibraryBooks";
-import { ConfirmDeleteField, FORM_WIDTH, FormField, errorMessage } from "./manageShared";
+import { ConfirmDeleteField, FORM_WIDTH, FormField, errorMessage, yieldToPaint } from "./manageShared";
 
 interface BookMetadataFormValues {
   title?: string;
@@ -49,6 +49,10 @@ function EditBookPanel({
     setBusy(true);
     setError(null);
     setProgressLabel(null);
+    // Lets the spinner/disabled state actually paint before the
+    // synchronous compress+encrypt work below blocks the main thread --
+    // see yieldToPaint's own doc comment.
+    await yieldToPaint();
     try {
       await onSaved(
         {

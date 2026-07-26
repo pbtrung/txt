@@ -40,17 +40,20 @@ describe("createUser", () => {
     const db = { execute } as unknown as Client;
 
     const adminUmk = new Uint8Array(64).fill(9);
-    const creds = await adminUsers.createUser(db, adminUmk, "libsql://example", ADMIN_R2_CONFIG, {
-      username: "bob",
-      password: "hunter2",
+    const creds = await adminUsers.createUser(db, adminUmk, ADMIN_R2_CONFIG, {
+      tursoDatabaseUrl: "libsql://example",
       displayName: "Bob",
       userTursoAuthToken: "user-token",
     });
 
     expect(creds.turso_database_url).toBe("libsql://example");
     expect(creds.turso_auth_token).toBe("user-token");
-    expect(creds.username).toBe("bob");
-    expect(creds.password).toBe("hunter2");
+    // username/password are generated here, not admin-typed (see file
+    // comment) -- assert the shape (42 chars, [0-9A-Za-z]) rather than an
+    // echo of caller input.
+    expect(creds.username).toMatch(/^[0-9A-Za-z]{42}$/);
+    expect(creds.password).toMatch(/^[0-9A-Za-z]{42}$/);
+    expect(creds.username).not.toBe(creds.password);
     expect(creds.display_name).toBe("Bob");
 
     const usernameLookupKey = base64ToBytes(creds.username_lookup_key);
@@ -72,7 +75,7 @@ describe("createUser", () => {
 
     // users row: username_hash matches HMAC(usernameLookupKey, username).
     const usersCall = calls[0];
-    const expectedHash = await hmacSha3_256(usernameLookupKey, new TextEncoder().encode("bob"));
+    const expectedHash = await hmacSha3_256(usernameLookupKey, new TextEncoder().encode(creds.username));
     expect(Array.from(usersCall.args[0] as Uint8Array)).toEqual(Array.from(expectedHash));
 
     // umk_store: decrypts under the returned user_root_key.

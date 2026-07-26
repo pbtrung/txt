@@ -35,9 +35,39 @@ import type { R2Config } from "./r2Config";
 
 export class AdminUsersError extends Error {}
 
+// Both the username and password are generated here, not admin-typed: the
+// only thing that ever actually "logs in" with them is unlock()'s own
+// Choose File flow, which reads them straight out of the downloaded
+// credential JSON -- no human ever types either one -- so there's nothing
+// to gain from letting an admin pick a memorable value, and a random
+// opaque one is simpler to get right than validating a typed one (no
+// uniqueness/length/charset checks needed; a collision is as astronomically
+// unlikely as username_lookup_key's or user_root_key's own randomness).
+const GENERATED_CREDENTIAL_LENGTH = 42;
+const ALPHANUMERIC_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+
+/** A cryptographically random string of `length` characters drawn evenly
+ * from [0-9A-Za-z] -- rejection sampling (not a plain `byte % 62`) so the
+ * charset's first `256 % 62 = 8` characters aren't drawn very slightly
+ * more often than the rest. */
+function randomAlphanumeric(length: number): string {
+  const chars: string[] = [];
+  const cutoff = 256 - (256 % ALPHANUMERIC_CHARS.length);
+  while (chars.length < length) {
+    for (const byte of randomBytes(length - chars.length)) {
+      if (byte < cutoff) chars.push(ALPHANUMERIC_CHARS[byte % ALPHANUMERIC_CHARS.length]);
+    }
+  }
+  return chars.join("");
+}
+
 export interface NewUserInput {
-  username: string;
-  password: string;
+  /** The Turso database URL to embed in the new user's credential JSON --
+   * an explicit field rather than always assuming the admin's own, since
+   * nothing here actually requires every account to share one (only that
+   * this admin's own umk_store/key_store/etc. rows live in whichever
+   * database userId ends up scoped to). */
+  tursoDatabaseUrl: string;
   displayName: string;
   /** The shared regular-user Turso token, pasted in by the admin -- see
    * file comment. Embedded verbatim in the returned credential JSON, never
@@ -59,30 +89,27 @@ export interface DownloadableUserCreds {
 
 /** Provisions a brand new regular-user account: users/umk_store/key_store/
  * r2_config/txt_metadata/txt_access/bookmarks rows, mirroring
- * txt/admin.py's AdminInitializer.run() -- generalized to a target
- * username/password instead of always being self-referential. r2_config's
- * read-only key *values* are copied from the admin's own (already-fetched)
- * R2Config, since every account shares the same read-only R2 credentials.
- * Also writes the generated credential JSON into the new row's own
- * users.creds, wrapped under the *admin's* umk (adminUmk) -- see file
- * comment -- so listUsersWithInfo can recover displayName later. */
+ * txt/admin.py's AdminInitializer.run() -- generalized to a freshly
+ * generated username/password instead of always being self-referential.
+ * r2_config's read-only key *values* are copied from the admin's own
+ * (already-fetched) R2Config, since every account shares the same
+ * read-only R2 credentials. Also writes the generated credential JSON
+ * into the new row's own users.creds, wrapped under the *admin's* umk
+ * (adminUmk) -- see file comment -- so listUsersWithInfo can recover
+ * displayName later. */
 export async function createUser(
   db: Client,
   adminUmk: Uint8Array,
-  adminTursoDatabaseUrl: string,
   adminR2Config: R2Config,
   input: NewUserInput,
 ): Promise<DownloadableUserCreds> {
+  const username = randomAlphanumeric(GENERATED_CREDENTIAL_LENGTH);
+  const password = randomAlphanumeric(GENERATED_CREDENTIAL_LENGTH);
   const usernameLookupKey = randomBytes(c.USERNAME_LOOKUP_KEY_MIN_LEN);
   const userRootKey = randomBytes(c.USER_ROOT_KEY_MIN_LEN);
-  const usernameHash = await hmacSha3_256(usernameLookupKey, new TextEncoder().encode(input.username));
+  const usernameHash = await hmacSha3_256(usernameLookupKey, new TextEncoder().encode(username));
   const pwSalt = randomBytes(c.PW_SALT_LEN);
-  const pwHash = await pbkdf2Sha3_256(
-    new TextEncoder().encode(input.password),
-    pwSalt,
-    c.PBKDF2_ITERATIONS,
-    c.PW_HASH_LEN,
-  );
+  const pwHash = await pbkdf2Sha3_256(new TextEncoder().encode(password), pwSalt, c.PBKDF2_ITERATIONS, c.PW_HASH_LEN);
 
   const insertUser = await db.execute({
     sql: "INSERT INTO users (username_hash, pw_salt, pw_hash) VALUES (?, ?, ?)",
@@ -141,11 +168,11 @@ export async function createUser(
   });
 
   const credsJson: DownloadableUserCreds = {
-    turso_database_url: adminTursoDatabaseUrl,
+    turso_database_url: input.tursoDatabaseUrl,
     turso_auth_token: input.userTursoAuthToken,
-    username: input.username,
+    username,
     username_lookup_key: bytesToBase64(usernameLookupKey),
-    password: input.password,
+    password,
     display_name: input.displayName,
     user_root_key: bytesToBase64(userRootKey),
   };

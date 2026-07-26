@@ -10,6 +10,20 @@ export function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/** Resolves right before the browser's next paint. Several of this
+ * screen's Save/Create/Delete handlers set a `busy` flag (to show a
+ * spinner) and then immediately run genuinely synchronous, CPU-bound WASM
+ * work (brotli compress/decompress, AEAD encrypt/decrypt -- see
+ * crypto/blob.ts) with no real `await` in between: awaiting an
+ * already-resolved promise only yields to the microtask queue, not back to
+ * the browser's render loop, so without a real yield point the spinner
+ * never actually paints until that work is already done. `await
+ * yieldToPaint()` right after setting `busy` gives the browser that one
+ * real chance to paint first. */
+export function yieldToPaint(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
+
 /** Triggers a browser download of `data` as pretty-printed JSON -- used for
  * the credential/root-key files the Users section hands off. */
 export function downloadJson(filename: string, data: unknown): void {
