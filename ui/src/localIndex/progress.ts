@@ -99,35 +99,20 @@ export function mountProgressUI(container: HTMLElement = document.body): Progres
     `<span>Skypiea</span>`;
   wordmarkWrap.appendChild(wordmark);
 
-  // UnlockScreen.tsx's button (px-3 py-2, containing a fs-5 icon beside a
-  // two-line lh-sm text block) has no equivalent action here -- there's
-  // nothing to click while verifying -- but it still occupies real layout
-  // height there, which this file used to just skip. Since both screens
-  // center their box vertically as a whole, skipping it made this box
-  // shorter than the real one, which shifted the wordmark down from where
-  // it sits on Unlock (a real, empirically-confirmed few-dozen-px gap, not
-  // a rounding error). This placeholder reserves that same height (py-2's
-  // 0.5rem top/bottom padding + the two lh-sm(1.25) small (0.875rem)
-  // lines' content height, 2 * 0.875 * 1.25 = 2.1875rem) so the wordmark
-  // ends up at the same position as Unlock's -- but rather than sitting
-  // empty with the spinner shown further down in the status block below
-  // (correct for matching Unlock's own during-unlock layout, but odd here,
-  // since this screen has no button to spin in place of), the spinner
-  // itself sits centered in this slot -- there's nothing else this screen
-  // could show in the button's place anyway.
-  const spinnerSlot = document.createElement("div");
-  spinnerSlot.style.cssText = "height: 3.1875rem; display: flex; align-items: center; justify-content: center;"; // 0.5rem + 0.5rem + 2.1875rem
-
-  // Matches `spinner-border spinner-border-sm text-primary` exactly: 1rem
-  // square, 0.2em border, the trailing edge transparent (Bootstrap's
+  // Matches `spinner-border spinner-border-sm text-primary mb-1` exactly:
+  // 1rem square, 0.2em border, the trailing edge transparent (Bootstrap's
   // actual technique for the spin, not a plain two-tone ring), 0.75s linear.
+  // Sits directly under the wordmark -- the same slot Unlock's own button
+  // occupies -- rather than further down past an empty reservation for
+  // that button's height (see trailingSpacer below for where that
+  // reservation actually goes instead): there's nothing to click while
+  // verifying, so the spinner may as well sit where the button would.
   const spinner = document.createElement("div");
   spinner.setAttribute("role", "status");
   spinner.setAttribute("aria-label", "Verifying");
   spinner.style.cssText =
-    "display: inline-block; width: 1rem; height: 1rem; border-radius: 50%; " +
+    "display: inline-block; width: 1rem; height: 1rem; margin-bottom: 0.25rem; border-radius: 50%; " +
     `border: 0.2em solid ${BRASS}; border-right-color: transparent; animation: boot-spin 0.75s linear infinite;`;
-  spinnerSlot.appendChild(spinner);
 
   const styles = document.createElement("style");
   styles.textContent =
@@ -138,12 +123,12 @@ export function mountProgressUI(container: HTMLElement = document.body): Progres
     ".boot-wordmark { font-size: calc(1.325rem + 0.9vw); } " +
     "@media (min-width: 1200px) { .boot-wordmark { font-size: 2rem; } }";
 
-  // Matches UnlockScreen.tsx's `mt-4 d-flex flex-column align-items-center
-  // gap-1` progress block's own margin -- minus the spinner it'd otherwise
-  // lead with, which now lives in spinnerSlot above instead.
+  // Matches UnlockScreen.tsx's `d-flex flex-column align-items-center
+  // gap-1` progress block exactly -- spinner immediately followed by its
+  // step counter/label, same 0.25rem gap-1 (plus the spinner's own
+  // mb-1 above) Unlock itself uses, not a wider one.
   const progress = document.createElement("div");
-  progress.style.cssText =
-    "margin-top: 1.5rem; display: flex; flex-direction: column; align-items: center; gap: 0.25rem;";
+  progress.style.cssText = "display: flex; flex-direction: column; align-items: center; gap: 0.25rem;";
 
   // Matches `small text-body-secondary` (0.875rem, Bootstrap's secondary text color).
   const stepCounter = document.createElement("div");
@@ -153,7 +138,25 @@ export function mountProgressUI(container: HTMLElement = document.body): Progres
   const stepLabel = document.createElement("div");
   stepLabel.style.cssText = `font-size: 0.875rem; color: ${SECONDARY_COLOR};`;
 
-  progress.append(stepCounter, stepLabel);
+  progress.append(spinner, stepCounter, stepLabel);
+
+  // UnlockScreen.tsx's button (px-3 py-2, containing a fs-5 icon beside a
+  // two-line lh-sm text block) plus its status block's own mt-4 have no
+  // equivalent here -- there's nothing to click while verifying, and the
+  // spinner already stands in for the button above -- but they still
+  // occupy real layout height on Unlock, which this file used to just
+  // skip. Since both screens center their box vertically as a whole,
+  // skipping it made this box shorter than the real one, which shifted
+  // the wordmark down from where it sits on Unlock (a real, empirically-
+  // confirmed few-dozen-px gap, not a rounding error). This invisible,
+  // trailing spacer reserves that same height (button: 0.5rem + 0.5rem
+  // padding + 2 * 0.875rem * 1.25 lh-sm content = 3.1875rem; status
+  // block's own mt-4 = 1.5rem; total 4.6875rem) after the visible content
+  // instead of wedged in the middle of it, so the spinner/text keep
+  // their natural tight spacing and the wordmark still ends up at the
+  // same position as Unlock's.
+  const trailingSpacer = document.createElement("div");
+  trailingSpacer.style.cssText = "height: 4.6875rem;";
 
   // Matches `alert alert-danger mt-4` exactly (Bootstrap's own alert-danger
   // palette/padding/border-radius), shown in place of the progress block on
@@ -166,7 +169,13 @@ export function mountProgressUI(container: HTMLElement = document.body): Progres
     "font-size: 0.875rem; white-space: pre-wrap; text-align: left;";
   error.hidden = true;
 
-  inner.append(wordmarkWrap, spinnerSlot, styles, progress, error);
+  // trailingSpacer comes after error, not before it -- its whole point is
+  // invisible reserved height for centering purposes, and sitting between
+  // progress and error would show up as a large, real gap above the error
+  // message on failure (error has no layout height at all while hidden,
+  // so trailingSpacer's own position doesn't affect the loading-state
+  // total either way).
+  inner.append(wordmarkWrap, styles, progress, error, trailingSpacer);
   root.appendChild(inner);
   container.appendChild(root);
 
