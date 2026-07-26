@@ -66,7 +66,7 @@ function CreateUserForm({
           <input
             id="manage-new-username"
             type="text"
-            className="form-control form-control-sm themed-control"
+            className="form-control themed-control"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             required
@@ -76,7 +76,7 @@ function CreateUserForm({
           <input
             id="manage-new-password"
             type="password"
-            className="form-control form-control-sm themed-control"
+            className="form-control themed-control"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
@@ -86,7 +86,7 @@ function CreateUserForm({
           <input
             id="manage-new-display-name"
             type="text"
-            className="form-control form-control-sm themed-control"
+            className="form-control themed-control"
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
             required
@@ -96,13 +96,13 @@ function CreateUserForm({
           <input
             id="manage-new-user-token"
             type="text"
-            className="form-control form-control-sm themed-control"
+            className="form-control themed-control"
             value={userTursoAuthToken}
             onChange={(e) => setUserTursoAuthToken(e.target.value)}
             required
           />
         </FormField>
-        <button type="submit" className="btn btn-sm btn-primary mt-1" disabled={busy}>
+        <button type="submit" className="btn btn-primary mt-1" disabled={busy}>
           Create user
         </button>
         {error && <div className="text-danger small mt-2">{error}</div>}
@@ -162,13 +162,13 @@ function EditUserPanel({ session, userId, onClose }: { session: VaultSession; us
             <input
               id="manage-edit-password"
               type="password"
-              className="form-control form-control-sm themed-control"
+              className="form-control themed-control"
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
               required
             />
           </FormField>
-          <button type="submit" className="btn btn-sm btn-primary" disabled={resetBusy}>
+          <button type="submit" className="btn btn-primary" disabled={resetBusy}>
             Save
           </button>
           {resetDone && <div className="text-success small mt-2">Password updated.</div>}
@@ -181,13 +181,13 @@ function EditUserPanel({ session, userId, onClose }: { session: VaultSession; us
             <input
               id="manage-edit-root-key"
               type="text"
-              className="form-control form-control-sm themed-control"
+              className="form-control themed-control"
               value={oldRootKey}
               onChange={(e) => setOldRootKey(e.target.value)}
               required
             />
           </FormField>
-          <button type="submit" className="btn btn-sm btn-primary" disabled={rotateBusy}>
+          <button type="submit" className="btn btn-primary" disabled={rotateBusy}>
             Rotate
           </button>
           {rotateError && <div className="text-danger small mt-2">{rotateError}</div>}

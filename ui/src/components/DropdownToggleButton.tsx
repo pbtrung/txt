@@ -25,7 +25,7 @@ export function DropdownToggleButton({
   return (
     <button
       type="button"
-      className={`btn btn-sm ${open ? "btn-primary" : "btn-outline-secondary border-primary"}${className ? ` ${className}` : ""}`}
+      className={`btn ${open ? "btn-primary" : "btn-outline-secondary border-primary"}${className ? ` ${className}` : ""}`}
       onClick={onClick}
       disabled={disabled}
       aria-expanded={open}

@@ -369,7 +369,7 @@ export function ReaderScreen() {
         className={`border-top align-items-center gap-2 gap-sm-3 ps-2 ps-sm-3 pe-3 py-2 d-sm-flex ${bottomBarHidden ? "d-none" : "d-flex"}`}
       >
         <select
-          className="form-select form-select-sm themed-control font-size-select"
+          className="form-select themed-control font-size-select"
           style={{ width: "4.25rem" }}
           value={fontSizePx}
           onChange={(event) => setFontSizePx(Number(event.target.value))}
@@ -391,7 +391,7 @@ export function ReaderScreen() {
         <div className="d-flex align-items-center gap-1">
           <button
             type="button"
-            className="btn btn-sm btn-link p-0 text-decoration-none"
+            className="btn btn-link p-0 text-decoration-none"
             onClick={previous}
             disabled={loading || currentPartNum <= 1}
             aria-label="Previous part"
@@ -405,7 +405,7 @@ export function ReaderScreen() {
               inputMode="numeric"
               pattern="[0-9]*"
               maxLength={partCountDigits}
-              className="form-control form-control-sm themed-control text-center"
+              className="form-control themed-control text-center"
               style={{ width: `calc(${partCountDigits}ch + 2rem)` }}
               value={partCountKnown ? partInput : "-"}
               disabled={loading || !partCountKnown}
@@ -424,7 +424,7 @@ export function ReaderScreen() {
 
           <button
             type="button"
-            className="btn btn-sm btn-link p-0 text-decoration-none"
+            className="btn btn-link p-0 text-decoration-none"
             onClick={next}
             disabled={loading || currentPartNum >= partCount}
             aria-label="Next part"

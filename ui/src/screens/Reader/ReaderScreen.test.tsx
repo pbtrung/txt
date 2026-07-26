@@ -85,10 +85,10 @@ describe("ReaderScreen", () => {
     expect(mobileAuthor).toHaveTextContent("L. E. Modesitt, Jr.");
   });
 
-  it("uses small (btn-sm) Previous/Next buttons, matching the top bar's buttons", () => {
+  it("uses medium-sized Previous/Next buttons, matching every other button in the app", () => {
     renderReader(baseResult());
-    expect(screen.getByRole("button", { name: /previous/i })).toHaveClass("btn-sm");
-    expect(screen.getByRole("button", { name: /next/i })).toHaveClass("btn-sm");
+    expect(screen.getByRole("button", { name: /previous/i })).not.toHaveClass("btn-sm");
+    expect(screen.getByRole("button", { name: /next/i })).not.toHaveClass("btn-sm");
   });
 
   describe("font size", () => {

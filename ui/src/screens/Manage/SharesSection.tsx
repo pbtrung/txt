@@ -59,7 +59,7 @@ function GrantShareForm({
         <FormField label="Txt" htmlFor="manage-grant-txt">
           <select
             id="manage-grant-txt"
-            className="form-select form-select-sm themed-control"
+            className="form-select themed-control"
             value={txtId}
             onChange={(e) => setTxtId(e.target.value)}
             required
@@ -78,13 +78,13 @@ function GrantShareForm({
           <input
             id="manage-grant-recipient"
             type="number"
-            className="form-control form-control-sm themed-control"
+            className="form-control themed-control"
             value={recipientUserId}
             onChange={(e) => setRecipientUserId(e.target.value)}
             required
           />
         </FormField>
-        <button type="submit" className="btn btn-sm btn-primary mt-1" disabled={busy}>
+        <button type="submit" className="btn btn-primary mt-1" disabled={busy}>
           Grant share
         </button>
         {error && <div className="text-danger small mt-2">{error}</div>}

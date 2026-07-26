@@ -69,7 +69,7 @@ function EditBookPanel({
           <input
             id="manage-book-title"
             type="text"
-            className="form-control form-control-sm themed-control"
+            className="form-control themed-control"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
           />
@@ -78,7 +78,7 @@ function EditBookPanel({
           <input
             id="manage-book-author"
             type="text"
-            className="form-control form-control-sm themed-control"
+            className="form-control themed-control"
             value={author}
             onChange={(e) => setAuthor(e.target.value)}
           />
@@ -87,7 +87,7 @@ function EditBookPanel({
           <input
             id="manage-book-publisher"
             type="text"
-            className="form-control form-control-sm themed-control"
+            className="form-control themed-control"
             value={publisher}
             onChange={(e) => setPublisher(e.target.value)}
           />
@@ -96,7 +96,7 @@ function EditBookPanel({
           <input
             id="manage-book-subjects"
             type="text"
-            className="form-control form-control-sm themed-control"
+            className="form-control themed-control"
             value={subjects}
             onChange={(e) => setSubjects(e.target.value)}
           />
@@ -104,13 +104,13 @@ function EditBookPanel({
         <FormField label="Description" htmlFor="manage-book-description">
           <textarea
             id="manage-book-description"
-            className="form-control form-control-sm themed-control"
+            className="form-control themed-control"
             rows={3}
             value={description}
             onChange={(e) => setDescription(e.target.value)}
           />
         </FormField>
-        <button type="submit" className="btn btn-sm btn-primary mt-1" disabled={busy}>
+        <button type="submit" className="btn btn-primary mt-1" disabled={busy}>
           Save
         </button>
         {error && <div className="text-danger small mt-2">{error}</div>}

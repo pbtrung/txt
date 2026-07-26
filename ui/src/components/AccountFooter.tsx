@@ -28,18 +28,21 @@ export function AccountFooter({
     <div className="border-top pt-2 mt-2 d-flex align-items-center justify-content-between gap-2">
       <span className="d-flex align-items-center gap-2 text-truncate">
         <i className="bi bi-person-circle text-body-secondary flex-shrink-0" aria-hidden="true" />
+        {/* No `small` here -- matches NavItem's own default (unstyled)
+            font-size, so the signed-in name reads at the same size as the
+            nav entries above it, not smaller. */}
         {manageLink ? (
-          <Link to="/manage" className="small text-truncate">
+          <Link to="/manage" className="text-truncate">
             {displayName}
           </Link>
         ) : (
-          <span className="small text-body-secondary text-truncate">{displayName}</span>
+          <span className="text-body-secondary text-truncate">{displayName}</span>
         )}
       </span>
       <span className="d-flex align-items-center gap-2 flex-shrink-0">
         <button
           type="button"
-          className="btn btn-sm btn-outline-secondary border-primary flex-shrink-0"
+          className="btn btn-outline-secondary border-primary flex-shrink-0"
           onClick={onRefresh}
           disabled={refreshing}
           aria-label={refreshAriaLabel}
@@ -53,7 +56,7 @@ export function AccountFooter({
         </button>
         <button
           type="button"
-          className="btn btn-sm btn-outline-secondary border-primary flex-shrink-0"
+          className="btn btn-outline-secondary border-primary flex-shrink-0"
           onClick={onLock}
           aria-label="Lock"
           title="Lock"

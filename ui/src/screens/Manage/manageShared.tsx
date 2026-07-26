@@ -134,7 +134,7 @@ export function ConfirmDeleteField({
     <div className="d-flex gap-2 align-items-center">
       <input
         type="text"
-        className="form-control form-control-sm themed-control"
+        className="form-control themed-control"
         style={{ maxWidth: "8rem" }}
         value={confirmText}
         onChange={(e) => onConfirmTextChange(e.target.value)}
@@ -142,7 +142,7 @@ export function ConfirmDeleteField({
       />
       <button
         type="button"
-        className="btn btn-sm btn-danger"
+        className="btn btn-danger"
         disabled={confirmText !== String(idToMatch) || busy}
         onClick={onConfirm}
       >
