@@ -289,7 +289,16 @@ export interface BookMetadataEdits {
 
 /** Admin Manage screen: overwrites one txt's curated metadata fields,
  * preserving its ingested `name` and any other OPF/Calibre field verbatim.
- * Throws if there's no existing txt_metadata entry for txtId at all. */
+ * Throws if there's no existing txt_metadata entry for txtId at all.
+ * Returns the updated entry's BookInfo directly (derived from the same
+ * in-memory content this just wrote) rather than making the caller
+ * re-fetch+re-decrypt the whole txt_metadata object a second time just to
+ * read back the one entry it already has. `onProgress`, if given, is
+ * called once per real network phase (downloading the account's current
+ * txt_metadata object, then uploading it back with this edit folded in)
+ * so a caller can show something more specific than a bare spinner while
+ * this runs -- there's no small-step-count concept worth a "Step N of M"
+ * counter here, just the two labels themselves. */
 export async function saveBookMetadata(
   db: Client,
   userId: number,
@@ -298,7 +307,9 @@ export async function saveBookMetadata(
   r2Config: R2Config,
   txtId: number,
   edits: BookMetadataEdits,
-): Promise<void> {
+  onProgress?: (label: string) => void,
+): Promise<BookInfo> {
+  onProgress?.("Reading current metadata…");
   const state = await loadRawMetadataState(db, userId, umk, r2Client, r2Config);
   if (!state) {
     throw new Error(`no txt_metadata row for user_id=${userId}`);
@@ -319,8 +330,11 @@ export async function saveBookMetadata(
   else delete metadata.subject;
   setOrDelete("description", edits.description);
 
-  const nextContent = { ...state.content, [String(txtId)]: { name: existing.name, metadata } };
+  const nextEntry = { name: existing.name, metadata };
+  const nextContent = { ...state.content, [String(txtId)]: nextEntry };
+  onProgress?.("Uploading changes…");
   await persistMetadataContent(db, userId, state.txtMetadataKey, nextContent, state.rawPath, r2Client, r2Config);
+  return toBookInfo(txtId, nextEntry);
 }
 
 /** Admin Manage screen: removes one txt's entry entirely (its txt row is

@@ -29,7 +29,7 @@ function EditBookPanel({
   onClose,
 }: {
   book: BookInfo;
-  onSaved: (edits: BookMetadataFormValues) => Promise<void>;
+  onSaved: (edits: BookMetadataFormValues, onProgress: (label: string) => void) => Promise<void>;
   onClose: () => void;
 }) {
   const [title, setTitle] = useState(book.title);
@@ -38,32 +38,41 @@ function EditBookPanel({
   const [subjects, setSubjects] = useState(book.subjects.join(", "));
   const [description, setDescription] = useState(book.description ?? "");
   const [busy, setBusy] = useState(false);
+  // What saveBookMetadata is doing right now (its own download-then-upload
+  // phases) -- shown beside the Save button's spinner instead of leaving
+  // it a silent, disabled button for however long that round-trip takes.
+  const [progressLabel, setProgressLabel] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setBusy(true);
     setError(null);
+    setProgressLabel(null);
     try {
-      await onSaved({
-        title: title.trim() || undefined,
-        author: author.trim() || undefined,
-        publisher: publisher.trim() || undefined,
-        subjects: subjects
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean),
-        description: description.trim() || undefined,
-      });
+      await onSaved(
+        {
+          title: title.trim() || undefined,
+          author: author.trim() || undefined,
+          publisher: publisher.trim() || undefined,
+          subjects: subjects
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean),
+          description: description.trim() || undefined,
+        },
+        setProgressLabel,
+      );
     } catch (err) {
       setError(errorMessage(err));
     } finally {
       setBusy(false);
+      setProgressLabel(null);
     }
   }
 
   return (
-    <Modal title={`Edit metadata -- ${book.title}`} onClose={onClose}>
+    <Modal title={`Edit: ${book.title}`} onClose={onClose}>
       <form onSubmit={(e) => void handleSubmit(e)} style={FORM_WIDTH}>
         <FormField label="Title" htmlFor="manage-book-title">
           <input
@@ -110,9 +119,13 @@ function EditBookPanel({
             onChange={(e) => setDescription(e.target.value)}
           />
         </FormField>
-        <button type="submit" className="btn btn-primary mt-1" disabled={busy}>
-          Save
-        </button>
+        <div className="d-flex align-items-center gap-2 mt-1">
+          <button type="submit" className="btn btn-primary d-flex align-items-center gap-2" disabled={busy}>
+            {busy && <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true" />}
+            Save
+          </button>
+          {busy && progressLabel && <span className="small text-body-secondary">{progressLabel}</span>}
+        </div>
         {error && <div className="text-danger small mt-2">{error}</div>}
       </form>
     </Modal>
@@ -201,8 +214,8 @@ export function BooksSection({
       {mode === "edit" && selectedBook && (
         <EditBookPanel
           book={selectedBook.info}
-          onSaved={async (edits) => {
-            await updateBookMetadata(selectedBook.txtId, edits);
+          onSaved={async (edits, onProgress) => {
+            await updateBookMetadata(selectedBook.txtId, edits, onProgress);
             onSetMode("none");
           }}
           onClose={() => onSetMode("none")}

@@ -307,7 +307,7 @@ describe("saveBookMetadata", () => {
 
     const { db, calls } = fakeClientWithCapture({ txt_metadata_key: keyBlob.buffer, content: pathBlob.buffer });
 
-    await saveBookMetadata(db, 42, umk, r2Client, r2Config, 7, {
+    const returned = await saveBookMetadata(db, 42, umk, r2Client, r2Config, 7, {
       title: "New Title",
       author: undefined,
       publisher: "Pub",
@@ -317,6 +317,22 @@ describe("saveBookMetadata", () => {
 
     expect(r2.putObject).toHaveBeenCalledWith(r2Client, r2Config, "existing-path", expect.anything());
     expect(calls.some((c) => c.sql.startsWith("UPDATE"))).toBe(false);
+
+    // The returned BookInfo reflects the same edits just persisted --
+    // callers (VaultContext's updateBookMetadata) rely on this instead of
+    // re-fetching+re-decrypting the whole txt_metadata object a second
+    // time just to read one entry back.
+    expect(returned).toEqual(
+      expect.objectContaining({
+        txtId: 7,
+        title: "New Title",
+        author: undefined,
+        publisher: "Pub",
+        subjects: ["A", "B"],
+        description: "Desc",
+        series: "Saga",
+      }),
+    );
 
     const decrypted = await blob.decrypt(txtMetadataKey, putBody!, true);
     const nextContent = JSON.parse(new TextDecoder().decode(decrypted));

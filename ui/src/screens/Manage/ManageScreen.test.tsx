@@ -266,6 +266,7 @@ describe("ManageScreen", () => {
         expect(updateBookMetadata).toHaveBeenCalledWith(
           1,
           expect.objectContaining({ title: "New Title", author: "Author One", subjects: ["A"] }),
+          expect.any(Function),
         ),
       );
     });

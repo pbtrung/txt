@@ -27,7 +27,6 @@ import { createDb } from "../data/db";
 import { createR2Client, deleteObject } from "../data/r2";
 import { parseCreds, type Creds } from "../data/creds";
 import {
-  getBookInfo,
   loadTxtMetadata,
   removeTxtMetadataEntry,
   saveBookMetadata,
@@ -104,8 +103,9 @@ export interface VaultContextValue {
   /** Admin Manage screen: overwrites one of the admin's own txt's curated
    * metadata fields (data/metadata.ts's saveBookMetadata), then refreshes
    * its entry in the in-memory metadataById. Requires a write-capable
-   * r2Client. */
-  updateBookMetadata: (txtId: number, edits: BookMetadataEdits) => Promise<void>;
+   * r2Client. `onProgress`, if given, is forwarded to saveBookMetadata --
+   * see its own doc comment. */
+  updateBookMetadata: (txtId: number, edits: BookMetadataEdits, onProgress?: (label: string) => void) => Promise<void>;
 }
 
 const VaultContext = createContext<VaultContextValue | null>(null);
@@ -414,10 +414,18 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   );
 
   const updateBookMetadata = useCallback(
-    async (txtId: number, edits: BookMetadataEdits) => {
+    async (txtId: number, edits: BookMetadataEdits, onProgress?: (label: string) => void) => {
       if (!session) throw new Error("vault is locked");
       await enqueueMutation(async () => {
-        await saveBookMetadata(
+        // saveBookMetadata already derives the updated BookInfo from the
+        // same in-memory content it just wrote (via toBookInfo) -- a
+        // second getBookInfo() call here used to re-fetch and re-decrypt
+        // this account's *entire* txt_metadata object all over again just
+        // to read back the one entry already sitting in hand, doubling
+        // this save's R2 round-trip for no reason (the real source of
+        // "Edit -> Save is slow" for any account with more than a
+        // handful of books).
+        const nextInfo = await saveBookMetadata(
           session.db,
           session.userId,
           session.umk,
@@ -425,21 +433,10 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           session.r2Config,
           txtId,
           edits,
-        );
-        // Re-reads rather than patching the in-memory BookInfo by hand, so
-        // title/rawMetadata/etc. stay derived the same way toBookInfo()
-        // already does it, instead of a second, easily-drifting copy of
-        // that logic living here too.
-        const nextInfo = await getBookInfo(
-          session.db,
-          session.userId,
-          session.umk,
-          session.r2Client,
-          session.r2Config,
-          txtId,
+          onProgress,
         );
         setSession((prev) => {
-          if (!prev || !nextInfo) return prev;
+          if (!prev) return prev;
           const nextMetadataById = new Map(prev.metadataById);
           nextMetadataById.set(txtId, nextInfo);
           return { ...prev, metadataById: nextMetadataById };
