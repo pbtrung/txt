@@ -100,18 +100,17 @@ export function ManageScreen() {
   }, [session]);
 
   const books = useMemo(() => (session ? Array.from(session.metadataById.values()) : []), [session]);
-  const ownTxtIds = useMemo(() => (session ? Array.from(session.metadataById.keys()) : []), [session]);
 
   const [shares, setShares] = useState<ShareEntry[] | null>(null);
   const [sharesError, setSharesError] = useState<string | null>(null);
   const loadShares = useCallback(async () => {
     if (!session) return;
     try {
-      setShares(await listShares(session.db, ownTxtIds));
+      setShares(await listShares(session.db));
     } catch (err) {
       setSharesError(errorMessage(err));
     }
-  }, [session, ownTxtIds]);
+  }, [session]);
 
   // The first load (only -- Create/Edit/Delete's own onChanged and
   // handleRefresh below reload a single list directly, without this gate)
@@ -138,7 +137,7 @@ export function ManageScreen() {
     };
     // Keyed on `session` alone -- this should only re-run for a genuinely
     // new session (a fresh unlock), not every time loadUsers/loadShares
-    // are recreated (e.g. ownTxtIds changing after a refresh).
+    // themselves are recreated.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
 

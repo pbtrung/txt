@@ -13,17 +13,10 @@ function rowsResult(rows: Record<string, unknown>[]) {
 }
 
 describe("listShares", () => {
-  it("returns [] without querying at all when the admin has no txt yet", async () => {
-    const execute = vi.fn();
-    const db = { execute } as unknown as Client;
-    expect(await adminShares.listShares(db, [])).toEqual([]);
-    expect(execute).not.toHaveBeenCalled();
-  });
-
-  it("lists shares scoped to the given txt ids", async () => {
+  it("lists every share, unfiltered -- only the admin ever owns/shares txt", async () => {
     const execute = vi.fn(async ({ sql, args }: { sql: string; args?: unknown[] }) => {
-      expect(sql).toContain("txt_id IN (?, ?)");
-      expect(args).toEqual([7, 9]);
+      expect(sql).toBe("SELECT id, txt_id, to_user_id FROM txt_shares");
+      expect(args).toEqual([]);
       return rowsResult([
         { id: 1, txt_id: 7, to_user_id: 3 },
         { id: 2, txt_id: 9, to_user_id: 4 },
@@ -31,7 +24,7 @@ describe("listShares", () => {
     });
     const db = { execute } as unknown as Client;
 
-    const shares = await adminShares.listShares(db, [7, 9]);
+    const shares = await adminShares.listShares(db);
 
     expect(shares).toEqual([
       { id: 1, txtId: 7, toUserId: 3 },

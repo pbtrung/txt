@@ -26,16 +26,14 @@ export interface ShareEntry {
   toUserId: number;
 }
 
-/** Every share grant on any of the admin's own txt (ownTxtIds). Empty
- * without querying at all if the admin has no txt yet, since an empty SQL
- * `IN ()` isn't valid. */
-export async function listShares(db: Client, ownTxtIds: number[]): Promise<ShareEntry[]> {
-  if (ownTxtIds.length === 0) return [];
-  const placeholders = ownTxtIds.map(() => "?").join(", ");
-  const result = await db.execute({
-    sql: `SELECT id, txt_id, to_user_id FROM txt_shares WHERE txt_id IN (${placeholders})`,
-    args: ownTxtIds,
-  });
+/** Every share grant -- unfiltered, not scoped to a caller-supplied txt id
+ * list: only the admin ever owns/shares txt at all (see file header), so
+ * every txt_shares row already belongs to the admin's own txt by
+ * construction. Filtering by `WHERE txt_id IN (...)` would just repeat
+ * that same true-for-every-row condition back at the database, growing a
+ * huge parameter list for nothing as the admin's library grows. */
+export async function listShares(db: Client): Promise<ShareEntry[]> {
+  const result = await db.execute({ sql: "SELECT id, txt_id, to_user_id FROM txt_shares", args: [] });
   return result.rows.map((row) => ({
     id: Number(row.id),
     txtId: Number(row.txt_id),
