@@ -1,10 +1,12 @@
 // The nav's account footer -- person icon, display name, Refresh/Lock --
 // pinned to the bottom of both Library's and Manage's left nav (the lg+
-// sidebar and the below-lg dropdown alike). Library's own name is a link
-// to /manage for an admin session (RequireAdmin guards the route itself;
-// this is just "don't offer it" for a regular user, not the real
-// enforcement); Manage's is always plain text, since that screen already
-// *is* where that link would go.
+// sidebar and the below-lg dropdown alike). Refresh/Lock render as one
+// merged Bootstrap button group (adjoining borders, no gap between them)
+// rather than two separately-spaced buttons. Library's own name is a
+// link to /manage for an admin session (RequireAdmin guards the route
+// itself; this is just "don't offer it" for a regular user, not the
+// real enforcement); Manage's is always plain text, since that screen
+// already *is* where that link would go.
 
 import { Link } from "react-router-dom";
 
@@ -39,10 +41,10 @@ export function AccountFooter({
           <span className="text-body-secondary text-truncate">{displayName}</span>
         )}
       </span>
-      <span className="d-flex align-items-center gap-2 flex-shrink-0">
+      <div className="btn-group flex-shrink-0" role="group" aria-label="Account actions">
         <button
           type="button"
-          className="btn btn-sm btn-outline-secondary border-primary flex-shrink-0"
+          className="btn btn-sm btn-outline-secondary border-primary"
           onClick={onRefresh}
           disabled={refreshing}
           aria-label={refreshAriaLabel}
@@ -56,14 +58,14 @@ export function AccountFooter({
         </button>
         <button
           type="button"
-          className="btn btn-sm btn-outline-secondary border-primary flex-shrink-0"
+          className="btn btn-sm btn-outline-secondary border-primary"
           onClick={onLock}
           aria-label="Lock"
           title="Lock"
         >
           <i className="bi bi-unlock text-primary" aria-hidden="true" />
         </button>
-      </span>
+      </div>
     </div>
   );
 }
