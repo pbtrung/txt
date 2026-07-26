@@ -48,6 +48,7 @@ const session: VaultContextModule.VaultSession = {
   r2Config: {} as never,
   r2Client: {} as never,
   metadataById,
+  rawMetadataState: null,
   txtAccessKey: new Uint8Array(64),
   bookmarkKey: new Uint8Array(64),
   isAdmin: false,

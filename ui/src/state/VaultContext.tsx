@@ -32,6 +32,7 @@ import {
   saveBookMetadata,
   type BookInfo,
   type BookMetadataEdits,
+  type RawMetadataState,
 } from "../data/metadata";
 import type { R2Config } from "../data/r2Config";
 import { verbose } from "../log";
@@ -69,6 +70,15 @@ export interface VaultSession {
   r2Config: R2Config;
   r2Client: AwsClient;
   metadataById: Map<number, BookInfo>;
+  /** The raw encrypted-content state metadataById was derived from --
+   * cached here (populated at unlock/refresh, kept in lockstep by
+   * updateBookMetadata/deleteTxt after every write of their own) purely so
+   * an edit or delete can skip re-fetching+re-decrypting+re-decompressing
+   * this account's entire txt_metadata R2 object a second time. Trusted
+   * only between explicit refreshes -- same tradeoff metadataById itself
+   * already makes for changes from outside this session (e.g. a
+   * concurrent --txt-ingest); see loadRawMetadataState's own comment. */
+  rawMetadataState: RawMetadataState | null;
   txtAccessKey: Uint8Array;
   bookmarkKey: Uint8Array;
   /** Whether creds.tursoAuthToken is an admin-shaped token (see
@@ -195,7 +205,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         // each a single row scoped to this user.
         setProgress(phaseProgress(UNLOCK_PHASES, 2));
         verbose("unlock: loading txt metadata");
-        const metadataById = await loadTxtMetadata(db, userId, umk, r2Client, r2Config);
+        const { state: rawMetadataState, metadataById } = await loadTxtMetadata(db, userId, umk, r2Client, r2Config);
         setProgress(phaseProgress(UNLOCK_PHASES, 3));
         verbose("unlock: loading access map");
         const { txtAccessKey, accessMap: initialAccessMap } = await loadOrInitAccess(db, userId, umk);
@@ -207,7 +217,19 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         setAccessMap(initialAccessMap);
         setBookmarksMap(initialBookmarksMap);
         const isAdmin = isAdminToken(creds.tursoAuthToken);
-        setSession({ creds, db, userId, umk, r2Config, r2Client, metadataById, txtAccessKey, bookmarkKey, isAdmin });
+        setSession({
+          creds,
+          db,
+          userId,
+          umk,
+          r2Config,
+          r2Client,
+          metadataById,
+          rawMetadataState,
+          txtAccessKey,
+          bookmarkKey,
+          isAdmin,
+        });
         setStatus("unlocked");
         setProgress(null);
         verbose("unlock: done");
@@ -245,7 +267,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     setProgress(phaseProgress(REFRESH_PHASES, 0));
     try {
       verbose("refresh: loading txt metadata");
-      const metadataById = await loadTxtMetadata(
+      const { state: rawMetadataState, metadataById } = await loadTxtMetadata(
         session.db,
         session.userId,
         session.umk,
@@ -267,7 +289,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         session.umk,
       );
 
-      setSession((prev) => (prev ? { ...prev, metadataById, txtAccessKey, bookmarkKey } : prev));
+      setSession((prev) => (prev ? { ...prev, metadataById, rawMetadataState, txtAccessKey, bookmarkKey } : prev));
       setAccessMap(nextAccessMap);
       setBookmarksMap(nextBookmarksMap);
       verbose("refresh: done");
@@ -377,13 +399,15 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         const rawPaths = await partRawPaths(session.db, txtId, txtKey);
         await Promise.all(rawPaths.map((rawPath) => deleteObject(session.r2Client, session.r2Config, rawPath)));
         await deleteTxtRows(session.db, txtId);
-        await removeTxtMetadataEntry(
+        const nextRawMetadataState = await removeTxtMetadataEntry(
           session.db,
           session.userId,
           session.umk,
           session.r2Client,
           session.r2Config,
           txtId,
+          undefined,
+          session.rawMetadataState,
         );
         const nextAccess = await removeAccessEntryData(
           session.db,
@@ -406,7 +430,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           if (!prev) return prev;
           const nextMetadataById = new Map(prev.metadataById);
           nextMetadataById.delete(txtId);
-          return { ...prev, metadataById: nextMetadataById };
+          return { ...prev, metadataById: nextMetadataById, rawMetadataState: nextRawMetadataState };
         });
       });
     },
@@ -422,10 +446,13 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         // second getBookInfo() call here used to re-fetch and re-decrypt
         // this account's *entire* txt_metadata object all over again just
         // to read back the one entry already sitting in hand, doubling
-        // this save's R2 round-trip for no reason (the real source of
-        // "Edit -> Save is slow" for any account with more than a
-        // handful of books).
-        const nextInfo = await saveBookMetadata(
+        // this save's R2 round-trip for no reason (the original source of
+        // "Edit -> Save is slow" for any account with more than a handful
+        // of books). Passing the session's own cached rawMetadataState in
+        // goes further: saveBookMetadata skips re-fetching it at all
+        // (rather than just not fetching it *twice*), so only its
+        // "Uploading changes" phase ever actually hits the network here.
+        const { info, state } = await saveBookMetadata(
           session.db,
           session.userId,
           session.umk,
@@ -434,12 +461,13 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           txtId,
           edits,
           onProgress,
+          session.rawMetadataState,
         );
         setSession((prev) => {
           if (!prev) return prev;
           const nextMetadataById = new Map(prev.metadataById);
-          nextMetadataById.set(txtId, nextInfo);
-          return { ...prev, metadataById: nextMetadataById };
+          nextMetadataById.set(txtId, info);
+          return { ...prev, metadataById: nextMetadataById, rawMetadataState: state };
         });
       });
     },

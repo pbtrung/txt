@@ -42,13 +42,13 @@ describe("loadTxtMetadata", () => {
     const umk = new Uint8Array(64).fill(1);
     const keyBlob = await blob.encrypt(umk, new Uint8Array(64).fill(2));
     const db = fakeClient({ txt_metadata_key: keyBlob.buffer, content: null });
-    const result = await loadTxtMetadata(db, 42, umk, r2Client, r2Config);
+    const { metadataById: result } = await loadTxtMetadata(db, 42, umk, r2Client, r2Config);
     expect(result.size).toBe(0);
   });
 
   it("returns an empty map when there is no txt_metadata row at all", async () => {
     const db = fakeClient(undefined);
-    const result = await loadTxtMetadata(db, 42, new Uint8Array(64), r2Client, r2Config);
+    const { metadataById: result } = await loadTxtMetadata(db, 42, new Uint8Array(64), r2Client, r2Config);
     expect(result.size).toBe(0);
   });
 
@@ -67,7 +67,7 @@ describe("loadTxtMetadata", () => {
     vi.mocked(r2.getObject).mockResolvedValue(body);
 
     const db = fakeClient({ txt_metadata_key: keyBlob.buffer, content: pathBlob.buffer });
-    const result = await loadTxtMetadata(db, 42, umk, r2Client, r2Config);
+    const { metadataById: result } = await loadTxtMetadata(db, 42, umk, r2Client, r2Config);
 
     expect(r2.getObject).toHaveBeenCalledWith(r2Client, r2Config, "some-raw-path");
     expect(result.get(3)?.name).toBe("short.txt");
@@ -87,7 +87,7 @@ describe("loadTxtMetadata", () => {
     vi.mocked(r2.getObject).mockResolvedValue(body);
 
     const db = fakeClient({ txt_metadata_key: keyBlob.buffer, content: pathBlob.buffer });
-    const result = await loadTxtMetadata(db, 42, umk, r2Client, r2Config);
+    const { metadataById: result } = await loadTxtMetadata(db, 42, umk, r2Client, r2Config);
 
     expect(result.get(5)?.name).toBe("uncompressed-body.txt");
   });
@@ -119,7 +119,7 @@ describe("loadTxtMetadata", () => {
     });
 
     const db = fakeClient({ txt_metadata_key: keyBlob.buffer, content: contentBlob.buffer });
-    const result = await loadTxtMetadata(db, 42, umk, r2Client, r2Config);
+    const { metadataById: result } = await loadTxtMetadata(db, 42, umk, r2Client, r2Config);
 
     expect(result.size).toBe(2);
     expect(result.get(7)).toEqual({
@@ -175,7 +175,7 @@ describe("loadTxtMetadata", () => {
     });
 
     const db = fakeClient({ txt_metadata_key: keyBlob.buffer, content: contentBlob.buffer });
-    const result = await loadTxtMetadata(db, 42, umk, r2Client, r2Config);
+    const { metadataById: result } = await loadTxtMetadata(db, 42, umk, r2Client, r2Config);
 
     expect(result.get(9)?.rawMetadata).toEqual([
       { key: "title", values: ["Some Book"] },
@@ -202,7 +202,7 @@ describe("loadTxtMetadata", () => {
         compressed: true,
       });
       const db = fakeClient({ txt_metadata_key: keyBlob.buffer, content: contentBlob.buffer });
-      const result = await loadTxtMetadata(db, 42, umk, r2Client, r2Config);
+      const { metadataById: result } = await loadTxtMetadata(db, 42, umk, r2Client, r2Config);
       return result.get(1)?.rawMetadata ?? [];
     }
 
@@ -254,7 +254,7 @@ describe("loadTxtMetadata", () => {
     });
 
     const db = fakeClient({ txt_metadata_key: keyBlob.buffer, content: contentBlob.buffer });
-    const result = await loadTxtMetadata(db, 42, umk, r2Client, r2Config);
+    const { metadataById: result } = await loadTxtMetadata(db, 42, umk, r2Client, r2Config);
 
     expect(result.get(1)?.rawMetadata).toEqual([{ key: "title", values: ["Some Book"] }]);
   });
@@ -322,7 +322,7 @@ describe("saveBookMetadata", () => {
     // callers (VaultContext's updateBookMetadata) rely on this instead of
     // re-fetching+re-decrypting the whole txt_metadata object a second
     // time just to read one entry back.
-    expect(returned).toEqual(
+    expect(returned.info).toEqual(
       expect.objectContaining({
         txtId: 7,
         title: "New Title",
@@ -333,6 +333,21 @@ describe("saveBookMetadata", () => {
         series: "Saga",
       }),
     );
+
+    // The returned RawMetadataState reflects the same write too -- callers
+    // (VaultContext) cache this so the *next* edit can skip re-fetching
+    // entirely, not just avoid a second fetch within the same call.
+    expect(returned.state.rawPath).toBe("existing-path");
+    expect(returned.state.content["7"]).toEqual({
+      name: "book.txt",
+      metadata: {
+        title: "New Title",
+        publisher: "Pub",
+        subject: ["A", "B"],
+        description: "Desc",
+        "calibre:series": "Saga",
+      },
+    });
 
     const decrypted = await blob.decrypt(txtMetadataKey, putBody!, true);
     const nextContent = JSON.parse(new TextDecoder().decode(decrypted));
@@ -398,6 +413,38 @@ describe("saveBookMetadata", () => {
       "no txt_metadata entry for txt_id=7",
     );
   });
+
+  it("skips re-fetching entirely when a cachedState is given -- the actual point of caching it", async () => {
+    const umk = new Uint8Array(64).fill(1);
+    const txtMetadataKey = new Uint8Array(64).fill(4);
+    const cachedState = {
+      txtMetadataKey,
+      content: { "7": { name: "book.txt", metadata: { title: "Old Title" } } },
+      rawPath: "cached-path",
+    };
+    const execute = vi.fn();
+    const db = { execute } as unknown as Client;
+    const progressLabels: string[] = [];
+
+    const { info, state } = await saveBookMetadata(
+      db,
+      42,
+      umk,
+      r2Client,
+      r2Config,
+      7,
+      { title: "New Title", subjects: [] },
+      (label) => progressLabels.push(label),
+      cachedState,
+    );
+
+    expect(execute).not.toHaveBeenCalled(); // no DB read at all -- cachedState skipped it
+    expect(r2.getObject).not.toHaveBeenCalled();
+    expect(progressLabels).toEqual(["Uploading changes…"]); // no "Reading current metadata…" phase
+    expect(info.title).toBe("New Title");
+    expect(r2.putObject).toHaveBeenCalledWith(r2Client, r2Config, "cached-path", expect.anything());
+    expect(state.rawPath).toBe("cached-path");
+  });
 });
 
 describe("removeTxtMetadataEntry", () => {
@@ -444,5 +491,34 @@ describe("removeTxtMetadataEntry", () => {
     await removeTxtMetadataEntry(db, 42, umk, r2Client, r2Config, 7);
 
     expect(r2.putObject).not.toHaveBeenCalled();
+  });
+
+  it("skips re-fetching entirely when a cachedState is given", async () => {
+    const umk = new Uint8Array(64).fill(1);
+    const txtMetadataKey = new Uint8Array(64).fill(4);
+    const cachedState = {
+      txtMetadataKey,
+      content: { "7": { name: "book.txt" }, "8": { name: "other.txt" } },
+      rawPath: "cached-path",
+    };
+    const execute = vi.fn();
+    const db = { execute } as unknown as Client;
+    const progressLabels: string[] = [];
+
+    const state = await removeTxtMetadataEntry(
+      db,
+      42,
+      umk,
+      r2Client,
+      r2Config,
+      7,
+      (label) => progressLabels.push(label),
+      cachedState,
+    );
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(r2.getObject).not.toHaveBeenCalled();
+    expect(progressLabels).toEqual(["Uploading changes…"]);
+    expect(state?.content).toEqual({ "8": { name: "other.txt" } });
   });
 });

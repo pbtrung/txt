@@ -37,6 +37,7 @@ function mockVault(
     r2Config: {} as never,
     r2Client: {} as AwsClient,
     metadataById,
+    rawMetadataState: null,
     txtAccessKey: new Uint8Array(64),
     bookmarkKey: new Uint8Array(64),
     isAdmin: false,

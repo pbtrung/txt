@@ -149,7 +149,13 @@ function toBookInfo(txtId: number, entry: TxtMetadataEntry): BookInfo {
   };
 }
 
-interface RawMetadataState {
+/** Exported so VaultContext can cache this on the session (populated at
+ * unlock/refresh) and hand it back to saveBookMetadata/
+ * removeTxtMetadataEntry, letting an edit or delete skip re-fetching +
+ * re-decrypting + re-decompressing this account's whole txt_metadata R2
+ * object -- often the actual bottleneck, since it holds every book's
+ * metadata in one blob, not just the one being touched. */
+export interface RawMetadataState {
   txtMetadataKey: Uint8Array;
   content: Record<string, TxtMetadataEntry>;
   /** The current R2 raw_path, once migrated -- null if there's no content
@@ -176,8 +182,16 @@ async function tolerantDecryptJson(key: Uint8Array, body: Uint8Array): Promise<u
 
 /** Resolves this account's txt_metadata_key, decrypted content, and current
  * R2 raw_path (if any) -- the shared read path behind loadTxtMetadata and
- * every write below, so both agree on what "the current content" is and a
- * write always starts from a fresh read rather than stale in-memory state. */
+ * every write below. A write only re-fetches via this when its caller
+ * doesn't already have a cached RawMetadataState to hand back in (see
+ * saveBookMetadata/removeTxtMetadataEntry's own cachedState parameter) --
+ * trading a fresh-read guarantee for not re-downloading this account's
+ * entire metadata blob on every single edit. VaultContext is expected to
+ * keep its cached copy in lockstep with every save/delete it makes (and
+ * to only trust it between explicit refreshes), the same tradeoff already
+ * accepted for metadataById/accessMap/bookmarksMap not tracking changes
+ * made outside the current session (e.g. a concurrent --txt-ingest) until
+ * the next Refresh. */
 async function loadRawMetadataState(
   db: Client,
   userId: number,
@@ -209,35 +223,34 @@ async function loadRawMetadataState(
   return { txtMetadataKey, content, rawPath };
 }
 
-/** All of this account's book metadata, keyed by txt_id. Empty if the account has no txt yet. */
+export interface LoadedTxtMetadata {
+  /** Null only if this account has no txt_metadata row at all (no txt
+   * ingested yet) -- pass straight through as VaultContext's cached
+   * rawMetadataState. */
+  state: RawMetadataState | null;
+  metadataById: Map<number, BookInfo>;
+}
+
+/** All of this account's book metadata, keyed by txt_id (empty if the
+ * account has no txt yet), plus the raw state it was derived from --
+ * VaultContext caches that raw state on the session (populated here, at
+ * unlock/refresh) so a later edit/delete can reuse it instead of paying
+ * for this same fetch+decrypt+decompress all over again. */
 export async function loadTxtMetadata(
   db: Client,
   userId: number,
   umk: Uint8Array,
   r2Client: AwsClient,
   r2Config: R2Config,
-): Promise<Map<number, BookInfo>> {
+): Promise<LoadedTxtMetadata> {
   const state = await loadRawMetadataState(db, userId, umk, r2Client, r2Config);
-  if (!state) return new Map();
-  const byId = new Map<number, BookInfo>();
+  if (!state) return { state: null, metadataById: new Map() };
+  const metadataById = new Map<number, BookInfo>();
   for (const [txtIdStr, entry] of Object.entries(state.content)) {
     const txtId = Number(txtIdStr);
-    byId.set(txtId, toBookInfo(txtId, entry));
+    metadataById.set(txtId, toBookInfo(txtId, entry));
   }
-  return byId;
-}
-
-/** One book's metadata -- for the Reader, which only needs a single txt_id. */
-export async function getBookInfo(
-  db: Client,
-  userId: number,
-  umk: Uint8Array,
-  r2Client: AwsClient,
-  r2Config: R2Config,
-  txtId: number,
-): Promise<BookInfo | null> {
-  const byId = await loadTxtMetadata(db, userId, umk, r2Client, r2Config);
-  return byId.get(txtId) ?? null;
+  return { state, metadataById };
 }
 
 /** Persists `content` back to this account's txt_metadata: reuses the
@@ -253,7 +266,10 @@ export async function getBookInfo(
  * a pointer, the same class of harmless leftover this app already accepts
  * elsewhere (e.g. deleteTxt's orphaned part objects). Requires a
  * write-capable r2Client (see r2.ts's createR2Client) -- only ever true for
- * an admin session today (see docs/credentials.md). */
+ * an admin session today (see docs/credentials.md). Returns the raw_path
+ * this content actually ended up under (the given one, reused in place,
+ * or the freshly-established one), so a caller updating a cached
+ * RawMetadataState knows what to store for next time. */
 async function persistMetadataContent(
   db: Client,
   userId: number,
@@ -262,18 +278,19 @@ async function persistMetadataContent(
   rawPath: string | null,
   r2Client: AwsClient,
   r2Config: R2Config,
-): Promise<void> {
+): Promise<string> {
   const body = await blob.encrypt(txtMetadataKey, new TextEncoder().encode(JSON.stringify(content)), {
     compressed: true,
   });
   if (rawPath !== null) {
     await putObject(r2Client, r2Config, rawPath, body);
-    return;
+    return rawPath;
   }
   const newRawPath = base32.encode(randomBytes(c.RAW_PATH_LEN));
   await putObject(r2Client, r2Config, newRawPath, body);
   const pathBlob = await blob.encrypt(txtMetadataKey, new TextEncoder().encode(newRawPath));
   await db.execute({ sql: "UPDATE txt_metadata SET content = ? WHERE user_id = ?", args: [pathBlob, userId] });
+  return newRawPath;
 }
 
 /** The curated metadata fields the admin Manage screen's Books section lets
@@ -287,18 +304,33 @@ export interface BookMetadataEdits {
   description?: string;
 }
 
+export interface SavedBookMetadata {
+  info: BookInfo;
+  /** The RawMetadataState after this write -- callers caching one (see
+   * RawMetadataState's own doc comment) should replace their cached copy
+   * with this rather than the one they passed in, since content (and
+   * possibly rawPath, if this was the account's first-ever write)
+   * changed. */
+  state: RawMetadataState;
+}
+
 /** Admin Manage screen: overwrites one txt's curated metadata fields,
  * preserving its ingested `name` and any other OPF/Calibre field verbatim.
  * Throws if there's no existing txt_metadata entry for txtId at all.
  * Returns the updated entry's BookInfo directly (derived from the same
- * in-memory content this just wrote) rather than making the caller
- * re-fetch+re-decrypt the whole txt_metadata object a second time just to
- * read back the one entry it already has. `onProgress`, if given, is
- * called once per real network phase (downloading the account's current
- * txt_metadata object, then uploading it back with this edit folded in)
- * so a caller can show something more specific than a bare spinner while
- * this runs -- there's no small-step-count concept worth a "Step N of M"
- * counter here, just the two labels themselves. */
+ * in-memory content this just wrote), plus the RawMetadataState to cache
+ * for next time, rather than making the caller re-fetch+re-decrypt the
+ * whole txt_metadata object a second time just to read back the one entry
+ * it already has.
+ *
+ * `cachedState`, if given (including explicitly `null`, meaning "already
+ * confirmed this account has no txt_metadata row"), is used as-is instead
+ * of an `undefined` triggering a fresh fetch -- skipping the "Reading
+ * current metadata" phase entirely on any edit after the first per
+ * session. `onProgress`, if given, is called once per real network phase
+ * that actually runs (there's no small-step-count concept worth a
+ * "Step N of M" counter here, just the label itself) so a caller can show
+ * something more specific than a bare spinner while this runs. */
 export async function saveBookMetadata(
   db: Client,
   userId: number,
@@ -308,9 +340,15 @@ export async function saveBookMetadata(
   txtId: number,
   edits: BookMetadataEdits,
   onProgress?: (label: string) => void,
-): Promise<BookInfo> {
-  onProgress?.("Reading current metadata…");
-  const state = await loadRawMetadataState(db, userId, umk, r2Client, r2Config);
+  cachedState?: RawMetadataState | null,
+): Promise<SavedBookMetadata> {
+  let state: RawMetadataState | null;
+  if (cachedState !== undefined) {
+    state = cachedState;
+  } else {
+    onProgress?.("Reading current metadata…");
+    state = await loadRawMetadataState(db, userId, umk, r2Client, r2Config);
+  }
   if (!state) {
     throw new Error(`no txt_metadata row for user_id=${userId}`);
   }
@@ -333,14 +371,27 @@ export async function saveBookMetadata(
   const nextEntry = { name: existing.name, metadata };
   const nextContent = { ...state.content, [String(txtId)]: nextEntry };
   onProgress?.("Uploading changes…");
-  await persistMetadataContent(db, userId, state.txtMetadataKey, nextContent, state.rawPath, r2Client, r2Config);
-  return toBookInfo(txtId, nextEntry);
+  const nextRawPath = await persistMetadataContent(
+    db,
+    userId,
+    state.txtMetadataKey,
+    nextContent,
+    state.rawPath,
+    r2Client,
+    r2Config,
+  );
+  return {
+    info: toBookInfo(txtId, nextEntry),
+    state: { txtMetadataKey: state.txtMetadataKey, content: nextContent, rawPath: nextRawPath },
+  };
 }
 
 /** Admin Manage screen: removes one txt's entry entirely (its txt row is
  * being deleted). A no-op if there's no txt_metadata row, or no entry for
  * txtId, at all -- deleteTxt calls this unconditionally rather than
- * checking first. */
+ * checking first. Returns the RawMetadataState to cache for next time
+ * (null only if the account genuinely has no txt_metadata row at all) --
+ * same cachedState/onProgress behavior as saveBookMetadata. */
 export async function removeTxtMetadataEntry(
   db: Client,
   userId: number,
@@ -348,10 +399,28 @@ export async function removeTxtMetadataEntry(
   r2Client: AwsClient,
   r2Config: R2Config,
   txtId: number,
-): Promise<void> {
-  const state = await loadRawMetadataState(db, userId, umk, r2Client, r2Config);
-  if (!state || !(String(txtId) in state.content)) return;
+  onProgress?: (label: string) => void,
+  cachedState?: RawMetadataState | null,
+): Promise<RawMetadataState | null> {
+  let state: RawMetadataState | null;
+  if (cachedState !== undefined) {
+    state = cachedState;
+  } else {
+    onProgress?.("Reading current metadata…");
+    state = await loadRawMetadataState(db, userId, umk, r2Client, r2Config);
+  }
+  if (!state || !(String(txtId) in state.content)) return state;
   const nextContent = { ...state.content };
   delete nextContent[String(txtId)];
-  await persistMetadataContent(db, userId, state.txtMetadataKey, nextContent, state.rawPath, r2Client, r2Config);
+  onProgress?.("Uploading changes…");
+  const nextRawPath = await persistMetadataContent(
+    db,
+    userId,
+    state.txtMetadataKey,
+    nextContent,
+    state.rawPath,
+    r2Client,
+    r2Config,
+  );
+  return { txtMetadataKey: state.txtMetadataKey, content: nextContent, rawPath: nextRawPath };
 }

@@ -16,7 +16,6 @@ vi.mock("../data/owner", () => ({
 }));
 vi.mock("../data/metadata", () => ({
   loadTxtMetadata: vi.fn(),
-  getBookInfo: vi.fn(),
   saveBookMetadata: vi.fn(),
   removeTxtMetadataEntry: vi.fn(),
 }));
@@ -46,7 +45,7 @@ import * as r2 from "../data/r2";
  * unlock() now performs, so a successful-unlock test doesn't need to spell
  * this out every time. */
 function mockLibraryLoads() {
-  vi.mocked(metadata.loadTxtMetadata).mockResolvedValue(new Map());
+  vi.mocked(metadata.loadTxtMetadata).mockResolvedValue({ state: null, metadataById: new Map() });
   vi.mocked(accessData.loadOrInitAccess).mockResolvedValue({ txtAccessKey: new Uint8Array(64), accessMap: new Map() });
   vi.mocked(bookmarksData.loadOrInitBookmarks).mockResolvedValue({
     bookmarkKey: new Uint8Array(64),
@@ -158,7 +157,7 @@ describe("VaultProvider", () => {
       readOnlyAccessKeyId: "id",
       readOnlySecretAccessKey: "secret",
     });
-    vi.mocked(metadata.loadTxtMetadata).mockResolvedValue(new Map());
+    vi.mocked(metadata.loadTxtMetadata).mockResolvedValue({ state: null, metadataById: new Map() });
     let resolveAccess: (value: { txtAccessKey: Uint8Array; accessMap: AccessMap }) => void = () => {};
     vi.mocked(accessData.loadOrInitAccess).mockReturnValue(
       new Promise((resolve) => {
@@ -284,7 +283,7 @@ describe("VaultProvider", () => {
       readOnlySecretAccessKey: "secret",
     });
     const bookInfo = { txtId: 7, name: "book.txt", title: "Book", subjects: [], rawMetadata: [] } as BookInfo;
-    vi.mocked(metadata.loadTxtMetadata).mockResolvedValue(new Map([[7, bookInfo]]));
+    vi.mocked(metadata.loadTxtMetadata).mockResolvedValue({ state: null, metadataById: new Map([[7, bookInfo]]) });
     vi.mocked(accessData.loadOrInitAccess).mockResolvedValue({
       txtAccessKey: new Uint8Array(64),
       accessMap: new Map([[7, { lastPartNum: 1, lastAccessedMs: 100 }]]),
@@ -297,7 +296,7 @@ describe("VaultProvider", () => {
     vi.mocked(owner.unwrapTxtKey).mockResolvedValue(new Uint8Array(64).fill(9));
     vi.mocked(owner.partRawPaths).mockResolvedValue(["path-1", "path-2"]);
     vi.mocked(r2.deleteObject).mockResolvedValue(undefined);
-    vi.mocked(metadata.removeTxtMetadataEntry).mockResolvedValue(undefined);
+    vi.mocked(metadata.removeTxtMetadataEntry).mockResolvedValue(null);
     vi.mocked(accessData.removeAccessEntry).mockImplementation(async (_db, _userId, _key, currentMap, txtId) => {
       const next = new Map(currentMap);
       next.delete(txtId);
@@ -328,6 +327,8 @@ describe("VaultProvider", () => {
       expect.anything(),
       expect.anything(),
       7,
+      undefined,
+      null,
     );
     expect(accessData.removeAccessEntry).toHaveBeenCalledWith(
       expect.anything(),
@@ -406,7 +407,7 @@ describe("VaultProvider", () => {
       expect(result.current.bookmarksMap.size).toBe(0);
 
       const freshMetadata = new Map([[7, { txtId: 7 } as unknown as BookInfo]]);
-      vi.mocked(metadata.loadTxtMetadata).mockResolvedValue(freshMetadata);
+      vi.mocked(metadata.loadTxtMetadata).mockResolvedValue({ state: null, metadataById: freshMetadata });
       vi.mocked(accessData.loadOrInitAccess).mockResolvedValue({
         txtAccessKey: new Uint8Array(64),
         accessMap: new Map([[7, { lastPartNum: 3, lastAccessedMs: 1 }]]),
@@ -429,7 +430,7 @@ describe("VaultProvider", () => {
       const result = await unlockedResult();
       expect(result.current.refreshing).toBe(false);
 
-      let resolveMetadata: (value: Map<number, BookInfo>) => void = () => {};
+      let resolveMetadata: (value: metadata.LoadedTxtMetadata) => void = () => {};
       vi.mocked(metadata.loadTxtMetadata).mockReturnValue(
         new Promise((resolve) => {
           resolveMetadata = resolve;
@@ -443,7 +444,7 @@ describe("VaultProvider", () => {
       await waitFor(() => expect(result.current.refreshing).toBe(true));
 
       await act(async () => {
-        resolveMetadata(new Map());
+        resolveMetadata({ state: null, metadataById: new Map() });
         await refreshPromise;
       });
       expect(result.current.refreshing).toBe(false);
