@@ -325,12 +325,13 @@ export function LibraryScreen() {
                 bordered segment beside the input -- visually two joined
                 boxes, not one. */}
             <i
-              className="bi bi-search position-absolute top-50 start-0 translate-middle-y ms-3 text-body-secondary pe-none"
+              className="bi bi-search position-absolute top-50 start-0 translate-middle-y ms-2 text-body-secondary pe-none"
               aria-hidden="true"
             />
             <input
               type="search"
-              className="form-control form-control-sm themed-control ps-5"
+              className="form-control form-control-sm themed-control"
+              style={{ paddingLeft: "2rem" }}
               placeholder="Search library"
               value={search}
               onChange={(e) => setSearch(e.target.value)}

@@ -323,35 +323,38 @@ export function ManageScreen() {
               adjoining borders) instead of two separate ones sitting next
               to each other. The search icon itself stays an overlay inside
               the input's own padding (exactly Library's search box), not a
-              separate .input-group-text box -- position-relative here (not
-              on the input-group's own children, which need to stay flush
-              for its border-merging CSS to apply) anchors it. The icon has
-              to come *after* the input in the DOM, not before: input-group's
-              own CSS strips left-side border-radius from every child
-              that's ':not(:first-child)', so with the icon first the input
-              itself would count as the second child and lose its rounded
-              left corner; position:absolute on the icon lets it still
-              paint on the left visually regardless of DOM order. z-index 6
-              keeps it above the input, whose own :focus state jumps to
-              z-index 5 via input-group's own CSS (bootstrap.css's
-              `.input-group > .form-control:focus`), the one time it'd
-              otherwise cover the icon. */}
-          <div className="input-group search-bar-width position-relative">
-            <input
-              type="search"
-              className="form-control form-control-sm themed-control ps-5"
-              placeholder={`Search ${heading.toLowerCase()}`}
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              disabled={isLoadingGate}
-              aria-label={`Search ${heading.toLowerCase()}`}
-            />
+              separate .input-group-text box -- it's a sibling of
+              .input-group, not one of its children, specifically so it
+              can't affect that group's own first-/last-child border-radius
+              rules: with the icon rendered as a *child* of .input-group,
+              the input would lose its right corner's rounding whenever the
+              toolbar (its only sibling giving it a rounded right edge)
+              hides during a loading gate, since the icon would then become
+              the new last child instead. position-relative moves to this
+              outer wrapper so the icon can still overlay the input's left
+              padding regardless. z-index 6 keeps it above the input, whose
+              own :focus state jumps to z-index 5 via input-group's own CSS
+              (bootstrap.css's `.input-group > .form-control:focus`), the
+              one time it'd otherwise cover the icon. */}
+          <div className="search-bar-width position-relative">
+            <div className="input-group">
+              <input
+                type="search"
+                className="form-control form-control-sm themed-control"
+                style={{ paddingLeft: "2rem" }}
+                placeholder={`Search ${heading.toLowerCase()}`}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                disabled={isLoadingGate}
+                aria-label={`Search ${heading.toLowerCase()}`}
+              />
+              {!isLoadingGate && <ManageToolbar buttons={toolbarButtons} />}
+            </div>
             <i
-              className="bi bi-search position-absolute top-50 start-0 translate-middle-y ms-3 text-body-secondary pe-none"
+              className="bi bi-search position-absolute top-50 start-0 translate-middle-y ms-2 text-body-secondary pe-none"
               style={{ zIndex: 6 }}
               aria-hidden="true"
             />
-            {!isLoadingGate && <ManageToolbar buttons={toolbarButtons} />}
           </div>
         </div>
       </div>
@@ -390,7 +393,11 @@ export function ManageScreen() {
               />
             </div>
 
-            <div className="flex-grow-1 d-flex flex-column overflow-hidden" style={{ minWidth: 0 }}>
+            {/* pt-2 matches the sidebar's own p-2 top spacing, so the list
+                starts the same distance below the border-bottom line the
+                nav's own first item does -- there's no section heading
+                here anymore to provide that breathing room on its own. */}
+            <div className="flex-grow-1 d-flex flex-column overflow-hidden pt-2" style={{ minWidth: 0 }}>
               {usersError && section === "users" && (
                 <div className="alert alert-danger m-2 py-2 px-3" role="alert">
                   {usersError}
