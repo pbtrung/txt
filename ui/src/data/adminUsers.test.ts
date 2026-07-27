@@ -27,24 +27,15 @@ const ADMIN_R2_CONFIG: R2Config = {
   readOnlySecretAccessKey: "ro-secret",
 };
 
-describe("createUser", () => {
-  it("provisions every row, returning a downloadable credential JSON that round-trips", async () => {
-    const calls: { sql: string; args: unknown[] }[] = [];
-    const execute = vi.fn(async ({ sql, args }: { sql: string; args?: unknown[] }) => {
-      calls.push({ sql, args: args ?? [] });
-      if (sql.startsWith("INSERT INTO users")) {
-        return { ...emptyResult(), lastInsertRowid: 99n };
-      }
-      return emptyResult();
-    });
-    const db = { execute } as unknown as Client;
-
+describe("generateNewUser", () => {
+  it("computes a full account's credential material without touching a database", async () => {
     const adminUmk = new Uint8Array(64).fill(9);
-    const creds = await adminUsers.createUser(db, adminUmk, ADMIN_R2_CONFIG, {
+    const generated = await adminUsers.generateNewUser(adminUmk, ADMIN_R2_CONFIG, {
       tursoDatabaseUrl: "libsql://example",
       displayName: "Bob",
       userTursoAuthToken: "user-token",
     });
+    const creds = generated.downloadable;
 
     expect(creds.turso_database_url).toBe("libsql://example");
     expect(creds.turso_auth_token).toBe("user-token");
@@ -61,7 +52,72 @@ describe("createUser", () => {
     expect(usernameLookupKey.length).toBeGreaterThanOrEqual(32);
     expect(userRootKey.length).toBeGreaterThanOrEqual(256);
 
-    // 7 INSERTs, then the users.creds UPDATE asserted separately below.
+    // usernameHash matches HMAC(usernameLookupKey, username).
+    const expectedHash = await hmacSha3_256(usernameLookupKey, new TextEncoder().encode(creds.username));
+    expect(Array.from(generated.usernameHash)).toEqual(Array.from(expectedHash));
+
+    // umkBlob decrypts under the returned user_root_key.
+    const umk = await blob.decrypt(userRootKey, generated.umkBlob);
+    expect(umk.length).toBe(64);
+
+    // privKeyBlob decrypts under umk.
+    const priv = await blob.decrypt(umk, generated.privKeyBlob);
+    expect(priv.length).toBeGreaterThan(0);
+
+    // r2ConfigBlob decrypts under umk to the admin's read-only key values, no read_write fields.
+    const r2Plain = await blob.decrypt(umk, generated.r2ConfigBlob, true);
+    const r2Json = JSON.parse(new TextDecoder().decode(r2Plain));
+    expect(r2Json).toEqual({
+      endpoint: ADMIN_R2_CONFIG.endpoint,
+      region: ADMIN_R2_CONFIG.region,
+      bucket: ADMIN_R2_CONFIG.bucket,
+      read_only_access_key_id: ADMIN_R2_CONFIG.readOnlyAccessKeyId,
+      read_only_secret_access_key: ADMIN_R2_CONFIG.readOnlySecretAccessKey,
+    });
+    expect(r2Json.read_write_access_key_id).toBeUndefined();
+
+    // txtAccessKeyBlob/bookmarkKeyBlob: both start as an encrypted empty object.
+    for (const [keyBlob, emptyBlob] of [
+      [generated.txtAccessKeyBlob, generated.txtAccessEmptyBlob],
+      [generated.bookmarkKeyBlob, generated.bookmarkEmptyBlob],
+    ] as const) {
+      const key = await blob.decrypt(umk, keyBlob);
+      const value = await blob.decrypt(key, emptyBlob, true);
+      expect(JSON.parse(new TextDecoder().decode(value))).toEqual({});
+    }
+
+    // credsBlob: the downloadable credential JSON, wrapped under the
+    // *admin's* own umk (not the new user's).
+    const credsPlain = await blob.decrypt(adminUmk, generated.credsBlob, true);
+    expect(JSON.parse(new TextDecoder().decode(credsPlain))).toEqual(creds);
+  });
+});
+
+describe("persistNewUser", () => {
+  it("writes exactly the already-generated material -- 7 INSERTs, then the users.creds UPDATE -- with no crypto of its own", async () => {
+    const adminUmk = new Uint8Array(64).fill(9);
+    const generated = await adminUsers.generateNewUser(adminUmk, ADMIN_R2_CONFIG, {
+      tursoDatabaseUrl: "libsql://example",
+      displayName: "Bob",
+      userTursoAuthToken: "user-token",
+    });
+
+    const calls: { sql: string; args: unknown[] }[] = [];
+    const execute = vi.fn(async ({ sql, args }: { sql: string; args?: unknown[] }) => {
+      calls.push({ sql, args: args ?? [] });
+      if (sql.startsWith("INSERT INTO users")) {
+        return { ...emptyResult(), lastInsertRowid: 99n };
+      }
+      return emptyResult();
+    });
+    const db = { execute } as unknown as Client;
+
+    const progress: string[] = [];
+    await adminUsers.persistNewUser(db, generated, (label) => progress.push(label));
+
+    // Two real write phases, not a silent multi-second sequence of INSERTs.
+    expect(progress).toEqual(["Creating account…", "Saving credentials…"]);
+
     const tableNames = calls.slice(0, 7).map((c) => c.sql.match(/INTO (\w+)/)?.[1]);
     expect(tableNames).toEqual([
       "users",
@@ -73,52 +129,19 @@ describe("createUser", () => {
       "bookmarks",
     ]);
 
-    // users row: username_hash matches HMAC(usernameLookupKey, username).
-    const usersCall = calls[0];
-    const expectedHash = await hmacSha3_256(usernameLookupKey, new TextEncoder().encode(creds.username));
-    expect(Array.from(usersCall.args[0] as Uint8Array)).toEqual(Array.from(expectedHash));
+    expect(calls[0].args).toEqual([generated.usernameHash, generated.pwSalt, generated.pwHash]);
+    expect(calls[1].args).toEqual([99, generated.umkBlob]);
+    expect(calls[2].args).toEqual([99, generated.pubKey, generated.privKeyBlob]);
+    expect(calls[3].args).toEqual([99, generated.r2ConfigBlob]);
+    expect(calls[4].sql).toContain("NULL");
+    expect(calls[4].args).toEqual([99, generated.txtMetadataKeyBlob]);
+    expect(calls[5].args).toEqual([99, generated.txtAccessKeyBlob, generated.txtAccessEmptyBlob]);
+    expect(calls[6].args).toEqual([99, generated.bookmarkKeyBlob, generated.bookmarkEmptyBlob]);
 
-    // umk_store: decrypts under the returned user_root_key.
-    const umkCall = calls[1];
-    const umk = await blob.decrypt(userRootKey, umkCall.args[1] as Uint8Array);
-    expect(umk.length).toBe(64);
-
-    // key_store: priv_key decrypts under umk.
-    const keyStoreCall = calls[2];
-    const priv = await blob.decrypt(umk, keyStoreCall.args[2] as Uint8Array);
-    expect(priv.length).toBeGreaterThan(0);
-
-    // r2_config: decrypts under umk to the admin's read-only key values, no read_write fields.
-    const r2Call = calls[3];
-    const r2Plain = await blob.decrypt(umk, r2Call.args[1] as Uint8Array, true);
-    const r2Json = JSON.parse(new TextDecoder().decode(r2Plain));
-    expect(r2Json).toEqual({
-      endpoint: ADMIN_R2_CONFIG.endpoint,
-      region: ADMIN_R2_CONFIG.region,
-      bucket: ADMIN_R2_CONFIG.bucket,
-      read_only_access_key_id: ADMIN_R2_CONFIG.readOnlyAccessKeyId,
-      read_only_secret_access_key: ADMIN_R2_CONFIG.readOnlySecretAccessKey,
-    });
-    expect(r2Json.read_write_access_key_id).toBeUndefined();
-
-    // txt_metadata: content column is NULL (inlined in the SQL, not a bound arg).
-    const metadataCall = calls[4];
-    expect(metadataCall.sql).toContain("NULL");
-    expect(metadataCall.args).toHaveLength(2);
-
-    // txt_access/bookmarks: both start as an encrypted empty object.
-    for (const call of [calls[5], calls[6]]) {
-      const key = await blob.decrypt(umk, call.args[1] as Uint8Array);
-      const value = await blob.decrypt(key, call.args[2] as Uint8Array, true);
-      expect(JSON.parse(new TextDecoder().decode(value))).toEqual({});
-    }
-
-    // users.creds: the returned credential JSON, wrapped under the admin's
-    // own umk (not the new user's) -- an UPDATE, not one of the seven INSERTs above.
+    // users.creds: an UPDATE, not one of the seven INSERTs above.
     const updateCall = calls[7];
     expect(updateCall.sql).toContain("UPDATE users SET creds");
-    const credsPlain = await blob.decrypt(adminUmk, updateCall.args[0] as Uint8Array, true);
-    expect(JSON.parse(new TextDecoder().decode(credsPlain))).toEqual(creds);
+    expect(updateCall.args).toEqual([generated.credsBlob, 99]);
   });
 });
 

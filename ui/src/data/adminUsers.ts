@@ -1,20 +1,29 @@
 // Admin Manage screen: creating/listing/updating/deleting regular user
-// accounts, and rotating a user's root key. `createUser`/`deleteUser` are
-// generalized TS ports of txt/admin.py's AdminInitializer and
-// txt/delete.py's TxtDeleter (reusing adminTxt.ts's deleteTxtRows per txt_id
-// the target user owns) -- the CLI's --init only ever provisions the
-// admin's own single account; this is what lets an admin provision (and
-// tear down) *other* accounts from the browser instead.
+// accounts, and rotating a user's root key. Account creation (generateNewUser
+// + persistNewUser below) and deleteUser are generalized TS ports of
+// txt/admin.py's AdminInitializer and txt/delete.py's TxtDeleter (reusing
+// adminTxt.ts's deleteTxtRows per txt_id the target user owns) -- the CLI's
+// --init only ever provisions the admin's own single account; this is what
+// lets an admin provision (and tear down) *other* accounts from the browser
+// instead.
+//
+// Creating an account is split into two steps -- generateNewUser (pure
+// computation, no database access at all) and persistNewUser (the actual
+// writes) -- so the Manage screen's Create-user form can show the
+// one-time-only credential JSON and require the admin to confirm they've
+// saved it *before* anything is ever written, rather than writing first and
+// only then hoping the admin manages to save the result. See both
+// functions' own doc comments.
 //
 // There's still no users.display_name column (a plaintext label wasn't
 // worth a schema change on its own), but users.creds now exists (see
 // docs/data_model.md): a regular user's full credential JSON, wrapped under
-// the *admin's* own umk rather than that row's own account. createUser
-// writes it there right after generating it, and listUsersWithInfo reads it
-// back to recover displayName for the Users list -- the admin's own umk is
-// already unwrapped in their session, so this needs no new secret, unlike
-// trying to read anything wrapped under a *regular* user's own umk (which
-// the admin genuinely can't do -- see rotateUserRootKey below).
+// the *admin's* own umk rather than that row's own account. persistNewUser
+// writes it there, and listUsersWithInfo reads it back to recover
+// displayName for the Users list -- the admin's own umk is already
+// unwrapped in their session, so this needs no new secret, unlike trying to
+// read anything wrapped under a *regular* user's own umk (which the admin
+// genuinely can't do -- see rotateUserRootKey below).
 //
 // Every regular user's Turso token is the same pre-minted, restricted token
 // (docs/credentials.md's "Minting each role's token" -- Turso's fine-grained
@@ -87,22 +96,46 @@ export interface DownloadableUserCreds {
   user_root_key: string;
 }
 
-/** Provisions a brand new regular-user account: users/umk_store/key_store/
- * r2_config/txt_metadata/txt_access/bookmarks rows, mirroring
- * txt/admin.py's AdminInitializer.run() -- generalized to a freshly
- * generated username/password instead of always being self-referential.
- * r2_config's read-only key *values* are copied from the admin's own
- * (already-fetched) R2Config, since every account shares the same
- * read-only R2 credentials. Also writes the generated credential JSON
- * into the new row's own users.creds, wrapped under the *admin's* umk
- * (adminUmk) -- see file comment -- so listUsersWithInfo can recover
- * displayName later. */
-export async function createUser(
-  db: Client,
+/** Every wrapped blob/key `persistNewUser` below needs to actually write a
+ * new account, plus the one-time credential JSON to show the admin --
+ * everything generateNewUser can compute without a database at all. */
+export interface GeneratedNewUser {
+  downloadable: DownloadableUserCreds;
+  usernameHash: Uint8Array;
+  pwSalt: Uint8Array;
+  pwHash: Uint8Array;
+  umkBlob: Uint8Array;
+  pubKey: Uint8Array;
+  privKeyBlob: Uint8Array;
+  r2ConfigBlob: Uint8Array;
+  txtMetadataKeyBlob: Uint8Array;
+  txtAccessKeyBlob: Uint8Array;
+  txtAccessEmptyBlob: Uint8Array;
+  bookmarkKeyBlob: Uint8Array;
+  bookmarkEmptyBlob: Uint8Array;
+  credsBlob: Uint8Array;
+}
+
+/** Generates a brand new regular-user account's full credential material,
+ * mirroring txt/admin.py's AdminInitializer.run() -- generalized to a
+ * freshly generated username/password instead of always being
+ * self-referential -- but doesn't write anything: every value below (and
+ * every blob it's wrapped into) is fully computable up front, including
+ * `credsBlob` (wrapped under the *admin's* own umk, adminUmk -- see file
+ * comment -- needs nothing the eventual INSERT would generate, like a
+ * userId). That's deliberate: persistNewUser (below) just re-plays these
+ * already-computed values as a sequence of writes, so the admin can review
+ * (and confirm they've saved) the returned `downloadable` credentials
+ * *before* persistNewUser ever runs, and a retry after a failed persist
+ * replays the exact same secrets instead of silently generating a second,
+ * different account. r2_config's read-only key *values* are copied from the
+ * admin's own (already-fetched) R2Config, since every account shares the
+ * same read-only R2 credentials. */
+export async function generateNewUser(
   adminUmk: Uint8Array,
   adminR2Config: R2Config,
   input: NewUserInput,
-): Promise<DownloadableUserCreds> {
+): Promise<GeneratedNewUser> {
   const username = randomAlphanumeric(GENERATED_CREDENTIAL_LENGTH);
   const password = randomAlphanumeric(GENERATED_CREDENTIAL_LENGTH);
   const usernameLookupKey = randomBytes(c.USERNAME_LOOKUP_KEY_MIN_LEN);
@@ -111,23 +144,11 @@ export async function createUser(
   const pwSalt = randomBytes(c.PW_SALT_LEN);
   const pwHash = await pbkdf2Sha3_256(new TextEncoder().encode(password), pwSalt, c.PBKDF2_ITERATIONS, c.PW_HASH_LEN);
 
-  const insertUser = await db.execute({
-    sql: "INSERT INTO users (username_hash, pw_salt, pw_hash) VALUES (?, ?, ?)",
-    args: [usernameHash, pwSalt, pwHash],
-  });
-  const userId = Number(insertUser.lastInsertRowid);
-
   const umk = randomBytes(c.UMK_LEN);
-  await db.execute({
-    sql: "INSERT INTO umk_store (user_id, umk) VALUES (?, ?)",
-    args: [userId, await blob.encrypt(userRootKey, umk)],
-  });
+  const umkBlob = await blob.encrypt(userRootKey, umk);
 
   const { pk, sk } = await kem.keypair();
-  await db.execute({
-    sql: "INSERT INTO key_store (user_id, pub_key, priv_key) VALUES (?, ?, ?)",
-    args: [userId, pk, await blob.encrypt(umk, sk)],
-  });
+  const privKeyBlob = await blob.encrypt(umk, sk);
 
   const r2ConfigJson = JSON.stringify({
     endpoint: adminR2Config.endpoint,
@@ -136,38 +157,20 @@ export async function createUser(
     read_only_access_key_id: adminR2Config.readOnlyAccessKeyId,
     read_only_secret_access_key: adminR2Config.readOnlySecretAccessKey,
   });
-  await db.execute({
-    sql: "INSERT INTO r2_config (user_id, config) VALUES (?, ?)",
-    args: [userId, await blob.encrypt(umk, new TextEncoder().encode(r2ConfigJson), { compressed: true })],
-  });
+  const r2ConfigBlob = await blob.encrypt(umk, new TextEncoder().encode(r2ConfigJson), { compressed: true });
 
   const txtMetadataKey = randomBytes(c.TXT_METADATA_KEY_LEN);
-  await db.execute({
-    sql: "INSERT INTO txt_metadata (user_id, txt_metadata_key, content) VALUES (?, ?, NULL)",
-    args: [userId, await blob.encrypt(umk, txtMetadataKey)],
-  });
+  const txtMetadataKeyBlob = await blob.encrypt(umk, txtMetadataKey);
 
   const txtAccessKey = randomBytes(c.TXT_ACCESS_KEY_LEN);
-  await db.execute({
-    sql: "INSERT INTO txt_access (user_id, txt_access_key, access) VALUES (?, ?, ?)",
-    args: [
-      userId,
-      await blob.encrypt(umk, txtAccessKey),
-      await blob.encrypt(txtAccessKey, new TextEncoder().encode("{}"), { compressed: true }),
-    ],
-  });
+  const txtAccessKeyBlob = await blob.encrypt(umk, txtAccessKey);
+  const txtAccessEmptyBlob = await blob.encrypt(txtAccessKey, new TextEncoder().encode("{}"), { compressed: true });
 
   const bookmarkKey = randomBytes(c.BOOKMARK_KEY_LEN);
-  await db.execute({
-    sql: "INSERT INTO bookmarks (user_id, bookmark_key, bookmark) VALUES (?, ?, ?)",
-    args: [
-      userId,
-      await blob.encrypt(umk, bookmarkKey),
-      await blob.encrypt(bookmarkKey, new TextEncoder().encode("{}"), { compressed: true }),
-    ],
-  });
+  const bookmarkKeyBlob = await blob.encrypt(umk, bookmarkKey);
+  const bookmarkEmptyBlob = await blob.encrypt(bookmarkKey, new TextEncoder().encode("{}"), { compressed: true });
 
-  const credsJson: DownloadableUserCreds = {
+  const downloadable: DownloadableUserCreds = {
     turso_database_url: input.tursoDatabaseUrl,
     turso_auth_token: input.userTursoAuthToken,
     username,
@@ -176,15 +179,79 @@ export async function createUser(
     display_name: input.displayName,
     user_root_key: bytesToBase64(userRootKey),
   };
-  await db.execute({
-    sql: "UPDATE users SET creds = ? WHERE id = ?",
-    args: [
-      await blob.encrypt(adminUmk, new TextEncoder().encode(JSON.stringify(credsJson)), { compressed: true }),
-      userId,
-    ],
+  const credsBlob = await blob.encrypt(adminUmk, new TextEncoder().encode(JSON.stringify(downloadable)), {
+    compressed: true,
   });
 
-  return credsJson;
+  return {
+    downloadable,
+    usernameHash,
+    pwSalt,
+    pwHash,
+    umkBlob,
+    pubKey: pk,
+    privKeyBlob,
+    r2ConfigBlob,
+    txtMetadataKeyBlob,
+    txtAccessKeyBlob,
+    txtAccessEmptyBlob,
+    bookmarkKeyBlob,
+    bookmarkEmptyBlob,
+    credsBlob,
+  };
+}
+
+/** Writes a `generateNewUser` result: users/umk_store/key_store/r2_config/
+ * txt_metadata/txt_access/bookmarks rows, then the credential JSON into
+ * that new row's own users.creds -- the only step in account creation that
+ * ever touches the database (see generateNewUser's own doc comment for
+ * why that split exists). Pure writes, no crypto work of its own, so
+ * `onProgress` (if given) is called just twice: once before the run of
+ * INSERTs that establish the account, once before the final UPDATE that
+ * makes it possible for listUsersWithInfo to recover its display name
+ * later. */
+export async function persistNewUser(
+  db: Client,
+  generated: GeneratedNewUser,
+  onProgress?: (label: string) => void,
+): Promise<void> {
+  onProgress?.("Creating account…");
+  const insertUser = await db.execute({
+    sql: "INSERT INTO users (username_hash, pw_salt, pw_hash) VALUES (?, ?, ?)",
+    args: [generated.usernameHash, generated.pwSalt, generated.pwHash],
+  });
+  const userId = Number(insertUser.lastInsertRowid);
+
+  await db.execute({
+    sql: "INSERT INTO umk_store (user_id, umk) VALUES (?, ?)",
+    args: [userId, generated.umkBlob],
+  });
+  await db.execute({
+    sql: "INSERT INTO key_store (user_id, pub_key, priv_key) VALUES (?, ?, ?)",
+    args: [userId, generated.pubKey, generated.privKeyBlob],
+  });
+  await db.execute({
+    sql: "INSERT INTO r2_config (user_id, config) VALUES (?, ?)",
+    args: [userId, generated.r2ConfigBlob],
+  });
+  await db.execute({
+    sql: "INSERT INTO txt_metadata (user_id, txt_metadata_key, content) VALUES (?, ?, NULL)",
+    args: [userId, generated.txtMetadataKeyBlob],
+  });
+  await db.execute({
+    sql: "INSERT INTO txt_access (user_id, txt_access_key, access) VALUES (?, ?, ?)",
+    args: [userId, generated.txtAccessKeyBlob, generated.txtAccessEmptyBlob],
+  });
+  await db.execute({
+    sql: "INSERT INTO bookmarks (user_id, bookmark_key, bookmark) VALUES (?, ?, ?)",
+    args: [userId, generated.bookmarkKeyBlob, generated.bookmarkEmptyBlob],
+  });
+
+  onProgress?.("Saving credentials…");
+  await db.execute({
+    sql: "UPDATE users SET creds = ? WHERE id = ?",
+    args: [generated.credsBlob, userId],
+  });
 }
 
 export interface UserSummary {

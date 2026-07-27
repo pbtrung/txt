@@ -9,11 +9,12 @@ import { Modal } from "../../components/Modal";
 import { VirtualizedListGroup } from "../../components/VirtualizedListGroup";
 import {
   AdminUsersError,
-  createUser,
   deleteUser,
+  generateNewUser,
+  persistNewUser,
   rotateUserRootKey,
   updateUserPassword,
-  type DownloadableUserCreds,
+  type GeneratedNewUser,
   type UserSummary,
 } from "../../data/adminUsers";
 import type { VaultSession } from "../../state/VaultContext";
@@ -32,65 +33,130 @@ function CreateUserForm({
   const [tursoDatabaseUrl, setTursoDatabaseUrl] = useState(session.creds.tursoDatabaseUrl);
   const [displayName, setDisplayName] = useState("");
   const [userTursoAuthToken, setUserTursoAuthToken] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  // Set once creation succeeds. While non-null, the modal shows the
-  // downloadable credential JSON instead of the form, and can only be
-  // closed via the explicit "I've saved this" button below -- its Modal's
-  // onClose becomes a no-op meanwhile (not the ×/backdrop-click/Escape it
-  // normally responds to), since this is the one chance to save the
-  // generated password/user_root_key, neither of which is ever held
-  // anywhere in a retrievable form again afterward.
-  const [createdCreds, setCreatedCreds] = useState<DownloadableUserCreds | null>(null);
+  const [generateBusy, setGenerateBusy] = useState(false);
+  const [generateError, setGenerateError] = useState<string | null>(null);
+  // Set once generation succeeds -- pure computation (see adminUsers.ts's
+  // generateNewUser), nothing written to the database yet. While non-null,
+  // the modal shows the downloadable credential JSON instead of the form.
+  // Unlike an earlier version of this flow, the modal stays freely
+  // closeable here: there's nothing to lose by backing out, since
+  // persistNewUser (the only step that actually writes anything) hasn't run.
+  const [generated, setGenerated] = useState<GeneratedNewUser | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [confirmedSaved, setConfirmedSaved] = useState(false);
+  const [persistBusy, setPersistBusy] = useState(false);
+  // What persistNewUser is doing right now (its own account-then-
+  // credentials write phases) -- shown beside the Create button's spinner,
+  // same pattern as BooksSection's Edit Save.
+  const [persistProgress, setPersistProgress] = useState<string | null>(null);
+  const [persistError, setPersistError] = useState<string | null>(null);
 
-  async function handleSubmit(e: FormEvent) {
+  async function handleGenerate(e: FormEvent) {
     e.preventDefault();
-    setBusy(true);
-    setError(null);
-    // Lets the spinner/disabled state actually paint before createUser's
-    // own synchronous compress+encrypt work blocks the main thread.
+    setGenerateBusy(true);
+    setGenerateError(null);
+    // Lets the spinner/disabled state actually paint before
+    // generateNewUser's own synchronous compress+encrypt work blocks the
+    // main thread.
     await yieldToPaint();
     try {
-      setCreatedCreds(
-        await createUser(session.db, session.umk, session.r2Config, {
+      setGenerated(
+        await generateNewUser(session.umk, session.r2Config, {
           tursoDatabaseUrl,
           displayName,
           userTursoAuthToken,
         }),
       );
     } catch (err) {
-      setError(errorMessage(err));
+      setGenerateError(errorMessage(err));
     } finally {
-      setBusy(false);
+      setGenerateBusy(false);
     }
   }
 
-  if (createdCreds) {
+  async function handleCreate() {
+    if (!generated) return;
+    setPersistBusy(true);
+    setPersistError(null);
+    setPersistProgress(null);
+    await yieldToPaint();
+    try {
+      // The very last step that ever touches the database for a new
+      // account -- everything up to here (this generated bundle, the
+      // admin's confirmation checkbox) is local state only.
+      await persistNewUser(session.db, generated, setPersistProgress);
+      onCreated();
+    } catch (err) {
+      setPersistError(errorMessage(err));
+    } finally {
+      setPersistBusy(false);
+      setPersistProgress(null);
+    }
+  }
+
+  async function handleCopy() {
+    await navigator.clipboard.writeText(JSON.stringify(generated!.downloadable, null, 2));
+    setCopied(true);
+  }
+
+  if (generated) {
+    const creds = generated.downloadable;
     return (
-      <Modal title="Save this user's credentials" onClose={() => {}}>
+      <Modal title="Save this user's credentials" onClose={onClose}>
         <div style={FORM_WIDTH}>
           <p className="small text-body-secondary">
             This is the only time the password and root key are ever shown -- download or copy this now, then confirm
             below. Neither can be recovered afterward.
           </p>
-          <pre
-            className="small bg-body-tertiary border rounded p-2"
-            style={{ maxHeight: "16rem", overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all" }}
-          >
-            {JSON.stringify(createdCreds, null, 2)}
-          </pre>
-          <div className="d-flex gap-2 mt-2">
+          <div className="position-relative">
+            <pre
+              className="small bg-body-tertiary border rounded p-2"
+              style={{ maxHeight: "16rem", overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all" }}
+            >
+              {JSON.stringify(creds, null, 2)}
+            </pre>
             <button
               type="button"
-              className="btn btn-outline-secondary"
-              onClick={() => downloadJson(`${createdCreds.username}_creds.json`, createdCreds)}
+              className="btn btn-sm btn-outline-secondary border-primary position-absolute top-0 end-0 m-1"
+              onClick={() => void handleCopy()}
+              aria-label="Copy credentials JSON to clipboard"
+              title={copied ? "Copied!" : "Copy to clipboard"}
             >
-              Download
-            </button>
-            <button type="button" className="btn btn-primary" onClick={onCreated}>
-              I&apos;ve saved this -- close
+              <i className={`bi ${copied ? "bi-check-lg" : "bi-clipboard"} text-primary`} aria-hidden="true" />
             </button>
           </div>
+          <button
+            type="button"
+            className="btn btn-outline-secondary mt-2"
+            onClick={() => downloadJson(`${creds.username}_creds.json`, creds)}
+          >
+            Download
+          </button>
+          <div className="form-check mt-3">
+            <input
+              id="manage-new-user-confirmed-saved"
+              type="checkbox"
+              className="form-check-input"
+              checked={confirmedSaved}
+              onChange={(e) => setConfirmedSaved(e.target.checked)}
+            />
+            <label className="form-check-label small" htmlFor="manage-new-user-confirmed-saved">
+              I&apos;ve saved this configuration (downloaded or copied)
+            </label>
+          </div>
+          <div className="d-flex align-items-center gap-2 mt-2">
+            <button
+              type="button"
+              className="btn btn-primary d-flex align-items-center gap-2"
+              disabled={!confirmedSaved || persistBusy}
+              onClick={() => void handleCreate()}
+            >
+              {persistBusy && <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true" />}
+              Create user
+            </button>
+            {persistBusy && persistProgress && <span className="small text-body-secondary">{persistProgress}</span>}
+          </div>
+          {persistError && <div className="text-danger small mt-2">{persistError}</div>}
         </div>
       </Modal>
     );
@@ -98,7 +164,7 @@ function CreateUserForm({
 
   return (
     <Modal title="Create user" onClose={onClose}>
-      <form onSubmit={(e) => void handleSubmit(e)} style={FORM_WIDTH}>
+      <form onSubmit={(e) => void handleGenerate(e)} style={FORM_WIDTH}>
         <FormField label="Turso database URL" htmlFor="manage-new-turso-url">
           <input
             id="manage-new-turso-url"
@@ -129,11 +195,11 @@ function CreateUserForm({
             required
           />
         </FormField>
-        <button type="submit" className="btn btn-primary mt-1 d-flex align-items-center gap-2" disabled={busy}>
-          {busy && <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true" />}
-          Create user
+        <button type="submit" className="btn btn-primary mt-1 d-flex align-items-center gap-2" disabled={generateBusy}>
+          {generateBusy && <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true" />}
+          Generate credentials
         </button>
-        {error && <div className="text-danger small mt-2">{error}</div>}
+        {generateError && <div className="text-danger small mt-2">{generateError}</div>}
       </form>
     </Modal>
   );
