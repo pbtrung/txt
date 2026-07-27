@@ -17,6 +17,7 @@ vi.mock("../../data/adminUsers", async () => {
   return {
     ...actual,
     generateNewUser: vi.fn(),
+    updateGeneratedNewUser: vi.fn(),
     persistNewUser: vi.fn(),
     listUsersWithInfo: vi.fn(),
     updateUserPassword: vi.fn(),
@@ -88,6 +89,28 @@ function setup(refreshing = false, metadataByIdOverride: Map<number, BookInfo> =
 // display name text) directly instead of via .closest("button").
 function userRow(name: string): HTMLElement {
   return screen.getByRole("button", { name: new RegExp(`^${name}`) });
+}
+
+/** A fake generateNewUser() result -- every non-downloadable field is an
+ * empty placeholder blob, since these tests exercise the UI flow around
+ * `generated`, never adminUsers.ts's own crypto (that's owner.test.ts's job). */
+function fakeGeneratedNewUser(downloadable: adminUsers.DownloadableUserCreds): adminUsers.GeneratedNewUser {
+  return {
+    downloadable,
+    usernameHash: new Uint8Array(),
+    pwSalt: new Uint8Array(),
+    pwHash: new Uint8Array(),
+    umkBlob: new Uint8Array(),
+    pubKey: new Uint8Array(),
+    privKeyBlob: new Uint8Array(),
+    r2ConfigBlob: new Uint8Array(),
+    txtMetadataKeyBlob: new Uint8Array(),
+    txtAccessKeyBlob: new Uint8Array(),
+    txtAccessEmptyBlob: new Uint8Array(),
+    bookmarkKeyBlob: new Uint8Array(),
+    bookmarkEmptyBlob: new Uint8Array(),
+    credsBlob: new Uint8Array(),
+  };
 }
 
 beforeEach(() => {
@@ -165,30 +188,15 @@ describe("ManageScreen", () => {
     });
 
     it("generates credentials without touching the db, gates Create behind the saved-it checkbox, then persists", async () => {
-      const generated: adminUsers.GeneratedNewUser = {
-        downloadable: {
-          turso_database_url: "libsql://example",
-          turso_auth_token: "user-token",
-          username: "carol",
-          username_lookup_key: "a",
-          password: "hunter2",
-          display_name: "Carol",
-          user_root_key: "b",
-        },
-        usernameHash: new Uint8Array(),
-        pwSalt: new Uint8Array(),
-        pwHash: new Uint8Array(),
-        umkBlob: new Uint8Array(),
-        pubKey: new Uint8Array(),
-        privKeyBlob: new Uint8Array(),
-        r2ConfigBlob: new Uint8Array(),
-        txtMetadataKeyBlob: new Uint8Array(),
-        txtAccessKeyBlob: new Uint8Array(),
-        txtAccessEmptyBlob: new Uint8Array(),
-        bookmarkKeyBlob: new Uint8Array(),
-        bookmarkEmptyBlob: new Uint8Array(),
-        credsBlob: new Uint8Array(),
-      };
+      const generated = fakeGeneratedNewUser({
+        turso_database_url: "libsql://example",
+        turso_auth_token: "user-token",
+        username: "carol",
+        username_lookup_key: "a",
+        password: "hunter2",
+        display_name: "Carol",
+        user_root_key: "b",
+      });
       vi.mocked(adminUsers.generateNewUser).mockResolvedValue(generated);
       vi.mocked(adminUsers.persistNewUser).mockResolvedValue(undefined);
       setup();
@@ -235,30 +243,15 @@ describe("ManageScreen", () => {
     });
 
     it("copies the generated credentials JSON to the clipboard", async () => {
-      const generated: adminUsers.GeneratedNewUser = {
-        downloadable: {
-          turso_database_url: "libsql://example",
-          turso_auth_token: "user-token",
-          username: "carol",
-          username_lookup_key: "a",
-          password: "hunter2",
-          display_name: "Carol",
-          user_root_key: "b",
-        },
-        usernameHash: new Uint8Array(),
-        pwSalt: new Uint8Array(),
-        pwHash: new Uint8Array(),
-        umkBlob: new Uint8Array(),
-        pubKey: new Uint8Array(),
-        privKeyBlob: new Uint8Array(),
-        r2ConfigBlob: new Uint8Array(),
-        txtMetadataKeyBlob: new Uint8Array(),
-        txtAccessKeyBlob: new Uint8Array(),
-        txtAccessEmptyBlob: new Uint8Array(),
-        bookmarkKeyBlob: new Uint8Array(),
-        bookmarkEmptyBlob: new Uint8Array(),
-        credsBlob: new Uint8Array(),
-      };
+      const generated = fakeGeneratedNewUser({
+        turso_database_url: "libsql://example",
+        turso_auth_token: "user-token",
+        username: "carol",
+        username_lookup_key: "a",
+        password: "hunter2",
+        display_name: "Carol",
+        user_root_key: "b",
+      });
       vi.mocked(adminUsers.generateNewUser).mockResolvedValue(generated);
       const writeText = vi.fn().mockResolvedValue(undefined);
       Object.assign(navigator, { clipboard: { writeText } });
@@ -273,6 +266,62 @@ describe("ManageScreen", () => {
 
       await userEvent.click(screen.getByRole("button", { name: /copy credentials json/i }));
       expect(writeText).toHaveBeenCalledWith(JSON.stringify(generated.downloadable, null, 2));
+    });
+
+    it("edits the generated credentials before creating -- no db write, and re-requires the saved-it confirmation", async () => {
+      const generated = fakeGeneratedNewUser({
+        turso_database_url: "libsql://example",
+        turso_auth_token: "user-token",
+        username: "carol",
+        username_lookup_key: "a",
+        password: "hunter2",
+        display_name: "Carol",
+        user_root_key: "b",
+      });
+      const updated = fakeGeneratedNewUser({ ...generated.downloadable, display_name: "Carolyn" });
+      vi.mocked(adminUsers.generateNewUser).mockResolvedValue(generated);
+      vi.mocked(adminUsers.updateGeneratedNewUser).mockResolvedValue(updated);
+      // This file's adminUsers mocks aren't cleared between tests, so an
+      // earlier test's own persistNewUser call would otherwise still be
+      // sitting in its call history here -- clear it so the "not called"
+      // assertion below only reflects this test's own actions.
+      vi.mocked(adminUsers.persistNewUser).mockClear();
+      setup();
+      await waitFor(() => expect(userRow("Alice")).toBeInTheDocument());
+
+      await userEvent.click(screen.getByRole("button", { name: "Create" }));
+      await userEvent.type(screen.getByLabelText("Display name"), "Carol");
+      await userEvent.type(screen.getByLabelText("Regular-user Turso token"), "user-token");
+      await userEvent.click(screen.getByRole("button", { name: "Generate credentials" }));
+      await waitFor(() => expect(screen.getByText(/"username": "carol"/)).toBeInTheDocument());
+
+      // Confirm the box, then edit -- editing should undo that confirmation
+      // (see below), since it no longer describes the *new* JSON. Scoped to
+      // the modal dialog itself, since the Users toolbar behind it has its
+      // own (disabled) "Edit" button with the same accessible name.
+      await userEvent.click(screen.getByLabelText("I've saved this configuration (downloaded or copied)"));
+      const dialog = screen.getByRole("dialog");
+      await userEvent.click(within(dialog).getByRole("button", { name: "Edit" }));
+
+      const displayNameField = screen.getByLabelText("Display name");
+      await userEvent.clear(displayNameField);
+      await userEvent.type(displayNameField, "Carolyn");
+      await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() =>
+        expect(adminUsers.updateGeneratedNewUser).toHaveBeenCalledWith(undefined, generated, {
+          tursoDatabaseUrl: "libsql://example",
+          displayName: "Carolyn",
+          userTursoAuthToken: "user-token",
+        }),
+      );
+      // updateGeneratedNewUser is pure computation too -- persistNewUser is
+      // still the only thing that would ever touch the db, and it hasn't.
+      expect(adminUsers.persistNewUser).not.toHaveBeenCalled();
+
+      await waitFor(() => expect(screen.getByText(/"display_name": "Carolyn"/)).toBeInTheDocument());
+      const createButton = screen.getByRole("button", { name: "Create user" });
+      expect(createButton).toBeDisabled();
     });
 
     it("requires the row's own id typed in before enabling Confirm delete, then deletes", async () => {

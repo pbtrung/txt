@@ -13,6 +13,7 @@ import {
   generateNewUser,
   persistNewUser,
   rotateUserRootKey,
+  updateGeneratedNewUser,
   updateUserPassword,
   type GeneratedNewUser,
   type UserSummary,
@@ -50,6 +51,12 @@ function CreateUserForm({
   // same pattern as BooksSection's Edit Save.
   const [persistProgress, setPersistProgress] = useState<string | null>(null);
   const [persistError, setPersistError] = useState<string | null>(null);
+  // Toggles the review step into editing the same three admin-supplied
+  // fields the initial form took -- see updateGeneratedNewUser, which
+  // leaves the generated username/password/keys untouched.
+  const [editing, setEditing] = useState(false);
+  const [editBusy, setEditBusy] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
 
   async function handleGenerate(e: FormEvent) {
     e.preventDefault();
@@ -99,6 +106,97 @@ function CreateUserForm({
     setCopied(true);
   }
 
+  function startEditing() {
+    if (!generated) return;
+    setTursoDatabaseUrl(generated.downloadable.turso_database_url);
+    setDisplayName(generated.downloadable.display_name);
+    setUserTursoAuthToken(generated.downloadable.turso_auth_token);
+    setEditError(null);
+    setEditing(true);
+  }
+
+  async function handleSaveEdit(e: FormEvent) {
+    e.preventDefault();
+    if (!generated) return;
+    setEditBusy(true);
+    setEditError(null);
+    await yieldToPaint();
+    try {
+      setGenerated(
+        await updateGeneratedNewUser(session.umk, generated, {
+          tursoDatabaseUrl,
+          displayName,
+          userTursoAuthToken,
+        }),
+      );
+      // The JSON just changed -- any earlier "I've saved this"/"Copied!"
+      // state referred to the *previous* content, so both reset here rather
+      // than letting Create stay enabled for content the admin never
+      // actually saved.
+      setConfirmedSaved(false);
+      setCopied(false);
+      setEditing(false);
+    } catch (err) {
+      setEditError(errorMessage(err));
+    } finally {
+      setEditBusy(false);
+    }
+  }
+
+  if (generated && editing) {
+    return (
+      <Modal title="Edit credentials" onClose={onClose}>
+        <form onSubmit={(e) => void handleSaveEdit(e)}>
+          <FormField label="Turso database URL" htmlFor="manage-new-turso-url">
+            <input
+              id="manage-new-turso-url"
+              type="text"
+              className="form-control themed-control"
+              value={tursoDatabaseUrl}
+              onChange={(e) => setTursoDatabaseUrl(e.target.value)}
+              required
+            />
+          </FormField>
+          <FormField label="Display name" htmlFor="manage-new-display-name">
+            <input
+              id="manage-new-display-name"
+              type="text"
+              className="form-control themed-control"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              required
+            />
+          </FormField>
+          <FormField label="Regular-user Turso token" htmlFor="manage-new-user-token">
+            <input
+              id="manage-new-user-token"
+              type="text"
+              className="form-control themed-control"
+              value={userTursoAuthToken}
+              onChange={(e) => setUserTursoAuthToken(e.target.value)}
+              required
+            />
+          </FormField>
+          <div className="d-flex gap-2 mt-1">
+            <button type="submit" className="btn btn-primary d-flex align-items-center gap-2" disabled={editBusy}>
+              {editBusy && <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true" />}
+              Save
+            </button>
+            <button
+              type="button"
+              className="btn btn-outline-secondary"
+              onClick={() => setEditing(false)}
+              disabled={editBusy}
+            >
+              Cancel
+            </button>
+          </div>
+          {editError && <div className="text-danger small mt-2">{editError}</div>}
+        </form>
+      </Modal>
+    );
+  }
+
   if (generated) {
     const creds = generated.downloadable;
     return (
@@ -108,30 +206,38 @@ function CreateUserForm({
             This is the only time the password and root key are ever shown -- download or copy this now, then confirm
             below. Neither can be recovered afterward.
           </p>
-          <div className="position-relative">
-            <pre
-              className="small bg-body-tertiary border rounded p-2"
-              style={{ maxHeight: "16rem", overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all" }}
-            >
-              {JSON.stringify(creds, null, 2)}
-            </pre>
+          <pre
+            className="small bg-body-tertiary border rounded p-2"
+            style={{ maxHeight: "16rem", overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all" }}
+          >
+            {JSON.stringify(creds, null, 2)}
+          </pre>
+          <div className="d-flex gap-2 mt-2">
             <button
               type="button"
-              className="btn btn-sm btn-outline-secondary border-primary position-absolute top-0 end-0 m-1"
+              className="btn btn-outline-secondary border-primary d-flex align-items-center gap-1"
+              onClick={startEditing}
+            >
+              <i className="bi bi-pencil text-primary" aria-hidden="true" />
+              Edit
+            </button>
+            <button
+              type="button"
+              className="btn btn-outline-secondary border-primary"
               onClick={() => void handleCopy()}
               aria-label="Copy credentials JSON to clipboard"
               title={copied ? "Copied!" : "Copy to clipboard"}
             >
               <i className={`bi ${copied ? "bi-check-lg" : "bi-clipboard"} text-primary`} aria-hidden="true" />
             </button>
+            <button
+              type="button"
+              className="btn btn-outline-secondary"
+              onClick={() => downloadJson(`${creds.username}_creds.json`, creds)}
+            >
+              Download
+            </button>
           </div>
-          <button
-            type="button"
-            className="btn btn-outline-secondary mt-2"
-            onClick={() => downloadJson(`${creds.username}_creds.json`, creds)}
-          >
-            Download
-          </button>
           <div className="form-check mt-3">
             <input
               id="manage-new-user-confirmed-saved"

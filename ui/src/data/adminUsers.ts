@@ -201,6 +201,33 @@ export async function generateNewUser(
   };
 }
 
+/** Updates the admin-supplied fields of an already-`generateNewUser`d bundle
+ * (Turso database URL, display name, the embedded regular-user Turso token)
+ * -- e.g. to fix a typo before persisting -- without regenerating anything
+ * else: username/password/username_lookup_key/user_root_key and every
+ * wrapped blob that doesn't depend on these three fields (umkBlob,
+ * privKeyBlob, r2ConfigBlob, txtMetadataKeyBlob, txtAccessKeyBlob/
+ * EmptyBlob, bookmarkKeyBlob/EmptyBlob) all stay exactly as first
+ * generated, so a later persistNewUser still writes the same account.
+ * Only `downloadable` and `credsBlob` (which embeds `downloadable`'s own
+ * JSON, wrapped under the admin's umk) actually change here. */
+export async function updateGeneratedNewUser(
+  adminUmk: Uint8Array,
+  generated: GeneratedNewUser,
+  edits: NewUserInput,
+): Promise<GeneratedNewUser> {
+  const downloadable: DownloadableUserCreds = {
+    ...generated.downloadable,
+    turso_database_url: edits.tursoDatabaseUrl,
+    turso_auth_token: edits.userTursoAuthToken,
+    display_name: edits.displayName,
+  };
+  const credsBlob = await blob.encrypt(adminUmk, new TextEncoder().encode(JSON.stringify(downloadable)), {
+    compressed: true,
+  });
+  return { ...generated, downloadable, credsBlob };
+}
+
 /** Writes a `generateNewUser` result: users/umk_store/key_store/r2_config/
  * txt_metadata/txt_access/bookmarks rows, then the credential JSON into
  * that new row's own users.creds -- the only step in account creation that

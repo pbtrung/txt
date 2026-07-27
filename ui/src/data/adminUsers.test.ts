@@ -93,6 +93,45 @@ describe("generateNewUser", () => {
   });
 });
 
+describe("updateGeneratedNewUser", () => {
+  it("updates only the admin-supplied fields (and credsBlob), leaving username/password/keys untouched", async () => {
+    const adminUmk = new Uint8Array(64).fill(9);
+    const generated = await adminUsers.generateNewUser(adminUmk, ADMIN_R2_CONFIG, {
+      tursoDatabaseUrl: "libsql://example",
+      displayName: "Bob",
+      userTursoAuthToken: "user-token",
+    });
+
+    const updated = await adminUsers.updateGeneratedNewUser(adminUmk, generated, {
+      tursoDatabaseUrl: "libsql://updated",
+      displayName: "Bobby",
+      userTursoAuthToken: "new-token",
+    });
+
+    expect(updated.downloadable).toEqual({
+      ...generated.downloadable,
+      turso_database_url: "libsql://updated",
+      turso_auth_token: "new-token",
+      display_name: "Bobby",
+    });
+    // Neither the generated username/password nor any key material was
+    // regenerated -- only downloadable and credsBlob (which embeds it) changed.
+    expect(updated.usernameHash).toBe(generated.usernameHash);
+    expect(updated.pwSalt).toBe(generated.pwSalt);
+    expect(updated.pwHash).toBe(generated.pwHash);
+    expect(updated.umkBlob).toBe(generated.umkBlob);
+    expect(updated.pubKey).toBe(generated.pubKey);
+    expect(updated.privKeyBlob).toBe(generated.privKeyBlob);
+    expect(updated.r2ConfigBlob).toBe(generated.r2ConfigBlob);
+    expect(updated.txtMetadataKeyBlob).toBe(generated.txtMetadataKeyBlob);
+    expect(updated.txtAccessKeyBlob).toBe(generated.txtAccessKeyBlob);
+    expect(updated.bookmarkKeyBlob).toBe(generated.bookmarkKeyBlob);
+
+    const credsPlain = await blob.decrypt(adminUmk, updated.credsBlob, true);
+    expect(JSON.parse(new TextDecoder().decode(credsPlain))).toEqual(updated.downloadable);
+  });
+});
+
 describe("persistNewUser", () => {
   it("writes exactly the already-generated material -- 7 INSERTs, then the users.creds UPDATE -- with no crypto of its own", async () => {
     const adminUmk = new Uint8Array(64).fill(9);
