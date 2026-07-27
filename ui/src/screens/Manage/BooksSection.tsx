@@ -13,7 +13,7 @@ import type { BookInfo } from "../../data/metadata";
 import { useVault } from "../../state/VaultContext";
 import { allBooksSorted, matchesSearch } from "../Library/libraryModel";
 import { useLibraryBooks } from "../Library/useLibraryBooks";
-import { ConfirmDeleteField, FORM_WIDTH, FormField, errorMessage, yieldToPaint } from "./manageShared";
+import { ConfirmDeleteField, FormField, errorMessage, yieldToPaint } from "./manageShared";
 
 interface BookMetadataFormValues {
   title?: string;
@@ -77,7 +77,7 @@ function EditBookPanel({
 
   return (
     <Modal title={`Edit: ${book.title}`} onClose={onClose}>
-      <form onSubmit={(e) => void handleSubmit(e)} style={FORM_WIDTH}>
+      <form onSubmit={(e) => void handleSubmit(e)}>
         <FormField label="Title" htmlFor="manage-book-title">
           <input
             id="manage-book-title"
@@ -162,7 +162,7 @@ function DeleteBookPanel({
 
   return (
     <Modal title={`Delete "${book.title}"`} onClose={onClose}>
-      <p className="small text-body-secondary" style={FORM_WIDTH}>
+      <p className="small text-body-secondary">
         This permanently deletes &ldquo;{book.title}&rdquo; and its stored content. Type <strong>{book.txtId}</strong>{" "}
         to confirm.
       </p>

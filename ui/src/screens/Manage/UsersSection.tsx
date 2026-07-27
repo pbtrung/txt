@@ -18,7 +18,7 @@ import {
   type UserSummary,
 } from "../../data/adminUsers";
 import type { VaultSession } from "../../state/VaultContext";
-import { ConfirmDeleteField, FORM_WIDTH, FormField, downloadJson, errorMessage, yieldToPaint } from "./manageShared";
+import { ConfirmDeleteField, FormField, downloadJson, errorMessage, yieldToPaint } from "./manageShared";
 import { UserRow, USER_ROW_HEIGHT } from "./UserRow";
 
 function CreateUserForm({
@@ -103,7 +103,7 @@ function CreateUserForm({
     const creds = generated.downloadable;
     return (
       <Modal title="Save this user's credentials" onClose={onClose}>
-        <div style={FORM_WIDTH}>
+        <div>
           <p className="small text-body-secondary">
             This is the only time the password and root key are ever shown -- download or copy this now, then confirm
             below. Neither can be recovered afterward.
@@ -164,7 +164,7 @@ function CreateUserForm({
 
   return (
     <Modal title="Create user" onClose={onClose}>
-      <form onSubmit={(e) => void handleGenerate(e)} style={FORM_WIDTH}>
+      <form onSubmit={(e) => void handleGenerate(e)}>
         <FormField label="Turso database URL" htmlFor="manage-new-turso-url">
           <input
             id="manage-new-turso-url"
@@ -249,7 +249,7 @@ function EditUserPanel({ session, userId, onClose }: { session: VaultSession; us
 
   return (
     <Modal title={`Edit user #${userId}`} onClose={onClose}>
-      <div style={FORM_WIDTH}>
+      <div>
         <h4 className="h6 small text-body-secondary text-uppercase mb-2">Reset password</h4>
         <form onSubmit={(e) => void handleResetPassword(e)}>
           <FormField label="New password" htmlFor="manage-edit-password">
@@ -332,7 +332,7 @@ function DeleteUserPanel({
 
   return (
     <Modal title={`Delete user #${userId}`} onClose={onClose}>
-      <p className="small text-body-secondary" style={FORM_WIDTH}>
+      <p className="small text-body-secondary">
         This deletes user #{userId}&apos;s entire account: every txt they own, their shares, and their read
         position/bookmarks. Type <strong>{userId}</strong> to confirm.
       </p>
@@ -369,21 +369,14 @@ export function UsersSection({
   onSetMode: (mode: UsersMode) => void;
   onChanged: () => void;
 }) {
-  // users.creds can never hold the admin's own display name (it's always
-  // NULL for that row -- see adminUsers.ts), but the admin's session already
-  // carries it (same value the nav footer shows), so patch it in here --
-  // once, ahead of both search and rendering -- rather than showing the
-  // "Unnamed user" fallback for the one row that could actually be named.
-  const withSelfName = useMemo(
-    () => users.map((u) => (u.id === session.userId ? { ...u, displayName: session.creds.displayName } : u)),
-    [users, session.userId, session.creds.displayName],
-  );
-
+  // The admin's own display name is already patched in by ManageScreen.tsx
+  // (users.creds can never hold it -- that row's creds is always NULL, see
+  // adminUsers.ts), shared with SharesSection's recipient list the same way.
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return withSelfName;
-    return withSelfName.filter((u) => String(u.id).includes(q) || (u.displayName ?? "").toLowerCase().includes(q));
-  }, [withSelfName, search]);
+    if (!q) return users;
+    return users.filter((u) => String(u.id).includes(q) || (u.displayName ?? "").toLowerCase().includes(q));
+  }, [users, search]);
 
   function selectRow(id: number) {
     onSelectRow(id);

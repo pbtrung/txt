@@ -7,6 +7,7 @@
 
 import type { CSSProperties } from "react";
 import { ClickableRow } from "../../components/ClickableRow";
+import { userLabel } from "./manageShared";
 
 // Same shape as BookRow's own two-line rows (py-3 padding + title/subtitle)
 // -- a plain constant, safe since every field here is text-truncate'd.
@@ -18,12 +19,17 @@ interface ShareRowProps {
    * SharesSection.tsx), not looked up here. */
   title: string;
   toUserId: number;
+  /** The recipient's display name, resolved by the caller from the same
+   * cached Users list ManageScreen already loads for the Users section --
+   * undefined if it's since gone missing (a deleted account) or just hasn't
+   * loaded yet, in which case userLabel falls back to "Unnamed user". */
+  recipientDisplayName?: string;
   selected: boolean;
   onClick: () => void;
   style?: CSSProperties;
 }
 
-export function ShareRow({ title, toUserId, selected, onClick, style }: ShareRowProps) {
+export function ShareRow({ title, toUserId, recipientDisplayName, selected, onClick, style }: ShareRowProps) {
   return (
     <ClickableRow
       onClick={onClick}
@@ -34,7 +40,7 @@ export function ShareRow({ title, toUserId, selected, onClick, style }: ShareRow
       <span className="overflow-hidden" style={{ minWidth: 0 }}>
         <span className="d-block fw-semibold text-truncate">{title}</span>
         <span className={`d-block small text-truncate ${selected ? "" : "text-body-secondary"}`}>
-          Shared with user #{toUserId}
+          Shared with {userLabel(recipientDisplayName, toUserId)}
         </span>
       </span>
     </ClickableRow>

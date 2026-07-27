@@ -373,7 +373,9 @@ describe("ManageScreen", () => {
       await goToShares();
       await userEvent.click(screen.getByRole("button", { name: "Create" }));
       await userEvent.selectOptions(screen.getByLabelText("Txt"), "1");
-      await userEvent.type(screen.getByLabelText("Recipient user id"), "2");
+      // Recipient is a dropdown of the same cached Users list the Users
+      // section already loaded (Bob's display name), not a free-typed id.
+      await userEvent.selectOptions(screen.getByLabelText("Recipient"), "2");
       await userEvent.click(screen.getByRole("button", { name: "Grant share" }));
 
       await waitFor(() => expect(getTxtKey).toHaveBeenCalledWith(1));
@@ -387,7 +389,10 @@ describe("ManageScreen", () => {
       // ShareRow renders the title and recipient as two separate lines --
       // see ShareRow.tsx -- rather than one line joined by an arrow.
       await waitFor(() => expect(screen.getByText("Book One")).toBeInTheDocument());
-      expect(screen.getByText("Shared with user #2")).toBeInTheDocument();
+      // Recipient shows the resolved display name (Bob, from the shared
+      // Users cache -- see beforeEach's listUsersWithInfo mock), not just
+      // the bare numeric id.
+      expect(screen.getByText("Shared with Bob (#2)")).toBeInTheDocument();
 
       await userEvent.click(screen.getByText("Book One"));
       await userEvent.click(screen.getByRole("button", { name: "Delete" }));

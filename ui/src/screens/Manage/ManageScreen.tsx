@@ -101,6 +101,20 @@ export function ManageScreen() {
 
   const books = useMemo(() => (session ? Array.from(session.metadataById.values()) : []), [session]);
 
+  // users.creds can never hold the admin's own display name (it's always
+  // NULL for that row -- see adminUsers.ts), but the admin's session already
+  // carries it (same value the nav footer shows), so patch it in here --
+  // once, shared by both Users (its own list) and Shares (the recipient
+  // dropdown/ShareRow's "Shared with" line) -- rather than showing the
+  // "Unnamed user" fallback for the one row that could actually be named.
+  const usersWithSelfName = useMemo(
+    () =>
+      (users ?? []).map((u) =>
+        session && u.id === session.userId ? { ...u, displayName: session.creds.displayName } : u,
+      ),
+    [users, session],
+  );
+
   const [shares, setShares] = useState<ShareEntry[] | null>(null);
   const [sharesError, setSharesError] = useState<string | null>(null);
   const loadShares = useCallback(async () => {
@@ -416,7 +430,7 @@ export function ManageScreen() {
               {section === "users" && (
                 <UsersSection
                   session={session}
-                  users={users ?? []}
+                  users={usersWithSelfName}
                   search={search}
                   selectedUserId={usersSelectedId}
                   mode={usersMode}
@@ -438,6 +452,7 @@ export function ManageScreen() {
                 <SharesSection
                   session={session}
                   books={books}
+                  users={usersWithSelfName}
                   shares={shares ?? []}
                   search={search}
                   selectedShareId={sharesSelectedId}

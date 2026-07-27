@@ -9,19 +9,22 @@ import { useMemo, useState, type FormEvent } from "react";
 import { Modal } from "../../components/Modal";
 import { VirtualizedListGroup } from "../../components/VirtualizedListGroup";
 import { grantShare, type ShareEntry } from "../../data/adminShares";
+import type { UserSummary } from "../../data/adminUsers";
 import type { BookInfo } from "../../data/metadata";
 import { useVault, type VaultSession } from "../../state/VaultContext";
-import { FORM_WIDTH, FormField, errorMessage } from "./manageShared";
+import { FormField, errorMessage, userLabel } from "./manageShared";
 import { ShareRow, SHARE_ROW_HEIGHT } from "./ShareRow";
 
 function GrantShareForm({
   session,
   books,
+  users,
   onGranted,
   onClose,
 }: {
   session: VaultSession;
   books: BookInfo[];
+  users: UserSummary[];
   onGranted: () => void;
   onClose: () => void;
 }) {
@@ -50,7 +53,7 @@ function GrantShareForm({
 
   return (
     <Modal title="Grant a share" onClose={onClose}>
-      <form onSubmit={(e) => void handleSubmit(e)} style={FORM_WIDTH}>
+      <form onSubmit={(e) => void handleSubmit(e)}>
         <FormField label="Txt" htmlFor="manage-grant-txt">
           <select
             id="manage-grant-txt"
@@ -69,15 +72,26 @@ function GrantShareForm({
             ))}
           </select>
         </FormField>
-        <FormField label="Recipient user id" htmlFor="manage-grant-recipient">
-          <input
+        <FormField label="Recipient" htmlFor="manage-grant-recipient">
+          {/* Same cached Users list ManageScreen already loads for the
+              Users section (see its own doc comment) -- picking a
+              recipient by name/id here costs no extra query. */}
+          <select
             id="manage-grant-recipient"
-            type="number"
-            className="form-control themed-control"
+            className="form-select themed-control"
             value={recipientUserId}
             onChange={(e) => setRecipientUserId(e.target.value)}
             required
-          />
+          >
+            <option value="" disabled>
+              Choose a recipient
+            </option>
+            {users.map((user) => (
+              <option key={user.id} value={user.id}>
+                {userLabel(user.displayName, user.id)}
+              </option>
+            ))}
+          </select>
         </FormField>
         <button type="submit" className="btn btn-primary mt-1" disabled={busy}>
           Grant share
@@ -93,6 +107,7 @@ export type SharesMode = "none" | "create";
 export function SharesSection({
   session,
   books,
+  users,
   shares,
   search,
   selectedShareId,
@@ -103,6 +118,7 @@ export function SharesSection({
 }: {
   session: VaultSession;
   books: BookInfo[];
+  users: UserSummary[];
   shares: ShareEntry[];
   search: string;
   selectedShareId: number | null;
@@ -111,14 +127,20 @@ export function SharesSection({
   onSetMode: (mode: SharesMode) => void;
   onChanged: () => void;
 }) {
+  // Recipient display names, keyed by id -- resolved from the same Users
+  // list ManageScreen already loads for the Users section, not a second
+  // fetch of its own.
+  const displayNameById = useMemo(() => new Map(users.map((user) => [user.id, user.displayName])), [users]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return shares;
     return shares.filter((s) => {
       const title = session.metadataById.get(s.txtId)?.title ?? "";
-      return title.toLowerCase().includes(q) || String(s.toUserId).includes(q);
+      const recipient = userLabel(displayNameById.get(s.toUserId), s.toUserId);
+      return title.toLowerCase().includes(q) || recipient.toLowerCase().includes(q);
     });
-  }, [shares, search, session.metadataById]);
+  }, [shares, search, session.metadataById, displayNameById]);
 
   return (
     <div className="d-flex flex-column flex-grow-1 overflow-hidden">
@@ -126,6 +148,7 @@ export function SharesSection({
         <GrantShareForm
           session={session}
           books={books}
+          users={users}
           onGranted={() => {
             onSetMode("none");
             onChanged();
@@ -144,6 +167,7 @@ export function SharesSection({
           <ShareRow
             title={session.metadataById.get(share.txtId)?.title ?? `txt #${share.txtId}`}
             toUserId={share.toUserId}
+            recipientDisplayName={displayNameById.get(share.toUserId)}
             selected={selectedShareId === share.id}
             onClick={() => onSelectRow(share.id)}
           />

@@ -95,6 +95,17 @@ export function ManageToolbar({ buttons }: { buttons: ToolbarButtonConfig[] }) {
   );
 }
 
+/** "<display name> (#<id>)" -- the shared label for referencing a user from
+ * somewhere else in this screen (Shares' recipient dropdown and ShareRow's
+ * "Shared with" line): unlike Users' own list, which just shows the name
+ * since nothing else on that row needs disambiguating, a reference *to* a
+ * user needs the id too -- two accounts can share a display name (or lack
+ * one), never an id. Falls back to "Unnamed user" the same way UserRow's
+ * own display already does. */
+export function userLabel(displayName: string | undefined, id: number): string {
+  return `${displayName ?? "Unnamed user"} (#${id})`;
+}
+
 // -------------------------------------------------------------- Forms ---
 
 /** One labeled field, stacked label-above-input -- the one field layout
@@ -120,11 +131,6 @@ export function FormField({
     </div>
   );
 }
-
-/** Every form/confirm-panel in this screen caps its width to this, instead
- * of stretching to whatever's left of the (now much wider, fixed-size)
- * Modal it's shown in. */
-export const FORM_WIDTH = { maxWidth: "26rem" };
 
 /** Users/Books' Delete panels both gate their "Confirm delete" button
  * behind typing the selected row's own numeric id back -- this screen's
