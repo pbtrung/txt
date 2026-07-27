@@ -242,7 +242,7 @@ describe("ManageScreen", () => {
       await waitFor(() => expect(userRow("Carol")).toBeInTheDocument());
     });
 
-    it("copies the generated credentials JSON to the clipboard", async () => {
+    it("copies the generated credentials JSON to the clipboard and shows a small confirmation alert", async () => {
       const generated = fakeGeneratedNewUser({
         turso_database_url: "libsql://example",
         turso_auth_token: "user-token",
@@ -264,8 +264,10 @@ describe("ManageScreen", () => {
       await userEvent.click(screen.getByRole("button", { name: "Generate credentials" }));
       await waitFor(() => expect(screen.getByText(/"username": "carol"/)).toBeInTheDocument());
 
-      await userEvent.click(screen.getByRole("button", { name: /copy credentials json/i }));
+      expect(screen.queryByText("Copied to clipboard!")).not.toBeInTheDocument();
+      await userEvent.click(screen.getByRole("button", { name: "Copy" }));
       expect(writeText).toHaveBeenCalledWith(JSON.stringify(generated.downloadable, null, 2));
+      expect(screen.getByText("Copied to clipboard!")).toBeInTheDocument();
     });
 
     it("edits the generated credentials before creating -- no db write, and re-requires the saved-it confirmation", async () => {

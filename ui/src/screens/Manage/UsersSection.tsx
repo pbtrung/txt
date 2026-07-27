@@ -3,7 +3,7 @@
 // admin's own row -- an admin can never delete themselves through this
 // screen (see ManageScreen.tsx's toolbarButtons, which omits it there).
 
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 import { Modal } from "../../components/Modal";
 import { VirtualizedListGroup } from "../../components/VirtualizedListGroup";
@@ -44,6 +44,16 @@ function CreateUserForm({
   // persistNewUser (the only step that actually writes anything) hasn't run.
   const [generated, setGenerated] = useState<GeneratedNewUser | null>(null);
   const [copied, setCopied] = useState(false);
+  // Cleared/reset on every click (not just set once) so the "Copied!"
+  // alert re-appears for each copy, not only the first -- and clearing any
+  // pending one first means a rapid second click restarts the same 2s
+  // window rather than the first click's timeout cutting it short.
+  const copiedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (copiedTimeoutRef.current) clearTimeout(copiedTimeoutRef.current);
+    };
+  }, []);
   const [confirmedSaved, setConfirmedSaved] = useState(false);
   const [persistBusy, setPersistBusy] = useState(false);
   // What persistNewUser is doing right now (its own account-then-
@@ -104,6 +114,8 @@ function CreateUserForm({
   async function handleCopy() {
     await navigator.clipboard.writeText(JSON.stringify(generated!.downloadable, null, 2));
     setCopied(true);
+    if (copiedTimeoutRef.current) clearTimeout(copiedTimeoutRef.current);
+    copiedTimeoutRef.current = setTimeout(() => setCopied(false), 2000);
   }
 
   function startEditing() {
@@ -134,6 +146,7 @@ function CreateUserForm({
       // than letting Create stay enabled for content the admin never
       // actually saved.
       setConfirmedSaved(false);
+      if (copiedTimeoutRef.current) clearTimeout(copiedTimeoutRef.current);
       setCopied(false);
       setEditing(false);
     } catch (err) {
@@ -217,31 +230,25 @@ function CreateUserForm({
             {JSON.stringify(creds, null, 2)}
           </pre>
           <div className="d-flex gap-2 mt-2">
-            <button
-              type="button"
-              className="btn btn-sm btn-outline-secondary border-primary d-flex align-items-center gap-1"
-              onClick={startEditing}
-            >
-              <i className="bi bi-pencil text-primary" aria-hidden="true" />
+            <button type="button" className="btn btn-sm btn-outline-secondary border-primary" onClick={startEditing}>
               Edit
             </button>
             <button
               type="button"
               className="btn btn-sm btn-outline-secondary border-primary"
               onClick={() => void handleCopy()}
-              aria-label="Copy credentials JSON to clipboard"
-              title={copied ? "Copied!" : "Copy to clipboard"}
             >
-              <i className={`bi ${copied ? "bi-check-lg" : "bi-clipboard"} text-primary`} aria-hidden="true" />
+              Copy
             </button>
             <button
               type="button"
-              className="btn btn-sm btn-outline-secondary"
+              className="btn btn-sm btn-outline-secondary border-primary"
               onClick={() => downloadJson(`${creds.username}_creds.json`, creds)}
             >
               Download
             </button>
           </div>
+          {copied && <div className="text-success small mt-2">Copied to clipboard!</div>}
           <div className="form-check mt-3">
             <input
               id="manage-new-user-confirmed-saved"
