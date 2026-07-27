@@ -1,10 +1,8 @@
 // One row in the admin Manage screen's Users list: display name (if known --
 // recovered from users.creds, wrapped under the admin's own umk, see
-// adminUsers.ts's listUsersWithInfo) or a plain fallback, then how many txt
-// this account owns (almost always 0 for a regular user -- only the admin
-// ever holds any, see the plan this screen was built from -- except the
-// admin's own row). One line, matching Library's BROWSE_ENTRY_ROW_HEIGHT
-// single-line rows rather than BookRow's two-line shape.
+// adminUsers.ts's listUsersWithInfo) or a plain fallback. One line, matching
+// Library's BROWSE_ENTRY_ROW_HEIGHT single-line rows rather than BookRow's
+// two-line shape.
 
 import type { CSSProperties } from "react";
 import { ClickableRow } from "../../components/ClickableRow";
@@ -31,9 +29,6 @@ export function UserRow({ user, isSelf, selected, onClick, style }: UserRowProps
       <span className="flex-grow-1 text-truncate fw-semibold" style={{ minWidth: 0 }}>
         {user.displayName ?? "Unnamed user"}
         {isSelf && <span className={`small ms-2 ${selected ? "" : "text-body-secondary"}`}>(you)</span>}
-      </span>
-      <span className={`small flex-shrink-0 ${selected ? "" : "text-body-secondary"}`}>
-        {user.bookCount} {user.bookCount === 1 ? "book" : "books"}
       </span>
     </ClickableRow>
   );

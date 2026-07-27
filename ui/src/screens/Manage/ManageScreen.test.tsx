@@ -91,8 +91,8 @@ function userRow(name: string): HTMLElement {
 
 beforeEach(() => {
   vi.mocked(adminUsers.listUsersWithInfo).mockResolvedValue([
-    { id: 1, displayName: "Alice", bookCount: 0 },
-    { id: 2, displayName: "Bob", bookCount: 0 },
+    { id: 1, displayName: "Alice" },
+    { id: 2, displayName: "Bob" },
   ]);
   vi.mocked(adminShares.listShares).mockResolvedValue([]);
 });
@@ -155,8 +155,8 @@ describe("ManageScreen", () => {
       // displayName for it from decryption -- the screen has to patch in
       // session.creds.displayName itself instead of showing the fallback.
       vi.mocked(adminUsers.listUsersWithInfo).mockResolvedValue([
-        { id: 1, displayName: undefined, bookCount: 0 },
-        { id: 2, displayName: "Bob", bookCount: 0 },
+        { id: 1, displayName: undefined },
+        { id: 2, displayName: "Bob" },
       ]);
       setup();
       await waitFor(() => expect(userRow("Alice")).toBeInTheDocument());
@@ -176,9 +176,9 @@ describe("ManageScreen", () => {
       setup();
       await waitFor(() => expect(userRow("Alice")).toBeInTheDocument());
       vi.mocked(adminUsers.listUsersWithInfo).mockResolvedValue([
-        { id: 1, displayName: "Alice", bookCount: 0 },
-        { id: 2, displayName: "Bob", bookCount: 0 },
-        { id: 3, displayName: "Carol", bookCount: 0 },
+        { id: 1, displayName: "Alice" },
+        { id: 2, displayName: "Bob" },
+        { id: 3, displayName: "Carol" },
       ]);
 
       await userEvent.click(screen.getByRole("button", { name: "Create" }));
@@ -328,9 +328,9 @@ describe("ManageScreen", () => {
   describe("search", () => {
     it("filters the Users list by display name", async () => {
       vi.mocked(adminUsers.listUsersWithInfo).mockResolvedValue([
-        { id: 1, displayName: "Alice", bookCount: 0 },
-        { id: 2, displayName: "Bob", bookCount: 0 },
-        { id: 22, displayName: "Zoe", bookCount: 0 },
+        { id: 1, displayName: "Alice" },
+        { id: 2, displayName: "Bob" },
+        { id: 22, displayName: "Zoe" },
       ]);
       setup();
       await waitFor(() => expect(userRow("Zoe")).toBeInTheDocument());
@@ -343,9 +343,9 @@ describe("ManageScreen", () => {
 
     it("filters the Users list by id", async () => {
       vi.mocked(adminUsers.listUsersWithInfo).mockResolvedValue([
-        { id: 1, displayName: "Alice", bookCount: 0 },
-        { id: 2, displayName: "Bob", bookCount: 0 },
-        { id: 22, displayName: "Zoe", bookCount: 0 },
+        { id: 1, displayName: "Alice" },
+        { id: 2, displayName: "Bob" },
+        { id: 22, displayName: "Zoe" },
       ]);
       setup();
       await waitFor(() => expect(userRow("Zoe")).toBeInTheDocument());
@@ -372,7 +372,7 @@ describe("ManageScreen", () => {
   describe("virtualization", () => {
     it("renders only a bounded window of rows for a large Users list, not all of them", async () => {
       vi.mocked(adminUsers.listUsersWithInfo).mockResolvedValue(
-        Array.from({ length: 500 }, (_, i) => ({ id: i + 1, displayName: `Person ${i + 1}`, bookCount: 0 })),
+        Array.from({ length: 500 }, (_, i) => ({ id: i + 1, displayName: `Person ${i + 1}` })),
       );
       setup();
 

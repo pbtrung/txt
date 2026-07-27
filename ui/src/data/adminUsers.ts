@@ -193,26 +193,17 @@ export interface UserSummary {
    * admin's own row (creds is always NULL there) and for any row whose
    * creds can't be decrypted/parsed (e.g. one created before this existed). */
   displayName?: string;
-  /** How many txt this account owns -- almost always 0 for a regular user
-   * (only the admin ever holds any, per the plan this screen was built
-   * from), except the admin's own row. */
-  bookCount: number;
 }
 
-/** Every account's id, recovered display name (if any), and txt count.
- * Two queries total regardless of how many accounts exist: one for
- * id+creds, one grouped count of txt rows by owner -- rather than a query
- * per account for either. */
+/** Every account's id and recovered display name (if any) -- one query
+ * regardless of how many accounts exist, rather than a query per account.
+ * No longer carries a book count: that used to be a second query
+ * (`COUNT(*) ... GROUP BY user_id` over the whole `txt` table) whose
+ * row-read cost scaled with the total number of documents in the entire
+ * database, not with the number of accounts being listed -- dropped along
+ * with the UserRow.tsx display it was only ever for. */
 export async function listUsersWithInfo(db: Client, adminUmk: Uint8Array): Promise<UserSummary[]> {
   const usersResult = await db.execute({ sql: "SELECT id, creds FROM users ORDER BY id ASC", args: [] });
-  const countsResult = await db.execute({
-    sql: "SELECT user_id, COUNT(*) as count FROM txt GROUP BY user_id",
-    args: [],
-  });
-  const countByUserId = new Map<number, number>();
-  for (const row of countsResult.rows) {
-    countByUserId.set(Number(row.user_id), Number(row.count));
-  }
 
   return Promise.all(
     usersResult.rows.map(async (row): Promise<UserSummary> => {
@@ -229,7 +220,7 @@ export async function listUsersWithInfo(db: Client, adminUmk: Uint8Array): Promi
           // populated, or wrapped under a since-rotated admin umk).
         }
       }
-      return { id, displayName, bookCount: countByUserId.get(id) ?? 0 };
+      return { id, displayName };
     }),
   );
 }

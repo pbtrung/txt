@@ -123,7 +123,7 @@ describe("createUser", () => {
 });
 
 describe("listUsersWithInfo", () => {
-  it("returns each user's id, recovered display name, and txt count", async () => {
+  it("returns each user's id and recovered display name -- one query, not a per-account count too", async () => {
     const adminUmk = new Uint8Array(64).fill(9);
     const credsJson = { display_name: "Bob", username: "bob" };
     const credsBlob = await blob.encrypt(adminUmk, new TextEncoder().encode(JSON.stringify(credsJson)), {
@@ -137,22 +137,16 @@ describe("listUsersWithInfo", () => {
           { id: 3, creds: null }, // never populated (e.g. predates this feature)
         ]);
       }
-      if (sql.includes("GROUP BY user_id")) {
-        return rowsResult([
-          { user_id: 1, count: 5 },
-          { user_id: 2, count: 0 },
-        ]);
-      }
-      return emptyResult();
+      throw new Error(`unexpected query: ${sql}`);
     });
     const db = { execute } as unknown as Client;
 
     const result = await adminUsers.listUsersWithInfo(db, adminUmk);
 
     expect(result).toEqual([
-      { id: 1, displayName: undefined, bookCount: 5 },
-      { id: 2, displayName: "Bob", bookCount: 0 },
-      { id: 3, displayName: undefined, bookCount: 0 },
+      { id: 1, displayName: undefined },
+      { id: 2, displayName: "Bob" },
+      { id: 3, displayName: undefined },
     ]);
   });
 
@@ -169,7 +163,7 @@ describe("listUsersWithInfo", () => {
 
     const result = await adminUsers.listUsersWithInfo(db, adminUmk);
 
-    expect(result).toEqual([{ id: 2, displayName: undefined, bookCount: 0 }]);
+    expect(result).toEqual([{ id: 2, displayName: undefined }]);
   });
 });
 
