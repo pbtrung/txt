@@ -218,7 +218,7 @@ function CreateUserForm({
     const creds = generated.downloadable;
     return (
       <Modal title="Save this user's credentials" onClose={onClose}>
-        <div>
+        <div className="pb-3">
           <p className="small text-body-secondary">
             This is the only time the password and root key are ever shown -- download or copy this now, then confirm
             below. Neither can be recovered afterward.
@@ -229,7 +229,7 @@ function CreateUserForm({
           >
             {JSON.stringify(creds, null, 2)}
           </pre>
-          <div className="d-flex gap-2 mt-2">
+          <div className="d-flex align-items-center gap-2 mt-2">
             <button type="button" className="btn btn-sm btn-outline-secondary border-primary" onClick={startEditing}>
               Edit
             </button>
@@ -247,8 +247,16 @@ function CreateUserForm({
             >
               Download
             </button>
+            {/* Smaller than .small (0.875em) -- on a narrow modal, three
+                buttons plus this text is a tight fit; shrinking the text
+                (rather than letting it wrap to its own line below the
+                buttons) keeps everything on one line down to small screens. */}
+            {copied && (
+              <span className="text-success text-nowrap" style={{ fontSize: "0.7rem" }}>
+                Copied to clipboard!
+              </span>
+            )}
           </div>
-          {copied && <div className="text-success small mt-2">Copied to clipboard!</div>}
           <div className="form-check mt-3">
             <input
               id="manage-new-user-confirmed-saved"
