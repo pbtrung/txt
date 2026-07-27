@@ -156,6 +156,28 @@ body,
   opacity: 0.65;
 }
 
+/* Every bordered icon button tints its icon brass via .text-primary at rest
+   (Refresh/Lock, the toolbar's Create/Edit, DropdownToggleButton's closed
+   state, the Create User modal's Copy button, ...) -- but Bootstrap's own
+   :hover/:focus-visible fill the button's background solid without
+   touching a child element's already-!important .text-primary, leaving a
+   brass icon on a similarly-toned fill nearly invisible (bootstrap.css's
+   .btn:hover/.btn:focus-visible both set the same --bs-btn-hover-color,
+   confirmed by inspecting node_modules/bootstrap/dist/css/bootstrap.css
+   directly -- so a keyboard-focused button has the exact same problem as a
+   hovered one, not just the one the request named). Matches the icon's
+   color to that same --bs-btn-hover-color instead (the same white its own
+   text already turns to, read off whichever .btn-* variant is actually in
+   play) -- specific enough to beat .text-primary's own !important. The
+   already-solid-brass-fill "open" state (DropdownToggleButton) sidesteps
+   this a different way -- it just omits .text-primary entirely so the icon
+   inherits .btn-primary's own (already-legible) color -- so this only ever
+   needs to cover the outline/bordered resting state's hover/focus. */
+.btn:hover .text-primary,
+.btn:focus-visible .text-primary {
+  color: var(--bs-btn-hover-color) !important;
+}
+
 /* Bootstrap's .vr uses align-self: stretch, which only fills the flex
    line's own content height -- inside the bottom bar's py-2 padding, that
    leaves visible gaps above/below before actually reaching the bar's top
