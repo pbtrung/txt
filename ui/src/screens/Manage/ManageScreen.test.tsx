@@ -384,9 +384,12 @@ describe("ManageScreen", () => {
       vi.mocked(adminShares.listShares).mockResolvedValue([{ id: 5, txtId: 1, toUserId: 2 }]);
       setup();
       await goToShares();
-      await waitFor(() => expect(screen.getByText(/Book One.*user #2/)).toBeInTheDocument());
+      // ShareRow renders the title and recipient as two separate lines --
+      // see ShareRow.tsx -- rather than one line joined by an arrow.
+      await waitFor(() => expect(screen.getByText("Book One")).toBeInTheDocument());
+      expect(screen.getByText("Shared with user #2")).toBeInTheDocument();
 
-      await userEvent.click(screen.getByText(/Book One.*user #2/));
+      await userEvent.click(screen.getByText("Book One"));
       await userEvent.click(screen.getByRole("button", { name: "Delete" }));
 
       expect(adminShares.revokeShare).toHaveBeenCalledWith({}, 5);

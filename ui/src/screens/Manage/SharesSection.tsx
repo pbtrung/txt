@@ -11,13 +11,8 @@ import { VirtualizedListGroup } from "../../components/VirtualizedListGroup";
 import { grantShare, type ShareEntry } from "../../data/adminShares";
 import type { BookInfo } from "../../data/metadata";
 import { useVault, type VaultSession } from "../../state/VaultContext";
-import { FORM_WIDTH, FormField, SelectableRow, errorMessage } from "./manageShared";
-
-// Every row here is a single, text-truncate'd line (a txt-title-to-
-// recipient-id share) -- same reasoning as Library's own
-// BROWSE_ENTRY_ROW_HEIGHT: a plain constant is safe since the rendered
-// height never depends on content.
-const ROW_HEIGHT = 44;
+import { FORM_WIDTH, FormField, errorMessage } from "./manageShared";
+import { ShareRow, SHARE_ROW_HEIGHT } from "./ShareRow";
 
 function GrantShareForm({
   session,
@@ -143,12 +138,15 @@ export function SharesSection({
         className="flex-grow-1"
         items={filtered}
         getKey={(share) => share.id}
-        estimateRowHeight={ROW_HEIGHT}
+        estimateRowHeight={SHARE_ROW_HEIGHT}
         emptyMessage="No shares match here yet."
         renderRow={(share) => (
-          <SelectableRow icon="bi-share" selected={selectedShareId === share.id} onClick={() => onSelectRow(share.id)}>
-            {session.metadataById.get(share.txtId)?.title ?? `txt #${share.txtId}`} &rarr; user #{share.toUserId}
-          </SelectableRow>
+          <ShareRow
+            title={session.metadataById.get(share.txtId)?.title ?? `txt #${share.txtId}`}
+            toUserId={share.toUserId}
+            selected={selectedShareId === share.id}
+            onClick={() => onSelectRow(share.id)}
+          />
         )}
       />
     </div>

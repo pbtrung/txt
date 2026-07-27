@@ -165,34 +165,3 @@ export function ConfirmDeleteField({
     </div>
   );
 }
-
-// --------------------------------------------------------- List rows ---
-
-/** A single-line, icon-led, selectable list row -- used by SharesSection
- * (a share has no dedicated row component of its own the way Users/Books
- * do, since it's just a txt title -> recipient id line). */
-export function SelectableRow({
-  icon,
-  selected,
-  onClick,
-  children,
-  style,
-}: {
-  icon: string;
-  selected: boolean;
-  onClick: () => void;
-  children: ReactNode;
-  style?: CSSProperties;
-}) {
-  return (
-    <button
-      type="button"
-      style={style}
-      className={`list-group-item list-group-item-action d-flex align-items-center gap-2 text-start ${selected ? "active" : ""}`}
-      onClick={onClick}
-    >
-      <i className={`bi ${icon} ${selected ? "" : "text-body-secondary"} flex-shrink-0`} aria-hidden="true" />
-      <span className="text-truncate">{children}</span>
-    </button>
-  );
-}
