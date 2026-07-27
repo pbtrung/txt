@@ -62,9 +62,13 @@ function GrantShareForm({
     <Modal title="Grant a share" onClose={onClose}>
       <form onSubmit={(e) => void handleSubmit(e)}>
         <FormField label="Txt" htmlFor="manage-grant-txt">
+          {/* text-truncate (overflow:hidden + ellipsis + nowrap) so a long
+              book title truncates cleanly in the closed select's own fixed
+              width, rather than the browser's default abrupt clip -- same
+              reasoning for the Recipient select below (a long display name). */}
           <select
             id="manage-grant-txt"
-            className="form-select form-select-sm themed-control"
+            className="form-select form-select-sm themed-control text-truncate"
             value={txtId}
             onChange={(e) => setTxtId(e.target.value)}
             required
@@ -85,7 +89,7 @@ function GrantShareForm({
               recipient by name/id here costs no extra query. */}
           <select
             id="manage-grant-recipient"
-            className="form-select form-select-sm themed-control"
+            className="form-select form-select-sm themed-control text-truncate"
             value={recipientUserId}
             onChange={(e) => setRecipientUserId(e.target.value)}
             required
