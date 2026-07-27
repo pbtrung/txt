@@ -14,7 +14,7 @@ import { grantShare, revokeShare, type ShareEntry } from "../../data/adminShares
 import type { UserSummary } from "../../data/adminUsers";
 import type { BookInfo } from "../../data/metadata";
 import { useVault, type VaultSession } from "../../state/VaultContext";
-import { FormField, errorMessage, userLabel } from "./manageShared";
+import { FormField, errorMessage, truncateOptionLabel, userLabel } from "./manageShared";
 import { ShareRow, SHARE_ROW_HEIGHT } from "./ShareRow";
 
 function GrantShareForm({
@@ -62,13 +62,9 @@ function GrantShareForm({
     <Modal title="Grant a share" onClose={onClose}>
       <form onSubmit={(e) => void handleSubmit(e)}>
         <FormField label="Txt" htmlFor="manage-grant-txt">
-          {/* text-truncate (overflow:hidden + ellipsis + nowrap) so a long
-              book title truncates cleanly in the closed select's own fixed
-              width, rather than the browser's default abrupt clip -- same
-              reasoning for the Recipient select below (a long display name). */}
           <select
             id="manage-grant-txt"
-            className="form-select form-select-sm themed-control text-truncate"
+            className="form-select form-select-sm themed-control"
             value={txtId}
             onChange={(e) => setTxtId(e.target.value)}
             required
@@ -76,9 +72,14 @@ function GrantShareForm({
             <option value="" disabled>
               Choose a txt
             </option>
+            {/* truncateOptionLabel shortens a long book title itself (with
+                an ellipsis) rather than relying on CSS text-overflow on the
+                <select>, which doesn't reliably truncate a native select's
+                own rendered value across browsers -- same reasoning for the
+                Recipient select below (a long display name). */}
             {books.map((book) => (
               <option key={book.txtId} value={book.txtId}>
-                {book.title}
+                {truncateOptionLabel(book.title)}
               </option>
             ))}
           </select>
@@ -89,7 +90,7 @@ function GrantShareForm({
               recipient by name/id here costs no extra query. */}
           <select
             id="manage-grant-recipient"
-            className="form-select form-select-sm themed-control text-truncate"
+            className="form-select form-select-sm themed-control"
             value={recipientUserId}
             onChange={(e) => setRecipientUserId(e.target.value)}
             required
@@ -99,7 +100,7 @@ function GrantShareForm({
             </option>
             {recipients.map((user) => (
               <option key={user.id} value={user.id}>
-                {userLabel(user.displayName, user.id)}
+                {truncateOptionLabel(userLabel(user.displayName, user.id))}
               </option>
             ))}
           </select>

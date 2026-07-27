@@ -106,6 +106,25 @@ export function userLabel(displayName: string | undefined, id: number): string {
   return `${displayName ?? "Unnamed user"} (#${id})`;
 }
 
+/** Shortens a <select> option's own label text, appending an ellipsis --
+ * used for Shares' Grant-share Txt/Recipient options (a long book title or
+ * display name). CSS text-overflow/text-truncate on a <select> element
+ * itself doesn't reliably truncate long option text across browsers (the
+ * rendered "current value" box is OS/browser-drawn UI, not a plain text
+ * node CSS can clip the same way it would a <div>), so this shortens the
+ * actual string instead of depending on that CSS working. 40 is a measured
+ * value, not a guess: at the project's smallest supported viewport
+ * (375x667), a worst-case all-wide-character 45-char option's rendered
+ * scrollWidth already exceeded the select's own clientWidth (confirmed via
+ * a headless-Chromium repro of the real markup, an iframe sized exactly
+ * 375px wide to sidestep headless Chrome's own ~500px minimum window
+ * width); 40 measured with no overflow at all in that same repro, and real
+ * option text (mixed-case, spaces, narrower letters) renders narrower per
+ * character than that synthetic worst case, so this has margin to spare. */
+export function truncateOptionLabel(text: string, maxLength = 40): string {
+  return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
+}
+
 // -------------------------------------------------------------- Forms ---
 
 /** One labeled field, stacked label-above-input -- the one field layout
