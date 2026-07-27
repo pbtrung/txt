@@ -1,7 +1,8 @@
 // Data hook backing the Reader screen (docs/ui.md's Screen 3): resolves the
-// txt_key and every part's raw path once, then fetches/caches one part's
-// text at a time as the reader navigates, persisting read position and
-// bookmarks along the way.
+// txt_key and part count once, then fetches/caches one part's raw path and
+// text at a time as the reader navigates (never every part's path up front --
+// see data/owner.ts's partRawPath), persisting read position and bookmarks
+// along the way.
 //
 // Read position and bookmarks themselves are no longer fetched here -- both
 // already live in VaultContext (loaded once, in full, during unlock), so
@@ -13,7 +14,7 @@ import { useSearchParams } from "react-router-dom";
 
 import type { BookmarkEntry } from "../../data/bookmarks";
 import type { BookInfo } from "../../data/metadata";
-import { partCount as fetchPartCount, partRawPaths } from "../../data/owner";
+import { partCount as fetchPartCount, partRawPath } from "../../data/owner";
 import { fetchPart } from "../../data/parts";
 import { useVault } from "../../state/VaultContext";
 import { clampPartNum } from "./readerModel";
@@ -56,7 +57,7 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
   const [targetLine, setTargetLine] = useState<number | null>(null);
 
   const txtKeyRef = useRef<Uint8Array | null>(null);
-  const rawPathsRef = useRef<string[]>([]);
+  const rawPathCache = useRef(new Map<number, string>());
   const partTextCache = useRef(new Map<number, string>());
 
   const bookmarks = bookmarksMap.get(txtId) ?? [];
@@ -65,11 +66,13 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
   // which are only ever fetched for whichever book is actually open.
   const info: BookInfo | null = session?.metadataById.get(txtId) ?? null;
 
-  // Load the book's key, part count, and part paths once per (session,
-  // txtId) -- metadata itself needs no fetch here at all, see `info` above.
-  // accessMap/searchParams are read here only to seed the initial part --
-  // deliberately not in the dep list below, since a read-position write
-  // (which updates accessMap) shouldn't re-trigger a full reload.
+  // Load the book's key and part count once per (session, txtId) -- part
+  // paths are resolved lazily, one at a time, by the part-fetch effect below
+  // (see data/owner.ts's partRawPath); metadata itself needs no fetch here at
+  // all, see `info` above. accessMap/searchParams are read here only to seed
+  // the initial part -- deliberately not in the dep list below, since a
+  // read-position write (which updates accessMap) shouldn't re-trigger a
+  // full reload.
   useEffect(() => {
     if (!session) return;
     let cancelled = false;
@@ -82,17 +85,13 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
     // targetLine scroll/highlight fire against stale content (see below).
     setPartText(null);
     partTextCache.current = new Map();
+    rawPathCache.current = new Map();
 
     (async () => {
-      const txtKey = await getTxtKey(txtId);
-      const [count, rawPaths] = await Promise.all([
-        fetchPartCount(session.db, txtId),
-        partRawPaths(session.db, txtId, txtKey),
-      ]);
+      const [txtKey, count] = await Promise.all([getTxtKey(txtId), fetchPartCount(session.db, txtId)]);
       if (cancelled) return;
 
       txtKeyRef.current = txtKey;
-      rawPathsRef.current = rawPaths;
       setPartCount(count);
 
       // A Library "Recent Bookmarks" click carries ?part=N&line=M -- prefer
@@ -127,24 +126,35 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, txtId, getTxtKey]);
 
-  // Fetch (and cache) the current part's text; persist the read position.
+  // Fetch (and cache) the current part's raw path, then its text; persist
+  // the read position. The raw path itself is resolved lazily here (one
+  // row-read, cached in rawPathCache) rather than upfront for every part in
+  // the book -- see data/owner.ts's partRawPath.
   useEffect(() => {
     if (!session || loading) return;
     const txtKey = txtKeyRef.current;
-    const rawPath = rawPathsRef.current[currentPartNum - 1];
-    if (!txtKey || !rawPath) return;
+    if (!txtKey) return;
 
     void recordReadPosition(txtId, { lastPartNum: currentPartNum, lastAccessedMs: Date.now() });
 
-    const cached = partTextCache.current.get(currentPartNum);
-    if (cached !== undefined) {
-      setPartText(cached);
+    const cachedText = partTextCache.current.get(currentPartNum);
+    if (cachedText !== undefined) {
+      setPartText(cachedText);
       return;
     }
 
     let cancelled = false;
     setPartTextLoading(true);
-    fetchPart(session.r2Client, session.r2Config, txtKey, rawPath)
+    (async () => {
+      let rawPath = rawPathCache.current.get(currentPartNum);
+      if (rawPath === undefined) {
+        const fetched = await partRawPath(session.db, txtId, currentPartNum, txtKey);
+        if (!fetched) throw new Error(`no txt_parts row for txt_id=${txtId}, part_num=${currentPartNum}`);
+        rawPath = fetched;
+        rawPathCache.current.set(currentPartNum, rawPath);
+      }
+      return fetchPart(session.r2Client, session.r2Config, txtKey, rawPath);
+    })()
       .then((text) => {
         if (cancelled) return;
         partTextCache.current.set(currentPartNum, text);

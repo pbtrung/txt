@@ -54,36 +54,27 @@ beforeAll(async () => {
   pwHash = await pbkdf2Sha3_256(new TextEncoder().encode(creds.password), pwSalt, PBKDF2_ITERATIONS, PW_HASH_LEN);
 });
 
-describe("resolveUserId", () => {
-  it("returns the matching user's id", async () => {
-    const db = fakeClient({ "FROM users WHERE username_hash": [{ id: 42 }] });
-    expect(await owner.resolveUserId(db, creds)).toBe(42);
+describe("resolveUserAndCheckPassword", () => {
+  it("resolves the user id and reports passwordOk: true for the correct password -- one query, not two", async () => {
+    const db = fakeClient({
+      "FROM users WHERE username_hash": [{ id: 42, pw_salt: pwSalt.buffer, pw_hash: pwHash.buffer }],
+    });
+    expect(await owner.resolveUserAndCheckPassword(db, creds)).toEqual({ userId: 42, passwordOk: true });
+  });
+
+  it("reports passwordOk: false for the wrong password", async () => {
+    const db = fakeClient({
+      "FROM users WHERE username_hash": [{ id: 42, pw_salt: pwSalt.buffer, pw_hash: pwHash.buffer }],
+    });
+    expect(await owner.resolveUserAndCheckPassword(db, { ...creds, password: "wrong-password" })).toEqual({
+      userId: 42,
+      passwordOk: false,
+    });
   });
 
   it("throws when no user matches", async () => {
     const db = fakeClient({ "FROM users WHERE username_hash": [] });
-    await expect(owner.resolveUserId(db, creds)).rejects.toThrow(owner.OwnerError);
-  });
-});
-
-describe("checkPassword", () => {
-  it("returns true for the correct password", async () => {
-    const db = fakeClient({
-      "FROM users WHERE id": [{ pw_salt: pwSalt.buffer, pw_hash: pwHash.buffer }],
-    });
-    expect(await owner.checkPassword(db, 42, "hunter2")).toBe(true);
-  });
-
-  it("returns false for the wrong password", async () => {
-    const db = fakeClient({
-      "FROM users WHERE id": [{ pw_salt: pwSalt.buffer, pw_hash: pwHash.buffer }],
-    });
-    expect(await owner.checkPassword(db, 42, "wrong-password")).toBe(false);
-  });
-
-  it("returns false when no user row exists", async () => {
-    const db = fakeClient({ "FROM users WHERE id": [] });
-    expect(await owner.checkPassword(db, 42, "hunter2")).toBe(false);
+    await expect(owner.resolveUserAndCheckPassword(db, creds)).rejects.toThrow(owner.OwnerError);
   });
 });
 
@@ -122,21 +113,18 @@ describe("fetchR2Config", () => {
   });
 });
 
-describe("listTxtIds / unwrapTxtKey / partRawPaths / partCount", () => {
-  it("lists txt ids, unwraps a txt_key, and decrypts part paths", async () => {
+describe("unwrapTxtKey / partRawPaths / partRawPath / partCount", () => {
+  it("unwraps a txt_key, decrypts every part's path, and counts parts", async () => {
     const txtKey = new Uint8Array(64).fill(11);
     const txtKeyBlob = await blob.encrypt(umk, txtKey);
     const path1 = await blob.encrypt(txtKey, new TextEncoder().encode("0000000000000000000000000000001"));
     const path2 = await blob.encrypt(txtKey, new TextEncoder().encode("0000000000000000000000000000002"));
 
     const db = fakeClient({
-      "FROM txt WHERE user_id": [{ id: 7 }, { id: 8 }],
       "FROM txt WHERE id": [{ txt_key: txtKeyBlob.buffer }],
       "FROM txt_parts": [{ path: path1.buffer }, { path: path2.buffer }],
       "FROM part_count": [{ count: 2 }],
     });
-
-    expect(await owner.listTxtIds(db, 42)).toEqual([7, 8]);
 
     const unwrapped = await owner.unwrapTxtKey(db, 7, 42, umk);
     expect(Array.from(unwrapped)).toEqual(Array.from(txtKey));
@@ -147,6 +135,19 @@ describe("listTxtIds / unwrapTxtKey / partRawPaths / partCount", () => {
     ]);
 
     expect(await owner.partCount(db, 7)).toBe(2);
+  });
+
+  it("partRawPath decrypts a single part's path -- one row-read, not every part in the document", async () => {
+    const txtKey = new Uint8Array(64).fill(11);
+    const path1 = await blob.encrypt(txtKey, new TextEncoder().encode("0000000000000000000000000000001"));
+    const db = fakeClient({ "FROM txt_parts": [{ path: path1.buffer }] });
+    expect(await owner.partRawPath(db, 7, 1, txtKey)).toBe("0000000000000000000000000000001");
+  });
+
+  it("partRawPath returns null when that part doesn't exist", async () => {
+    const txtKey = new Uint8Array(64).fill(11);
+    const db = fakeClient({ "FROM txt_parts": [] });
+    expect(await owner.partRawPath(db, 7, 99, txtKey)).toBeNull();
   });
 
   it("unwrapTxtKey scopes its query by user_id, not just txt_id", async () => {

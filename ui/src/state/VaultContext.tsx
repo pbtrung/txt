@@ -22,7 +22,7 @@ import {
 } from "../data/bookmarks";
 import { deleteTxtRows } from "../data/adminTxt";
 import { isAdminToken } from "../crypto/jwt";
-import { checkPassword, fetchR2Config, partRawPaths, resolveUserId, unwrapTxtKey, unwrapUmk } from "../data/owner";
+import { fetchR2Config, partRawPaths, resolveUserAndCheckPassword, unwrapTxtKey, unwrapUmk } from "../data/owner";
 import { createDb } from "../data/db";
 import { createR2Client, deleteObject } from "../data/r2";
 import { parseCreds, type Creds } from "../data/creds";
@@ -182,16 +182,12 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
         const db = createDb(creds);
         setProgress(phaseProgress(UNLOCK_PHASES, 0));
-        verbose("unlock: resolving user id");
-        const userId = await resolveUserId(db, creds);
-        verbose("unlock: resolved user id", userId);
-
-        verbose("unlock: checking password");
-        const passwordOk = await checkPassword(db, userId, creds.password);
+        verbose("unlock: resolving user id and checking password");
+        const { userId, passwordOk } = await resolveUserAndCheckPassword(db, creds);
         if (!passwordOk) {
           throw new Error("Incorrect password for this account.");
         }
-        verbose("unlock: password OK");
+        verbose("unlock: resolved user id, password OK", userId);
 
         setProgress(phaseProgress(UNLOCK_PHASES, 1));
         verbose("unlock: unwrapping umk");

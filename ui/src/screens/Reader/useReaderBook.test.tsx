@@ -24,6 +24,15 @@ const recordReadPosition = vi.fn().mockResolvedValue(undefined);
 const addBookmarkEntry = vi.fn().mockResolvedValue(undefined);
 const removeBookmarkEntry = vi.fn().mockResolvedValue(undefined);
 
+/** useReaderBook resolves one part's raw path at a time (see data/owner.ts's
+ * partRawPath) rather than every part up front -- this stands in for a
+ * txt_parts table indexed 1-based by `paths`' own array position. */
+function mockPartRawPath(paths: string[]) {
+  vi.mocked(ownerModule.partRawPath).mockImplementation(
+    async (_db, _txtId, partNum) => paths[partNum - 1] ?? null,
+  );
+}
+
 function mockVault(
   accessMap: AccessMap = new Map(),
   bookmarksMap: BookmarksMap = new Map(),
@@ -78,7 +87,7 @@ describe("useReaderBook", () => {
       new Map([[7, { txtId: 7, name: "n", title: "The White Order", subjects: [], rawMetadata: [] }]]),
     );
     vi.mocked(ownerModule.partCount).mockResolvedValue(41);
-    vi.mocked(ownerModule.partRawPaths).mockResolvedValue(Array.from({ length: 41 }, (_, i) => `path-${i + 1}`));
+    mockPartRawPath(Array.from({ length: 41 }, (_, i) => `path-${i + 1}`));
     vi.mocked(partsModule.fetchPart).mockResolvedValue("Part fourteen's text.");
 
     const { result } = renderReaderBook(7);
@@ -103,7 +112,7 @@ describe("useReaderBook", () => {
   it("defaults to part 1 when there's no saved read position", async () => {
     mockVault();
     vi.mocked(ownerModule.partCount).mockResolvedValue(5);
-    vi.mocked(ownerModule.partRawPaths).mockResolvedValue(["p1", "p2", "p3", "p4", "p5"]);
+    mockPartRawPath(["p1", "p2", "p3", "p4", "p5"]);
     vi.mocked(partsModule.fetchPart).mockResolvedValue("part one");
 
     const { result } = renderReaderBook(3);
@@ -114,7 +123,7 @@ describe("useReaderBook", () => {
   it("prefers a ?part= query param over the saved read position", async () => {
     mockVault(new Map([[3, { lastPartNum: 1, lastAccessedMs: 1 }]]));
     vi.mocked(ownerModule.partCount).mockResolvedValue(5);
-    vi.mocked(ownerModule.partRawPaths).mockResolvedValue(["p1", "p2", "p3", "p4", "p5"]);
+    mockPartRawPath(["p1", "p2", "p3", "p4", "p5"]);
     vi.mocked(partsModule.fetchPart).mockImplementation(async (_c, _cfg, _key, path) => `text for ${path}`);
 
     const { result } = renderReaderBook(3, "/?part=4");
@@ -125,7 +134,7 @@ describe("useReaderBook", () => {
   it("prefers a ?part=&line= query param over the saved read position, and sets targetLine", async () => {
     mockVault(new Map([[3, { lastPartNum: 1, lastAccessedMs: 1 }]]));
     vi.mocked(ownerModule.partCount).mockResolvedValue(5);
-    vi.mocked(ownerModule.partRawPaths).mockResolvedValue(["p1", "p2", "p3", "p4", "p5"]);
+    mockPartRawPath(["p1", "p2", "p3", "p4", "p5"]);
     vi.mocked(partsModule.fetchPart).mockImplementation(async (_c, _cfg, _key, path) => `text for ${path}`);
 
     const { result } = renderReaderBook(3, "/?part=4&line=7");
@@ -137,7 +146,7 @@ describe("useReaderBook", () => {
   it("goToBookmark() moves to the given part and sets targetLine", async () => {
     mockVault();
     vi.mocked(ownerModule.partCount).mockResolvedValue(5);
-    vi.mocked(ownerModule.partRawPaths).mockResolvedValue(["p1", "p2", "p3", "p4", "p5"]);
+    mockPartRawPath(["p1", "p2", "p3", "p4", "p5"]);
     vi.mocked(partsModule.fetchPart).mockImplementation(async (_c, _cfg, _key, path) => `text for ${path}`);
 
     const { result } = renderReaderBook(9);
@@ -155,7 +164,7 @@ describe("useReaderBook", () => {
   it("clears partText immediately when switching parts, before the new text arrives", async () => {
     mockVault();
     vi.mocked(ownerModule.partCount).mockResolvedValue(5);
-    vi.mocked(ownerModule.partRawPaths).mockResolvedValue(["p1", "p2", "p3", "p4", "p5"]);
+    mockPartRawPath(["p1", "p2", "p3", "p4", "p5"]);
     let resolveFetch: (text: string) => void = () => {};
     vi.mocked(partsModule.fetchPart).mockImplementation(
       () =>
@@ -179,7 +188,7 @@ describe("useReaderBook", () => {
   it("next()/previous() move within [1, partCount] and re-fetch the new part", async () => {
     mockVault(new Map([[9, { lastPartNum: 1, lastAccessedMs: 1 }]]));
     vi.mocked(ownerModule.partCount).mockResolvedValue(3);
-    vi.mocked(ownerModule.partRawPaths).mockResolvedValue(["p1", "p2", "p3"]);
+    mockPartRawPath(["p1", "p2", "p3"]);
     vi.mocked(partsModule.fetchPart).mockImplementation(async (_c, _cfg, _key, path) => `text for ${path}`);
 
     const { result } = renderReaderBook(9);
@@ -197,7 +206,7 @@ describe("useReaderBook", () => {
   it("bookmarkLine() calls addBookmarkEntry for the current part/line/preview", async () => {
     mockVault();
     vi.mocked(ownerModule.partCount).mockResolvedValue(3);
-    vi.mocked(ownerModule.partRawPaths).mockResolvedValue(["p1", "p2", "p3"]);
+    mockPartRawPath(["p1", "p2", "p3"]);
     vi.mocked(partsModule.fetchPart).mockResolvedValue("text");
 
     const { result } = renderReaderBook(5);
@@ -214,7 +223,7 @@ describe("useReaderBook", () => {
     ]);
     mockVault(new Map(), bookmarksMap);
     vi.mocked(ownerModule.partCount).mockResolvedValue(3);
-    vi.mocked(ownerModule.partRawPaths).mockResolvedValue(["p1", "p2", "p3"]);
+    mockPartRawPath(["p1", "p2", "p3"]);
     vi.mocked(partsModule.fetchPart).mockResolvedValue("text");
 
     const { result } = renderReaderBook(5);
@@ -233,7 +242,7 @@ describe("useReaderBook", () => {
     ]);
     mockVault(new Map(), bookmarksMap);
     vi.mocked(ownerModule.partCount).mockResolvedValue(3);
-    vi.mocked(ownerModule.partRawPaths).mockResolvedValue(["p1", "p2", "p3"]);
+    mockPartRawPath(["p1", "p2", "p3"]);
     vi.mocked(partsModule.fetchPart).mockResolvedValue("text");
 
     const { result } = renderReaderBook(5);
@@ -247,7 +256,7 @@ describe("useReaderBook", () => {
   it("removeBookmark() calls removeBookmarkEntry with the given createdAt", async () => {
     mockVault();
     vi.mocked(ownerModule.partCount).mockResolvedValue(3);
-    vi.mocked(ownerModule.partRawPaths).mockResolvedValue(["p1", "p2", "p3"]);
+    mockPartRawPath(["p1", "p2", "p3"]);
     vi.mocked(partsModule.fetchPart).mockResolvedValue("text");
 
     const { result } = renderReaderBook(5);

@@ -18,8 +18,9 @@ export function concatBytes(...parts: Uint8Array[]): Uint8Array {
 }
 
 /** Compares two byte arrays for equality without an early exit on the first
- * mismatching byte -- used to compare secret material (e.g. checkPassword's
- * recomputed hash against the stored one), where a byte-by-byte short
+ * mismatching byte -- used to compare secret material (e.g.
+ * resolveUserAndCheckPassword's recomputed hash against the stored one),
+ * where a byte-by-byte short
  * circuit would let a timing side channel leak how much of a guess matched.
  * The length check isn't similarly hardened (lengths here are fixed
  * constants, not secrets), but everything past that always walks the full

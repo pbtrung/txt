@@ -7,8 +7,7 @@ import { useVault, VaultProvider } from "./VaultContext";
 vi.mock("../data/db", () => ({ createDb: vi.fn(() => ({ execute: vi.fn() })) }));
 vi.mock("../data/r2", () => ({ createR2Client: vi.fn(() => ({ fetch: vi.fn() })), deleteObject: vi.fn() }));
 vi.mock("../data/owner", () => ({
-  resolveUserId: vi.fn(),
-  checkPassword: vi.fn(),
+  resolveUserAndCheckPassword: vi.fn(),
   unwrapUmk: vi.fn(),
   unwrapTxtKey: vi.fn(),
   fetchR2Config: vi.fn(),
@@ -83,8 +82,7 @@ describe("VaultProvider", () => {
   });
 
   it("unlocks successfully when every step succeeds", async () => {
-    vi.mocked(owner.resolveUserId).mockResolvedValue(42);
-    vi.mocked(owner.checkPassword).mockResolvedValue(true);
+    vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({ userId: 42, passwordOk: true });
     vi.mocked(owner.unwrapUmk).mockResolvedValue(new Uint8Array(64).fill(1));
     vi.mocked(owner.fetchR2Config).mockResolvedValue({
       endpoint: "https://x",
@@ -109,11 +107,10 @@ describe("VaultProvider", () => {
   });
 
   it("moves progress through each unlock phase, then clears it", async () => {
-    vi.mocked(owner.resolveUserId).mockResolvedValue(42);
-    let resolvePasswordCheck: (ok: boolean) => void = () => {};
-    vi.mocked(owner.checkPassword).mockReturnValue(
+    let resolveAuth: (auth: { userId: number; passwordOk: boolean }) => void = () => {};
+    vi.mocked(owner.resolveUserAndCheckPassword).mockReturnValue(
       new Promise((resolve) => {
-        resolvePasswordCheck = resolve;
+        resolveAuth = resolve;
       }),
     );
     vi.mocked(owner.unwrapUmk).mockResolvedValue(new Uint8Array(64).fill(1));
@@ -133,12 +130,12 @@ describe("VaultProvider", () => {
     act(() => {
       unlockPromise = result.current.unlock(fakeFile(CONFIG));
     });
-    // "Signing you in" covers resolveUserId + checkPassword -- stalled on
-    // the latter, so this is where progress should sit until it resolves.
+    // "Signing you in" covers resolveUserAndCheckPassword -- stalled on it,
+    // so this is where progress should sit until it resolves.
     await waitFor(() => expect(result.current.progress).toEqual({ label: "Signing you in", step: 1, total: 5 }));
 
     await act(async () => {
-      resolvePasswordCheck(true);
+      resolveAuth({ userId: 42, passwordOk: true });
       await unlockPromise;
     });
 
@@ -147,8 +144,7 @@ describe("VaultProvider", () => {
   });
 
   it("splits the library-loading phase into its three actual requests, not one big step", async () => {
-    vi.mocked(owner.resolveUserId).mockResolvedValue(42);
-    vi.mocked(owner.checkPassword).mockResolvedValue(true);
+    vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({ userId: 42, passwordOk: true });
     vi.mocked(owner.unwrapUmk).mockResolvedValue(new Uint8Array(64).fill(1));
     vi.mocked(owner.fetchR2Config).mockResolvedValue({
       endpoint: "https://x",
@@ -189,8 +185,7 @@ describe("VaultProvider", () => {
   });
 
   it("clears progress if unlock fails", async () => {
-    vi.mocked(owner.resolveUserId).mockResolvedValue(42);
-    vi.mocked(owner.checkPassword).mockResolvedValue(false);
+    vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({ userId: 42, passwordOk: false });
 
     const { result } = renderVault();
     await act(async () => {
@@ -214,8 +209,7 @@ describe("VaultProvider", () => {
   });
 
   it("stays locked when the password check fails", async () => {
-    vi.mocked(owner.resolveUserId).mockResolvedValue(42);
-    vi.mocked(owner.checkPassword).mockResolvedValue(false);
+    vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({ userId: 42, passwordOk: false });
 
     const { result } = renderVault();
     await act(async () => {
@@ -227,8 +221,7 @@ describe("VaultProvider", () => {
   });
 
   it("serializes concurrent bookmark additions so neither overwrites the other", async () => {
-    vi.mocked(owner.resolveUserId).mockResolvedValue(42);
-    vi.mocked(owner.checkPassword).mockResolvedValue(true);
+    vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({ userId: 42, passwordOk: true });
     vi.mocked(owner.unwrapUmk).mockResolvedValue(new Uint8Array(64).fill(1));
     vi.mocked(owner.fetchR2Config).mockResolvedValue({
       endpoint: "https://x",
@@ -272,8 +265,7 @@ describe("VaultProvider", () => {
   });
 
   it("deleteTxt removes the txt's rows, access/bookmarks entries, and its in-memory metadata", async () => {
-    vi.mocked(owner.resolveUserId).mockResolvedValue(42);
-    vi.mocked(owner.checkPassword).mockResolvedValue(true);
+    vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({ userId: 42, passwordOk: true });
     vi.mocked(owner.unwrapUmk).mockResolvedValue(new Uint8Array(64).fill(1));
     vi.mocked(owner.fetchR2Config).mockResolvedValue({
       endpoint: "https://x",
@@ -354,8 +346,7 @@ describe("VaultProvider", () => {
   });
 
   it("lock() clears the session and returns to locked", async () => {
-    vi.mocked(owner.resolveUserId).mockResolvedValue(42);
-    vi.mocked(owner.checkPassword).mockResolvedValue(true);
+    vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({ userId: 42, passwordOk: true });
     vi.mocked(owner.unwrapUmk).mockResolvedValue(new Uint8Array(64).fill(1));
     vi.mocked(owner.fetchR2Config).mockResolvedValue({
       endpoint: "https://x",
@@ -380,8 +371,7 @@ describe("VaultProvider", () => {
 
   describe("refresh", () => {
     async function unlockedResult() {
-      vi.mocked(owner.resolveUserId).mockResolvedValue(42);
-      vi.mocked(owner.checkPassword).mockResolvedValue(true);
+      vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({ userId: 42, passwordOk: true });
       vi.mocked(owner.unwrapUmk).mockResolvedValue(new Uint8Array(64).fill(1));
       vi.mocked(owner.fetchR2Config).mockResolvedValue({
         endpoint: "https://x",
