@@ -22,6 +22,7 @@ vi.mock("../../data/adminUsers", async () => {
     listUsersWithInfo: vi.fn(),
     updateUserPassword: vi.fn(),
     rotateUserRootKey: vi.fn(),
+    getUserCreds: vi.fn(),
     deleteUser: vi.fn(),
   };
 });
@@ -356,6 +357,43 @@ describe("ManageScreen", () => {
       await userEvent.click(screen.getByRole("button", { name: "Rotate" }));
       expect(adminUsers.rotateUserRootKey).toHaveBeenCalledWith({}, 2, "old-key-b64");
       await waitFor(() => expect(screen.getByText("new-root-key-b64")).toBeInTheDocument());
+    });
+
+    it("shows the resolved display name in the Edit panel's title and reveals that account's stored creds", async () => {
+      const storedCreds: adminUsers.DownloadableUserCreds = {
+        turso_database_url: "libsql://example",
+        turso_auth_token: "user-token",
+        username: "bob",
+        username_lookup_key: "a",
+        password: "hunter2",
+        display_name: "Bob",
+        user_root_key: "b",
+      };
+      vi.mocked(adminUsers.getUserCreds).mockResolvedValue(storedCreds);
+      setup();
+      await waitFor(() => expect(userRow("Bob")).toBeInTheDocument());
+      await userEvent.click(userRow("Bob"));
+      await userEvent.click(screen.getByRole("button", { name: "Edit" }));
+
+      expect(screen.getByRole("dialog", { name: "Edit Bob (#2)" })).toBeInTheDocument();
+
+      await userEvent.click(screen.getByRole("button", { name: "Show creds" }));
+      await waitFor(() => expect(adminUsers.getUserCreds).toHaveBeenCalledWith({}, undefined, 2));
+      await waitFor(() =>
+        expect(screen.getByLabelText("This account's stored credential JSON")).toHaveValue(
+          JSON.stringify(storedCreds, null, 2),
+        ),
+      );
+    });
+
+    it("doesn't offer Show creds when editing the admin's own row", async () => {
+      setup();
+      await waitFor(() => expect(userRow("Alice")).toBeInTheDocument());
+      await userEvent.click(userRow("Alice"));
+      await userEvent.click(screen.getByRole("button", { name: "Edit" }));
+
+      expect(screen.getByRole("dialog", { name: "Edit Alice (#1)" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Show creds" })).not.toBeInTheDocument();
     });
   });
 

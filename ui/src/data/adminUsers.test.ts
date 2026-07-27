@@ -229,6 +229,53 @@ describe("listUsersWithInfo", () => {
   });
 });
 
+describe("getUserCreds", () => {
+  it("decrypts and returns a user's stored credential JSON", async () => {
+    const adminUmk = new Uint8Array(64).fill(9);
+    const credsJson = {
+      turso_database_url: "libsql://example",
+      turso_auth_token: "user-token",
+      username: "bob",
+      username_lookup_key: "a",
+      password: "hunter2",
+      display_name: "Bob",
+      user_root_key: "b",
+    };
+    const credsBlob = await blob.encrypt(adminUmk, new TextEncoder().encode(JSON.stringify(credsJson)), {
+      compressed: true,
+    });
+    const execute = vi.fn().mockResolvedValue(rowsResult([{ creds: credsBlob.buffer }]));
+    const db = { execute } as unknown as Client;
+
+    const result = await adminUsers.getUserCreds(db, adminUmk, 2);
+    expect(result).toEqual(credsJson);
+  });
+
+  it("returns null when creds is NULL (e.g. the admin's own row)", async () => {
+    const execute = vi.fn().mockResolvedValue(rowsResult([{ creds: null }]));
+    const db = { execute } as unknown as Client;
+
+    expect(await adminUsers.getUserCreds(db, new Uint8Array(64).fill(9), 1)).toBeNull();
+  });
+
+  it("returns null when there's no such user row at all", async () => {
+    const execute = vi.fn().mockResolvedValue(emptyResult());
+    const db = { execute } as unknown as Client;
+
+    expect(await adminUsers.getUserCreds(db, new Uint8Array(64).fill(9), 999)).toBeNull();
+  });
+
+  it("returns null (not throwing) when creds can't be decrypted", async () => {
+    const wrongKeyBlob = await blob.encrypt(new Uint8Array(64).fill(1), new TextEncoder().encode("{}"), {
+      compressed: true,
+    });
+    const execute = vi.fn().mockResolvedValue(rowsResult([{ creds: wrongKeyBlob.buffer }]));
+    const db = { execute } as unknown as Client;
+
+    expect(await adminUsers.getUserCreds(db, new Uint8Array(64).fill(9), 2)).toBeNull();
+  });
+});
+
 describe("updateUserPassword", () => {
   it("writes a pw_salt/pw_hash pair that verifies against the new password", async () => {
     let persistedSalt: Uint8Array | null = null;

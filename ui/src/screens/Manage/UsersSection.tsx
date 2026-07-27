@@ -11,15 +11,17 @@ import {
   AdminUsersError,
   deleteUser,
   generateNewUser,
+  getUserCreds,
   persistNewUser,
   rotateUserRootKey,
   updateGeneratedNewUser,
   updateUserPassword,
+  type DownloadableUserCreds,
   type GeneratedNewUser,
   type UserSummary,
 } from "../../data/adminUsers";
 import type { VaultSession } from "../../state/VaultContext";
-import { ConfirmDeleteField, FormField, downloadJson, errorMessage, yieldToPaint } from "./manageShared";
+import { ConfirmDeleteField, FormField, downloadJson, errorMessage, userLabel, yieldToPaint } from "./manageShared";
 import { UserRow, USER_ROW_HEIGHT } from "./UserRow";
 
 function CreateUserForm({
@@ -334,7 +336,19 @@ function CreateUserForm({
   );
 }
 
-function EditUserPanel({ session, userId, onClose }: { session: VaultSession; userId: number; onClose: () => void }) {
+function EditUserPanel({
+  session,
+  userId,
+  displayName,
+  isSelf,
+  onClose,
+}: {
+  session: VaultSession;
+  userId: number;
+  displayName?: string;
+  isSelf: boolean;
+  onClose: () => void;
+}) {
   const [newPassword, setNewPassword] = useState("");
   const [resetBusy, setResetBusy] = useState(false);
   const [resetError, setResetError] = useState<string | null>(null);
@@ -344,6 +358,13 @@ function EditUserPanel({ session, userId, onClose }: { session: VaultSession; us
   const [rotateBusy, setRotateBusy] = useState(false);
   const [rotateError, setRotateError] = useState<string | null>(null);
   const [newRootKey, setNewRootKey] = useState<string | null>(null);
+
+  // undefined = not fetched yet; null = fetched, nothing there (creds
+  // couldn't decrypt) -- distinct from "never clicked Show creds" so the
+  // button's own busy/label state doesn't need a separate flag for that.
+  const [creds, setCreds] = useState<DownloadableUserCreds | null | undefined>(undefined);
+  const [credsBusy, setCredsBusy] = useState(false);
+  const [credsError, setCredsError] = useState<string | null>(null);
 
   async function handleResetPassword(e: FormEvent) {
     e.preventDefault();
@@ -376,8 +397,23 @@ function EditUserPanel({ session, userId, onClose }: { session: VaultSession; us
     }
   }
 
+  async function handleShowCreds() {
+    setCredsBusy(true);
+    setCredsError(null);
+    try {
+      setCreds(await getUserCreds(session.db, session.umk, userId));
+    } catch (err) {
+      setCredsError(errorMessage(err));
+    } finally {
+      setCredsBusy(false);
+    }
+  }
+
   return (
-    <Modal title={`Edit user #${userId}`} onClose={onClose}>
+    // userLabel's own "Unnamed user (#<id>)" fallback covers a row with no
+    // recovered display name -- Modal's own h3 already truncates a long
+    // one (text-truncate), so nothing extra is needed here for that.
+    <Modal title={`Edit ${userLabel(displayName, userId)}`} onClose={onClose}>
       <div>
         <h4 className="h6 small text-body-secondary text-uppercase mb-2">Reset password</h4>
         <form onSubmit={(e) => void handleResetPassword(e)}>
@@ -427,6 +463,42 @@ function EditUserPanel({ session, userId, onClose }: { session: VaultSession; us
             </div>
           )}
         </form>
+
+        {/* users.creds is always NULL for the admin's own row (see
+            adminUsers.ts) -- nothing this could ever show for it, so the
+            whole section is omitted rather than offering a button that
+            can only ever reveal "nothing stored". */}
+        {!isSelf && (
+          <>
+            <h4 className="h6 small text-body-secondary text-uppercase mb-2 mt-4">Show creds</h4>
+            <p className="small text-body-secondary">
+              This account's credential JSON, stored wrapped under your own umk (users.creds) since it was created.
+            </p>
+            <button
+              type="button"
+              className="btn btn-sm btn-outline-secondary border-primary d-flex align-items-center gap-2"
+              onClick={() => void handleShowCreds()}
+              disabled={credsBusy}
+            >
+              {credsBusy && <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true" />}
+              Show creds
+            </button>
+            {credsError && <div className="text-danger small mt-2">{credsError}</div>}
+            {creds !== undefined &&
+              (creds === null ? (
+                <div className="text-body-secondary small mt-2">No stored credentials for this account.</div>
+              ) : (
+                <textarea
+                  className="form-control form-control-sm themed-control mt-2"
+                  readOnly
+                  rows={8}
+                  value={JSON.stringify(creds, null, 2)}
+                  onFocus={(e) => e.target.select()}
+                  aria-label="This account's stored credential JSON"
+                />
+              ))}
+          </>
+        )}
       </div>
     </Modal>
   );
@@ -524,7 +596,13 @@ export function UsersSection({
         <CreateUserForm session={session} onCreated={afterChange} onClose={() => onSetMode("none")} />
       )}
       {mode === "edit" && selectedUserId !== null && (
-        <EditUserPanel session={session} userId={selectedUserId} onClose={() => onSetMode("none")} />
+        <EditUserPanel
+          session={session}
+          userId={selectedUserId}
+          displayName={users.find((u) => u.id === selectedUserId)?.displayName}
+          isSelf={selectedUserId === session.userId}
+          onClose={() => onSetMode("none")}
+        />
       )}
       {mode === "delete" && selectedUserId !== null && (
         <DeleteUserPanel

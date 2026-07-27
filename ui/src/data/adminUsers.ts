@@ -319,6 +319,32 @@ export async function listUsersWithInfo(db: Client, adminUmk: Uint8Array): Promi
   );
 }
 
+/** Reads back a regular user's stored credential JSON (users.creds, wrapped
+ * under the *admin's* own umk -- see file comment) for the Manage screen's
+ * "Show creds" reveal in EditUserPanel -- the same JSON createUser/
+ * persistNewUser showed once at creation time, now readable again since
+ * it's still sitting there, wrapped under a key the admin already holds.
+ * Returns null if there's no row, `creds` is NULL (always true for the
+ * admin's own row -- callers should never offer this for that row at all),
+ * or it fails to decrypt/parse (e.g. wrapped under a since-rotated admin
+ * umk) -- the caller shows a "not available" message rather than an error
+ * for any of these, same as listUsersWithInfo's own displayName fallback. */
+export async function getUserCreds(
+  db: Client,
+  adminUmk: Uint8Array,
+  userId: number,
+): Promise<DownloadableUserCreds | null> {
+  const result = await db.execute({ sql: "SELECT creds FROM users WHERE id = ?", args: [userId] });
+  const row = result.rows[0];
+  if (!row || row.creds === null) return null;
+  try {
+    const decrypted = await blob.decrypt(adminUmk, requireBlobBytes(row.creds, "users.creds"), true);
+    return JSON.parse(new TextDecoder().decode(decrypted)) as DownloadableUserCreds;
+  } catch {
+    return null;
+  }
+}
+
 /** Resets a user's login password -- pw_hash/pw_salt sit outside the umk
  * chain entirely (docs/credentials.md: password is "never used as IKM
  * anywhere in the key hierarchy"), so this needs no key material at all. */
