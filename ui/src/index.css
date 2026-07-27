@@ -176,6 +176,25 @@ body,
   background-position: right 0.35rem center;
 }
 
+/* InternalLink's MemoryRouter fallback (a <button>, not a real <a href> --
+   see components/InternalLink.tsx and appRouter.ts's isMemoryRouterActive):
+   strips every bit of default button chrome away so it reads identically to
+   the <a> it replaces, then borrows Bootstrap's own link color/hover so it
+   still visually reads as a link rather than plain text. Layout stays the
+   caller's job via its own className, same as a real Link's would be. */
+.link-reset {
+  display: inline;
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--bs-link-color);
+  cursor: pointer;
+}
+.link-reset:hover {
+  color: var(--bs-link-hover-color);
+}
+
 /* A smaller variant of Bootstrap's .btn-sm, for row-level delete buttons
    (Library's BookRow/BookmarkRow, Reader's bookmark list) that shouldn't
    compete visually with the row's own primary click target. */

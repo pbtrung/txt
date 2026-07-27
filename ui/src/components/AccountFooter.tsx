@@ -8,7 +8,7 @@
 // real enforcement); Manage's is always plain text, since that screen
 // already *is* where that link would go.
 
-import { Link } from "react-router-dom";
+import { InternalLink } from "./InternalLink";
 
 export function AccountFooter({
   displayName,
@@ -34,9 +34,9 @@ export function AccountFooter({
             font-size, so the signed-in name reads at the same size as the
             nav entries above it, not smaller. */}
         {manageLink ? (
-          <Link to="/manage" className="text-truncate">
+          <InternalLink to="/manage" className="text-truncate">
             {displayName}
-          </Link>
+          </InternalLink>
         ) : (
           <span className="text-body-secondary text-truncate">{displayName}</span>
         )}

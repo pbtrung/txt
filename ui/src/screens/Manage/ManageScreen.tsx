@@ -34,9 +34,9 @@
 // rather than a descendant of it.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
 
 import { DropdownToggleButton } from "../../components/DropdownToggleButton";
+import { InternalLink } from "../../components/InternalLink";
 import { Wordmark } from "../../components/Wordmark";
 import { useDropdown } from "../../hooks/useDropdown";
 import { listUsersWithInfo, type UserSummary } from "../../data/adminUsers";
@@ -264,14 +264,14 @@ export function ManageScreen() {
             drawer toggle instead, so going back to Library is always one
             tap away regardless of screen size. */}
         <div className="library-nav border-end p-2 d-none d-lg-flex align-items-center justify-content-center position-relative">
-          <Link
+          <InternalLink
             to="/library"
             className="position-absolute top-50 start-0 translate-middle-y ms-2 d-flex align-items-center text-decoration-none"
             aria-label="Back to Library"
             title="Back to Library"
           >
             <i className="bi bi-arrow-left text-body-secondary" aria-hidden="true" />
-          </Link>
+          </InternalLink>
           <Wordmark />
         </div>
 
@@ -279,14 +279,14 @@ export function ManageScreen() {
           ref={nav.ref}
           className="dropdown position-relative d-lg-none d-flex align-items-center gap-2 ps-2 ps-sm-3 py-2"
         >
-          <Link
+          <InternalLink
             to="/library"
             className="d-flex align-items-center text-decoration-none"
             aria-label="Back to Library"
             title="Back to Library"
           >
             <i className="bi bi-arrow-left text-body-secondary" aria-hidden="true" />
-          </Link>
+          </InternalLink>
           <DropdownToggleButton
             open={nav.open}
             onClick={nav.toggle}
