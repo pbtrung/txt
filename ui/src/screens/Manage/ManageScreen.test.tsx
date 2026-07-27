@@ -384,6 +384,17 @@ describe("ManageScreen", () => {
           JSON.stringify(storedCreds, null, 2),
         ),
       );
+
+      // Toggles: "Hide creds" hides the textarea without re-fetching;
+      // clicking "Show creds" again just re-shows the already-fetched value.
+      await userEvent.click(screen.getByRole("button", { name: "Hide creds" }));
+      expect(screen.queryByLabelText("This account's stored credential JSON")).not.toBeInTheDocument();
+
+      await userEvent.click(screen.getByRole("button", { name: "Show creds" }));
+      expect(screen.getByLabelText("This account's stored credential JSON")).toHaveValue(
+        JSON.stringify(storedCreds, null, 2),
+      );
+      expect(adminUsers.getUserCreds).toHaveBeenCalledTimes(1);
     });
 
     it("doesn't offer Show creds when editing the admin's own row", async () => {

@@ -360,9 +360,10 @@ function EditUserPanel({
   const [newRootKey, setNewRootKey] = useState<string | null>(null);
 
   // undefined = not fetched yet; null = fetched, nothing there (creds
-  // couldn't decrypt) -- distinct from "never clicked Show creds" so the
-  // button's own busy/label state doesn't need a separate flag for that.
+  // couldn't decrypt). Cached once fetched -- toggling the button back off
+  // and on again just flips showingCreds, it doesn't re-fetch.
   const [creds, setCreds] = useState<DownloadableUserCreds | null | undefined>(undefined);
+  const [showingCreds, setShowingCreds] = useState(false);
   const [credsBusy, setCredsBusy] = useState(false);
   const [credsError, setCredsError] = useState<string | null>(null);
 
@@ -397,11 +398,20 @@ function EditUserPanel({
     }
   }
 
-  async function handleShowCreds() {
+  async function handleToggleCreds() {
+    if (showingCreds) {
+      setShowingCreds(false);
+      return;
+    }
+    if (creds !== undefined) {
+      setShowingCreds(true);
+      return;
+    }
     setCredsBusy(true);
     setCredsError(null);
     try {
       setCreds(await getUserCreds(session.db, session.umk, userId));
+      setShowingCreds(true);
     } catch (err) {
       setCredsError(errorMessage(err));
     } finally {
@@ -471,20 +481,18 @@ function EditUserPanel({
         {!isSelf && (
           <>
             <h4 className="h6 small text-body-secondary text-uppercase mb-2 mt-4">Show creds</h4>
-            <p className="small text-body-secondary">
-              This account's credential JSON, stored wrapped under your own umk (users.creds) since it was created.
-            </p>
+            <p className="small text-body-secondary">Show this account's credential JSON.</p>
             <button
               type="button"
               className="btn btn-sm btn-outline-secondary border-primary d-flex align-items-center gap-2"
-              onClick={() => void handleShowCreds()}
+              onClick={() => void handleToggleCreds()}
               disabled={credsBusy}
             >
               {credsBusy && <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true" />}
-              Show creds
+              {showingCreds ? "Hide creds" : "Show creds"}
             </button>
             {credsError && <div className="text-danger small mt-2">{credsError}</div>}
-            {creds !== undefined &&
+            {showingCreds &&
               (creds === null ? (
                 <div className="text-body-secondary small mt-2">No stored credentials for this account.</div>
               ) : (
