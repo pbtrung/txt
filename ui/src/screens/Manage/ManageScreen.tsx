@@ -40,7 +40,7 @@ import { InternalLink } from "../../components/InternalLink";
 import { Wordmark } from "../../components/Wordmark";
 import { useDropdown } from "../../hooks/useDropdown";
 import { listUsersWithInfo, type UserSummary } from "../../data/adminUsers";
-import { listShares, revokeShare, type ShareEntry } from "../../data/adminShares";
+import { listShares, type ShareEntry } from "../../data/adminShares";
 import { useVault } from "../../state/VaultContext";
 import { BooksSection, type BooksMode } from "./BooksSection";
 import { ManageNavContent, type Section } from "./ManageNav";
@@ -71,7 +71,6 @@ export function ManageScreen() {
   const [booksMode, setBooksMode] = useState<BooksMode>("none");
   const [sharesSelectedId, setSharesSelectedId] = useState<number | null>(null);
   const [sharesMode, setSharesMode] = useState<SharesMode>("none");
-  const [sharesActionError, setSharesActionError] = useState<string | null>(null);
 
   function selectSection(next: Section) {
     setSection(next);
@@ -84,7 +83,6 @@ export function ManageScreen() {
     setBooksMode("none");
     setSharesSelectedId(null);
     setSharesMode("none");
-    setSharesActionError(null);
     nav.close();
   }
 
@@ -154,20 +152,6 @@ export function ManageScreen() {
     // themselves are recreated.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
-
-  // Revoking a share needs no confirm step (unlike Users/Books' Delete) --
-  // it fires directly from the toolbar button instead of opening a panel.
-  async function handleRevokeShare() {
-    if (!session || sharesSelectedId === null) return;
-    setSharesActionError(null);
-    try {
-      await revokeShare(session.db, sharesSelectedId);
-      setSharesSelectedId(null);
-      void loadShares();
-    } catch (err) {
-      setSharesActionError(errorMessage(err));
-    }
-  }
 
   // Refreshing re-loads the vault's own data (session.metadataById, via
   // VaultContext's refresh()) *and* this screen's own Users/Shares lists --
@@ -250,20 +234,10 @@ export function ManageScreen() {
         label: "Delete",
         variant: "danger",
         disabled: sharesSelectedId === null,
-        onClick: () => void handleRevokeShare(),
+        onClick: () => setSharesMode(sharesMode === "delete" ? "none" : "delete"),
       },
     ];
-  }, [
-    session,
-    section,
-    usersSelectedId,
-    usersMode,
-    booksSelectedId,
-    booksMode,
-    sharesSelectedId,
-    sharesMode,
-    handleRevokeShare,
-  ]);
+  }, [session, section, usersSelectedId, usersMode, booksSelectedId, booksMode, sharesSelectedId, sharesMode]);
 
   if (!session) return null;
 
@@ -419,11 +393,6 @@ export function ManageScreen() {
               {sharesError && section === "shares" && (
                 <div className="alert alert-danger m-2 py-2 px-3" role="alert">
                   {sharesError}
-                </div>
-              )}
-              {sharesActionError && section === "shares" && (
-                <div className="alert alert-danger m-2 py-2 px-3" role="alert">
-                  {sharesActionError}
                 </div>
               )}
 

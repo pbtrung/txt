@@ -431,7 +431,7 @@ describe("ManageScreen", () => {
       expect(adminShares.grantShare).toHaveBeenCalledWith({}, 1, expect.any(Uint8Array), 2);
     });
 
-    it("revokes a selected share immediately, no confirm step", async () => {
+    it("requires an explicit confirmation before revoking a selected share", async () => {
       vi.mocked(adminShares.listShares).mockResolvedValue([{ id: 5, txtId: 1, toUserId: 2 }]);
       setup();
       await goToShares();
@@ -446,7 +446,34 @@ describe("ManageScreen", () => {
       await userEvent.click(screen.getByText("Book One"));
       await userEvent.click(screen.getByRole("button", { name: "Delete" }));
 
+      // Clicking Delete opens a confirmation modal instead of revoking
+      // right away.
+      expect(adminShares.revokeShare).not.toHaveBeenCalled();
+      const dialog = await screen.findByRole("dialog", { name: "Revoke share" });
+      expect(within(dialog).getByText(/Book One/)).toBeInTheDocument();
+
+      await userEvent.click(within(dialog).getByRole("button", { name: "Revoke share" }));
       expect(adminShares.revokeShare).toHaveBeenCalledWith({}, 5);
+    });
+
+    it("cancelling the revoke confirmation leaves the share untouched", async () => {
+      vi.mocked(adminShares.listShares).mockResolvedValue([{ id: 5, txtId: 1, toUserId: 2 }]);
+      // This file's adminShares mocks aren't cleared between tests -- an
+      // earlier test's own successful revokeShare call would otherwise
+      // still be sitting in its call history here.
+      vi.mocked(adminShares.revokeShare).mockClear();
+      setup();
+      await goToShares();
+      await waitFor(() => expect(screen.getByText("Book One")).toBeInTheDocument());
+
+      await userEvent.click(screen.getByText("Book One"));
+      await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+      const dialog = await screen.findByRole("dialog", { name: "Revoke share" });
+      await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+      expect(screen.queryByRole("dialog", { name: "Revoke share" })).not.toBeInTheDocument();
+      expect(adminShares.revokeShare).not.toHaveBeenCalled();
     });
   });
 

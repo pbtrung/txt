@@ -8,7 +8,7 @@ import { useMemo, useState, type FormEvent } from "react";
 
 import { Modal } from "../../components/Modal";
 import { VirtualizedListGroup } from "../../components/VirtualizedListGroup";
-import { grantShare, type ShareEntry } from "../../data/adminShares";
+import { grantShare, revokeShare, type ShareEntry } from "../../data/adminShares";
 import type { UserSummary } from "../../data/adminUsers";
 import type { BookInfo } from "../../data/metadata";
 import { useVault, type VaultSession } from "../../state/VaultContext";
@@ -102,7 +102,62 @@ function GrantShareForm({
   );
 }
 
-export type SharesMode = "none" | "create";
+function DeleteSharePanel({
+  session,
+  share,
+  title,
+  recipientLabel,
+  onRevoked,
+  onClose,
+}: {
+  session: VaultSession;
+  share: ShareEntry;
+  title: string;
+  recipientLabel: string;
+  onRevoked: () => void;
+  onClose: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleConfirm() {
+    setBusy(true);
+    setError(null);
+    try {
+      await revokeShare(session.db, share.id);
+      onRevoked();
+    } catch (err) {
+      setError(errorMessage(err));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal title="Revoke share" onClose={onClose}>
+      <p className="small text-body-secondary">
+        This immediately revokes {recipientLabel}&apos;s access to &ldquo;{title}&rdquo;. They can be granted access
+        again later.
+      </p>
+      <div className="d-flex gap-2">
+        <button type="button" className="btn btn-sm btn-outline-secondary" onClick={onClose} disabled={busy}>
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="btn btn-sm btn-danger d-flex align-items-center gap-2"
+          onClick={() => void handleConfirm()}
+          disabled={busy}
+        >
+          {busy && <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true" />}
+          Revoke share
+        </button>
+      </div>
+      {error && <div className="text-danger small mt-2">{error}</div>}
+    </Modal>
+  );
+}
+
+export type SharesMode = "none" | "create" | "delete";
 
 export function SharesSection({
   session,
@@ -142,6 +197,8 @@ export function SharesSection({
     });
   }, [shares, search, session.metadataById, displayNameById]);
 
+  const selectedShare = selectedShareId !== null ? shares.find((s) => s.id === selectedShareId) : undefined;
+
   return (
     <div className="d-flex flex-column flex-grow-1 overflow-hidden">
       {mode === "create" && (
@@ -151,6 +208,20 @@ export function SharesSection({
           users={users}
           onGranted={() => {
             onSetMode("none");
+            onChanged();
+          }}
+          onClose={() => onSetMode("none")}
+        />
+      )}
+      {mode === "delete" && selectedShare && (
+        <DeleteSharePanel
+          session={session}
+          share={selectedShare}
+          title={session.metadataById.get(selectedShare.txtId)?.title ?? `txt #${selectedShare.txtId}`}
+          recipientLabel={userLabel(displayNameById.get(selectedShare.toUserId), selectedShare.toUserId)}
+          onRevoked={() => {
+            onSetMode("none");
+            onSelectRow(null);
             onChanged();
           }}
           onClose={() => onSetMode("none")}
