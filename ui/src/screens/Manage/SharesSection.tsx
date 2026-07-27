@@ -57,7 +57,7 @@ function GrantShareForm({
         <FormField label="Txt" htmlFor="manage-grant-txt">
           <select
             id="manage-grant-txt"
-            className="form-select themed-control"
+            className="form-select form-select-sm themed-control"
             value={txtId}
             onChange={(e) => setTxtId(e.target.value)}
             required
@@ -78,7 +78,7 @@ function GrantShareForm({
               recipient by name/id here costs no extra query. */}
           <select
             id="manage-grant-recipient"
-            className="form-select themed-control"
+            className="form-select form-select-sm themed-control"
             value={recipientUserId}
             onChange={(e) => setRecipientUserId(e.target.value)}
             required
@@ -93,7 +93,7 @@ function GrantShareForm({
             ))}
           </select>
         </FormField>
-        <button type="submit" className="btn btn-primary mt-1" disabled={busy}>
+        <button type="submit" className="btn btn-sm btn-primary mt-1" disabled={busy}>
           Grant share
         </button>
         {error && <div className="text-danger small mt-2">{error}</div>}

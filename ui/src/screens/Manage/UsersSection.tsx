@@ -151,7 +151,7 @@ function CreateUserForm({
             <input
               id="manage-new-turso-url"
               type="text"
-              className="form-control themed-control"
+              className="form-control form-control-sm themed-control"
               value={tursoDatabaseUrl}
               onChange={(e) => setTursoDatabaseUrl(e.target.value)}
               required
@@ -161,7 +161,7 @@ function CreateUserForm({
             <input
               id="manage-new-display-name"
               type="text"
-              className="form-control themed-control"
+              className="form-control form-control-sm themed-control"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
               required
@@ -171,20 +171,24 @@ function CreateUserForm({
             <input
               id="manage-new-user-token"
               type="text"
-              className="form-control themed-control"
+              className="form-control form-control-sm themed-control"
               value={userTursoAuthToken}
               onChange={(e) => setUserTursoAuthToken(e.target.value)}
               required
             />
           </FormField>
           <div className="d-flex gap-2 mt-1">
-            <button type="submit" className="btn btn-primary d-flex align-items-center gap-2" disabled={editBusy}>
+            <button
+              type="submit"
+              className="btn btn-sm btn-primary d-flex align-items-center gap-2"
+              disabled={editBusy}
+            >
               {editBusy && <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true" />}
               Save
             </button>
             <button
               type="button"
-              className="btn btn-outline-secondary"
+              className="btn btn-sm btn-outline-secondary"
               onClick={() => setEditing(false)}
               disabled={editBusy}
             >
@@ -215,7 +219,7 @@ function CreateUserForm({
           <div className="d-flex gap-2 mt-2">
             <button
               type="button"
-              className="btn btn-outline-secondary border-primary d-flex align-items-center gap-1"
+              className="btn btn-sm btn-outline-secondary border-primary d-flex align-items-center gap-1"
               onClick={startEditing}
             >
               <i className="bi bi-pencil text-primary" aria-hidden="true" />
@@ -223,7 +227,7 @@ function CreateUserForm({
             </button>
             <button
               type="button"
-              className="btn btn-outline-secondary border-primary"
+              className="btn btn-sm btn-outline-secondary border-primary"
               onClick={() => void handleCopy()}
               aria-label="Copy credentials JSON to clipboard"
               title={copied ? "Copied!" : "Copy to clipboard"}
@@ -232,7 +236,7 @@ function CreateUserForm({
             </button>
             <button
               type="button"
-              className="btn btn-outline-secondary"
+              className="btn btn-sm btn-outline-secondary"
               onClick={() => downloadJson(`${creds.username}_creds.json`, creds)}
             >
               Download
@@ -253,7 +257,7 @@ function CreateUserForm({
           <div className="d-flex align-items-center gap-2 mt-2">
             <button
               type="button"
-              className="btn btn-primary d-flex align-items-center gap-2"
+              className="btn btn-sm btn-primary d-flex align-items-center gap-2"
               disabled={!confirmedSaved || persistBusy}
               onClick={() => void handleCreate()}
             >
@@ -275,7 +279,7 @@ function CreateUserForm({
           <input
             id="manage-new-turso-url"
             type="text"
-            className="form-control themed-control"
+            className="form-control form-control-sm themed-control"
             value={tursoDatabaseUrl}
             onChange={(e) => setTursoDatabaseUrl(e.target.value)}
             required
@@ -285,7 +289,7 @@ function CreateUserForm({
           <input
             id="manage-new-display-name"
             type="text"
-            className="form-control themed-control"
+            className="form-control form-control-sm themed-control"
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
             required
@@ -295,13 +299,17 @@ function CreateUserForm({
           <input
             id="manage-new-user-token"
             type="text"
-            className="form-control themed-control"
+            className="form-control form-control-sm themed-control"
             value={userTursoAuthToken}
             onChange={(e) => setUserTursoAuthToken(e.target.value)}
             required
           />
         </FormField>
-        <button type="submit" className="btn btn-primary mt-1 d-flex align-items-center gap-2" disabled={generateBusy}>
+        <button
+          type="submit"
+          className="btn btn-sm btn-primary mt-1 d-flex align-items-center gap-2"
+          disabled={generateBusy}
+        >
           {generateBusy && <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true" />}
           Generate credentials
         </button>
@@ -362,13 +370,13 @@ function EditUserPanel({ session, userId, onClose }: { session: VaultSession; us
             <input
               id="manage-edit-password"
               type="password"
-              className="form-control themed-control"
+              className="form-control form-control-sm themed-control"
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
               required
             />
           </FormField>
-          <button type="submit" className="btn btn-primary" disabled={resetBusy}>
+          <button type="submit" className="btn btn-sm btn-primary" disabled={resetBusy}>
             Save
           </button>
           {resetDone && <div className="text-success small mt-2">Password updated.</div>}
@@ -381,13 +389,13 @@ function EditUserPanel({ session, userId, onClose }: { session: VaultSession; us
             <input
               id="manage-edit-root-key"
               type="text"
-              className="form-control themed-control"
+              className="form-control form-control-sm themed-control"
               value={oldRootKey}
               onChange={(e) => setOldRootKey(e.target.value)}
               required
             />
           </FormField>
-          <button type="submit" className="btn btn-primary" disabled={rotateBusy}>
+          <button type="submit" className="btn btn-sm btn-primary" disabled={rotateBusy}>
             Rotate
           </button>
           {rotateError && <div className="text-danger small mt-2">{rotateError}</div>}
