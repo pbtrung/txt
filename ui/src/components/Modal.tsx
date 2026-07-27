@@ -36,10 +36,17 @@ export function Modal({ title, onClose, children }: ModalProps) {
           delete alike, whether its content is a full form or a single
           confirm field -- renders at the same size instead of each
           shrinking to its own content's width. maxWidth is just the
-          narrow-viewport fallback. */}
+          narrow-viewport fallback. maxHeight matches exactly what the
+          backdrop's own p-3 (1rem top + 1rem bottom) leaves -- not an
+          arbitrary percentage like 85vh, which was leaving real unused
+          space below the dialog on a short viewport (confirmed at
+          375x667) while still forcing an internal scrollbar on taller
+          panels (e.g. Users' Save-credentials step) that would have fit
+          in that leftover space. overflowY:auto still scrolls internally
+          for the rare panel taller than even this. */}
       <div
         className="modal-dialog-anim bg-body rounded-4 shadow-lg p-3"
-        style={{ width: "34rem", maxWidth: "92vw", maxHeight: "85vh", overflowY: "auto" }}
+        style={{ width: "34rem", maxWidth: "92vw", maxHeight: "calc(100vh - 2rem)", overflowY: "auto" }}
         role="dialog"
         aria-modal="true"
         aria-label={title}
