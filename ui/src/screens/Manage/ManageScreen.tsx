@@ -406,6 +406,7 @@ export function ManageScreen() {
                   onSelectRow={setUsersSelectedId}
                   onSetMode={setUsersMode}
                   onChanged={() => void loadUsers()}
+                  onUserDeleted={() => void loadShares()}
                 />
               )}
               {section === "books" && (

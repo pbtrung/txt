@@ -568,6 +568,7 @@ export function UsersSection({
   onSelectRow,
   onSetMode,
   onChanged,
+  onUserDeleted,
 }: {
   session: VaultSession;
   users: UserSummary[];
@@ -577,6 +578,11 @@ export function UsersSection({
   onSelectRow: (id: number | null) => void;
   onSetMode: (mode: UsersMode) => void;
   onChanged: () => void;
+  /** Deleting a user also revokes/dangles shares involving them (see
+   * adminUsers.ts's deleteUser) -- called alongside onChanged, but only
+   * for Delete, so Create/Edit don't pay for a shares reload they have no
+   * reason to need. */
+  onUserDeleted: () => void;
 }) {
   // The admin's own display name is already patched in by ManageScreen.tsx
   // (users.creds can never hold it -- that row's creds is always NULL, see
@@ -598,6 +604,11 @@ export function UsersSection({
     onChanged();
   }
 
+  function afterDelete() {
+    afterChange();
+    onUserDeleted();
+  }
+
   return (
     <div className="d-flex flex-column flex-grow-1 overflow-hidden">
       {mode === "create" && (
@@ -616,7 +627,7 @@ export function UsersSection({
         <DeleteUserPanel
           session={session}
           userId={selectedUserId}
-          onDeleted={afterChange}
+          onDeleted={afterDelete}
           onClose={() => onSetMode("none")}
         />
       )}

@@ -338,8 +338,18 @@ describe("ManageScreen", () => {
       await userEvent.type(screen.getByRole("textbox"), "2");
       expect(confirmButton).toBeEnabled();
 
+      // Deleting a user also revokes/dangles shares involving them (see
+      // adminUsers.ts's deleteUser) -- the Shares list should reload too,
+      // not just Users, so a stale grant doesn't linger in the UI. Compared
+      // against a snapshot taken just before the delete (rather than
+      // asserting an absolute call count), since this file's mocks aren't
+      // cleared between tests.
+      const listSharesCallsBefore = vi.mocked(adminShares.listShares).mock.calls.length;
       await userEvent.click(confirmButton);
       expect(adminUsers.deleteUser).toHaveBeenCalledWith({}, 1, 2);
+      await waitFor(() =>
+        expect(vi.mocked(adminShares.listShares).mock.calls.length).toBeGreaterThan(listSharesCallsBefore),
+      );
     });
 
     it("resets a password and rotates a root key from the Edit panel", async () => {
