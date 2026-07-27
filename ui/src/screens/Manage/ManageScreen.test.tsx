@@ -431,6 +431,18 @@ describe("ManageScreen", () => {
       expect(adminShares.grantShare).toHaveBeenCalledWith({}, 1, expect.any(Uint8Array), 2);
     });
 
+    it("doesn't list the admin's own account as a possible recipient", async () => {
+      setup();
+      await goToShares();
+      await userEvent.click(screen.getByRole("button", { name: "Create" }));
+
+      // session.userId is 1 (Alice) -- only Bob (id 2) should be selectable.
+      const recipientSelect = screen.getByLabelText("Recipient") as HTMLSelectElement;
+      const optionLabels = Array.from(recipientSelect.options).map((o) => o.textContent);
+      expect(optionLabels.some((label) => label?.includes("Alice"))).toBe(false);
+      expect(optionLabels.some((label) => label?.includes("Bob"))).toBe(true);
+    });
+
     it("requires an explicit confirmation before revoking a selected share", async () => {
       vi.mocked(adminShares.listShares).mockResolvedValue([{ id: 5, txtId: 1, toUserId: 2 }]);
       setup();

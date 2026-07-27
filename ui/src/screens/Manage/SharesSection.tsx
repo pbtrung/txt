@@ -1,8 +1,10 @@
 // Manage screen's Shares section: existing grants on the admin's own txt.
-// Create grants a new one; revoking (the shell's toolbar "Delete" button --
-// see ManageScreen.tsx's handleRevokeShare) fires immediately, no confirm
-// step (unlike Users/Books delete) -- a share is easy to re-grant, unlike
-// an account or a txt.
+// Create grants a new one (recipient dropdown excludes the admin's own
+// account -- only the admin ever owns/shares txt at all, see credentials.md,
+// so sharing with themselves would be meaningless); Delete opens a
+// lightweight confirm panel (DeleteSharePanel below) rather than firing
+// immediately -- simpler than Users/Books' type-the-id ConfirmDeleteField,
+// since a share is still easy to re-grant, unlike an account or a txt.
 
 import { useMemo, useState, type FormEvent } from "react";
 
@@ -33,6 +35,11 @@ function GrantShareForm({
   const [recipientUserId, setRecipientUserId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Only the admin ever owns/shares txt at all (see file comment) -- sharing
+  // with their own account would be a meaningless grant, so it's excluded
+  // here rather than left for the admin to notice and avoid themselves.
+  const recipients = useMemo(() => users.filter((u) => u.id !== session.userId), [users, session.userId]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -86,7 +93,7 @@ function GrantShareForm({
             <option value="" disabled>
               Choose a recipient
             </option>
-            {users.map((user) => (
+            {recipients.map((user) => (
               <option key={user.id} value={user.id}>
                 {userLabel(user.displayName, user.id)}
               </option>
