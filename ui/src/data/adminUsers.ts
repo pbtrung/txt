@@ -39,7 +39,9 @@ import * as c from "../crypto/constants";
 import * as kem from "../crypto/kem";
 import { hmacSha3_256, pbkdf2Sha3_256 } from "../crypto/leancryptoLoader";
 import { deleteTxtRows } from "./adminTxt";
+import { parseCreds } from "./creds";
 import { requireBlobBytes } from "./db";
+import { unwrapUmk } from "./owner";
 import type { R2Config } from "./r2Config";
 
 export class AdminUsersError extends Error {}
@@ -343,6 +345,22 @@ export async function getUserCreds(
   } catch {
     return null;
   }
+}
+
+/** Recovers a regular user's own umk via the admin's escrowed copy of their
+ * creds (users.creds, wrapped under the *admin's* own umk -- see file
+ * comment): decrypt that JSON with getUserCreds, then unwrap umk_store.umk
+ * the ordinary way (owner.ts's unwrapUmk) using the user_root_key it
+ * carries. Lets the admin read/write anything wrapped under that user's own
+ * umk -- e.g. their txt_metadata (see adminShares.ts's grantShare/
+ * revokeShare) -- without that user's own session ever being involved.
+ * Returns null under the same conditions getUserCreds does (no row, creds
+ * NULL, or undecryptable/unparsable) -- callers decide whether that's a
+ * hard failure or something to skip past. */
+export async function resolveUserUmk(db: Client, adminUmk: Uint8Array, userId: number): Promise<Uint8Array | null> {
+  const creds = await getUserCreds(db, adminUmk, userId);
+  if (!creds) return null;
+  return unwrapUmk(db, parseCreds(creds), userId);
 }
 
 /** Resets a user's login password -- pw_hash/pw_salt sit outside the umk
