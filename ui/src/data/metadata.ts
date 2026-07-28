@@ -50,7 +50,7 @@ export interface BookInfo {
 // the source element had attributes, or a list of either for repeated tags.
 type OpfValue = string | { text: string; [attr: string]: string } | OpfValue[];
 type OpfMetadata = Record<string, OpfValue>;
-interface TxtMetadataEntry {
+export interface TxtMetadataEntry {
   name: string;
   metadata?: OpfMetadata;
 }
@@ -412,6 +412,53 @@ export async function removeTxtMetadataEntry(
   if (!state || !(String(txtId) in state.content)) return state;
   const nextContent = { ...state.content };
   delete nextContent[String(txtId)];
+  onProgress?.("Uploading changes…");
+  const nextRawPath = await persistMetadataContent(
+    db,
+    userId,
+    state.txtMetadataKey,
+    nextContent,
+    state.rawPath,
+    r2Client,
+    r2Config,
+  );
+  return { txtMetadataKey: state.txtMetadataKey, content: nextContent, rawPath: nextRawPath };
+}
+
+/** Sets (creating or overwriting) one txt_id's entry verbatim -- unlike
+ * saveBookMetadata, which only edits an already-existing entry's curated
+ * fields, this takes a full TxtMetadataEntry and doesn't require one to
+ * already be there. Generic over any account's userId/umk, same as every
+ * other function in this file -- what makes it usable for adminShares.ts's
+ * grantShare to copy a txt's real metadata entry into a *recipient's* own
+ * txt_metadata row (via the admin's escrowed access to that recipient's
+ * umk, see adminUsers.ts's resolveUserUmk), not just the caller's own.
+ * Throws if there's no txt_metadata row for userId at all -- every account
+ * gets one provisioned at creation, so this should only ever happen for a
+ * userId that doesn't actually exist. Same cachedState/onProgress
+ * conventions as saveBookMetadata/removeTxtMetadataEntry. */
+export async function upsertTxtMetadataEntry(
+  db: Client,
+  userId: number,
+  umk: Uint8Array,
+  r2Client: AwsClient,
+  r2Config: R2Config,
+  txtId: number,
+  entry: TxtMetadataEntry,
+  onProgress?: (label: string) => void,
+  cachedState?: RawMetadataState | null,
+): Promise<RawMetadataState> {
+  let state: RawMetadataState | null;
+  if (cachedState !== undefined) {
+    state = cachedState;
+  } else {
+    onProgress?.("Reading current metadata…");
+    state = await loadRawMetadataState(db, userId, umk, r2Client, r2Config);
+  }
+  if (!state) {
+    throw new Error(`no txt_metadata row for user_id=${userId}`);
+  }
+  const nextContent = { ...state.content, [String(txtId)]: entry };
   onProgress?.("Uploading changes…");
   const nextRawPath = await persistMetadataContent(
     db,
