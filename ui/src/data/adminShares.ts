@@ -45,6 +45,15 @@ export async function listShares(db: Client): Promise<ShareEntry[]> {
   }));
 }
 
+/** Every user_id a txt has been shared to -- used by VaultContext's
+ * deleteTxt to best-effort scrub each recipient's own copied metadata entry
+ * before the txt_shares rows themselves are deleted (adminTxt.ts's
+ * deleteTxtRows). */
+export async function shareRecipientIds(db: Client, txtId: number): Promise<number[]> {
+  const result = await db.execute({ sql: "SELECT to_user_id FROM txt_shares WHERE txt_id = ?", args: [txtId] });
+  return result.rows.map((row) => Number(row.to_user_id));
+}
+
 /** Grants recipientUserId access to txtId, wrapping its already-unwrapped
  * txtKey (e.g. from VaultContext's getTxtKey) under their public key --
  * and, so the recipient's own Library actually shows this txt, copies

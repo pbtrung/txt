@@ -2,6 +2,7 @@ import type { Client } from "@libsql/core/api";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import * as blob from "../crypto/blob";
+import * as kem from "../crypto/kem";
 import { pbkdf2Sha3_256 } from "../crypto/leancryptoLoader";
 import { PBKDF2_ITERATIONS, PW_HASH_LEN } from "../crypto/constants";
 import type { Creds } from "./creds";
@@ -113,7 +114,24 @@ describe("fetchR2Config", () => {
   });
 });
 
+describe("unwrapPrivKey", () => {
+  it("decrypts key_store.priv_key with the umk", async () => {
+    const privKey = new Uint8Array(2000).fill(13);
+    const privKeyBlob = await blob.encrypt(umk, privKey);
+    const db = fakeClient({ "FROM key_store": [{ priv_key: privKeyBlob.buffer }] });
+    const result = await owner.unwrapPrivKey(db, 42, umk);
+    expect(Array.from(result)).toEqual(Array.from(privKey));
+  });
+
+  it("throws when no key_store row exists", async () => {
+    const db = fakeClient({ "FROM key_store": [] });
+    await expect(owner.unwrapPrivKey(db, 42, umk)).rejects.toThrow(owner.OwnerError);
+  });
+});
+
 describe("unwrapTxtKey / partRawPaths / partRawPath / partCount", () => {
+  const privKey = new Uint8Array(64).fill(0); // unused on the owned-txt path below
+
   it("unwraps a txt_key, decrypts every part's path, and counts parts", async () => {
     const txtKey = new Uint8Array(64).fill(11);
     const txtKeyBlob = await blob.encrypt(umk, txtKey);
@@ -126,7 +144,7 @@ describe("unwrapTxtKey / partRawPaths / partRawPath / partCount", () => {
       "FROM part_count": [{ count: 2 }],
     });
 
-    const unwrapped = await owner.unwrapTxtKey(db, 7, 42, umk);
+    const unwrapped = await owner.unwrapTxtKey(db, 7, 42, umk, privKey);
     expect(Array.from(unwrapped)).toEqual(Array.from(txtKey));
 
     expect(await owner.partRawPaths(db, 7, txtKey)).toEqual([
@@ -150,22 +168,23 @@ describe("unwrapTxtKey / partRawPaths / partRawPath / partCount", () => {
     expect(await owner.partRawPath(db, 7, 99, txtKey)).toBeNull();
   });
 
-  it("unwrapTxtKey scopes its query by user_id, not just txt_id", async () => {
+  it("unwrapTxtKey scopes both the owned-txt query and its txt_shares fallback by this account's own id", async () => {
     // Reader's /read/:txtId comes straight from a client-supplied route
     // param, with no prior ownership check -- unlike every other lookup in
     // this file, txtId here isn't already known to belong to this session.
     // An unscoped "WHERE id = ?" would let a signed-in user distinguish "this
     // txt_id exists (for someone else)" from "it doesn't" via a decrypt
-    // failure vs. a not-found error, an existence oracle across accounts.
-    // Asserting the executed SQL/args here (rather than just its return
-    // value) is what actually catches a regression that silently drops the
-    // predicate again.
-    let executedSql = "";
-    let executedArgs: unknown[] = [];
+    // failure vs. a not-found error, an existence oracle across accounts --
+    // and the txt_shares fallback below reopens that same oracle unless
+    // *it's* scoped too ("exists but isn't mine, and isn't shared to me
+    // either" must land on the identical not-found branch as "doesn't exist
+    // at all"). Asserting the executed SQL/args here (rather than just the
+    // return value) is what actually catches a regression that silently
+    // drops either predicate.
+    const calls: { sql: string; args: unknown[] }[] = [];
     const db = {
       async execute({ sql, args }: { sql: string; args?: unknown[] }) {
-        executedSql = sql;
-        executedArgs = args ?? [];
+        calls.push({ sql, args: args ?? [] });
         return {
           rows: [],
           columns: [],
@@ -177,8 +196,29 @@ describe("unwrapTxtKey / partRawPaths / partRawPath / partCount", () => {
       },
     } as unknown as Client;
 
-    await expect(owner.unwrapTxtKey(db, 7, 42, umk)).rejects.toThrow(owner.OwnerError);
-    expect(executedSql).toMatch(/WHERE id = \? AND user_id = \?/);
-    expect(executedArgs).toEqual([7, 42]);
+    await expect(owner.unwrapTxtKey(db, 7, 42, umk, privKey)).rejects.toThrow(owner.OwnerError);
+    expect(calls[0].sql).toMatch(/FROM txt WHERE id = \? AND user_id = \?/);
+    expect(calls[0].args).toEqual([7, 42]);
+    expect(calls[1].sql).toMatch(/FROM txt_shares WHERE txt_id = \? AND to_user_id = \?/);
+    expect(calls[1].args).toEqual([7, 42]);
+  });
+
+  it("falls back to txt_shares (Decapsulated via this account's own key_store.priv_key) when the txt isn't owned", async () => {
+    const { pk, sk } = await kem.keypair();
+    const txtKey = new Uint8Array(64).fill(11);
+    const { saltKemCt, blob: wrappedTxtKey } = await kem.wrap(pk, txtKey);
+
+    const db = fakeClient({
+      "FROM txt WHERE id": [], // not owned
+      "FROM txt_shares": [{ salt_kem_ct: saltKemCt.buffer, txt_key: wrappedTxtKey.buffer }],
+    });
+
+    const unwrapped = await owner.unwrapTxtKey(db, 7, 42, umk, sk);
+    expect(Array.from(unwrapped)).toEqual(Array.from(txtKey));
+  });
+
+  it("throws when the txt is neither owned nor shared to this account", async () => {
+    const db = fakeClient({ "FROM txt WHERE id": [], "FROM txt_shares": [] });
+    await expect(owner.unwrapTxtKey(db, 7, 42, umk, privKey)).rejects.toThrow(owner.OwnerError);
   });
 });

@@ -21,8 +21,17 @@ import {
   type BookmarksMap,
 } from "../data/bookmarks";
 import { deleteTxtRows } from "../data/adminTxt";
+import { resolveUserUmk } from "../data/adminUsers";
+import { shareRecipientIds } from "../data/adminShares";
 import { isAdminToken } from "../crypto/jwt";
-import { fetchR2Config, partRawPaths, resolveUserAndCheckPassword, unwrapTxtKey, unwrapUmk } from "../data/owner";
+import {
+  fetchR2Config,
+  partRawPaths,
+  resolveUserAndCheckPassword,
+  unwrapPrivKey,
+  unwrapTxtKey,
+  unwrapUmk,
+} from "../data/owner";
 import { createDb } from "../data/db";
 import { createR2Client, deleteObject } from "../data/r2";
 import { parseCreds, type Creds } from "../data/creds";
@@ -81,6 +90,13 @@ export interface VaultSession {
   rawMetadataState: RawMetadataState | null;
   txtAccessKey: Uint8Array;
   bookmarkKey: Uint8Array;
+  /** This account's own key_store keypair private key, unwrapped under its
+   * own umk (owner.ts's unwrapPrivKey) -- needed to Decapsulate a
+   * txt_shares grant back down to a shared document's txt_key (see
+   * owner.ts's unwrapTxtKey fallback), the same way umk itself unwraps an
+   * owned txt.txt_key directly. Every account has a key_store row, so this
+   * is fetched unconditionally, not just for non-admin sessions. */
+  privKey: Uint8Array;
   /** Whether creds.tursoAuthToken is an admin-shaped token (see
    * crypto/jwt.ts's isAdminToken) -- a client-local, load-time fact, not
    * something looked up from the database (docs/credentials.md's "How a
@@ -192,6 +208,8 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         setProgress(phaseProgress(UNLOCK_PHASES, 1));
         verbose("unlock: unwrapping umk");
         const umk = await unwrapUmk(db, creds, userId);
+        verbose("unlock: unwrapping key_store keypair");
+        const privKey = await unwrapPrivKey(db, userId, umk);
         verbose("unlock: fetching r2 config");
         const r2Config = await fetchR2Config(db, userId, umk);
         const r2Client = createR2Client(r2Config);
@@ -224,6 +242,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           rawMetadataState,
           txtAccessKey,
           bookmarkKey,
+          privKey,
           isAdmin,
         });
         setStatus("unlocked");
@@ -302,7 +321,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       if (!session) {
         throw new Error("vault is locked");
       }
-      const txtKey = await unwrapTxtKey(session.db, txtId, session.userId, session.umk);
+      const txtKey = await unwrapTxtKey(session.db, txtId, session.userId, session.umk, session.privKey);
       txtKeyCache.current.set(txtId, txtKey);
       return txtKey;
     },
@@ -394,6 +413,26 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         const txtKey = await getTxtKey(txtId);
         const rawPaths = await partRawPaths(session.db, txtId, txtKey);
         await Promise.all(rawPaths.map((rawPath) => deleteObject(session.r2Client, session.r2Config, rawPath)));
+
+        // Best-effort: scrub the copy grantShare (adminShares.ts) made in
+        // each recipient's own txt_metadata, so deleting this txt doesn't
+        // leave a phantom Library entry behind for anyone it was shared
+        // with. Must run before deleteTxtRows below, which deletes these
+        // txt_shares rows. Recovering a given recipient's umk (or reaching
+        // R2) failing never blocks the delete itself -- same leftover
+        // tradeoff already accepted elsewhere in this file.
+        const recipientIds = await shareRecipientIds(session.db, txtId);
+        for (const toUserId of recipientIds) {
+          try {
+            const recipientUmk = await resolveUserUmk(session.db, session.umk, toUserId);
+            if (recipientUmk) {
+              await removeTxtMetadataEntry(session.db, toUserId, recipientUmk, session.r2Client, session.r2Config, txtId);
+            }
+          } catch {
+            // Leave this recipient's copy stale rather than blocking the delete.
+          }
+        }
+
         await deleteTxtRows(session.db, txtId);
         const nextRawMetadataState = await removeTxtMetadataEntry(
           session.db,

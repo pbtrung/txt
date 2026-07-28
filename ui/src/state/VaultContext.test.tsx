@@ -9,10 +9,12 @@ vi.mock("../data/r2", () => ({ createR2Client: vi.fn(() => ({ fetch: vi.fn() }))
 vi.mock("../data/owner", () => ({
   resolveUserAndCheckPassword: vi.fn(),
   unwrapUmk: vi.fn(),
+  unwrapPrivKey: vi.fn(),
   unwrapTxtKey: vi.fn(),
   fetchR2Config: vi.fn(),
   partRawPaths: vi.fn(),
 }));
+vi.mock("../data/adminUsers", () => ({ resolveUserUmk: vi.fn() }));
 vi.mock("../data/metadata", () => ({
   loadTxtMetadata: vi.fn(),
   saveBookMetadata: vi.fn(),
@@ -30,10 +32,13 @@ vi.mock("../data/bookmarks", () => ({
   removeAllBookmarksForTxt: vi.fn(),
 }));
 vi.mock("../data/adminTxt", () => ({ deleteTxtRows: vi.fn() }));
+vi.mock("../data/adminShares", () => ({ shareRecipientIds: vi.fn() }));
 
 import * as accessData from "../data/access";
 import type { AccessMap } from "../data/access";
+import * as adminShares from "../data/adminShares";
 import * as adminTxt from "../data/adminTxt";
+import * as adminUsers from "../data/adminUsers";
 import * as bookmarksData from "../data/bookmarks";
 import * as metadata from "../data/metadata";
 import type { BookInfo } from "../data/metadata";
@@ -84,6 +89,7 @@ describe("VaultProvider", () => {
   it("unlocks successfully when every step succeeds", async () => {
     vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({ userId: 42, passwordOk: true });
     vi.mocked(owner.unwrapUmk).mockResolvedValue(new Uint8Array(64).fill(1));
+    vi.mocked(owner.unwrapPrivKey).mockResolvedValue(new Uint8Array(64).fill(2));
     vi.mocked(owner.fetchR2Config).mockResolvedValue({
       endpoint: "https://x",
       region: "auto",
@@ -114,6 +120,7 @@ describe("VaultProvider", () => {
       }),
     );
     vi.mocked(owner.unwrapUmk).mockResolvedValue(new Uint8Array(64).fill(1));
+    vi.mocked(owner.unwrapPrivKey).mockResolvedValue(new Uint8Array(64).fill(2));
     vi.mocked(owner.fetchR2Config).mockResolvedValue({
       endpoint: "https://x",
       region: "auto",
@@ -146,6 +153,7 @@ describe("VaultProvider", () => {
   it("splits the library-loading phase into its three actual requests, not one big step", async () => {
     vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({ userId: 42, passwordOk: true });
     vi.mocked(owner.unwrapUmk).mockResolvedValue(new Uint8Array(64).fill(1));
+    vi.mocked(owner.unwrapPrivKey).mockResolvedValue(new Uint8Array(64).fill(2));
     vi.mocked(owner.fetchR2Config).mockResolvedValue({
       endpoint: "https://x",
       region: "auto",
@@ -223,6 +231,7 @@ describe("VaultProvider", () => {
   it("serializes concurrent bookmark additions so neither overwrites the other", async () => {
     vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({ userId: 42, passwordOk: true });
     vi.mocked(owner.unwrapUmk).mockResolvedValue(new Uint8Array(64).fill(1));
+    vi.mocked(owner.unwrapPrivKey).mockResolvedValue(new Uint8Array(64).fill(2));
     vi.mocked(owner.fetchR2Config).mockResolvedValue({
       endpoint: "https://x",
       region: "auto",
@@ -267,6 +276,7 @@ describe("VaultProvider", () => {
   it("deleteTxt removes the txt's rows, access/bookmarks entries, and its in-memory metadata", async () => {
     vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({ userId: 42, passwordOk: true });
     vi.mocked(owner.unwrapUmk).mockResolvedValue(new Uint8Array(64).fill(1));
+    vi.mocked(owner.unwrapPrivKey).mockResolvedValue(new Uint8Array(64).fill(2));
     vi.mocked(owner.fetchR2Config).mockResolvedValue({
       endpoint: "https://x",
       region: "auto",
@@ -285,6 +295,7 @@ describe("VaultProvider", () => {
       bookmarksMap: new Map(),
     });
     vi.mocked(adminTxt.deleteTxtRows).mockResolvedValue(undefined);
+    vi.mocked(adminShares.shareRecipientIds).mockResolvedValue([]);
     vi.mocked(owner.unwrapTxtKey).mockResolvedValue(new Uint8Array(64).fill(9));
     vi.mocked(owner.partRawPaths).mockResolvedValue(["path-1", "path-2"]);
     vi.mocked(r2.deleteObject).mockResolvedValue(undefined);
@@ -340,6 +351,72 @@ describe("VaultProvider", () => {
     expect(result.current.session?.metadataById.has(7)).toBe(false);
   });
 
+  it("deleteTxt best-effort scrubs each recipient's copied metadata entry before deleting the txt_shares rows", async () => {
+    vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({ userId: 42, passwordOk: true });
+    vi.mocked(owner.unwrapUmk).mockResolvedValue(new Uint8Array(64).fill(1));
+    vi.mocked(owner.fetchR2Config).mockResolvedValue({
+      endpoint: "https://x",
+      region: "auto",
+      bucket: "b",
+      readOnlyAccessKeyId: "id",
+      readOnlySecretAccessKey: "secret",
+    });
+    mockLibraryLoads();
+    vi.mocked(adminTxt.deleteTxtRows).mockResolvedValue(undefined);
+    vi.mocked(owner.unwrapTxtKey).mockResolvedValue(new Uint8Array(64).fill(9));
+    vi.mocked(owner.partRawPaths).mockResolvedValue([]);
+    vi.mocked(r2.deleteObject).mockResolvedValue(undefined);
+    vi.mocked(accessData.removeAccessEntry).mockResolvedValue(new Map());
+    vi.mocked(bookmarksData.removeAllBookmarksForTxt).mockResolvedValue(new Map());
+
+    // Two recipients: one whose umk resolves fine, one whose escrow lookup
+    // fails outright -- the cleanup must still proceed for the first and
+    // never block the delete itself for the second.
+    vi.mocked(adminShares.shareRecipientIds).mockResolvedValue([2, 3]);
+    vi.mocked(adminUsers.resolveUserUmk).mockImplementation(async (_db, _adminUmk, userId) => {
+      if (userId === 2) return new Uint8Array(64).fill(5);
+      throw new Error("boom");
+    });
+    vi.mocked(metadata.removeTxtMetadataEntry).mockResolvedValue(null);
+
+    const { result } = renderVault();
+    await act(async () => {
+      await result.current.unlock(fakeFile(CONFIG));
+    });
+    await waitFor(() => expect(result.current.status).toBe("unlocked"));
+
+    await act(async () => {
+      await result.current.deleteTxt(7);
+    });
+
+    expect(adminShares.shareRecipientIds).toHaveBeenCalledWith(expect.anything(), 7);
+    // Recipient #2's copy is scrubbed with their own (resolved) umk...
+    expect(metadata.removeTxtMetadataEntry).toHaveBeenCalledWith(
+      expect.anything(),
+      2,
+      expect.any(Uint8Array),
+      expect.anything(),
+      expect.anything(),
+      7,
+    );
+    // ...recipient #3's escrow lookup threw, so no removal call was ever
+    // made for them -- but that must not have stopped deleteTxtRows.
+    expect(metadata.removeTxtMetadataEntry).not.toHaveBeenCalledWith(
+      expect.anything(),
+      3,
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      7,
+    );
+    expect(adminTxt.deleteTxtRows).toHaveBeenCalledWith(expect.anything(), 7);
+
+    // Cleanup runs before the txt_shares rows (and the txt itself) are gone.
+    const cleanupCallOrder = vi.mocked(adminShares.shareRecipientIds).mock.invocationCallOrder[0];
+    const deleteRowsCallOrder = vi.mocked(adminTxt.deleteTxtRows).mock.invocationCallOrder[0];
+    expect(cleanupCallOrder).toBeLessThan(deleteRowsCallOrder);
+  });
+
   it("deleteTxt throws when the vault is locked", async () => {
     const { result } = renderVault();
     await expect(result.current.deleteTxt(7)).rejects.toThrow("vault is locked");
@@ -348,6 +425,7 @@ describe("VaultProvider", () => {
   it("lock() clears the session and returns to locked", async () => {
     vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({ userId: 42, passwordOk: true });
     vi.mocked(owner.unwrapUmk).mockResolvedValue(new Uint8Array(64).fill(1));
+    vi.mocked(owner.unwrapPrivKey).mockResolvedValue(new Uint8Array(64).fill(2));
     vi.mocked(owner.fetchR2Config).mockResolvedValue({
       endpoint: "https://x",
       region: "auto",
@@ -373,6 +451,7 @@ describe("VaultProvider", () => {
     async function unlockedResult() {
       vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({ userId: 42, passwordOk: true });
       vi.mocked(owner.unwrapUmk).mockResolvedValue(new Uint8Array(64).fill(1));
+    vi.mocked(owner.unwrapPrivKey).mockResolvedValue(new Uint8Array(64).fill(2));
       vi.mocked(owner.fetchR2Config).mockResolvedValue({
         endpoint: "https://x",
         region: "auto",

@@ -7,6 +7,7 @@
 import type { Client } from "@libsql/core/api";
 
 import * as blob from "../crypto/blob";
+import * as kem from "../crypto/kem";
 import { hmacSha3_256, pbkdf2Sha3_256 } from "../crypto/leancryptoLoader";
 import { bytesEqual } from "../crypto/bytes";
 import { PBKDF2_ITERATIONS, PW_HASH_LEN } from "../crypto/constants";
@@ -73,6 +74,19 @@ export async function fetchR2Config(db: Client, userId: number, umk: Uint8Array)
   return parseR2Config(await decryptJson(umk, requireBlobBytes(row.config, "r2_config.config")));
 }
 
+/** Unwraps this account's own key_store keypair private key -- needed to
+ * Decapsulate a txt_shares grant (unwrapTxtKey's fallback below) back down
+ * to a shared txt_key, the same way a document owner's own umk unwraps
+ * their own txt.txt_key directly. */
+export async function unwrapPrivKey(db: Client, userId: number, umk: Uint8Array): Promise<Uint8Array> {
+  const result = await db.execute({ sql: "SELECT priv_key FROM key_store WHERE user_id = ?", args: [userId] });
+  const row = result.rows[0];
+  if (!row) {
+    throw new OwnerError(`no key_store row for user_id=${userId}`);
+  }
+  return blob.decrypt(umk, requireBlobBytes(row.priv_key, "key_store.priv_key"));
+}
+
 // Scoped by user_id, not just id: unlike every other unscoped-by-id lookup
 // in this file, this one is reachable from a client-supplied route param
 // (Reader's /read/:txtId) with no prior ownership check -- an
@@ -81,16 +95,42 @@ export async function fetchR2Config(db: Client, userId: number, umk: Uint8Array)
 // documents, an existence oracle Turso's lack of row-level security doesn't
 // otherwise close. Scoping here means a foreign-but-existing txt_id and a
 // genuinely nonexistent one both hit the exact same not-found branch.
-export async function unwrapTxtKey(db: Client, txtId: number, userId: number, umk: Uint8Array): Promise<Uint8Array> {
-  const result = await db.execute({
+//
+// Falls back to txt_shares when this account doesn't own txtId: the
+// fallback query is scoped by to_user_id the same way the owner lookup is
+// scoped by user_id, so the anti-oracle property above still holds --
+// "exists but isn't mine, and isn't shared to me either" and "doesn't exist
+// at all" both still land on the same not-found branch. privKey (this
+// account's own key_store.priv_key, see unwrapPrivKey above) Decapsulates
+// the KEM-wrapped txt_key a document owner granted via adminShares.ts's
+// grantShare.
+export async function unwrapTxtKey(
+  db: Client,
+  txtId: number,
+  userId: number,
+  umk: Uint8Array,
+  privKey: Uint8Array,
+): Promise<Uint8Array> {
+  const ownResult = await db.execute({
     sql: "SELECT txt_key FROM txt WHERE id = ? AND user_id = ?",
     args: [txtId, userId],
   });
-  const row = result.rows[0];
-  if (!row) {
+  const ownRow = ownResult.rows[0];
+  if (ownRow) {
+    return blob.decrypt(umk, requireBlobBytes(ownRow.txt_key, "txt.txt_key"));
+  }
+
+  const shareResult = await db.execute({
+    sql: "SELECT salt_kem_ct, txt_key FROM txt_shares WHERE txt_id = ? AND to_user_id = ?",
+    args: [txtId, userId],
+  });
+  const shareRow = shareResult.rows[0];
+  if (!shareRow) {
     throw new OwnerError(`no txt row for txt_id=${txtId}`);
   }
-  return blob.decrypt(umk, requireBlobBytes(row.txt_key, "txt.txt_key"));
+  const saltKemCt = requireBlobBytes(shareRow.salt_kem_ct, "txt_shares.salt_kem_ct");
+  const wrappedTxtKey = requireBlobBytes(shareRow.txt_key, "txt_shares.txt_key");
+  return kem.unwrap(privKey, saltKemCt, wrappedTxtKey);
 }
 
 /** Decrypts every part's path for a txt, in part_num order -- deliberately

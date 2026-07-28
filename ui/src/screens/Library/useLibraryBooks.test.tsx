@@ -51,6 +51,7 @@ const session: VaultContextModule.VaultSession = {
   rawMetadataState: null,
   txtAccessKey: new Uint8Array(64),
   bookmarkKey: new Uint8Array(64),
+  privKey: new Uint8Array(64),
   isAdmin: false,
 };
 
