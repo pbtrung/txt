@@ -14,9 +14,13 @@
 // root key or umk.
 
 import type { Client } from "@libsql/core/api";
+import type { AwsClient } from "aws4fetch";
 
 import * as kem from "../crypto/kem";
+import { resolveUserUmk } from "./adminUsers";
 import { requireBlobBytes } from "./db";
+import { removeTxtMetadataEntry, upsertTxtMetadataEntry, type TxtMetadataEntry } from "./metadata";
+import type { R2Config } from "./r2Config";
 
 export class AdminSharesError extends Error {}
 
@@ -42,12 +46,27 @@ export async function listShares(db: Client): Promise<ShareEntry[]> {
 }
 
 /** Grants recipientUserId access to txtId, wrapping its already-unwrapped
- * txtKey (e.g. from VaultContext's getTxtKey) under their public key. */
+ * txtKey (e.g. from VaultContext's getTxtKey) under their public key --
+ * and, so the recipient's own Library actually shows this txt, copies
+ * `entry` (the admin's own txt_metadata entry for txtId) into the
+ * recipient's own txt_metadata row too, via the admin's escrowed access to
+ * that recipient's umk (adminUsers.ts's resolveUserUmk). That copy happens
+ * *before* the txt_shares insert: a share that's "granted" but invisible in
+ * the recipient's Library is a confusing half-feature, so failing to
+ * recover the recipient's umk is a hard failure here (unlike revokeShare's
+ * best-effort cleanup below) -- and doing it first means a failure never
+ * leaves a dangling txt_shares row, with the whole call safely retryable
+ * either way (upsertTxtMetadataEntry overwrites the same entry either
+ * time). */
 export async function grantShare(
   db: Client,
   txtId: number,
   txtKey: Uint8Array,
   recipientUserId: number,
+  entry: TxtMetadataEntry,
+  adminUmk: Uint8Array,
+  r2Client: AwsClient,
+  r2Config: R2Config,
 ): Promise<void> {
   const result = await db.execute({ sql: "SELECT pub_key FROM key_store WHERE user_id = ?", args: [recipientUserId] });
   const row = result.rows[0];
@@ -55,6 +74,13 @@ export async function grantShare(
     throw new AdminSharesError(`no key_store row for user_id=${recipientUserId}`);
   }
   const pubKey = requireBlobBytes(row.pub_key, "key_store.pub_key");
+
+  const recipientUmk = await resolveUserUmk(db, adminUmk, recipientUserId);
+  if (!recipientUmk) {
+    throw new AdminSharesError(`couldn't recover user_id=${recipientUserId}'s umk via their escrowed creds`);
+  }
+  await upsertTxtMetadataEntry(db, recipientUserId, recipientUmk, r2Client, r2Config, txtId, entry);
+
   const { saltKemCt, blob: wrappedTxtKey } = await kem.wrap(pubKey, txtKey);
   await db.execute({
     sql: "INSERT INTO txt_shares (txt_id, to_user_id, salt_kem_ct, txt_key) VALUES (?, ?, ?, ?)",
@@ -62,7 +88,31 @@ export async function grantShare(
   });
 }
 
-/** Revokes one existing share grant by its row id. */
-export async function revokeShare(db: Client, shareId: number): Promise<void> {
+/** Revokes one existing share grant by its row id, and best-effort scrubs
+ * the copy grantShare made in the recipient's own txt_metadata (so it stops
+ * showing up in their Library) -- wrapped in try/catch, unlike grantShare's
+ * hard failure on the same escrow step: revoking access is the actually
+ * security-relevant action here and must not be blocked by a metadata
+ * cleanup failure (e.g. the recipient's creds having since become
+ * undecryptable). Leaves a stale metadata entry behind on failure, the same
+ * class of harmless leftover already accepted elsewhere in this app (see
+ * metadata.ts's persistMetadataContent). */
+export async function revokeShare(
+  db: Client,
+  shareId: number,
+  txtId: number,
+  toUserId: number,
+  adminUmk: Uint8Array,
+  r2Client: AwsClient,
+  r2Config: R2Config,
+): Promise<void> {
+  try {
+    const recipientUmk = await resolveUserUmk(db, adminUmk, toUserId);
+    if (recipientUmk) {
+      await removeTxtMetadataEntry(db, toUserId, recipientUmk, r2Client, r2Config, txtId);
+    }
+  } catch {
+    // Best-effort -- see doc comment above.
+  }
   await db.execute({ sql: "DELETE FROM txt_shares WHERE id = ?", args: [shareId] });
 }

@@ -48,7 +48,20 @@ function GrantShareForm({
     try {
       const id = Number(txtId);
       const txtKey = await getTxtKey(id);
-      await grantShare(session.db, id, txtKey, Number(recipientUserId));
+      const entry = session.rawMetadataState?.content[String(id)];
+      if (!entry) {
+        throw new Error(`no metadata entry for txt_id=${id}`);
+      }
+      await grantShare(
+        session.db,
+        id,
+        txtKey,
+        Number(recipientUserId),
+        entry,
+        session.umk,
+        session.r2Client,
+        session.r2Config,
+      );
       setRecipientUserId("");
       onGranted();
     } catch (err) {
@@ -136,7 +149,7 @@ function DeleteSharePanel({
     setBusy(true);
     setError(null);
     try {
-      await revokeShare(session.db, share.id);
+      await revokeShare(session.db, share.id, share.txtId, share.toUserId, session.umk, session.r2Client, session.r2Config);
       onRevoked();
     } catch (err) {
       setError(errorMessage(err));

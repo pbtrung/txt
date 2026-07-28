@@ -51,6 +51,8 @@ function setup(refreshing = false, metadataByIdOverride: Map<number, BookInfo> =
       creds: { tursoDatabaseUrl: "libsql://example", displayName: "Alice" },
       db: {} as never,
       userId: 1,
+      umk: new Uint8Array(64).fill(9),
+      r2Client: {} as never,
       r2Config: {
         endpoint: "https://x",
         region: "auto",
@@ -59,6 +61,10 @@ function setup(refreshing = false, metadataByIdOverride: Map<number, BookInfo> =
         readOnlySecretAccessKey: "ro-secret",
       },
       metadataById: metadataByIdOverride,
+      // GrantShareForm reads the raw entry (not the derived BookInfo) for
+      // whichever txt_id is chosen, to copy into the recipient's own
+      // txt_metadata -- see adminShares.ts's grantShare.
+      rawMetadataState: { txtMetadataKey: new Uint8Array(64), content: { "1": { name: "n1" } }, rawPath: "existing" },
       isAdmin: true,
     } as unknown as VaultContextModule.VaultSession,
     error: null,
@@ -220,7 +226,7 @@ describe("ManageScreen", () => {
       // (session.db never appears), unlike persistNewUser below.
       await waitFor(() =>
         expect(adminUsers.generateNewUser).toHaveBeenCalledWith(
-          undefined,
+          expect.any(Uint8Array),
           expect.objectContaining({ endpoint: "https://x" }),
           { tursoDatabaseUrl: "libsql://example", displayName: "Carol", userTursoAuthToken: "user-token" },
         ),
@@ -312,7 +318,7 @@ describe("ManageScreen", () => {
       await userEvent.click(screen.getByRole("button", { name: "Save" }));
 
       await waitFor(() =>
-        expect(adminUsers.updateGeneratedNewUser).toHaveBeenCalledWith(undefined, generated, {
+        expect(adminUsers.updateGeneratedNewUser).toHaveBeenCalledWith(expect.any(Uint8Array), generated, {
           tursoDatabaseUrl: "libsql://example",
           displayName: "Carolyn",
           userTursoAuthToken: "user-token",
@@ -388,7 +394,7 @@ describe("ManageScreen", () => {
       expect(screen.getByRole("dialog", { name: "Edit Bob (#2)" })).toBeInTheDocument();
 
       await userEvent.click(screen.getByRole("button", { name: "Show creds" }));
-      await waitFor(() => expect(adminUsers.getUserCreds).toHaveBeenCalledWith({}, undefined, 2));
+      await waitFor(() => expect(adminUsers.getUserCreds).toHaveBeenCalledWith({}, expect.any(Uint8Array), 2));
       await waitFor(() =>
         expect(screen.getByLabelText("This account's stored credential JSON")).toHaveValue(
           JSON.stringify(storedCreds, null, 2),
@@ -489,7 +495,16 @@ describe("ManageScreen", () => {
       await userEvent.click(screen.getByRole("button", { name: "Grant share" }));
 
       await waitFor(() => expect(getTxtKey).toHaveBeenCalledWith(1));
-      expect(adminShares.grantShare).toHaveBeenCalledWith({}, 1, expect.any(Uint8Array), 2);
+      expect(adminShares.grantShare).toHaveBeenCalledWith(
+        {},
+        1,
+        expect.any(Uint8Array),
+        2,
+        { name: "n1" },
+        expect.any(Uint8Array),
+        {},
+        expect.objectContaining({ bucket: "b" }),
+      );
     });
 
     it("doesn't list the admin's own account as a possible recipient", async () => {
@@ -526,7 +541,15 @@ describe("ManageScreen", () => {
       expect(within(dialog).getByText(/Book One/)).toBeInTheDocument();
 
       await userEvent.click(within(dialog).getByRole("button", { name: "Revoke share" }));
-      expect(adminShares.revokeShare).toHaveBeenCalledWith({}, 5);
+      expect(adminShares.revokeShare).toHaveBeenCalledWith(
+        {},
+        5,
+        1,
+        2,
+        expect.any(Uint8Array),
+        {},
+        expect.objectContaining({ bucket: "b" }),
+      );
     });
 
     it("cancelling the revoke confirmation leaves the share untouched", async () => {
