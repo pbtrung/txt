@@ -414,23 +414,22 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         const rawPaths = await partRawPaths(session.db, txtId, txtKey);
         await Promise.all(rawPaths.map((rawPath) => deleteObject(session.r2Client, session.r2Config, rawPath)));
 
-        // Best-effort: scrub the copy grantShare (adminShares.ts) made in
-        // each recipient's own txt_metadata, so deleting this txt doesn't
-        // leave a phantom Library entry behind for anyone it was shared
-        // with. Must run before deleteTxtRows below, which deletes these
-        // txt_shares rows. Recovering a given recipient's umk (or reaching
-        // R2) failing never blocks the delete itself -- same leftover
-        // tradeoff already accepted elsewhere in this file.
+        // Scrub the copy grantShare (adminShares.ts) made in each
+        // recipient's own txt_metadata, so deleting this txt doesn't leave a
+        // phantom (now-undecryptable) Library entry behind for anyone it
+        // was shared with. Must run before deleteTxtRows below, which
+        // deletes these txt_shares rows. Same policy as
+        // adminShares.ts's revokeShare: a recipient's escrow lookup failing
+        // is a hard failure -- this throws (leaving the txt, and every
+        // share, untouched) rather than proceeding and leaving that
+        // recipient's copy stale.
         const recipientIds = await shareRecipientIds(session.db, txtId);
         for (const toUserId of recipientIds) {
-          try {
-            const recipientUmk = await resolveUserUmk(session.db, session.umk, toUserId);
-            if (recipientUmk) {
-              await removeTxtMetadataEntry(session.db, toUserId, recipientUmk, session.r2Client, session.r2Config, txtId);
-            }
-          } catch {
-            // Leave this recipient's copy stale rather than blocking the delete.
+          const recipientUmk = await resolveUserUmk(session.db, session.umk, toUserId);
+          if (!recipientUmk) {
+            throw new Error(`couldn't recover user_id=${toUserId}'s umk via their escrowed creds`);
           }
+          await removeTxtMetadataEntry(session.db, toUserId, recipientUmk, session.r2Client, session.r2Config, txtId);
         }
 
         await deleteTxtRows(session.db, txtId);

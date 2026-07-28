@@ -201,11 +201,12 @@ describe("revokeShare", () => {
     expect(deleteCall?.args).toEqual([5]);
   });
 
-  it("still deletes the share row even when the recipient's umk can't be recovered (best-effort cleanup)", async () => {
+  it("throws (and never deletes the share row) when the recipient's umk can't be recovered -- same hard-failure policy as grantShare", async () => {
     const { db, calls } = fakeClient({});
-    await adminShares.revokeShare(db, 5, 7, 42, new Uint8Array(64), r2Client, r2Config);
+    await expect(adminShares.revokeShare(db, 5, 7, 42, new Uint8Array(64), r2Client, r2Config)).rejects.toThrow(
+      adminShares.AdminSharesError,
+    );
     expect(r2.putObject).not.toHaveBeenCalled();
-    const deleteCall = calls.find((c) => c.sql.startsWith("DELETE FROM txt_shares"));
-    expect(deleteCall?.args).toEqual([5]);
+    expect(calls.some((c) => c.sql.startsWith("DELETE FROM txt_shares"))).toBe(false);
   });
 });

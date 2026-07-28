@@ -46,9 +46,8 @@ export async function listShares(db: Client): Promise<ShareEntry[]> {
 }
 
 /** Every user_id a txt has been shared to -- used by VaultContext's
- * deleteTxt to best-effort scrub each recipient's own copied metadata entry
- * before the txt_shares rows themselves are deleted (adminTxt.ts's
- * deleteTxtRows). */
+ * deleteTxt to scrub each recipient's own copied metadata entry before the
+ * txt_shares rows themselves are deleted (adminTxt.ts's deleteTxtRows). */
 export async function shareRecipientIds(db: Client, txtId: number): Promise<number[]> {
   const result = await db.execute({ sql: "SELECT to_user_id FROM txt_shares WHERE txt_id = ?", args: [txtId] });
   return result.rows.map((row) => Number(row.to_user_id));
@@ -62,11 +61,12 @@ export async function shareRecipientIds(db: Client, txtId: number): Promise<numb
  * that recipient's umk (adminUsers.ts's resolveUserUmk). That copy happens
  * *before* the txt_shares insert: a share that's "granted" but invisible in
  * the recipient's Library is a confusing half-feature, so failing to
- * recover the recipient's umk is a hard failure here (unlike revokeShare's
- * best-effort cleanup below) -- and doing it first means a failure never
- * leaves a dangling txt_shares row, with the whole call safely retryable
- * either way (upsertTxtMetadataEntry overwrites the same entry either
- * time). */
+ * recover the recipient's umk is a hard failure here -- same policy as
+ * revokeShare below, consistently: neither one ever leaves a stale/
+ * dangling copy behind on a failure, they just fail the whole call instead.
+ * Doing the copy first here means a failure never leaves a dangling
+ * txt_shares row either, with the whole call safely retryable either way
+ * (upsertTxtMetadataEntry overwrites the same entry either time). */
 export async function grantShare(
   db: Client,
   txtId: number,
@@ -97,15 +97,15 @@ export async function grantShare(
   });
 }
 
-/** Revokes one existing share grant by its row id, and best-effort scrubs
- * the copy grantShare made in the recipient's own txt_metadata (so it stops
- * showing up in their Library) -- wrapped in try/catch, unlike grantShare's
- * hard failure on the same escrow step: revoking access is the actually
- * security-relevant action here and must not be blocked by a metadata
- * cleanup failure (e.g. the recipient's creds having since become
- * undecryptable). Leaves a stale metadata entry behind on failure, the same
- * class of harmless leftover already accepted elsewhere in this app (see
- * metadata.ts's persistMetadataContent). */
+/** Revokes one existing share grant by its row id -- but first scrubs the
+ * copy grantShare made in the recipient's own txt_metadata (same escrow
+ * path, same order: metadata first, then the txt_shares row), so revoking
+ * never leaves that recipient's Library still showing a now-undecryptable
+ * entry for it. Failing to recover the recipient's umk (or to reach R2) is
+ * a hard failure here, same policy as grantShare -- this call simply fails
+ * (the share stays granted) rather than ever leaving a stale copy behind;
+ * the caller can retry once whatever's blocking the escrow lookup is
+ * fixed. */
 export async function revokeShare(
   db: Client,
   shareId: number,
@@ -115,13 +115,10 @@ export async function revokeShare(
   r2Client: AwsClient,
   r2Config: R2Config,
 ): Promise<void> {
-  try {
-    const recipientUmk = await resolveUserUmk(db, adminUmk, toUserId);
-    if (recipientUmk) {
-      await removeTxtMetadataEntry(db, toUserId, recipientUmk, r2Client, r2Config, txtId);
-    }
-  } catch {
-    // Best-effort -- see doc comment above.
+  const recipientUmk = await resolveUserUmk(db, adminUmk, toUserId);
+  if (!recipientUmk) {
+    throw new AdminSharesError(`couldn't recover user_id=${toUserId}'s umk via their escrowed creds`);
   }
+  await removeTxtMetadataEntry(db, toUserId, recipientUmk, r2Client, r2Config, txtId);
   await db.execute({ sql: "DELETE FROM txt_shares WHERE id = ?", args: [shareId] });
 }

@@ -351,7 +351,7 @@ describe("VaultProvider", () => {
     expect(result.current.session?.metadataById.has(7)).toBe(false);
   });
 
-  it("deleteTxt best-effort scrubs each recipient's copied metadata entry before deleting the txt_shares rows", async () => {
+  it("deleteTxt scrubs each recipient's copied metadata entry before deleting the txt_shares rows", async () => {
     vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({ userId: 42, passwordOk: true });
     vi.mocked(owner.unwrapUmk).mockResolvedValue(new Uint8Array(64).fill(1));
     vi.mocked(owner.fetchR2Config).mockResolvedValue({
@@ -369,14 +369,8 @@ describe("VaultProvider", () => {
     vi.mocked(accessData.removeAccessEntry).mockResolvedValue(new Map());
     vi.mocked(bookmarksData.removeAllBookmarksForTxt).mockResolvedValue(new Map());
 
-    // Two recipients: one whose umk resolves fine, one whose escrow lookup
-    // fails outright -- the cleanup must still proceed for the first and
-    // never block the delete itself for the second.
     vi.mocked(adminShares.shareRecipientIds).mockResolvedValue([2, 3]);
-    vi.mocked(adminUsers.resolveUserUmk).mockImplementation(async (_db, _adminUmk, userId) => {
-      if (userId === 2) return new Uint8Array(64).fill(5);
-      throw new Error("boom");
-    });
+    vi.mocked(adminUsers.resolveUserUmk).mockResolvedValue(new Uint8Array(64).fill(5));
     vi.mocked(metadata.removeTxtMetadataEntry).mockResolvedValue(null);
 
     const { result } = renderVault();
@@ -390,31 +384,58 @@ describe("VaultProvider", () => {
     });
 
     expect(adminShares.shareRecipientIds).toHaveBeenCalledWith(expect.anything(), 7);
-    // Recipient #2's copy is scrubbed with their own (resolved) umk...
-    expect(metadata.removeTxtMetadataEntry).toHaveBeenCalledWith(
-      expect.anything(),
-      2,
-      expect.any(Uint8Array),
-      expect.anything(),
-      expect.anything(),
-      7,
-    );
-    // ...recipient #3's escrow lookup threw, so no removal call was ever
-    // made for them -- but that must not have stopped deleteTxtRows.
-    expect(metadata.removeTxtMetadataEntry).not.toHaveBeenCalledWith(
-      expect.anything(),
-      3,
-      expect.anything(),
-      expect.anything(),
-      expect.anything(),
-      7,
-    );
+    for (const toUserId of [2, 3]) {
+      expect(metadata.removeTxtMetadataEntry).toHaveBeenCalledWith(
+        expect.anything(),
+        toUserId,
+        expect.any(Uint8Array),
+        expect.anything(),
+        expect.anything(),
+        7,
+      );
+    }
     expect(adminTxt.deleteTxtRows).toHaveBeenCalledWith(expect.anything(), 7);
 
     // Cleanup runs before the txt_shares rows (and the txt itself) are gone.
     const cleanupCallOrder = vi.mocked(adminShares.shareRecipientIds).mock.invocationCallOrder[0];
     const deleteRowsCallOrder = vi.mocked(adminTxt.deleteTxtRows).mock.invocationCallOrder[0];
     expect(cleanupCallOrder).toBeLessThan(deleteRowsCallOrder);
+  });
+
+  it("deleteTxt throws (and never deletes any rows) when a recipient's umk can't be recovered -- same hard-failure policy as revokeShare", async () => {
+    vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({ userId: 42, passwordOk: true });
+    vi.mocked(owner.unwrapUmk).mockResolvedValue(new Uint8Array(64).fill(1));
+    vi.mocked(owner.fetchR2Config).mockResolvedValue({
+      endpoint: "https://x",
+      region: "auto",
+      bucket: "b",
+      readOnlyAccessKeyId: "id",
+      readOnlySecretAccessKey: "secret",
+    });
+    mockLibraryLoads();
+    vi.mocked(owner.unwrapTxtKey).mockResolvedValue(new Uint8Array(64).fill(9));
+    vi.mocked(owner.partRawPaths).mockResolvedValue([]);
+    vi.mocked(r2.deleteObject).mockResolvedValue(undefined);
+
+    vi.mocked(adminShares.shareRecipientIds).mockResolvedValue([2]);
+    vi.mocked(adminUsers.resolveUserUmk).mockResolvedValue(null);
+
+    const { result } = renderVault();
+    await act(async () => {
+      await result.current.unlock(fakeFile(CONFIG));
+    });
+    await waitFor(() => expect(result.current.status).toBe("unlocked"));
+
+    // Clear call history accumulated by unlock()/earlier tests sharing these
+    // module-level mocks -- what matters here is calls made *by this
+    // deleteTxt call specifically*, not "ever, across the whole file".
+    vi.mocked(metadata.removeTxtMetadataEntry).mockClear();
+    vi.mocked(adminTxt.deleteTxtRows).mockClear();
+
+    await expect(result.current.deleteTxt(7)).rejects.toThrow(/couldn't recover/i);
+
+    expect(metadata.removeTxtMetadataEntry).not.toHaveBeenCalled();
+    expect(adminTxt.deleteTxtRows).not.toHaveBeenCalled();
   });
 
   it("deleteTxt throws when the vault is locked", async () => {
