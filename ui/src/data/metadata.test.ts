@@ -3,7 +3,7 @@ import type { Client } from "@libsql/core/api";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import * as blob from "../crypto/blob";
-import { loadTxtMetadata, removeTxtMetadataEntry, saveBookMetadata } from "./metadata";
+import { loadTxtMetadata, removeTxtMetadataEntry, saveBookMetadata, upsertTxtMetadataEntry } from "./metadata";
 import * as r2 from "./r2";
 import type { R2Config } from "./r2Config";
 
@@ -520,5 +520,91 @@ describe("removeTxtMetadataEntry", () => {
     expect(r2.getObject).not.toHaveBeenCalled();
     expect(progressLabels).toEqual(["Uploading changes…"]);
     expect(state?.content).toEqual({ "8": { name: "other.txt" } });
+  });
+});
+
+describe("upsertTxtMetadataEntry", () => {
+  afterEach(() => {
+    vi.mocked(r2.getObject).mockReset();
+    vi.mocked(r2.putObject).mockReset();
+  });
+
+  it("creates a fresh entry (and R2 path) when there's no content yet -- e.g. a share recipient's first grant", async () => {
+    const umk = new Uint8Array(64).fill(1);
+    const txtMetadataKey = new Uint8Array(64).fill(4);
+    const keyBlob = await blob.encrypt(umk, txtMetadataKey);
+    let putBody: Uint8Array | null = null;
+    vi.mocked(r2.putObject).mockImplementation(async (_client, _config, _key, body) => {
+      putBody = body;
+    });
+    const { db, calls } = fakeClientWithCapture({ txt_metadata_key: keyBlob.buffer, content: null });
+
+    const state = await upsertTxtMetadataEntry(db, 42, umk, r2Client, r2Config, 7, { name: "shared-book.txt" });
+
+    expect(r2.putObject).toHaveBeenCalledTimes(1);
+    const updateCall = calls.find((c) => c.sql.startsWith("UPDATE"));
+    expect(updateCall?.args[1]).toBe(42);
+    const decrypted = await blob.decrypt(txtMetadataKey, putBody!, true);
+    expect(JSON.parse(new TextDecoder().decode(decrypted))).toEqual({ "7": { name: "shared-book.txt" } });
+    expect(state.content["7"]).toEqual({ name: "shared-book.txt" });
+  });
+
+  it("overwrites an existing entry verbatim, reusing the existing path in place", async () => {
+    const umk = new Uint8Array(64).fill(1);
+    const txtMetadataKey = new Uint8Array(64).fill(4);
+    const keyBlob = await blob.encrypt(umk, txtMetadataKey);
+    const content = { "7": { name: "book.txt", metadata: { title: "Old Title" } }, "8": { name: "other.txt" } };
+    const existingBody = await blob.encrypt(txtMetadataKey, new TextEncoder().encode(JSON.stringify(content)), {
+      compressed: true,
+    });
+    const pathBlob = await blob.encrypt(txtMetadataKey, new TextEncoder().encode("existing-path"));
+    vi.mocked(r2.getObject).mockResolvedValue(existingBody);
+    let putBody: Uint8Array | null = null;
+    vi.mocked(r2.putObject).mockImplementation(async (_client, _config, _key, body) => {
+      putBody = body;
+    });
+    const { db, calls } = fakeClientWithCapture({ txt_metadata_key: keyBlob.buffer, content: pathBlob.buffer });
+
+    const state = await upsertTxtMetadataEntry(db, 42, umk, r2Client, r2Config, 7, { name: "new-name.txt" });
+
+    expect(r2.putObject).toHaveBeenCalledWith(r2Client, r2Config, "existing-path", expect.anything());
+    expect(calls.some((c) => c.sql.startsWith("UPDATE"))).toBe(false);
+    const decrypted = await blob.decrypt(txtMetadataKey, putBody!, true);
+    const nextContent = JSON.parse(new TextDecoder().decode(decrypted));
+    expect(nextContent).toEqual({ "7": { name: "new-name.txt" }, "8": { name: "other.txt" } });
+    expect(state.content["7"]).toEqual({ name: "new-name.txt" });
+  });
+
+  it("throws when there is no txt_metadata row at all", async () => {
+    const { db } = fakeClientWithCapture(undefined);
+    await expect(
+      upsertTxtMetadataEntry(db, 42, new Uint8Array(64), r2Client, r2Config, 7, { name: "x.txt" }),
+    ).rejects.toThrow("no txt_metadata row");
+  });
+
+  it("skips re-fetching entirely when a cachedState is given", async () => {
+    const umk = new Uint8Array(64).fill(1);
+    const txtMetadataKey = new Uint8Array(64).fill(4);
+    const cachedState = { txtMetadataKey, content: { "8": { name: "other.txt" } }, rawPath: "cached-path" };
+    const execute = vi.fn();
+    const db = { execute } as unknown as Client;
+    const progressLabels: string[] = [];
+
+    const state = await upsertTxtMetadataEntry(
+      db,
+      42,
+      umk,
+      r2Client,
+      r2Config,
+      7,
+      { name: "shared-book.txt" },
+      (label) => progressLabels.push(label),
+      cachedState,
+    );
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(r2.getObject).not.toHaveBeenCalled();
+    expect(progressLabels).toEqual(["Uploading changes…"]);
+    expect(state.content).toEqual({ "7": { name: "shared-book.txt" }, "8": { name: "other.txt" } });
   });
 });

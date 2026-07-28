@@ -276,6 +276,44 @@ describe("getUserCreds", () => {
   });
 });
 
+describe("resolveUserUmk", () => {
+  it("recovers a regular user's umk by chaining their escrowed creds through the ordinary unwrapUmk path", async () => {
+    const adminUmk = new Uint8Array(64).fill(9);
+    const userRootKey = new Uint8Array(256).fill(3);
+    const targetUmk = new Uint8Array(64).fill(7);
+    const credsJson = {
+      turso_database_url: "libsql://example",
+      turso_auth_token: "user-token",
+      username: "bob",
+      username_lookup_key: bytesToBase64(new Uint8Array(32).fill(6)),
+      password: "hunter2",
+      display_name: "Bob",
+      user_root_key: bytesToBase64(userRootKey),
+    };
+    const credsBlob = await blob.encrypt(adminUmk, new TextEncoder().encode(JSON.stringify(credsJson)), {
+      compressed: true,
+    });
+    const umkBlob = await blob.encrypt(userRootKey, targetUmk);
+    const execute = vi.fn(async ({ sql }: { sql: string }) => {
+      if (sql.includes("FROM users")) return rowsResult([{ creds: credsBlob.buffer }]);
+      if (sql.includes("FROM umk_store")) return rowsResult([{ umk: umkBlob.buffer }]);
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const db = { execute } as unknown as Client;
+
+    const result = await adminUsers.resolveUserUmk(db, adminUmk, 2);
+    expect(result).not.toBeNull();
+    expect(Array.from(result!)).toEqual(Array.from(targetUmk));
+  });
+
+  it("returns null under the same conditions getUserCreds does (e.g. no users.creds row)", async () => {
+    const execute = vi.fn().mockResolvedValue(emptyResult());
+    const db = { execute } as unknown as Client;
+
+    expect(await adminUsers.resolveUserUmk(db, new Uint8Array(64).fill(9), 999)).toBeNull();
+  });
+});
+
 describe("updateUserPassword", () => {
   it("writes a pw_salt/pw_hash pair that verifies against the new password", async () => {
     let persistedSalt: Uint8Array | null = null;
