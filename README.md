@@ -39,6 +39,8 @@ node txt.ts --migrate \
     "user_root_key": "<base64>",
     "r2_config": {
       "endpoint": "https://...",
+      "read_only_access_key_id": "...",
+      "read_only_secret_access_key": "...",
       "read_write_access_key_id": "...",
       "read_write_secret_access_key": "...",
       "region": "auto",

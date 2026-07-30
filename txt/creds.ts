@@ -2,6 +2,8 @@ import fs from "node:fs";
 
 export interface R2Config {
   endpoint: string;
+  read_only_access_key_id: string;
+  read_only_secret_access_key: string;
   read_write_access_key_id: string;
   read_write_secret_access_key: string;
   region: string;

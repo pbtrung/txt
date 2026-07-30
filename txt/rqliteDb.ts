@@ -109,14 +109,26 @@ export class RqliteDb {
     return rqliteDb;
   }
 
+  /**
+   * Opens an rqlite_txt.db that must already exist (unlike open(), which
+   * creates one) -- for tools that inspect or clean up an existing output
+   * rather than produce one. readOnly leaves the real file untouched.
+   */
+  static async openExisting(path: string, opts: { readOnly?: boolean } = {}): Promise<RqliteDb> {
+    if (!existsSync(path)) throw new Error(`${path}: no such file`);
+    const db = await SqliteDb.open(path, { preload: readFileSync(path), readOnly: opts.readOnly });
+    return new RqliteDb(db);
+  }
+
   /** Reuses an existing admin account (resume) or seeds a fresh one. */
   ensureAdmin(tier: RateTier): SeedResult {
-    const existingUserId = this.findExistingAdmin();
+    const existingUserId = this.findAdminUserId();
     if (existingUserId) return { userId: existingUserId, apiKeyRaw: null };
     return this.seedAdmin(tier);
   }
 
-  private findExistingAdmin(): string | null {
+  /** The one admin account this tool ever creates, or null if none exists yet. */
+  findAdminUserId(): string | null {
     const stmt = this.db.prepare("SELECT user_id FROM users LIMIT 1;");
     const userId = stmt.step() ? stmt.columnText(0) : null;
     stmt.finalize();
@@ -272,6 +284,110 @@ export class RqliteDb {
         s.bindInt64(4, oldVersion);
       },
     );
+  }
+
+  /** True if a writer has committed since the last GC sweep cleared this flag. */
+  needsGc(userId: string): boolean {
+    const stmt = this.db.prepare("SELECT needs_gc FROM db_meta WHERE db_id=?;");
+    stmt.bindText(1, userId);
+    const flag = stmt.step() ? stmt.columnInt64(0) : 0n;
+    stmt.finalize();
+    return flag !== 0n;
+  }
+
+  clearNeedsGc(userId: string): void {
+    this.db.run("UPDATE db_meta SET needs_gc=0 WHERE db_id=?;", (s) => s.bindText(1, userId));
+  }
+
+  /** INSERT OR IGNORE into gc_runs for today -- bookkeeping only, doesn't gate this run. */
+  recordGcRun(): void {
+    const dayId = Math.floor(Date.now() / 86400000);
+    this.db.run("INSERT OR IGNORE INTO gc_runs (day_id, started_at) VALUES (?, ?);", (s) => {
+      s.bindInt64(1, dayId);
+      s.bindInt64(2, Date.now());
+    });
+  }
+
+  /** Oldest snapshot version any non-expired reader still needs, or current_version if none. */
+  gcWatermark(userId: string): number {
+    const stmt = this.db.prepare(
+      "SELECT MIN(snapshot_version) FROM active_readers WHERE db_id=? AND lease_expires_at > ?;",
+    );
+    stmt.bindText(1, userId);
+    stmt.bindInt64(2, Date.now());
+    stmt.step();
+    const watermark = stmt.columnIsNull(0) ? null : Number(stmt.columnInt64(0));
+    stmt.finalize();
+    return watermark ?? this.currentVersion(userId);
+  }
+
+  /** Registers a reader's pinned snapshot -- what a real read transaction's BEGIN would do. */
+  insertActiveReader(
+    userId: string,
+    readerId: string,
+    snapshotVersion: number,
+    leaseExpiresAtMs: number,
+  ): void {
+    this.db.run(
+      "INSERT INTO active_readers (db_id, reader_id, snapshot_version, lease_expires_at) VALUES (?, ?, ?, ?);",
+      (s) => {
+        s.bindText(1, userId);
+        s.bindText(2, readerId);
+        s.bindInt64(3, snapshotVersion);
+        s.bindInt64(4, leaseExpiresAtMs);
+      },
+    );
+  }
+
+  expiredReaderIds(userId: string): string[] {
+    const stmt = this.db.prepare(
+      "SELECT reader_id FROM active_readers WHERE db_id=? AND lease_expires_at<?;",
+    );
+    stmt.bindText(1, userId);
+    stmt.bindInt64(2, Date.now());
+    const ids: string[] = [];
+    while (stmt.step()) ids.push(stmt.columnText(0));
+    stmt.finalize();
+    return ids;
+  }
+
+  deleteReader(userId: string, readerId: string): void {
+    this.db.run("DELETE FROM active_readers WHERE db_id=? AND reader_id=?;", (s) => {
+      s.bindText(1, userId);
+      s.bindText(2, readerId);
+    });
+  }
+
+  /** Page (page_no, version) pairs superseded at or before the watermark -- safe to delete. */
+  garbagePages(userId: string, watermark: number): { pageNo: number; version: number }[] {
+    const stmt = this.db.prepare(`
+      SELECT page_no, version FROM pages AS p
+      WHERE db_id = ?
+        AND version < (
+          SELECT MAX(version) FROM pages AS p2
+          WHERE p2.db_id = p.db_id AND p2.page_no = p.page_no AND p2.version <= ?
+        );
+    `);
+    stmt.bindText(1, userId);
+    stmt.bindInt64(2, watermark);
+    const rows: { pageNo: number; version: number }[] = [];
+    while (stmt.step())
+      rows.push({ pageNo: Number(stmt.columnInt64(0)), version: Number(stmt.columnInt64(1)) });
+    stmt.finalize();
+    return rows;
+  }
+
+  deleteGarbagePage(userId: string, pageNo: number, version: number): void {
+    this.db.run("DELETE FROM pages WHERE db_id=? AND page_no=? AND version=?;", (s) => {
+      s.bindText(1, userId);
+      s.bindInt64(2, pageNo);
+      s.bindInt64(3, version);
+    });
+  }
+
+  /** Flushes any writes made through the mutating methods above to the real file. */
+  flush(): void {
+    this.db.flushToHost();
   }
 
   close(): void {

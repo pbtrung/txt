@@ -145,6 +145,8 @@ test("migrate: synthetic old vault end to end", async () => {
       user_root_key: fixture.rootKey.toString("base64"),
       r2_config: {
         endpoint: `http://127.0.0.1:${mockR2.port}`,
+        read_only_access_key_id: "dummy",
+        read_only_secret_access_key: "dummy",
         read_write_access_key_id: "dummy",
         read_write_secret_access_key: "dummy",
         region: "auto",
@@ -283,6 +285,8 @@ test("migrate: resumes after a failure without reprocessing committed documents"
       user_root_key: fixture.rootKey.toString("base64"),
       r2_config: {
         endpoint: `http://127.0.0.1:${mockR2.port}`,
+        read_only_access_key_id: "dummy",
+        read_only_secret_access_key: "dummy",
         read_write_access_key_id: "dummy",
         read_write_secret_access_key: "dummy",
         region: "auto",
