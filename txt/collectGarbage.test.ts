@@ -121,3 +121,62 @@ test("collect-garbage: dry-run changes nothing, a real run removes only supersed
     "a second run with nothing new to do must be a no-op",
   );
 });
+
+test("collect-garbage: with no active readers, keeps exactly one page row per page_no", async () => {
+  const dbPath = "/tmp/txt-collect-garbage-test-single-version.db";
+  try {
+    fs.unlinkSync(dbPath);
+  } catch {
+    // fine, nothing to remove
+  }
+
+  const rootKey = randomBytes(256);
+  const rqliteDb = await RqliteDb.open(dbPath);
+  const { userId } = rqliteDb.ensureAdmin({ tierId: "free", rate: 10, burst: 20 });
+
+  const userDb = await UserDb.create(rootKey);
+  const commit = () => {
+    const snap = userDb.snapshot();
+    rqliteDb.commit(userId, snap.pageSize, snap.bytes);
+  };
+  commit(); // v1
+  for (let i = 0; i < 10; i++) {
+    userDb.insertTxt(randomBytes(128), `doc-${i}.txt`, null, Date.now());
+    commit(); // v2..v11, no active_readers registered at all -- the common case for this tool
+  }
+  rqliteDb.close();
+
+  const pageCount = await countRows(dbPath, "SELECT page_count FROM db_meta;");
+  const rowsBefore = await countRows(dbPath, "SELECT count(*) FROM pages;");
+  assert.ok(rowsBefore > pageCount, "history across 11 commits should exceed one row per page");
+
+  await new CollectGarbageCommand({ dbPath, dryRun: false, verbose: false }).run();
+
+  assert.equal(
+    await countRows(dbPath, "SELECT count(*) FROM pages;"),
+    pageCount,
+    "exactly one row per page should survive -- only the most recent version",
+  );
+  assert.equal(
+    await countRows(
+      dbPath,
+      "SELECT max(cnt) FROM (SELECT page_no, count(*) cnt FROM pages GROUP BY page_no);",
+    ),
+    1,
+    "no page_no should have more than one surviving version",
+  );
+
+  const rqliteDb2 = await RqliteDb.openExisting(dbPath, { readOnly: true });
+  const { bytes } = rqliteDb2.latestPages(userId);
+  rqliteDb2.close();
+  const reconstructed = await SqliteDb.open("/single-version-reassembled.db", {
+    preload: bytes,
+    rawKey: rootKey,
+    readOnly: true,
+  });
+  const stmt = reconstructed.prepare("SELECT count(*) FROM txt;");
+  stmt.step();
+  assert.equal(Number(stmt.columnInt64(0)), 10, "all 10 documents must still be readable after GC");
+  stmt.finalize();
+  reconstructed.close();
+});
