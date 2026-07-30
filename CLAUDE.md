@@ -4,9 +4,9 @@ Context for working in this repository.
 
 ## What this is
 
-`txt` is being redesigned from a shared, column-encrypted Turso/libSQL vault into a new architecture: one SQLCipher-encrypted SQLite database per user, itself persisted page-by-page in an [rqlite](https://rqlite.io) page store. The two schemas — and the reasoning behind every design choice in them — are documented in [docs/data_model.md](docs/data_model.md); the shared blob format (`magic||version||salt||ciphertext||tag`, AEAD + HKDF) is in [docs/crypto.md](docs/crypto.md). Read both before touching schema or crypto code — they carry the actual design rationale, not just the shape.
+`txt` is a private, end-to-end encrypted reading vault: one SQLCipher-encrypted SQLite database per user, itself persisted page-by-page in an [rqlite](https://rqlite.io) page store. The two schemas — and the reasoning behind every design choice in them — are documented in [docs/data_model.md](docs/data_model.md); the shared blob format (`magic||version||salt||ciphertext||tag`, AEAD + HKDF) is in [docs/crypto.md](docs/crypto.md). Read both before touching schema or crypto code — they carry the actual design rationale, not just the shape.
 
-The current branch (`rqlite`) is that redesign in progress. `txt.ts`/`txt/` is a migration CLI (`--migrate`) that moves an old vault onto the new schema; see [README.md](README.md) for usage. `sqlcipher/` is a vendored, prebuilt SQLCipher+leancrypto WASM bundle (not source you edit directly — see below).
+`txt.ts`/`txt/` is the admin CLI for this design: `--migrate` brings an existing vault database onto this schema, `--clean-bucket`/`--collect-garbage`/`--vacuum` are day-to-day maintenance of the page store and object storage; see [README.md](README.md) for usage. `sqlcipher/` is a vendored, prebuilt SQLCipher+leancrypto WASM bundle (not source you edit directly — see below).
 
 ## Working in this repo
 

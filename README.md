@@ -1,17 +1,10 @@
 # txt
 
-A migration tool that moves a `txt` vault off its old shared, column-encrypted Turso/libSQL schema and onto the new design: one SQLCipher-encrypted database per user, itself stored page-by-page in an [rqlite](https://rqlite.io) page store. See [docs/data_model.md](docs/data_model.md) for both schemas and [docs/crypto.md](docs/crypto.md) for the blob format used throughout.
+A private, end-to-end encrypted reading vault. Documents are chunked into parts, encrypted client-side, and stored as objects in R2/S3; each user's own metadata — titles, read position, bookmarks — lives in that user's own SQLCipher-encrypted SQLite database, which is itself persisted page-by-page (not as one opaque file) in an [rqlite](https://rqlite.io) cluster.
 
-## Main features
+See [docs/data_model.md](docs/data_model.md) for both schemas (the page store and the per-user database) and the reasoning behind every design choice in them, and [docs/crypto.md](docs/crypto.md) for the blob format used wherever content needs its own encryption outside the SQLCipher file.
 
-- **`--migrate`** — reads an old vault (`turso_txt.db`) and re-encrypts every document part under a fresh per-document key, at a fresh object path, in the same R2/S3 bucket — never touching the old key material or path scheme.
-- Builds the migrated user's SQLCipher database for real (via a JS-backed `sqlite3_vfs`, not a simulation), then chops its actual on-disk pages into the target `pages`/`db_meta`/`users`/`rate_tiers`/`api_keys` schema, so the output is genuine rqlite seed data, not just a reshaped copy of the input.
-- Seeds a fresh admin account and API key for the migrated vault (the raw key is printed once and never stored).
-- **Commits progress to `rqlite_txt.db` after every document**, not just at the end — the in-progress SQLCipher database only ever lives in memory, so a document isn't durable until its pages are written out. If the process is interrupted, whatever was fully migrated is safely on disk.
-- **Resumable across runs**: re-running `--migrate` with the same `--out`/`--out-creds` reopens the existing output, skips every document already committed, and continues from the first one that isn't — no separate resume flag needed.
-- A part failure aborts the run cleanly rather than silently committing a half-migrated document — whatever completed before it stays committed, and a re-run picks up exactly where it left off once the underlying issue (e.g. a network blip) is fixed.
-- `--no-delete` to keep old R2/S3 objects around instead of deleting them once their replacement is confirmed written and committed.
-- `--verbose` for detailed per-step progress (metadata resolution, each part's download/upload/insert, each commit, each deletion).
+`txt.ts` is the admin CLI for this design: bringing data in, and day-to-day maintenance of the page store and object storage.
 
 ## Install
 
@@ -21,7 +14,11 @@ Requires Node.js 22.6+ (developed and tested against Node 26) — no build step,
 npm install
 ```
 
-## Usage
+## `--migrate`
+
+Brings an existing vault database onto this schema: re-encrypts every document part under a fresh per-document key, at a fresh object path, in the same R2/S3 bucket — never touching the old key material or path scheme. Builds the destination user's SQLCipher database for real (via a JS-backed `sqlite3_vfs`, not a simulation), then chops its actual on-disk pages into the `pages`/`db_meta`/`users`/`rate_tiers`/`api_keys` schema, so the output is genuine rqlite seed data. Seeds a fresh admin account and API key (the raw key is printed once and never stored).
+
+Commits progress to the output database after every document, not just at the end — the in-progress SQLCipher database only ever lives in memory, so a document isn't durable until its pages are written out. Re-running `--migrate` with the same `--out`/`--out-creds` reopens the existing output, skips every document already committed, and continues from the first one that isn't — no separate resume flag needed. A part failure aborts the run cleanly rather than silently committing a half-migrated document.
 
 ```
 node txt.ts --migrate \
@@ -32,7 +29,7 @@ node txt.ts --migrate \
   [--no-delete] [--verbose]
 ```
 
-- `--in` — path to the old vault's SQLite file.
+- `--in` — path to the source vault's SQLite file.
 - `--in-creds` — JSON file with the credentials needed to read it:
   ```json
   {
@@ -48,7 +45,7 @@ node txt.ts --migrate \
     }
   }
   ```
-  `user_root_key` unwraps the old vault's `umk`/`txt_key` chain; `r2_config` needs read, write, _and_ delete access, since migrating a part means writing its replacement and removing the original from the same bucket.
+  `user_root_key` unwraps the source vault's key chain; `r2_config` needs both pairs, since migrating a part means reading the original and writing/deleting under the new scheme.
 - `--out` — path to write the new rqlite-schema database to.
 - `--out-creds` — JSON file supplying the new database's raw SQLCipher key:
   ```json
@@ -57,14 +54,49 @@ node txt.ts --migrate \
 - `--no-delete` — still writes every new object and database row, just leaves the old R2/S3 objects in place instead of deleting them.
 - `--verbose` — prints detailed per-step progress instead of only a final summary.
 
-Only documents whose owner's `umk_store` row decrypts against the supplied `user_root_key` are migrated. `users`, `txt_access`, `bookmarks`, `txt_shares`, and `key_store` are never read at all — the new schema has no equivalent, so nothing from them is carried forward.
+Only documents whose owner decrypts against the supplied `user_root_key` are migrated — everything ends up under this one new admin account.
+
+## `--clean-bucket`
+
+Deletes every R2/S3 object that isn't referenced by any `txt_parts.path` in the migrated database — orphans left behind by interrupted runs, manual experiments, or anything else. Read-only against `rqlite_txt.db`; only the bucket is ever written to.
+
+```
+node txt.ts --clean-bucket --creds creds.json --db rqlite_txt.db [--dry-run] [--verbose]
+```
+
+- `--creds` — same shape as `--in-creds` above (`user_root_key` + `r2_config`).
+- `--db` — the rqlite-schema database to check references against.
+- `--dry-run` — logs what would be deleted without deleting anything; a final summary always prints regardless.
+- `--verbose` — logs each referenced-path/bucket-listing step, not just the summary.
+
+## `--collect-garbage`
+
+Sweeps `rqlite_txt.db`'s own page-store tables: page versions superseded before the GC watermark, and expired `active_readers` leases. Skips entirely if `needs_gc` isn't set (nothing has changed since the last sweep). Only ever touches `rqlite_txt.db` — the bucket is untouched (that's what `--clean-bucket` is for).
+
+```
+node txt.ts --collect-garbage --db rqlite_txt.db [--dry-run] [--verbose]
+```
+
+- `--dry-run` — opens the database read-only and only logs what would be removed.
+- `--verbose` — logs each removed page version/reader lease, not just the summary.
+
+## `--vacuum`
+
+Rebuilds the admin's user SQLCipher database first (reclaiming space from deleted rows, defragmenting), commits the result back into `rqlite_txt.db` as a new version, then rebuilds `rqlite_txt.db` itself. Note: since a rewrite touches nearly every page, `rqlite_txt.db` typically _grows_ right after a vacuum (the old pre-vacuum page versions are still there) — run `--collect-garbage` afterward, then `--vacuum` again, to actually shrink it.
+
+```
+node txt.ts --vacuum --creds creds.json --db rqlite_txt.db [--verbose]
+```
+
+- `--creds` — needs only `user_root_key` (same shape as `--out-creds` above) to open the user database.
+- `--verbose` — logs the user database's byte size before/after its own rebuild.
 
 ## Development
 
 ```
 npm run typecheck   # tsc --noEmit
 npm test            # node --test txt/*.test.ts
-npm run format       # prettier --write .
+npm run format      # prettier --write .
 ```
 
-`txt/migrate.test.ts` runs the whole migration end to end against a small synthetic vault and a local mock R2 server, including a simulated failure and a subsequent resume — it never touches a real database or bucket.
+Every command has a committed end-to-end test that runs it against a real synthetic database (and, for `--migrate`/`--clean-bucket`, a local mock R2 server) — never against a real database or bucket. `txt/migrate.test.ts` also covers a simulated mid-run failure and the subsequent resume; `txt/vacuum.test.ts` walks the full vacuum → collect-garbage → vacuum cycle and confirms content survives it.
