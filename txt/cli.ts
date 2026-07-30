@@ -2,16 +2,19 @@ import { parseArgs } from "node:util";
 import { MigrateCommand } from "./migrate.ts";
 import { CleanBucketCommand } from "./cleanBucket.ts";
 import { CollectGarbageCommand } from "./collectGarbage.ts";
+import { VacuumCommand } from "./vacuum.ts";
 
 const USAGE = `usage:
   txt.ts --migrate --in-creds <file> --in <file> --out-creds <file> --out <file> [--no-delete] [--verbose]
   txt.ts --clean-bucket --creds <file> --db <file> [--dry-run] [--verbose]
-  txt.ts --collect-garbage --db <file> [--dry-run] [--verbose]`;
+  txt.ts --collect-garbage --db <file> [--dry-run] [--verbose]
+  txt.ts --vacuum --creds <file> --db <file> [--verbose]`;
 
 const OPTIONS = {
   migrate: { type: "boolean" },
   "clean-bucket": { type: "boolean" },
   "collect-garbage": { type: "boolean" },
+  vacuum: { type: "boolean" },
   "in-creds": { type: "string" },
   in: { type: "string" },
   "out-creds": { type: "string" },
@@ -30,6 +33,7 @@ export async function main(argv: string[]): Promise<void> {
   if (values.migrate) return runMigrate(values);
   if (values["clean-bucket"]) return runCleanBucket(values);
   if (values["collect-garbage"]) return runCollectGarbage(values);
+  if (values.vacuum) return runVacuum(values);
   throw new Error(USAGE);
 }
 
@@ -63,6 +67,14 @@ async function runCollectGarbage(values: Values): Promise<void> {
   await new CollectGarbageCommand({
     dbPath: requiredArg(values, "db"),
     dryRun: !!values["dry-run"],
+    verbose: !!values.verbose,
+  }).run();
+}
+
+async function runVacuum(values: Values): Promise<void> {
+  await new VacuumCommand({
+    credsPath: requiredArg(values, "creds"),
+    dbPath: requiredArg(values, "db"),
     verbose: !!values.verbose,
   }).run();
 }

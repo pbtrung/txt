@@ -7,7 +7,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
-import { SqliteDb } from "./sqlite.ts";
+import { SqliteDb, type Statement } from "./sqlite.ts";
 
 const SCHEMA = `
 PRAGMA foreign_keys = ON;
@@ -358,8 +358,27 @@ export class RqliteDb {
     });
   }
 
-  /** Page (page_no, version) pairs superseded at or before the watermark -- safe to delete. */
+  /**
+   * Page (page_no, version) pairs safe to delete: superseded within their own
+   * page's history at or before the watermark, plus -- only when nothing is
+   * pinned to an older snapshot than the current one -- pages that no longer
+   * exist at all (e.g. after a VACUUM shrinks page_count). That second class
+   * only applies when watermark == currentVersion: db_meta.page_count is
+   * never versioned (see docs/data_model.md), so "beyond the current page
+   * count" is only meaningful relative to the *current* state, not an older
+   * pinned snapshot that might have had more pages before the shrink.
+   */
   garbagePages(userId: string, watermark: number): { pageNo: number; version: number }[] {
+    const rows = this.supersededPages(userId, watermark);
+    if (watermark >= this.currentVersion(userId))
+      rows.push(...this.trailingPages(userId, watermark));
+    return rows;
+  }
+
+  private supersededPages(
+    userId: string,
+    watermark: number,
+  ): { pageNo: number; version: number }[] {
     const stmt = this.db.prepare(`
       SELECT page_no, version FROM pages AS p
       WHERE db_id = ?
@@ -370,6 +389,22 @@ export class RqliteDb {
     `);
     stmt.bindText(1, userId);
     stmt.bindInt64(2, watermark);
+    return this.collectPageRows(stmt);
+  }
+
+  /** Rows for page_no's beyond the current page_count -- the file no longer has them at all. */
+  private trailingPages(userId: string, watermark: number): { pageNo: number; version: number }[] {
+    const pageCount = this.readMeta(userId).pageCount;
+    const stmt = this.db.prepare(
+      "SELECT page_no, version FROM pages WHERE db_id=? AND page_no>? AND version<=?;",
+    );
+    stmt.bindText(1, userId);
+    stmt.bindInt64(2, pageCount);
+    stmt.bindInt64(3, watermark);
+    return this.collectPageRows(stmt);
+  }
+
+  private collectPageRows(stmt: Statement): { pageNo: number; version: number }[] {
     const rows: { pageNo: number; version: number }[] = [];
     while (stmt.step())
       rows.push({ pageNo: Number(stmt.columnInt64(0)), version: Number(stmt.columnInt64(1)) });
@@ -387,6 +422,12 @@ export class RqliteDb {
 
   /** Flushes any writes made through the mutating methods above to the real file. */
   flush(): void {
+    this.db.flushToHost();
+  }
+
+  /** Rebuilds rqlite_txt.db's own file to reclaim space and defragment, then flushes it. */
+  vacuum(): void {
+    this.db.exec("VACUUM;");
     this.db.flushToHost();
   }
 

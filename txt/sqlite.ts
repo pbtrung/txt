@@ -52,7 +52,12 @@ export class SqliteDb {
    * disk until this is called explicitly.
    */
   flushToHost(): void {
-    writeFileSync(this.path, Buffer.from(this.mod.FS.readFile(this.path)));
+    writeFileSync(this.path, this.readBytes());
+  }
+
+  /** This database's current raw bytes, straight out of MEMFS (no disk I/O). */
+  readBytes(): Buffer {
+    return Buffer.from(this.mod.FS.readFile(this.path));
   }
 
   private key(rawKey: Uint8Array): void {
