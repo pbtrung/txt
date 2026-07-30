@@ -1,3 +1,4 @@
+import { writeFileSync } from "node:fs";
 import { type WasmModule, loadWasm, writeBuffer, readBuffer, cString } from "./wasm.ts";
 
 const SQLITE_OK = 0;
@@ -18,10 +19,12 @@ export interface OpenOptions {
 export class SqliteDb {
   private readonly mod: WasmModule;
   private readonly db: number;
+  private readonly path: string;
 
-  private constructor(mod: WasmModule, db: number) {
+  private constructor(mod: WasmModule, db: number, path: string) {
     this.mod = mod;
     this.db = db;
+    this.path = path;
   }
 
   static async open(path: string, opts: OpenOptions = {}): Promise<SqliteDb> {
@@ -37,9 +40,19 @@ export class SqliteDb {
     mod._free(ppDb);
     if (vfsPtr) mod._free(vfsPtr);
     if (rc !== SQLITE_OK) throw new Error(`sqlite3_open_v2('${path}') failed: rc=${rc}`);
-    const wrapper = new SqliteDb(mod, db);
+    const wrapper = new SqliteDb(mod, db, path);
     if (opts.rawKey) wrapper.key(opts.rawKey);
     return wrapper;
+  }
+
+  /**
+   * Copies this database's MEMFS bytes out to a real file at the same path
+   * it was opened with. Needed because this WASM build has no real-filesystem
+   * VFS -- sqlite3_open_v2 only ever touches MEMFS, so nothing lands on real
+   * disk until this is called explicitly.
+   */
+  flushToHost(): void {
+    writeFileSync(this.path, Buffer.from(this.mod.FS.readFile(this.path)));
   }
 
   private key(rawKey: Uint8Array): void {

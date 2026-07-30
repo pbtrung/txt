@@ -1,11 +1,13 @@
 // Orchestrates --migrate: decrypt the old shared-vault schema, re-encrypt
 // each part's content under a fresh per-document key at a fresh R2/S3 path,
-// build the new user's SQLCipher database, then chop it into pages and
-// seed a new rqlite_txt.db under a freshly generated admin account.
+// build the new user's SQLCipher database, and commit it into rqlite_txt.db
+// after every document finishes -- the temporary user database only ever
+// lives in memory, so committing early and often is what makes a run
+// resumable after a crash, not anything the in-memory side keeps track of.
 
 import { randomBytes } from "node:crypto";
 import { brotliCompressSync, brotliDecompressSync } from "node:zlib";
-import { loadInCreds, loadOutCreds, rootKeyBytes } from "./creds.ts";
+import { loadInCreds, loadOutCreds, rootKeyBytes, type OutCreds } from "./creds.ts";
 import { BlobCipher } from "./blobCipher.ts";
 import { R2Client } from "./r2.ts";
 import {
@@ -35,17 +37,18 @@ export interface MigrateOptions {
 interface Summary {
   documents: number;
   partsMigrated: number;
-  partsFailed: number;
 }
 
 export class MigrateCommand {
   private readonly opts: MigrateOptions;
-  private readonly summary: Summary = { documents: 0, partsMigrated: 0, partsFailed: 0 };
+  private readonly summary: Summary = { documents: 0, partsMigrated: 0 };
   private readonly metadataCache = new Map<bigint, TxtMetadataMap>();
   private cipher!: BlobCipher;
   private r2!: R2Client;
   private oldVault!: OldVault;
   private userDb!: UserDb;
+  private rqliteDb!: RqliteDb;
+  private userId!: string;
 
   constructor(opts: MigrateOptions) {
     this.opts = opts;
@@ -57,24 +60,55 @@ export class MigrateCommand {
     this.cipher = await BlobCipher.create();
     this.r2 = new R2Client(inCreds.r2_config);
     this.oldVault = await OldVault.open(this.opts.inPath);
-    this.userDb = await UserDb.create(rootKeyBytes(outCreds));
-    const umks = this.oldVault.findDecryptableUmks(this.cipher, rootKeyBytes(inCreds));
-    if (umks.size === 0)
-      throw new Error("no umk_store row decrypted with the supplied user_root_key");
-    await this.migrateAll(umks);
-    this.oldVault.close();
-    await this.writeOutput();
+    await this.openOutput(outCreds);
+    try {
+      const umks = this.oldVault.findDecryptableUmks(this.cipher, rootKeyBytes(inCreds));
+      this.log(`decrypted ${umks.size} owner umk(s) with the supplied root key`);
+      if (umks.size === 0)
+        throw new Error("no umk_store row decrypted with the supplied user_root_key");
+      await this.migrateAll(umks);
+    } finally {
+      this.oldVault.close();
+      this.rqliteDb.close();
+    }
     this.report();
+  }
+
+  private async openOutput(outCreds: OutCreds): Promise<void> {
+    this.rqliteDb = await RqliteDb.open(this.opts.outPath);
+    const { userId, apiKeyRaw } = this.rqliteDb.ensureAdmin(DEFAULT_RATE_TIER);
+    this.userId = userId;
+    const version = this.rqliteDb.currentVersion(userId);
+    const rawKey = rootKeyBytes(outCreds);
+    if (version === 0) {
+      this.userDb = await UserDb.create(rawKey);
+      this.commitProgress(); // baseline version 1 -- schema only, no documents yet
+    } else {
+      this.log(`resuming from existing output at version ${version}`);
+      this.userDb = await UserDb.resume(rawKey, this.rqliteDb.latestPages(userId).bytes);
+    }
+    this.announceAdmin(userId, apiKeyRaw);
+  }
+
+  private announceAdmin(userId: string, apiKeyRaw: string | null): void {
+    if (apiKeyRaw) {
+      console.log(`\nnew admin user_id: ${userId}`);
+      console.log(`new admin API key (save this now, it is never stored anywhere): ${apiKeyRaw}`);
+    } else {
+      this.log(`reusing existing admin user_id: ${userId}`);
+    }
   }
 
   private async migrateAll(umks: Map<bigint, Buffer>): Promise<void> {
     const rows = this.oldVault.listTxt(new Set(umks.keys()));
-    for (const row of rows) {
+    const alreadyDone = this.userDb.countTxt();
+    if (alreadyDone > 0) this.log(`skipping ${alreadyDone} already-committed document(s)`);
+    for (const row of rows.slice(alreadyDone)) {
       await this.migrateDocument(row, umks.get(row.userId)!);
       this.summary.documents++;
-      if (this.opts.verbose) {
-        console.log(`migrated txt ${row.txtId} (${this.summary.documents}/${rows.length})`);
-      }
+      this.log(
+        `migrated txt ${row.txtId} (${alreadyDone + this.summary.documents}/${rows.length})`,
+      );
     }
   }
 
@@ -88,15 +122,35 @@ export class MigrateCommand {
       : null;
     const newTxtId = this.userDb.insertTxt(newTxtKey, entry.name, metadataBuf, Date.now());
     const parts = this.oldVault.listParts(row.txtId);
-    await mapLimit(parts, PART_CONCURRENCY, (part) =>
+    this.log(`txt ${row.txtId} -> ${newTxtId} "${entry.name}": migrating ${parts.length} part(s)`);
+    const oldPaths = await mapLimit(parts, PART_CONCURRENCY, (part) =>
       this.migratePart(part, newTxtId, oldTxtKey, newTxtKey),
     );
+    this.commitProgress();
+    if (!this.opts.noDelete) await this.deleteOldObjects(oldPaths);
+  }
+
+  private commitProgress(): void {
+    const snap = this.userDb.snapshot();
+    this.rqliteDb.commit(this.userId, snap.pageSize, snap.bytes);
+    this.log(
+      `committed progress (${snap.pageCount} pages at version ${this.rqliteDb.currentVersion(this.userId)})`,
+    );
+  }
+
+  private async deleteOldObjects(oldPaths: (string | null)[]): Promise<void> {
+    const paths = oldPaths.filter((p): p is string => p !== null);
+    await mapLimit(paths, PART_CONCURRENCY, async (oldPath) => {
+      await this.r2.delete(oldPath);
+      this.log(`  deleted old object ${oldPath}`);
+    });
   }
 
   private async metadataFor(userId: bigint, umk: Buffer): Promise<TxtMetadataMap> {
     const cached = this.metadataCache.get(userId);
     if (cached) return cached;
     const raw = this.oldVault.metadataRaw(userId);
+    this.log(`resolving metadata map for owner ${userId}${raw ? "" : " (none found)"}`);
     const map = raw
       ? await resolveTxtMetadataMap(
           this.cipher,
@@ -109,23 +163,27 @@ export class MigrateCommand {
     return map;
   }
 
+  /**
+   * Returns this part's old path on success (deletion is deferred until the
+   * whole document commits), or null if there was nothing new to do. A
+   * failure here propagates all the way up and aborts the run -- a document
+   * only ever commits once every one of its parts has succeeded, so letting
+   * one bad part abort cleanly (rather than silently leaving a document
+   * partially migrated) is what keeps "resume" meaningful: whatever's
+   * already committed is complete, and the rest just needs a re-run once
+   * whatever caused the failure is fixed.
+   */
   private async migratePart(
     part: OldPartRow,
     newTxtId: bigint,
     oldTxtKey: Buffer,
     newTxtKey: Buffer,
-  ): Promise<void> {
-    if (this.userDb.hasPart(newTxtId, part.partNum)) return;
-    try {
-      await this.reencryptPart(part, newTxtId, oldTxtKey, newTxtKey);
-      this.summary.partsMigrated++;
-    } catch (err) {
-      this.summary.partsFailed++;
-      console.error(
-        `part ${part.partNum} of new txt_id ${newTxtId} failed:`,
-        (err as Error).message,
-      );
+  ): Promise<string | null> {
+    if (this.userDb.hasPart(newTxtId, part.partNum)) {
+      this.log(`  part ${part.partNum}: already present, skipping`);
+      return null;
     }
+    return this.reencryptPart(part, newTxtId, oldTxtKey, newTxtKey);
   }
 
   private async reencryptPart(
@@ -133,30 +191,27 @@ export class MigrateCommand {
     newTxtId: bigint,
     oldTxtKey: Buffer,
     newTxtKey: Buffer,
-  ): Promise<void> {
+  ): Promise<string> {
     const oldPath = this.cipher.decrypt(oldTxtKey, part.pathBlob).toString("ascii");
+    this.log(`  part ${part.partNum}: downloading ${oldPath}`);
     const object = await this.r2.get(oldPath);
     const plaintext = brotliDecompressSync(this.cipher.decrypt(oldTxtKey, object));
     const newPath = randomPath();
+    this.log(`  part ${part.partNum}: uploading ${newPath}`);
     await this.r2.put(newPath, this.cipher.encrypt(newTxtKey, brotliCompressSync(plaintext)));
     this.userDb.insertPart(newTxtId, part.partNum, newPath);
-    if (!this.opts.noDelete) await this.r2.delete(oldPath);
+    this.summary.partsMigrated++;
+    this.log(`  part ${part.partNum}: inserted (txt_id ${newTxtId})`);
+    return oldPath;
   }
 
-  private async writeOutput(): Promise<void> {
-    const finished = this.userDb.finish();
-    const rqliteDb = await RqliteDb.create(this.opts.outPath);
-    const { userId, apiKeyRaw } = rqliteDb.seedAdmin(DEFAULT_RATE_TIER);
-    rqliteDb.writePages(userId, finished.pageSize, finished.bytes);
-    rqliteDb.close();
-    console.log(`\nnew admin user_id: ${userId}`);
-    console.log(`new admin API key (save this now, it is never stored anywhere): ${apiKeyRaw}`);
+  private log(message: string): void {
+    if (this.opts.verbose) console.log(message);
   }
 
   private report(): void {
     console.log(
-      `\nmigrated ${this.summary.documents} documents, ${this.summary.partsMigrated} parts ` +
-        `(${this.summary.partsFailed} part failures)`,
+      `\nmigrated ${this.summary.documents} documents, ${this.summary.partsMigrated} parts`,
     );
   }
 }

@@ -84,6 +84,15 @@ export class UserDb {
     return new UserDb(db, files);
   }
 
+  /** Reopens a previously snapshotted database (schema already applied) to continue a run. */
+  static async resume(rawKey: Uint8Array, bytes: Uint8Array): Promise<UserDb> {
+    const mod = await loadWasm();
+    const { name, files } = registerJsVfs(mod, { name: "userdb-vfs" });
+    files.set(PATH, { bytes: new Uint8Array(bytes) });
+    const db = await SqliteDb.open(PATH, { vfsName: name, rawKey });
+    return new UserDb(db, files);
+  }
+
   insertTxt(
     txtKey: Uint8Array,
     name: string,
@@ -119,10 +128,31 @@ export class UserDb {
     return found;
   }
 
-  finish(): FinishedUserDb {
-    this.db.close();
+  /** Current bytes without closing the database -- safe to call after each autocommit statement. */
+  snapshot(): FinishedUserDb {
     const entry = this.files.get(PATH);
-    if (!entry) throw new Error("temp user db missing from VFS store after close");
+    if (!entry) throw new Error("temp user db missing from VFS store");
     return { bytes: entry.bytes, pageSize: PAGE_SIZE, pageCount: entry.bytes.length / PAGE_SIZE };
+  }
+
+  finish(): FinishedUserDb {
+    const result = this.snapshot();
+    this.db.close();
+    return result;
+  }
+
+  /**
+   * How many documents are already durably committed, in the same id-ascending
+   * order oldVault.listTxt() migrates them in -- the resume marker. Since a
+   * document is only ever committed to rqlite_txt.db once all of its parts are
+   * done (see MigrateCommand), this count is always exactly "documents fully
+   * migrated so far", never a partially-migrated one.
+   */
+  countTxt(): number {
+    const stmt = this.db.prepare("SELECT count(*) FROM txt;");
+    stmt.step();
+    const count = Number(stmt.columnInt64(0));
+    stmt.finalize();
+    return count;
   }
 }

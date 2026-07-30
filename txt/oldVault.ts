@@ -53,9 +53,10 @@ export class OldVault {
     return result;
   }
 
+  /** Ordered by id -- migration order must be stable and deterministic for resume to work. */
   listTxt(ownerUserIds: Set<bigint>): OldTxtRow[] {
     const rows: OldTxtRow[] = [];
-    const stmt = this.db.prepare("SELECT id, user_id, txt_key FROM txt;");
+    const stmt = this.db.prepare("SELECT id, user_id, txt_key FROM txt ORDER BY id;");
     while (stmt.step()) {
       const userId = stmt.columnInt64(1);
       if (ownerUserIds.has(userId))
