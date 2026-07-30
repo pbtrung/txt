@@ -87,21 +87,29 @@ async function survivingNames(dbPath: string, rootKey: Buffer): Promise<string[]
   return names;
 }
 
-test("vacuum: shrinks the user db immediately, and rqlite_txt.db once GC'd", async () => {
+test("vacuum: a single run shrinks both the user db and rqlite_txt.db itself", async () => {
   const fixture = await buildFixtureWithFreeSpace();
   const namesBefore = await survivingNames(fixture.dbPath, fixture.rootKey);
   assert.equal(namesBefore.length, DOC_COUNT / 2, "half the documents should have been deleted");
 
   const userDbSizeBefore = await reconstructedUserDbSize(fixture.dbPath);
+  const rqliteSizeBefore = statSync(fixture.dbPath).size;
   await new VacuumCommand({
     credsPath: fixture.credsPath,
     dbPath: fixture.dbPath,
     verbose: true,
   }).run();
   const userDbSizeAfter = await reconstructedUserDbSize(fixture.dbPath);
+  const rqliteSizeAfter = statSync(fixture.dbPath).size;
   assert.ok(
     userDbSizeAfter < userDbSizeBefore,
     `vacuum should shrink the reconstructed user db (${userDbSizeBefore} -> ${userDbSizeAfter})`,
+  );
+  assert.ok(
+    rqliteSizeAfter < rqliteSizeBefore,
+    // vacuum's own rewrite supersedes nearly every page; without collecting
+    // that garbage before its own VACUUM, rqlite_txt.db would only grow
+    `a single vacuum should shrink rqlite_txt.db too, by collecting its own stale pages first (${rqliteSizeBefore} -> ${rqliteSizeAfter})`,
   );
 
   const namesAfterVacuum = await survivingNames(fixture.dbPath, fixture.rootKey);
@@ -111,25 +119,20 @@ test("vacuum: shrinks the user db immediately, and rqlite_txt.db once GC'd", asy
     "vacuum must not change surviving document content",
   );
 
-  // Realistic follow-up: reclaim the page versions vacuum's rewrite left
-  // behind, then rqlite_txt.db's own vacuum has real free pages to reclaim.
+  // A follow-up collect-garbage/vacuum should now find nothing left to do.
   await new CollectGarbageCommand({ dbPath: fixture.dbPath, dryRun: false, verbose: false }).run();
-  const rqliteSizeBeforeSecondVacuum = statSync(fixture.dbPath).size;
+  const rqliteSizeStable = statSync(fixture.dbPath).size;
   await new VacuumCommand({
     credsPath: fixture.credsPath,
     dbPath: fixture.dbPath,
     verbose: false,
   }).run();
-  const rqliteSizeAfterSecondVacuum = statSync(fixture.dbPath).size;
-  assert.ok(
-    rqliteSizeAfterSecondVacuum < rqliteSizeBeforeSecondVacuum,
-    `rqlite_txt.db should shrink once GC has freed rows (${rqliteSizeBeforeSecondVacuum} -> ${rqliteSizeAfterSecondVacuum})`,
+  assert.equal(
+    statSync(fixture.dbPath).size,
+    rqliteSizeStable,
+    "a second vacuum with nothing new to reclaim should not change rqlite_txt.db's size",
   );
 
   const namesAfterAll = await survivingNames(fixture.dbPath, fixture.rootKey);
-  assert.deepEqual(
-    namesAfterAll,
-    namesBefore,
-    "content must survive the whole vacuum/gc/vacuum cycle",
-  );
+  assert.deepEqual(namesAfterAll, namesBefore, "content must survive the whole cycle");
 });

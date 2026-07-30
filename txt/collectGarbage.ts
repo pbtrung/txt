@@ -2,20 +2,82 @@
 // page versions superseded before the GC watermark, and expired
 // active_readers leases -- per docs/data_model.md's "rqlite Page Store".
 // Only ever touches rqlite_txt.db; the R2/S3 bucket is untouched (that's
-// what --clean-bucket is for).
+// what --clean-bucket is for). sweepGarbage() is the reusable sweep itself
+// (also used by --vacuum, on its own already-open connection); this file's
+// CollectGarbageCommand is just the standalone-command wrapper around it.
 
 import { RqliteDb } from "./rqliteDb.ts";
 
-export interface CollectGarbageOptions {
-  dbPath: string;
+export interface SweepOptions {
   dryRun: boolean;
   verbose: boolean;
 }
 
+export interface SweepResult {
+  /** True if needs_gc wasn't set -- nothing has changed since the last sweep, so nothing else ran. */
+  skipped: boolean;
+  pagesRemoved: number;
+  readersRemoved: number;
+}
+
+/** Sweeps one tenant's garbage on an already-open RqliteDb. Caller owns open/close. */
+export function sweepGarbage(rqliteDb: RqliteDb, userId: string, opts: SweepOptions): SweepResult {
+  if (!rqliteDb.needsGc(userId)) return { skipped: true, pagesRemoved: 0, readersRemoved: 0 };
+  if (!opts.dryRun) rqliteDb.recordGcRun();
+  const watermark = rqliteDb.gcWatermark(userId);
+  logIf(opts, `gc watermark: version ${watermark}`);
+  const readersRemoved = sweepReaders(rqliteDb, userId, opts);
+  const pagesRemoved = sweepPages(rqliteDb, userId, watermark, opts);
+  if (!opts.dryRun) {
+    rqliteDb.clearNeedsGc(userId);
+    rqliteDb.flush();
+  }
+  return { skipped: false, pagesRemoved, readersRemoved };
+}
+
+function sweepReaders(rqliteDb: RqliteDb, userId: string, opts: SweepOptions): number {
+  let count = 0;
+  for (const readerId of rqliteDb.expiredReaderIds(userId)) {
+    if (opts.dryRun) {
+      console.log(`would remove expired reader lease: ${readerId}`);
+    } else {
+      rqliteDb.deleteReader(userId, readerId);
+      logIf(opts, `removed expired reader lease: ${readerId}`);
+    }
+    count++;
+  }
+  return count;
+}
+
+function sweepPages(
+  rqliteDb: RqliteDb,
+  userId: string,
+  watermark: number,
+  opts: SweepOptions,
+): number {
+  let count = 0;
+  for (const { pageNo, version } of rqliteDb.garbagePages(userId, watermark)) {
+    if (opts.dryRun) {
+      console.log(`would delete: page ${pageNo} version ${version}`);
+    } else {
+      rqliteDb.deleteGarbagePage(userId, pageNo, version);
+      logIf(opts, `deleted: page ${pageNo} version ${version}`);
+    }
+    count++;
+  }
+  return count;
+}
+
+function logIf(opts: SweepOptions, message: string): void {
+  if (opts.verbose) console.log(message);
+}
+
+export interface CollectGarbageOptions extends SweepOptions {
+  dbPath: string;
+}
+
 export class CollectGarbageCommand {
   private readonly opts: CollectGarbageOptions;
-  private pagesRemoved = 0;
-  private readersRemoved = 0;
 
   constructor(opts: CollectGarbageOptions) {
     this.opts = opts;
@@ -24,66 +86,26 @@ export class CollectGarbageCommand {
   async run(): Promise<void> {
     const rqliteDb = await RqliteDb.openExisting(this.opts.dbPath, { readOnly: this.opts.dryRun });
     try {
-      await this.sweep(rqliteDb);
+      const userId = rqliteDb.findAdminUserId();
+      if (!userId) {
+        console.log("no admin account found; nothing to collect");
+        return;
+      }
+      const result = sweepGarbage(rqliteDb, userId, this.opts);
+      if (result.skipped) {
+        console.log("needs_gc is not set; nothing has changed since the last sweep");
+        return;
+      }
+      this.report(result);
     } finally {
       rqliteDb.close();
     }
   }
 
-  private async sweep(rqliteDb: RqliteDb): Promise<void> {
-    const userId = rqliteDb.findAdminUserId();
-    if (!userId) {
-      console.log("no admin account found; nothing to collect");
-      return;
-    }
-    if (!rqliteDb.needsGc(userId)) {
-      console.log("needs_gc is not set; nothing has changed since the last sweep");
-      return;
-    }
-    if (!this.opts.dryRun) rqliteDb.recordGcRun();
-    const watermark = rqliteDb.gcWatermark(userId);
-    this.log(`gc watermark: version ${watermark}`);
-    this.collectExpiredReaders(rqliteDb, userId);
-    this.collectPages(rqliteDb, userId, watermark);
-    if (!this.opts.dryRun) {
-      rqliteDb.clearNeedsGc(userId);
-      rqliteDb.flush();
-    }
-    this.report();
-  }
-
-  private collectExpiredReaders(rqliteDb: RqliteDb, userId: string): void {
-    for (const readerId of rqliteDb.expiredReaderIds(userId)) {
-      if (this.opts.dryRun) {
-        console.log(`would remove expired reader lease: ${readerId}`);
-      } else {
-        rqliteDb.deleteReader(userId, readerId);
-        this.log(`removed expired reader lease: ${readerId}`);
-      }
-      this.readersRemoved++;
-    }
-  }
-
-  private collectPages(rqliteDb: RqliteDb, userId: string, watermark: number): void {
-    for (const { pageNo, version } of rqliteDb.garbagePages(userId, watermark)) {
-      if (this.opts.dryRun) {
-        console.log(`would delete: page ${pageNo} version ${version}`);
-      } else {
-        rqliteDb.deleteGarbagePage(userId, pageNo, version);
-        this.log(`deleted: page ${pageNo} version ${version}`);
-      }
-      this.pagesRemoved++;
-    }
-  }
-
-  private log(message: string): void {
-    if (this.opts.verbose) console.log(message);
-  }
-
-  private report(): void {
+  private report(result: SweepResult): void {
     const verb = this.opts.dryRun ? "would remove" : "removed";
     console.log(
-      `\n${verb} ${this.pagesRemoved} garbage page version(s), ${this.readersRemoved} expired reader lease(s)`,
+      `\n${verb} ${result.pagesRemoved} garbage page version(s), ${result.readersRemoved} expired reader lease(s)`,
     );
   }
 }

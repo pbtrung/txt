@@ -82,7 +82,7 @@ node txt.ts --collect-garbage --db rqlite_txt.db [--dry-run] [--verbose]
 
 ## `--vacuum`
 
-Rebuilds the admin's user SQLCipher database first (reclaiming space from deleted rows, defragmenting), commits the result back into `rqlite_txt.db` as a new version, then rebuilds `rqlite_txt.db` itself. Note: since a rewrite touches nearly every page, `rqlite_txt.db` typically _grows_ right after a vacuum (the old pre-vacuum page versions are still there) — run `--collect-garbage` afterward, then `--vacuum` again, to actually shrink it.
+Rebuilds the admin's user SQLCipher database first (reclaiming space from deleted rows, defragmenting), commits the result back into `rqlite_txt.db` as a new version, collects the stale page versions that rewrite left behind, then rebuilds `rqlite_txt.db` itself — in that order, since a plain `VACUUM` only reclaims space already-deleted rows freed up, not rows that are merely superseded but still live.
 
 ```
 node txt.ts --vacuum --creds creds.json --db rqlite_txt.db [--verbose]
@@ -99,4 +99,4 @@ npm test            # node --test txt/*.test.ts
 npm run format      # prettier --write .
 ```
 
-Every command has a committed end-to-end test that runs it against a real synthetic database (and, for `--migrate`/`--clean-bucket`, a local mock R2 server) — never against a real database or bucket. `txt/migrate.test.ts` also covers a simulated mid-run failure and the subsequent resume; `txt/vacuum.test.ts` walks the full vacuum → collect-garbage → vacuum cycle and confirms content survives it.
+Every command has a committed end-to-end test that runs it against a real synthetic database (and, for `--migrate`/`--clean-bucket`, a local mock R2 server) — never against a real database or bucket. `txt/migrate.test.ts` also covers a simulated mid-run failure and the subsequent resume; `txt/vacuum.test.ts` confirms a single `--vacuum` run shrinks both databases and that content survives it.
