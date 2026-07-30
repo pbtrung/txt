@@ -113,6 +113,7 @@ This is the schema that lives *inside* each user's own SQLCipher database — wh
 ```sql
 CREATE TABLE txt (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    txt_key       BLOB    NOT NULL,  -- 128 random bytes
     name          TEXT    NOT NULL,  -- original filename
     metadata      BLOB,              -- brotli(JSON) from a <name>.opf sidecar, if one was found; NULL otherwise
     last_part_num INTEGER,           -- this document's own read position; NULL until first opened
