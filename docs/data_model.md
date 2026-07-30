@@ -1,14 +1,18 @@
 # Data Model — rqlite
 
+This project stores each user's data as their own SQLCipher-encrypted SQLite database, not as rows in a shared multi-tenant database. That per-user database's schema is described below under **User SQLCipher Database**. It's persisted as a sequence of encrypted pages in rqlite, described under **rqlite Page Store**. Account/auth data (who a user is, their API key, their rate tier) lives once, at the page-store level — never duplicated inside each tenant's own database.
+
+## rqlite Page Store
+
 Backend: rqlite (a Raft-replicated SQLite). It is a page store: it holds the encrypted pages of a user's SQLCipher database, not rows of application data. Every `pages.data` value is already SQLCipher ciphertext by the time it reaches rqlite — rqlite never sees plaintext or the encryption key, the same client-side-only encryption boundary as the rest of this project.
 
 Storage is append-only and MVCC: a write never overwrites a page row, it inserts a new version. A reader pins a snapshot version at `BEGIN` and only ever sees page versions at or below it, which is what lets reads proceed without blocking writers (and vice versa) using nothing but rqlite's own atomic multi-statement transactions — no separate lock manager, no `SELECT ... FOR UPDATE`. `BEGIN` reads `db_meta.current_version` at rqlite's `strong` (or at least `weak`, leader-routed) consistency level — `pages` and `db_meta` always replicate together in one Raft log entry, so a lagging follower can only ever be *behind*, never internally inconsistent, but reading at `none` from one would still pin a staler snapshot than necessary.
 
 `db_id` is the tenant boundary — one SQLCipher DB per user, and always equal to a `users.user_id` value (enforced by a foreign key, see below). It is set server-side by the OpenResty auth layer on every request from the authenticated identity, never trusted from the client, since rqlite itself has no row-level ACLs to fall back on.
 
-Every timestamp column in this schema (`created_at`, `revoked_at`, `lease_expires_at`, `started_at`) is Unix **seconds**, not milliseconds — `gc_runs.day_id = floor(unix_time / 86400)` only buckets one calendar day per row under that assumption. Every foreign key declared below requires `PRAGMA foreign_keys = ON` to actually be enforced: SQLite (rqlite included) accepts a `REFERENCES` clause at `CREATE TABLE` time regardless of ordering or of whether the pragma is set, but silently stops enforcing it the moment the pragma isn't on for a given connection — whatever opens these connections must set it on every one, not just the first.
+Every timestamp column in this schema (`created_at`, `revoked_at`, `lease_expires_at`, `started_at`) is Unix **milliseconds** — `gc_runs.day_id = floor(unix_time_ms / 86400000)` only buckets one calendar day per row under that assumption. Every foreign key declared below requires `PRAGMA foreign_keys = ON` to actually be enforced: SQLite (rqlite included) accepts a `REFERENCES` clause at `CREATE TABLE` time regardless of ordering or of whether the pragma is set, but silently stops enforcing it the moment the pragma isn't on for a given connection — whatever opens these connections must set it on every one, not just the first.
 
-## Schema
+### Schema
 
 ```sql
 CREATE TABLE users (
@@ -67,7 +71,7 @@ CREATE TABLE gc_runs (
 );
 ```
 
-## Tables
+### Tables
 
 - **`users`** — one row per account. `user_id` is a UUIDv4 (stored as `TEXT`), generated once at account creation — not a sequential integer, since this value doubles as `db_id`, the tenant boundary, and a guessable/sortable ID would let one tenant enumerate or infer the existence of others. `role` gates admin-only operations. `rate_tier` is a foreign key into `rate_tiers`, looked up alongside auth to pick a rate-limit rate/burst pair — an unrecognized tier is rejected at write time instead of silently falling through a lookup elsewhere. `disabled` is a kill switch independent of the account's `api_keys` row — it can lock an account out even if its key hasn't been individually revoked.
 - **`rate_tiers`** — the closed set of valid `users.rate_tier` values and the rate/burst pair each one maps to. Adding a tier is an `INSERT`, not a migration; removing one that's still referenced is rejected by the foreign key rather than orphaning accounts on a now-meaningless tier string.
@@ -92,10 +96,78 @@ CREATE TABLE gc_runs (
 
   The `WHERE current_version=old_N` clause on the `UPDATE` is the concurrency-control mechanism: the client read `old_N` before building this transaction, and if the `UPDATE` reports 0 rows affected, some other writer committed first, so this client must rebuild its dirty pages against the new base version and retry. Both statements execute inside one atomic transaction with no other transaction able to interleave, so they see the same pre-transaction `current_version` — which is why the `INSERT` needs its own copy of the same guard rather than an unconditional `VALUES (...)`: an `UPDATE` matching zero rows is a normal, successful no-op in SQLite, not an error, so without the matching guard on the `INSERT` a writer that loses the CAS race would still have its page rows land, stamped with a version number it never actually won — silently corrupting that version for any reader who later reads a page only the loser touched. Guarding both statements identically means a lost race makes the whole transaction a no-op, together, at the cost of one indexed subquery per statement instead of a flat `VALUES` list.
 - **`active_readers`** — one row per open read transaction, registering the snapshot version it pinned so GC knows the oldest version still in use. A row is expected to be removed on commit/rollback; `lease_expires_at` exists so a crashed client can't block GC forever — the watermark calculation ignores any expired lease when computing the minimum snapshot version still in use. The same daily sweep also runs `DELETE FROM active_readers WHERE lease_expires_at < <sweep start time>` so an expired row doesn't just get ignored forever, it actually gets removed — otherwise every crashed or non-cleanly-closed reader leaves a permanent row behind.
-- **`gc_runs`** — one row per calendar day. `INSERT OR IGNORE` on `day_id` (`floor(unix_time / 86400)`, seconds) is the distributed lock: every OpenResty replica computes the same `day_id`, only the first writer's insert succeeds, everyone else's `rows_affected` comes back 0 and skips running the sweep — no coordinator process needed, just the primary key's own uniqueness.
+- **`gc_runs`** — one row per calendar day. `INSERT OR IGNORE` on `day_id` (`floor(unix_time_ms / 86400000)`, milliseconds) is the distributed lock: every OpenResty replica computes the same `day_id`, only the first writer's insert succeeds, everyone else's `rows_affected` comes back 0 and skips running the sweep — no coordinator process needed, just the primary key's own uniqueness.
 
-## Design Notes
+### Design Notes
 
 - **Read consistency for pinning a snapshot.** `BEGIN` should read `current_version` at `strong` or `weak` rqlite consistency, not `none` — see the schema intro. This bounds staleness; it isn't a correctness requirement, since `pages`/`db_meta` replicate atomically together regardless of consistency level.
 - **`rate_tiers` as a reference table rather than a `CHECK`.** `role` uses an inline `CHECK` because its two values are fixed for the life of the schema; `rate_tier` uses a foreign key into `rate_tiers` instead, because new tiers are expected to be added over time and a `CHECK` would need a migration for each one.
 - **`db_id` is a `users.user_id` value, not an independent tenant identifier.** All four `db_id` columns (`pages`, `db_meta`, `active_readers`, plus the `users` table itself) are tied together by foreign keys now, so a page row can't outlive, or exist without, its owning account.
+
+## User SQLCipher Database
+
+This is the schema that lives *inside* each user's own SQLCipher database — what's actually sitting in the `pages` rows above, once decrypted. No column here carries its own wrapped encryption key or ciphertext blob: the entire file is already opaque SQLCipher ciphertext before any page of it reaches rqlite, so a second, per-column encryption layer on top would protect against nothing. Plain columns and plain JSON are enough.
+
+### Schema
+
+```sql
+CREATE TABLE txt (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    name          TEXT    NOT NULL,  -- original filename
+    metadata      BLOB,              -- brotli(JSON) from a <name>.opf sidecar, if one was found; NULL otherwise
+    last_part_num INTEGER,           -- this document's own read position; NULL until first opened
+    last_accessed INTEGER,           -- unix ms; NULL until first opened
+    created_at    INTEGER NOT NULL,  -- unix ms
+    FOREIGN KEY (id, last_part_num) REFERENCES txt_parts(txt_id, part_num)
+);
+
+CREATE INDEX idx_txt_last_accessed ON txt(last_accessed DESC);
+
+CREATE TABLE txt_parts (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    txt_id   INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
+    part_num INTEGER NOT NULL,
+    content  BLOB    NOT NULL,  -- brotli(cleaned part text)
+    UNIQUE (txt_id, part_num)
+);
+
+CREATE TABLE txt_bookmarks (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    txt_id     INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
+    part_num   INTEGER NOT NULL,
+    line       INTEGER NOT NULL,
+    preview    TEXT    NOT NULL CHECK (length(preview) <= 60),
+    created_at INTEGER NOT NULL,  -- unix ms
+    UNIQUE (txt_id, part_num, line)
+);
+
+CREATE INDEX idx_txt_bookmarks_txt_id_created_at ON txt_bookmarks(txt_id, created_at);
+
+-- Enforces the per-document bookmark cap in the database instead of relying
+-- on every caller to evict before inserting: after each insert, keep only
+-- the 20 most recent rows (by created_at, id as tiebreak) for that txt_id
+-- and delete the rest.
+CREATE TRIGGER trg_txt_bookmarks_cap
+AFTER INSERT ON txt_bookmarks
+BEGIN
+  DELETE FROM txt_bookmarks
+  WHERE txt_id = NEW.txt_id
+    AND id NOT IN (
+      SELECT id FROM txt_bookmarks
+      WHERE txt_id = NEW.txt_id
+      ORDER BY created_at DESC, id DESC
+      LIMIT 20
+    );
+END;
+```
+
+### Tables
+
+- **`txt`** — one row per document. `name`/`metadata` are this document's ingested filename and optional `<name>.opf` sidecar (`metadata` holds `brotli(JSON)`, `NULL` when no sidecar was found — compression only, not encryption, same as `txt_parts.content`); `last_part_num`/`last_accessed` are this document's own read position, `NULL` until first opened. There's no `user_id` column — the database itself is already scoped to one account (its `db_id` in the page store above), so a second identifier here would be redundant. The composite `FOREIGN KEY (id, last_part_num) REFERENCES txt_parts(txt_id, part_num)` keeps a document's read position from ever pointing at a part that doesn't exist for it; it deliberately has no `ON DELETE` action — `ON DELETE SET NULL` on a multi-column foreign key nulls *every* column in that key, which here would include `id` itself (the primary key), so the only safe options are `RESTRICT`/`NO ACTION` (the default). In practice this never blocks anything: the only way a `txt_parts` row disappears today is `ON DELETE CASCADE` from deleting its owning `txt` row outright, at which point the `txt` row (and this constraint along with it) is gone too. `idx_txt_last_accessed` backs the "recently opened" query in Design Notes below.
+- **`txt_parts`** — a document's content, chunked into ordered parts (`part_num`, target ~200 KB per part) so a large document isn't loaded/decompressed as a single blob. `content` holds the part's own text directly — `brotli(cleaned part text)`. `UNIQUE (txt_id, part_num)` keeps part numbering consistent and, since a `UNIQUE` constraint creates its own index over exactly those columns, already backs both "does this part number exist" lookups and `SELECT COUNT(*) FROM txt_parts WHERE txt_id=?` for pagination UI — a separate `CREATE INDEX` on the same two columns would just be a second, redundant index paying write cost for no additional query it could serve; a denormalized part-count column would add the same waste plus a way to drift out of sync, for no benefit over the `COUNT(*)`.
+- **`txt_bookmarks`** — one row per bookmark, linked to its document via `txt_id`. `part_num` is the part the bookmark falls in; `line` is 1-based, indexing into that part's text as split into lines the same way the reader renders them; `preview` is that line's text truncated to 60 characters, `CHECK`-enforced rather than left as an app-only convention a buggy caller could violate. `UNIQUE (txt_id, part_num, line)` rules out two bookmarks on the exact same line of the same document — re-bookmarking an already-bookmarked line is a constraint violation the caller needs to handle (`INSERT OR IGNORE`/`INSERT OR REPLACE`, or a pre-check), not a silent duplicate row. Deleting a document removes all of its bookmarks via `ON DELETE CASCADE`. The per-document cap (`constants.BOOKMARK_LIMIT`, 20) is enforced by `trg_txt_bookmarks_cap` above, not by the client: every insert leaves at most 20 rows for that `txt_id`, oldest evicted first, regardless of what the calling code does or forgets to do. `idx_txt_bookmarks_txt_id_created_at` backs both that trigger's per-`txt_id` scan and the reader's own "list bookmarks, most recent first" query — since the table only ever holds 20 rows per document, both are cheap short index range scans no matter how many documents or total bookmarks exist.
+
+### Design Notes
+
+- **Recently-opened lists aren't capped by storage.** `last_part_num`/`last_accessed` live on each document's own row, so there's no shared blob size to protect — a "recently opened" list of any size is just `ORDER BY last_accessed DESC, id DESC LIMIT n` at query time (the `id` tiebreak matters because millisecond timestamps can still collide under fast, scripted writes), backed by `idx_txt_last_accessed`.
+- **Where the SQLCipher key itself comes from is a different layer.** This schema describes what's inside the database once it's open; deriving and managing the passphrase that opens it is an auth/key-management concern the rqlite-level schema and OpenResty auth layer own, not a table in here.
