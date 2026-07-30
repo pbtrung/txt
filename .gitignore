@@ -36,3 +36,6 @@ htmlcov/
 # Project-specific
 creds/
 *.json
+!package.json
+!tsconfig.json
+*.db
