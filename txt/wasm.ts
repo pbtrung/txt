@@ -14,7 +14,7 @@ export interface WasmModule {
   HEAP32: Int32Array;
   addFunction(fn: (...args: number[]) => number, signature: string): number;
   removeFunction(ptr: number): void;
-  FS: { writeFile(path: string, data: Uint8Array): void };
+  FS: { writeFile(path: string, data: Uint8Array): void; readFile(path: string): Uint8Array };
 
   _sqlite3_open(filename: number, ppDb: number): number;
   _sqlite3_open_v2(filename: number, ppDb: number, flags: number, vfs: number): number;

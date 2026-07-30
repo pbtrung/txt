@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "test": "node --test txt/*.test.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },

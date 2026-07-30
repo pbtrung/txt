@@ -14,6 +14,7 @@ export class R2Client {
     this.client = new S3Client({
       endpoint: config.endpoint,
       region: config.region,
+      forcePathStyle: true,
       credentials: {
         accessKeyId: config.read_write_access_key_id,
         secretAccessKey: config.read_write_secret_access_key,
