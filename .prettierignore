@@ -1,0 +1,5 @@
+node_modules/
+sqlcipher/
+docs/
+package-lock.json
+*.db

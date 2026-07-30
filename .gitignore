@@ -38,4 +38,5 @@ creds/
 *.json
 !package.json
 !tsconfig.json
+!.prettierrc.json
 *.db
