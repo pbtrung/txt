@@ -1,4 +1,4 @@
-# docker/
+# Docker
 
 Container image for one rqlite node, fronted by OpenResty acting as the "OpenResty auth layer" docs/data_model.md's page-store schema assumes: it resolves each request's API key to a `{user_id, role}` identity and injects `db_id` server-side, since rqlite itself has no row-level ACLs.
 
