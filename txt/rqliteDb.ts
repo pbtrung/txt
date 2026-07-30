@@ -6,7 +6,7 @@
 // output size rewriting every page on every document.
 
 import { existsSync, readFileSync } from "node:fs";
-import { randomUUID, randomBytes, createHash } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { SqliteDb, type Statement } from "./sqlite.ts";
 
 const SCHEMA = `
@@ -73,8 +73,8 @@ export interface RateTier {
 
 export interface SeedResult {
   userId: string;
-  /** null when resuming an admin a prior run already created -- the raw key was already printed once. */
-  apiKeyRaw: string | null;
+  /** false when resuming an admin a prior run already created. */
+  created: boolean;
 }
 
 interface DbMeta {
@@ -120,11 +120,16 @@ export class RqliteDb {
     return new RqliteDb(db);
   }
 
-  /** Reuses an existing admin account (resume) or seeds a fresh one. */
-  ensureAdmin(tier: RateTier): SeedResult {
+  /**
+   * Reuses an existing admin account (resume) or seeds a fresh one, hashing
+   * apiKey (the caller-supplied out_creds.json api_key, base64) into
+   * api_keys.key_hash exactly the way the OpenResty auth layer hashes a
+   * bearer token -- SHA3-256 of the string as given, base64-encoded.
+   */
+  ensureAdmin(tier: RateTier, apiKey: string): SeedResult {
     const existingUserId = this.findAdminUserId();
-    if (existingUserId) return { userId: existingUserId, apiKeyRaw: null };
-    return this.seedAdmin(tier);
+    if (existingUserId) return { userId: existingUserId, created: false };
+    return this.seedAdmin(tier, apiKey);
   }
 
   /** The one admin account this tool ever creates, or null if none exists yet. */
@@ -135,13 +140,13 @@ export class RqliteDb {
     return userId;
   }
 
-  private seedAdmin(tier: RateTier): SeedResult {
+  private seedAdmin(tier: RateTier, apiKey: string): SeedResult {
     const userId = randomUUID();
     const nowMs = Date.now();
     this.insertRateTier(tier);
     this.insertUser(userId, tier.tierId, nowMs);
-    const apiKeyRaw = this.insertApiKey(userId, nowMs);
-    return { userId, apiKeyRaw };
+    this.insertApiKey(userId, nowMs, apiKey);
+    return { userId, created: true };
   }
 
   private insertRateTier(tier: RateTier): void {
@@ -163,15 +168,13 @@ export class RqliteDb {
     );
   }
 
-  private insertApiKey(userId: string, nowMs: number): string {
-    const apiKeyRaw = randomBytes(32).toString("base64url");
-    const keyHash = createHash("sha3-256").update(apiKeyRaw).digest("base64");
+  private insertApiKey(userId: string, nowMs: number, apiKey: string): void {
+    const keyHash = createHash("sha3-256").update(apiKey).digest("base64");
     this.db.run("INSERT INTO api_keys (user_id, key_hash, created_at) VALUES (?, ?, ?);", (s) => {
       s.bindText(1, userId);
       s.bindText(2, keyHash);
       s.bindInt64(3, nowMs);
     });
-    return apiKeyRaw;
   }
 
   /** 0 if this tenant has never committed a page yet. */

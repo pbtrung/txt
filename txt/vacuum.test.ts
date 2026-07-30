@@ -32,7 +32,7 @@ async function buildFixtureWithFreeSpace(): Promise<{
   }
 
   const rqliteDb = await RqliteDb.open(dbPath);
-  const { userId } = rqliteDb.ensureAdmin({ tierId: "free", rate: 10, burst: 20 });
+  const { userId } = rqliteDb.ensureAdmin({ tierId: "free", rate: 10, burst: 20 }, "test-api-key");
 
   const userDb = await UserDb.create(rootKey);
   const padding = brotliCompressSync(randomBytes(2000)); // incompressible -- keeps rows page-sized
@@ -57,7 +57,13 @@ async function buildFixtureWithFreeSpace(): Promise<{
   rqliteDb.close();
 
   const credsPath = "/tmp/txt-vacuum-test-creds.json";
-  fs.writeFileSync(credsPath, JSON.stringify({ user_root_key: rootKey.toString("base64") }));
+  fs.writeFileSync(
+    credsPath,
+    JSON.stringify({
+      user_root_key: rootKey.toString("base64"),
+      api_key: randomBytes(32).toString("base64"),
+    }),
+  );
   return { dbPath, credsPath, rootKey };
 }
 

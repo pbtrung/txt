@@ -16,7 +16,7 @@ npm install
 
 ## `--migrate`
 
-Brings an existing vault database onto this schema: re-encrypts every document part under a fresh per-document key, at a fresh object path, in the same R2/S3 bucket — never touching the old key material or path scheme. Builds the destination user's SQLCipher database for real (via a JS-backed `sqlite3_vfs`, not a simulation), then chops its actual on-disk pages into the `pages`/`db_meta`/`users`/`rate_tiers`/`api_keys` schema, so the output is genuine rqlite seed data. Seeds a fresh admin account and API key (the raw key is printed once and never stored).
+Brings an existing vault database onto this schema: re-encrypts every document part under a fresh per-document key, at a fresh object path, in the same R2/S3 bucket — never touching the old key material or path scheme. Builds the destination user's SQLCipher database for real (via a JS-backed `sqlite3_vfs`, not a simulation), then chops its actual on-disk pages into the `pages`/`db_meta`/`users`/`rate_tiers`/`api_keys` schema, so the output is genuine rqlite seed data. Seeds a fresh admin account whose `api_keys.key_hash` is derived from the `api_key` supplied in `--out-creds` — this tool never generates or prints a key itself.
 
 Commits progress to the output database after every document, not just at the end — the in-progress SQLCipher database only ever lives in memory, so a document isn't durable until its pages are written out. Re-running `--migrate` with the same `--out`/`--out-creds` reopens the existing output, skips every document already committed, and continues from the first one that isn't — no separate resume flag needed. A part failure aborts the run cleanly rather than silently committing a half-migrated document.
 
@@ -47,10 +47,14 @@ node txt.ts --migrate \
   ```
   `user_root_key` unwraps the source vault's key chain; `r2_config` needs both pairs, since migrating a part means reading the original and writing/deleting under the new scheme.
 - `--out` — path to write the new rqlite-schema database to.
-- `--out-creds` — JSON file supplying the new database's raw SQLCipher key:
+- `--out-creds` — JSON file supplying the new database's raw SQLCipher key and the seeded admin's API key:
   ```json
-  { "user_root_key": "<base64, at least 256 raw bytes>" }
+  {
+    "user_root_key": "<base64, at least 256 raw bytes>",
+    "api_key": "<base64, at least 32 raw bytes>"
+  }
   ```
+  `api_key` becomes the admin account's bearer token as-is — it's hashed straight into `api_keys.key_hash` (`base64(SHA3-256(api_key))`, the same way the OpenResty auth layer hashes a bearer token it receives), never generated or printed by this tool. Pick it yourself and keep it, the same way you already keep `user_root_key`.
 - `--no-delete` — still writes every new object and database row, just leaves the old R2/S3 objects in place instead of deleting them.
 - `--verbose` — prints detailed per-step progress instead of only a final summary.
 
@@ -88,7 +92,7 @@ Rebuilds the admin's user SQLCipher database first (reclaiming space from delete
 node txt.ts --vacuum --creds creds.json --db rqlite_txt.db [--verbose]
 ```
 
-- `--creds` — needs only `user_root_key` (same shape as `--out-creds` above) to open the user database.
+- `--creds` — same shape as `--out-creds` above; only `user_root_key` is actually used, to open the user database, but `api_key` still has to be present since both commands share the same loader/validation.
 - `--verbose` — logs the user database's byte size before/after its own rebuild.
 
 ## Development

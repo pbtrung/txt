@@ -76,7 +76,7 @@ export class MigrateCommand {
 
   private async openOutput(outCreds: OutCreds): Promise<void> {
     this.rqliteDb = await RqliteDb.open(this.opts.outPath);
-    const { userId, apiKeyRaw } = this.rqliteDb.ensureAdmin(DEFAULT_RATE_TIER);
+    const { userId, created } = this.rqliteDb.ensureAdmin(DEFAULT_RATE_TIER, outCreds.api_key);
     this.userId = userId;
     const version = this.rqliteDb.currentVersion(userId);
     const rawKey = rootKeyBytes(outCreds);
@@ -87,13 +87,14 @@ export class MigrateCommand {
       this.log(`resuming from existing output at version ${version}`);
       this.userDb = await UserDb.resume(rawKey, this.rqliteDb.latestPages(userId).bytes);
     }
-    this.announceAdmin(userId, apiKeyRaw);
+    this.announceAdmin(userId, created);
   }
 
-  private announceAdmin(userId: string, apiKeyRaw: string | null): void {
-    if (apiKeyRaw) {
-      console.log(`\nnew admin user_id: ${userId}`);
-      console.log(`new admin API key (save this now, it is never stored anywhere): ${apiKeyRaw}`);
+  private announceAdmin(userId: string, created: boolean): void {
+    if (created) {
+      console.log(
+        `\nnew admin user_id: ${userId} (API key hash seeded from out_creds.json's api_key)`,
+      );
     } else {
       this.log(`reusing existing admin user_id: ${userId}`);
     }

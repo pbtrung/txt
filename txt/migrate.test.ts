@@ -6,7 +6,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { randomBytes } from "node:crypto";
+import { randomBytes, createHash } from "node:crypto";
 import { brotliCompressSync, brotliDecompressSync } from "node:zlib";
 import fs from "node:fs";
 import http from "node:http";
@@ -156,7 +156,10 @@ test("migrate: synthetic old vault end to end", async () => {
   );
   fs.writeFileSync(
     outCredsPath,
-    JSON.stringify({ user_root_key: randomBytes(256).toString("base64") }),
+    JSON.stringify({
+      user_root_key: randomBytes(256).toString("base64"),
+      api_key: randomBytes(32).toString("base64"),
+    }),
   );
   try {
     fs.unlinkSync(outPath);
@@ -176,7 +179,7 @@ test("migrate: synthetic old vault end to end", async () => {
 
     const outCreds = JSON.parse(fs.readFileSync(outCredsPath, "utf8"));
     const outRootKey = Buffer.from(outCreds.user_root_key, "base64");
-    await verifyOutput(outPath, outRootKey, mockR2.store, fixture);
+    await verifyOutput(outPath, outRootKey, outCreds.api_key, mockR2.store, fixture);
   } finally {
     await mockR2.close();
   }
@@ -296,7 +299,10 @@ test("migrate: resumes after a failure without reprocessing committed documents"
   );
   fs.writeFileSync(
     outCredsPath,
-    JSON.stringify({ user_root_key: randomBytes(256).toString("base64") }),
+    JSON.stringify({
+      user_root_key: randomBytes(256).toString("base64"),
+      api_key: randomBytes(32).toString("base64"),
+    }),
   );
   try {
     fs.unlinkSync(outPath);
@@ -375,6 +381,7 @@ async function namesInOutput(outPath: string, outRootKey: Buffer): Promise<strin
 async function verifyOutput(
   outPath: string,
   outRootKey: Buffer,
+  apiKey: string,
   store: Map<string, Buffer>,
   fixture: OldFixture,
 ): Promise<void> {
@@ -384,8 +391,11 @@ async function verifyOutput(
   const keyHash = readApiKeyHash(rqDb, userId);
   rqDb.close();
 
-  assert.match(keyHash, /^[A-Za-z0-9+/]+=*$/, "key_hash should look like base64");
-  assert.equal(Buffer.from(keyHash, "base64").length, 32, "SHA3-256 digest is 32 bytes");
+  assert.equal(
+    keyHash,
+    createHash("sha3-256").update(apiKey).digest("base64"),
+    "key_hash should be SHA3-256(out_creds.json's api_key), base64-encoded",
+  );
 
   const userDbBytes = Buffer.concat(pageBuffers);
   const userDbPath = "/tmp/txt-migrate-test-reassembled-user.db";
