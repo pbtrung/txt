@@ -145,7 +145,7 @@ run)
 esac
 
 if [ -f "$NGINX_CONF" ]; then
-  NGINX_HTPASSWD="${NGINX_HTPASSWD:-/etc/nginx/.htpasswd}"
+  export NGINX_HTPASSWD="${NGINX_HTPASSWD:-/etc/nginx/.htpasswd}"
   if [ -n "$NGINX_USER" ] && [ -n "$NGINX_PASSWORD" ]; then
     printf "%s" "$NGINX_PASSWORD" | htpasswd -ic "$NGINX_HTPASSWD" "$NGINX_USER"
   fi
