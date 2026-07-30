@@ -96,7 +96,7 @@ export class MigrateCommand {
         `\nnew admin user_id: ${userId} (API key hash seeded from out_creds.json's api_key)`,
       );
     } else {
-      this.log(`reusing existing admin user_id: ${userId}`);
+      this.log(`reusing existing admin user_id: ${userId} (API key hash refreshed)`);
     }
   }
 

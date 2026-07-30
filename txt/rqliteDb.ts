@@ -83,6 +83,11 @@ interface DbMeta {
   pageSize: number;
 }
 
+/** SHA3-256 of apiKey as given, base64-encoded -- matches the OpenResty auth layer's hash. */
+function hashApiKey(apiKey: string): string {
+  return createHash("sha3-256").update(apiKey).digest("base64");
+}
+
 export class RqliteDb {
   private readonly db: SqliteDb;
 
@@ -124,11 +129,16 @@ export class RqliteDb {
    * Reuses an existing admin account (resume) or seeds a fresh one, hashing
    * apiKey (the caller-supplied out_creds.json api_key, base64) into
    * api_keys.key_hash exactly the way the OpenResty auth layer hashes a
-   * bearer token -- SHA3-256 of the string as given, base64-encoded.
+   * bearer token -- SHA3-256 of the string as given, base64-encoded. When
+   * resuming, a non-empty apiKey still overwrites the stored key_hash --
+   * out_creds.json is the source of truth on every run, not just the first.
    */
   ensureAdmin(tier: RateTier, apiKey: string): SeedResult {
     const existingUserId = this.findAdminUserId();
-    if (existingUserId) return { userId: existingUserId, created: false };
+    if (existingUserId) {
+      if (apiKey) this.updateApiKeyHash(existingUserId, apiKey);
+      return { userId: existingUserId, created: false };
+    }
     return this.seedAdmin(tier, apiKey);
   }
 
@@ -169,11 +179,17 @@ export class RqliteDb {
   }
 
   private insertApiKey(userId: string, nowMs: number, apiKey: string): void {
-    const keyHash = createHash("sha3-256").update(apiKey).digest("base64");
     this.db.run("INSERT INTO api_keys (user_id, key_hash, created_at) VALUES (?, ?, ?);", (s) => {
       s.bindText(1, userId);
-      s.bindText(2, keyHash);
+      s.bindText(2, hashApiKey(apiKey));
       s.bindInt64(3, nowMs);
+    });
+  }
+
+  private updateApiKeyHash(userId: string, apiKey: string): void {
+    this.db.run("UPDATE api_keys SET key_hash = ? WHERE user_id = ?;", (s) => {
+      s.bindText(1, hashApiKey(apiKey));
+      s.bindText(2, userId);
     });
   }
 
