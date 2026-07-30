@@ -37,6 +37,7 @@ htmlcov/
 creds/
 *.json
 !package.json
+!package-lock.json
 !tsconfig.json
 !.prettierrc.json
 *.db
