@@ -1,4 +1,4 @@
-// Screen 2 -- Library (docs/ui.md): a catalog nav on the left, a plain list
+// Screen 2 -- Library: a catalog nav on the left, a plain list
 // of books on the right. Top bar stays a slim strip above both panes:
 // wordmark and a search field. Account status/actions (who's signed in, and
 // locking the vault) live in the nav's account footer instead, not the top

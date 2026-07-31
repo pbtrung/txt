@@ -9,27 +9,23 @@
 //      index.html itself unchanged.
 //   2. SHA-512s every file under dist/ (including the now-SRI-tagged
 //      index.html) into dist/manifest.json.
-//   3. Writes dist/_headers and dist/_redirects (Cloudflare Pages' own
-//      response-header/rewrite config files -- see docker/README.md; ui/
-//      deploys there, not from docker/, which is rqlite/OpenResty only).
-//      _headers narrows the direct-CDN-visit CSP's connect-src from
-//      index.html's own <meta> tag's deliberately-open '*' down to 'self'
-//      plus this deployment's own rqlite/OpenResty endpoint (--build-creds's
-//      rqlite_url) and R2's host pattern; sets Access-Control-Allow-Origin: *
-//      so local_index.html (served from this same Pages deployment, sending
-//      a real Origin, not opened bare via file://) can still read the
-//      response bodies of its cross-origin fetches to manifest.json/
-//      manifest.sig/every other dist/ asset; and sets
-//      Cross-Origin-Opener-Policy/Cross-Origin-Embedder-Policy, which is
-//      what makes SharedArrayBuffer available at all for data/dbWorker.ts's
-//      Worker+Atomics bridge -- there's no separate server config to set
-//      these on Cloudflare Pages, only this file. _redirects adds the SPA
-//      fallback react-router-dom's BrowserRouter needs (a direct hit or
-//      refresh on /library, /read/:txtId, ... must still resolve to
-//      index.html). Both are deploy-time config files, never themselves
-//      served as a fetchable path, so they're written after buildManifest()
-//      runs, not before -- same reason manifest.json/manifest.sig are,
-//      below.
+//   3. Writes dist/_headers (Cloudflare Pages' own response-header config
+//      file -- see docker/README.md; ui/ deploys there, not from docker/,
+//      which is rqlite/OpenResty only). Narrows the direct-CDN-visit CSP's
+//      connect-src from index.html's own <meta> tag's deliberately-open '*'
+//      down to 'self' plus this deployment's own rqlite/OpenResty endpoint
+//      (--build-creds's rqlite_url) and R2's host pattern; sets
+//      Access-Control-Allow-Origin: * so local_index.html (served from this
+//      same Pages deployment, sending a real Origin, not opened bare via
+//      file://) can still read the response bodies of its cross-origin
+//      fetches to manifest.json/manifest.sig/every other dist/ asset; and
+//      sets Cross-Origin-Opener-Policy/Cross-Origin-Embedder-Policy, which
+//      is what makes SharedArrayBuffer available at all for
+//      data/dbWorker.ts's Worker+Atomics bridge -- there's no separate
+//      server config to set these on Cloudflare Pages, only this file. A
+//      deploy-time config file, never itself served as a fetchable path,
+//      so it's written after buildManifest() runs, not before -- same
+//      reason manifest.json/manifest.sig are, below.
 //   4. Loads (or, only if absent, generates) an SLH-DSA-SHA2-256f keypair
 //      (@noble/post-quantum) from --build-creds's slhdsa_256f_priv_key,
 //      signs manifest.json's literal bytes with it, and writes the raw
@@ -202,14 +198,6 @@ function writeHeadersFile(rqliteUrl) {
   writeFileSync(join(DIST_DIR, "_headers"), headers, "utf8");
 }
 
-// SPA fallback for react-router-dom's BrowserRouter (appRouter.ts), which
-// uses real URLs (/library, /read/:txtId) -- Cloudflare Pages' own rewrite
-// syntax (a trailing " 200" makes it a rewrite that keeps the request path,
-// not an HTTP redirect that would change the browser's URL to /index.html).
-function writeRedirectsFile() {
-  writeFileSync(join(DIST_DIR, "_redirects"), "/* /index.html 200\n", "utf8");
-}
-
 /** Reuses slhdsa_256f_priv_key from buildCreds if it's a non-empty base64
  * string; otherwise generates a fresh keypair. Never regenerates when a key
  * is already present. */
@@ -318,7 +306,6 @@ async function main() {
 
   const manifest = buildManifest();
   writeHeadersFile(rqliteUrl);
-  writeRedirectsFile();
   const manifestBytes = Buffer.from(JSON.stringify(manifest), "utf8");
   writeFileSync(join(DIST_DIR, "manifest.json"), manifestBytes);
   writeFileSync(

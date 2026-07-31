@@ -4,8 +4,8 @@ import { aeadDecrypt, aeadEncrypt, hkdf } from "./wasmLoader";
 import { bytesToHex, hexToBytes } from "../crypto/testUtil";
 
 // Same known-good vectors as the old crypto/leancryptoLoader.test.ts
-// (cross-checked by hand against the real native leancrypto library, see
-// docs/ui.md's implementation plan) -- HKDF-SHA3-512 and Ascon-Keccak AEAD
+// (cross-checked by hand against the real native leancrypto library) --
+// HKDF-SHA3-512 and Ascon-Keccak AEAD
 // are the same underlying primitive regardless of which C API wraps them
 // (sqlcipher.js's simpler lc_wasm_hkdf_sha3_512/lc_wasm_aead_* wrapper
 // functions here, vs. the old leancrypto.js's raw lc_hkdf/lc_ak_alloc_taglen

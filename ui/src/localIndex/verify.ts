@@ -1,11 +1,11 @@
 // The verification core of local_index.html (see ui/scripts/build-integrity.mjs
-// for how manifest.json/manifest.sig/the embedded public key get produced, and
-// docs/ui.md's local-boot design for why this exists as a separate, never-
-// deployed file rather than living inside dist/ itself: dist/'s own index.html
-// is served by the CDN, so a verifier shipped inside it could be tampered away
-// by whatever compromised that CDN. local_index.html never touches the CDN's
-// index.html at all -- it's opened directly (e.g. via file://) and only ever
-// trusts bytes it has independently hashed/signature-checked itself.
+// for how manifest.json/manifest.sig/the embedded public key get produced).
+// This exists as a separate, never-deployed file rather than living inside
+// dist/ itself: dist/'s own index.html is served by the CDN, so a verifier
+// shipped inside it could be tampered away by whatever compromised that CDN.
+// local_index.html never touches the CDN's index.html at all -- it's opened
+// directly (e.g. via file://) and only ever trusts bytes it has
+// independently hashed/signature-checked itself.
 //
 // Two-stage trust: manifest.json's own bytes are trusted only once
 // slh_dsa_sha2_256f.verify() confirms manifest.sig over them (both fetched as

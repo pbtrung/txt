@@ -71,14 +71,15 @@ async function fetchMeta(client: RqliteHttpClient, targetDbId?: string): Promise
 
 // Target round trip count for prefetchPages below -- not a fixed page
 // count per request, so a bigger MAX_CACHED_PAGES cap doesn't silently
-// turn back into dozens of round trips. But it's a target, not a
-// guarantee: PREFETCH_MAX_BATCH_SIZE below still wins when the two
-// conflict, since rqlite/auth_perms.lua rejected a real batch of ~800
-// page_no's in one request with HTTP 400 once MAX_CACHED_PAGES grew to
-// 4000 (400/PREFETCH_ROUND_TRIPS) -- 200 is the largest size confirmed
-// working in practice, not a value derived from any documented limit.
+// turn back into dozens of round trips. A large batch (~800 page_no's, one
+// request) previously got HTTP 400 from auth_perms.lua once MAX_CACHED_PAGES
+// grew to 4000, which briefly got worked around by capping the per-request
+// batch size -- but the real cause was docker/nginx.conf's
+// client_body_buffer_size never being set, spilling any body past its tiny
+// (8k/16k) default to a temp file that ngx.req.get_body_data() can't read
+// (see nginx.conf's own comment). Fixed there instead, so batch size is
+// unbounded again here.
 const PREFETCH_ROUND_TRIPS = 5;
-const PREFETCH_MAX_BATCH_SIZE = 200;
 
 /** Eagerly fetches this account's pages in a handful of batched round trips
  * right after open() learns the page count, instead of leaving every one
@@ -97,10 +98,7 @@ async function prefetchPages(
   targetDbId: string | undefined,
 ): Promise<Map<number, Uint8Array>> {
   const total = Math.min(pageCount, MAX_CACHED_PAGES);
-  const batchSize = Math.min(
-    Math.max(1, Math.ceil(total / PREFETCH_ROUND_TRIPS)),
-    PREFETCH_MAX_BATCH_SIZE,
-  );
+  const batchSize = Math.max(1, Math.ceil(total / PREFETCH_ROUND_TRIPS));
   const extra = targetDbId !== undefined ? { target_db_id: targetDbId } : {};
   const pages = new Map<number, Uint8Array>();
   const start = performance.now();

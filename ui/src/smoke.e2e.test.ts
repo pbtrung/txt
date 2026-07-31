@@ -226,7 +226,9 @@ function startStaticServer(): Promise<{ url: string; close: () => Promise<void> 
       res.setHeader("Content-Type", mimeTypes[ext] ?? "application/octet-stream");
       res.end(data);
     } catch {
-      // SPA fallback, same as dist/_redirects' "/* /index.html 200" rewrite.
+      // SPA fallback: react-router-dom's BrowserRouter (appRouter.ts) uses
+      // real URLs (/library, /read/:txtId), so a direct hit on one of those
+      // has to resolve to index.html too, not 404.
       const indexData = readFileSync(join(DIST_DIR, "index.html"));
       res.setHeader("Content-Type", "text/html");
       res.end(indexData);

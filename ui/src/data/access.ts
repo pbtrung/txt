@@ -14,20 +14,6 @@ export interface ReadPosition {
 
 export type AccessMap = Map<number, ReadPosition>;
 
-/** Null until the document has been opened at least once (both columns are
- * NULL together, see docs/data_model.md's txt table). */
-export function getReadPosition(db: SqliteDb, txtId: number): ReadPosition | null {
-  const stmt = db.prepare("SELECT last_part_num, last_accessed FROM txt WHERE id = ?");
-  stmt.bindInt64(1, txtId);
-  const found = stmt.step();
-  const position =
-    found && !stmt.columnIsNull(0)
-      ? { lastPartNum: Number(stmt.columnInt64(0)), lastAccessedMs: Number(stmt.columnInt64(1)) }
-      : null;
-  stmt.finalize();
-  return position;
-}
-
 export function setReadPosition(
   db: SqliteDb,
   txtId: number,

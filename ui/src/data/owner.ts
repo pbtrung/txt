@@ -10,18 +10,6 @@
 
 import type { SqliteDb } from "./sqliteDb";
 
-/** Every part's object-storage path, in part_num order -- used by
- * VaultContext.tsx's deleteTxt, which needs every part's path to delete
- * each one's R2 object. The Reader itself uses partRawPath instead. */
-export function partRawPaths(db: SqliteDb, txtId: number): string[] {
-  const stmt = db.prepare("SELECT path FROM txt_parts WHERE txt_id = ? ORDER BY part_num ASC");
-  stmt.bindInt64(1, txtId);
-  const paths: string[] = [];
-  while (stmt.step()) paths.push(stmt.columnText(0));
-  stmt.finalize();
-  return paths;
-}
-
 /** One part's object-storage path (1-based part_num) -- one row-read, not
  * one per part in the document. Returns null if no such part exists. */
 export function partRawPath(db: SqliteDb, txtId: number, partNum: number): string | null {

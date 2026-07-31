@@ -1,7 +1,7 @@
-// Data hook backing the Reader screen (docs/ui.md's Screen 3): resolves the
-// txt_key and part count once, then fetches/caches one part's raw path and
-// text at a time as the reader navigates (never every part's path up front),
-// persisting read position and bookmarks along the way.
+// Data hook backing the Reader screen: resolves the txt_key and part count
+// once, then fetches/caches one part's raw path and text at a time as the
+// reader navigates (never every part's path up front), persisting read
+// position and bookmarks along the way.
 //
 // partCount/partRawPath go through session.client (data/dbWorkerClient.ts)
 // now, not a direct data/owner.ts call against a SqliteDb -- the db itself

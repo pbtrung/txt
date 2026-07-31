@@ -1,7 +1,7 @@
 // The toggle button for a useDropdown()-backed menu (Library's nav drawer,
-// Reader's Info/Bookmarks, Manage's nav drawer) -- same open/closed
-// styling and aria wiring in all four; only the icon, label, and (for
-// Library's/Manage's nav buttons) an extra centering class differ.
+// Reader's Info/Bookmarks) -- same open/closed styling and aria wiring in
+// all three; only the icon, label, and (for Library's nav button) an extra
+// centering class differ.
 
 interface DropdownToggleButtonProps {
   open: boolean;

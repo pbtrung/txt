@@ -1,25 +1,27 @@
-// R2 (S3-compatible) object storage client, mirrors txt/r2.py's R2Client --
+// R2 (S3-compatible) object storage client, mirrors txt/r2.ts's R2Client --
 // signed with aws4fetch (built for exactly this Workers/browser + R2 use
-// case, no Node polyfills needed) instead of boto3. Every regular-user
+// case, no Node polyfills needed) instead of the AWS SDK. Every regular-user
 // session is read-only in practice (their r2_config row only ever holds the
-// read-only pair), but the client itself isn't hardcoded that way: an admin
-// session whose r2_config carries read-write keys (via txt.py
-// --update-r2-config, see docs/credentials.md) gets a write-capable client
-// here, which the admin Manage screen's txt delete/metadata edit rely on.
+// read-only pair, see docs/data_model.md); createR2Client itself isn't
+// hardcoded that way, though -- an admin session whose r2_config carries
+// read-write keys (via txt.ts --update-db) gets a write-capable client
+// back. Nothing in ui/ actually writes to R2 yet (there's no admin
+// management screen -- deliberately out of scope for now, see CLAUDE.md),
+// so only getObject exists here; add put/delete when a write flow does.
 
 import { AwsClient } from "aws4fetch";
 
 import { isBrowser } from "../env";
 import type { R2Config } from "./r2Config";
 
-// get_async/put_async/delete_async retry on failure with exponential
-// backoff before giving up (txt/r2.py's _RETRY_DELAYS/_MAX_ATTEMPTS).
+// Retries on failure with exponential backoff before giving up (mirrors
+// txt/r2.ts's own _RETRY_DELAYS/_MAX_ATTEMPTS).
 const RETRY_DELAYS_MS = [2000, 4000, 8000];
 const MAX_ATTEMPTS = 1 + RETRY_DELAYS_MS.length;
 
 /** Builds a client from this account's read-write keys if its r2_config
- * carries them (the admin's own row, post --update-r2-config), otherwise
- * the read-only pair every account's row has from the start. */
+ * carries them (the admin's own row, populated by txt.ts --update-db),
+ * otherwise the read-only pair every account's row has from the start. */
 export function createR2Client(config: R2Config): AwsClient {
   const canWrite = Boolean(config.readWriteAccessKeyId && config.readWriteSecretAccessKey);
   return new AwsClient({
@@ -78,31 +80,4 @@ export async function getObject(
 ): Promise<Uint8Array> {
   const response = await withRetries(`R2 GET ${key}`, () => client.fetch(objectUrl(config, key)));
   return new Uint8Array(await response.arrayBuffer());
-}
-
-/** Uploads one R2 object (overwriting it if it already exists), retrying
- * with backoff before giving up. Requires a write-capable client (see
- * createR2Client) -- an R2 bucket policy that only grants a read-only key
- * pair GET/HEAD/LIST rejects this regardless of what this function does. */
-export async function putObject(
-  client: AwsClient,
-  config: R2Config,
-  key: string,
-  body: Uint8Array,
-): Promise<void> {
-  await withRetries(`R2 PUT ${key}`, () =>
-    client.fetch(objectUrl(config, key), { method: "PUT", body: body as BodyInit }),
-  );
-}
-
-/** Deletes one R2 object, retrying with backoff before giving up. Same
- * write-capable-client requirement as putObject. */
-export async function deleteObject(
-  client: AwsClient,
-  config: R2Config,
-  key: string,
-): Promise<void> {
-  await withRetries(`R2 DELETE ${key}`, () =>
-    client.fetch(objectUrl(config, key), { method: "DELETE" }),
-  );
 }

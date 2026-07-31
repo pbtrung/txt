@@ -1,15 +1,13 @@
 // Calibre/OPF book descriptions (dc:description) commonly carry HTML
-// markup, XML-escaped inside the .opf and unescaped back into a literal
-// string by opf.py's ElementTree parsing (see txt/opf.py, docs/data_model.md's
-// txt_metadata) -- so BookInfo.description can be `<p>...</p>`, not plain
-// text. It has to be sanitized before rendering: this string can come from
-// a shared document (txt_shares), i.e. from someone else's ingest, not
-// necessarily this account's own -- an unsanitized dangerouslySetInnerHTML
-// would let a malicious .opf's description run script in the reader's
-// session. DOMPurify strips everything but a small, formatting-only tag
-// allowlist appropriate for a short blurb (no script/style/iframe/on*
-// handlers/javascript: URIs, regardless of the allowlist below -- DOMPurify
-// enforces that unconditionally).
+// markup, unescaped back into a literal string when the ingested <name>.opf
+// sidecar is parsed into txt.metadata (see docs/data_model.md's txt table)
+// -- so BookInfo.description can be `<p>...</p>`, not plain text. It has to
+// be sanitized before rendering: an untrusted .opf's description could
+// otherwise carry a script tag, and an unsanitized dangerouslySetInnerHTML
+// would run it in the reader's session. DOMPurify strips everything but a
+// small, formatting-only tag allowlist appropriate for a short blurb (no
+// script/style/iframe/on* handlers/javascript: URIs, regardless of the
+// allowlist below -- DOMPurify enforces that unconditionally).
 
 import DOMPurify from "dompurify";
 

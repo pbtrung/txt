@@ -1,4 +1,4 @@
-// Screen 3 -- Reader (docs/ui.md): a reading pane with a part-navigation bar
+// Screen 3 -- Reader: a reading pane with a part-navigation bar
 // along the bottom. "About this book" is a dropdown off the top bar;
 // "Bookmarks" is a dropdown off the bottom bar (opening upward, since it's
 // anchored near the bottom of the screen) -- both closed by default, no
@@ -174,9 +174,8 @@ export function ReaderScreen() {
   const seriesLabel = info?.series
     ? `${info.series}${info.seriesIndex ? `, #${info.seriesIndex}` : ""}`
     : null;
-  // Calibre/OPF descriptions commonly carry HTML (see sanitizeHtml.ts) --
-  // and this book's metadata may come from a document someone else shared
-  // with this account, so it must be sanitized before rendering. The
+  // Calibre/OPF descriptions commonly carry untrusted HTML (see
+  // sanitizeHtml.ts), so it must be sanitized before rendering. The
   // collapsed preview uses the plain-text version so truncating at a
   // character count can't cut a tag in half; the expanded view uses the
   // full sanitized HTML so real formatting (bold/italic/lists/...) shows.

@@ -121,8 +121,8 @@ export function decodeBlobColumn(value: unknown): Uint8Array {
 }
 
 /** rqlite BLOB positional params must be hex x'...' or a numeric byte array
- * -- NOT base64 -- see CLAUDE.md/docs/data_model.md's noted gap. Used when
- * sending page.data on COMMIT (remoteVfs.ts). */
+ * -- NOT base64, unlike the query-result encoding decodeBlobColumn above
+ * decodes. Used when sending page.data on COMMIT (remoteVfs.ts). */
 export function encodeBlobParam(bytes: Uint8Array): number[] {
   return Array.from(bytes);
 }

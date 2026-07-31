@@ -1,5 +1,5 @@
-// Pure data-shaping logic for the Library screen (docs/ui.md's Screen 2):
-// combining each txt's metadata and read position into one LibraryBook, and
+// Pure data-shaping logic for the Library screen: combining each txt's
+// metadata and read position into one LibraryBook, and
 // every txt's bookmarks into one flat, recency-sorted feed, then deriving
 // the Recent/All books/Authors/Subjects/Publishers views from those. Kept
 // free of React so it's easily unit tested and so useLibraryBooks.ts (the

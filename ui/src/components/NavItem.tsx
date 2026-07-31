@@ -1,7 +1,5 @@
 // A single row in a left-nav list-group -- a label and a trailing count,
-// highlighted when active. Shared by Library's nav (Recent/All books/
-// Browse) and Manage's nav (Users/Books/Shares), which otherwise had two
-// byte-for-byte copies of this.
+// highlighted when active. Used by Library's nav (Recent/All books/Browse).
 
 export function NavItem({
   active,

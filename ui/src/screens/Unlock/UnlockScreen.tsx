@@ -1,4 +1,4 @@
-// Screen 1 -- Unlock (docs/ui.md): the only job here is loading the
+// Screen 1 -- Unlock: the only job here is loading the
 // credential file. No headline, no explanatory copy, no dropzone preview --
 // a wordmark and a single button carrying both the action and its effect.
 

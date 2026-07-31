@@ -1,5 +1,5 @@
-// Pure helpers for the Reader screen (docs/ui.md's Screen 3), kept free of
-// React/data-layer calls so they're trivially unit tested.
+// Pure helpers for the Reader screen, kept free of React/data-layer calls
+// so they're trivially unit tested.
 
 export function clampPartNum(partNum: number, partCount: number): number {
   if (partCount <= 0) return 1;

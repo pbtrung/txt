@@ -1,5 +1,5 @@
 // Shared behavior behind every hand-rolled dropdown in this app (Library's
-// and Manage's nav drawers, Reader's Info and Bookmarks menus): there's no
+// nav drawer, Reader's Info and Bookmarks menus): there's no
 // Bootstrap JS in this project (only its CSS), so open/closed state and
 // "close on an outside click or Escape" are all hand-rolled here instead of
 // relying on its dropdown plugin. Each call is independent -- two dropdowns

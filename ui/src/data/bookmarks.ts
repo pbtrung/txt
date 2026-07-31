@@ -44,29 +44,6 @@ export function loadBookmarksMap(db: SqliteDb): BookmarksMap {
   return map;
 }
 
-/** Most-recent-first, matching idx_txt_bookmarks_txt_id_created_at and the
- * reader's own "list bookmarks" query (docs/data_model.md's Design Notes). */
-export function listBookmarks(db: SqliteDb, txtId: number): Bookmark[] {
-  const stmt = db.prepare(
-    "SELECT id, part_num, line, preview, created_at FROM txt_bookmarks " +
-      "WHERE txt_id = ? ORDER BY created_at DESC, id DESC",
-  );
-  stmt.bindInt64(1, txtId);
-  const bookmarks: Bookmark[] = [];
-  while (stmt.step()) {
-    bookmarks.push({
-      id: Number(stmt.columnInt64(0)),
-      txtId,
-      partNum: Number(stmt.columnInt64(1)),
-      line: Number(stmt.columnInt64(2)),
-      preview: stmt.columnText(3),
-      createdAt: Number(stmt.columnInt64(4)),
-    });
-  }
-  stmt.finalize();
-  return bookmarks;
-}
-
 /** Re-bookmarking an already-bookmarked line is a silent no-op (INSERT OR
  * IGNORE against the UNIQUE (txt_id, part_num, line) constraint), not an
  * error the caller needs to handle. */
@@ -93,11 +70,4 @@ export function addBookmark(
 
 export function removeBookmark(db: SqliteDb, bookmarkId: number): void {
   db.run("DELETE FROM txt_bookmarks WHERE id = ?;", (s) => s.bindInt64(1, bookmarkId));
-}
-
-/** Removes every bookmark for one document at once -- not needed for
- * deleteTxt (ON DELETE CASCADE already handles that), but useful when only
- * a document's bookmarks should be cleared without deleting the document. */
-export function removeAllBookmarksForTxt(db: SqliteDb, txtId: number): void {
-  db.run("DELETE FROM txt_bookmarks WHERE txt_id = ?;", (s) => s.bindInt64(1, txtId));
 }

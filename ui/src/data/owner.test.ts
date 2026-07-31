@@ -37,16 +37,6 @@ beforeAll(async () => {
   );
 });
 
-describe("partRawPaths", () => {
-  it("returns every part's path, in part_num order", () => {
-    expect(owner.partRawPaths(db, 1)).toEqual(["path-0", "path-1", "path-2"]);
-  });
-
-  it("returns an empty array for a txt_id with no parts", () => {
-    expect(owner.partRawPaths(db, 999)).toEqual([]);
-  });
-});
-
 describe("partRawPath", () => {
   it("returns one part's path by part_num", () => {
     expect(owner.partRawPath(db, 1, 1)).toBe("path-1");
