@@ -72,6 +72,17 @@ export interface RemoteVfsHandle {
    * docs/data_model.md. */
   commit(client: RqliteHttpClient): Promise<boolean>;
   getCurrentVersion(): number;
+  /** Seeds the page cache with pages already fetched via a batched request
+   * (see prefetchAllPages in commands.ts) -- so SQLite's own later page-at-
+   * a-time xRead calls find them already resident instead of each
+   * triggering its own individual network round trip. Ported from ui/'s
+   * remoteVfs.ts, which needed this for the same reason -- a large
+   * operation (there, opening a big library; here, --remote-vacuum
+   * touching essentially every page) issuing one request per page in
+   * sequence was slow enough on its own to be a real problem, and for
+   * --remote-vacuum specifically, sustained enough to trip a 503 from the
+   * single-node deployment under that load. */
+  primeCache(pages: Map<number, Uint8Array>): void;
 }
 
 /** Cheap FNV-1a checksum of a page's bytes, logged alongside every page
@@ -462,11 +473,16 @@ export function registerRemoteVfs(mod: WasmModule, opts: RemoteVfsOptions): Remo
     return true;
   }
 
+  function primeCache(pages: Map<number, Uint8Array>): void {
+    for (const [pageNo, bytes] of pages) pageCache.set(pageNo, bytes);
+  }
+
   return {
     name,
     stats,
     isDirty: () => dirtyPages.size > 0,
     commit,
     getCurrentVersion: () => currentVersion,
+    primeCache,
   };
 }

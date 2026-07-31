@@ -87,6 +87,8 @@ node txt.ts --vacuum --creds creds.json --db rqlite_txt.db [--verbose]
 
 `--vacuum`'s remote counterpart — same three steps (rebuild the user SQLCipher database, collect the pages that rewrite superseded, rebuild the page store's own backing SQLite database), but entirely over the network against a live deployment via `--creds`, with no local file access to `rqlite_txt.db` at all. Opens the user database the same lazy, page-on-demand way `--test-perf`/`--test-write` do (`txt/remoteVfs.ts`'s write support), `VACUUM`s it, and commits the result back; then sweeps garbage and runs a plain `VACUUM` against the page store's own database via the admin-only `RAW_QUERY` escape hatch (`docker/auth_perms.lua`) — per [rqlite's own performance guide](https://rqlite.io/docs/guides/performance/#vacuum), that's a plain SQL statement over the ordinary `/db/execute` API, no dedicated endpoint, but it may temporarily double disk usage and blocks writes while it runs.
 
+A `VACUUM` touches essentially every page of the user database, so opening its session prefetches every page in 5 batched round trips up front (`commands.ts`'s `prefetchAllPages`, mirroring `ui/`'s `data/dbWorker.ts` — same reasoning: leaving thousands of pages to be discovered one at a time by SQLite's own page-at-a-time reads is slow enough on its own to matter, and was found to be sustained enough against a single-node deployment to trip an HTTP 503 under that load). `--test-perf`/`--test-write` don't do this — they only ever touch a handful of pages, so prefetching everything up front would just add latency for pages a run may never need.
+
 ```
 node txt.ts --remote-vacuum --creds creds.json [--verbose]
 ```

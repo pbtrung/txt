@@ -90,6 +90,37 @@ test("registerRemoteVfs: opens and decrypts a real db from lazily-fetched pages,
   }
 });
 
+test("registerRemoteVfs.primeCache: pre-seeded pages are read without ever calling fetchPage", async () => {
+  const { rootKey, pages, pageSize, pageCount } = await buildRealUserDb();
+
+  const mod = await loadWasm();
+  const backedPath = "/remote-test-primed.db";
+  const vfs = registerRemoteVfs(mod, {
+    pageSize,
+    pageCount,
+    backedPath,
+    fetchPage: () => {
+      throw new Error("test fetchPage: should never be called -- every page was primed");
+    },
+  });
+  const primed = new Map<number, Uint8Array>();
+  for (let i = 0; i < pageCount; i++) primed.set(i + 1, pages[i]!);
+  vfs.primeCache(primed);
+
+  const db = await SqliteDb.open(backedPath, {
+    vfsName: vfs.name,
+    rawKey: rootKey,
+    readOnly: true,
+  });
+  try {
+    assert.equal(countRows(db, "SELECT * FROM txt;"), 2);
+    assert.equal(countRows(db, "SELECT * FROM txt_parts;"), 3);
+    assert.equal(vfs.stats.roundtrips.length, 0, "no page should need a real fetch after priming");
+  } finally {
+    db.close();
+  }
+});
+
 /** A tiny fake page store behind a real HTTP server -- COMMIT is the only
  * statement actually exercised over the wire (fetchPage below reads
  * straight out of the same in-memory map, exactly like prefetch bypasses a

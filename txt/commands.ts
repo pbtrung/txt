@@ -32,7 +32,14 @@ import {
 import { UserDb } from "./userDb.ts";
 import { RqliteDb } from "./rqliteDb.ts";
 import { SqliteDb } from "./sqlite.ts";
-import { RqliteHttpClient, resolveTargetDbId, fetchMeta, type Meta } from "./rqliteHttpClient.ts";
+import {
+  RqliteHttpClient,
+  resolveTargetDbId,
+  fetchMeta,
+  resultRows,
+  decodeBlobColumn,
+  type Meta,
+} from "./rqliteHttpClient.ts";
 import { startRemotePageWorker, type RemotePageBridge } from "./remotePageClient.ts";
 import { loadWasm } from "./wasm.ts";
 import { registerRemoteVfs, type RemoteVfsStats, type RemoteVfsHandle } from "./remoteVfs.ts";
@@ -327,7 +334,7 @@ export class RemoteVacuumCommand extends Command<RemoteVacuumOptions> {
   }
 
   private async vacuumUserDb(creds: PerfCreds): Promise<void> {
-    const session = await openRemoteSession(creds, false, (m) => this.log(m));
+    const session = await openRemoteSession(creds, false, (m) => this.log(m), { prefetch: true });
     try {
       this.progress("Vacuuming the user database (remote)...");
       session.db.exec("VACUUM;");
@@ -896,10 +903,46 @@ interface Session {
  * same way for every command that needs one (TestWriteCommand,
  * RemoteVacuumCommand) -- used to be duplicated as TestWriteCommand's own
  * private method. */
+// Fetched in a handful of batched round trips rather than leaving every
+// page to be discovered and fetched individually later by SQLite's own
+// page-at-a-time xRead callback -- for a command that (like --remote-vacuum)
+// ends up touching essentially every page, one request per page in
+// sequence is slow enough on its own to be a real problem, and sustained
+// enough against a single-node deployment to trip a 503 under that load.
+// Mirrors ui/'s data/dbWorker.ts prefetchPages, which found this first (see
+// its own comment for the client_body_buffer_size fix that made an
+// unbounded batch size safe).
+const PREFETCH_ROUND_TRIPS = 5;
+
+export async function prefetchAllPages(
+  client: RqliteHttpClient,
+  pageCount: number,
+  snapshot: number,
+  targetDbId: string | undefined,
+  log: (message: string) => void,
+): Promise<Map<number, Uint8Array>> {
+  const batchSize = Math.max(1, Math.ceil(pageCount / PREFETCH_ROUND_TRIPS));
+  const extra = targetDbId !== undefined ? { target_db_id: targetDbId } : {};
+  const pages = new Map<number, Uint8Array>();
+  for (let from = 1; from <= pageCount; from += batchSize) {
+    const to = Math.min(from + batchSize - 1, pageCount);
+    const batch = [];
+    for (let pageNo = from; pageNo <= to; pageNo++) batch.push({ page_no: pageNo, snapshot });
+    const results = await client.query("READ_PAGE", batch, extra);
+    for (let i = 0; i < batch.length; i++) {
+      const row = resultRows(results, i)[0];
+      if (row) pages.set(from + i, decodeBlobColumn(row[0]));
+    }
+    log(`prefetched pages ${from}-${to} of ${pageCount}`);
+  }
+  return pages;
+}
+
 async function openRemoteSession(
   creds: PerfCreds,
   readOnly: boolean,
   log: (message: string) => void,
+  opts: { prefetch?: boolean } = {},
 ): Promise<Session> {
   const client = new RqliteHttpClient(creds.rqlite_url, creds.api_key);
   const targetDbId = await resolveTargetDbId(client, creds.api_key);
@@ -925,6 +968,16 @@ async function openRemoteSession(
     targetDbId,
     log,
   });
+  if (opts.prefetch && meta.pageCount > 0) {
+    const prefetched = await prefetchAllPages(
+      client,
+      meta.pageCount,
+      meta.currentVersion,
+      targetDbId,
+      log,
+    );
+    vfs.primeCache(prefetched);
+  }
   const db = await SqliteDb.open(BACKED_PATH, {
     vfsName: vfs.name,
     rawKey: rootKeyBytes(creds),

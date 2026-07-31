@@ -15,6 +15,7 @@ import {
   decodeBlobColumn,
   type RqliteResult,
 } from "./rqliteHttpClient.ts";
+import { prefetchAllPages } from "./commands.ts";
 
 interface CapturedRequest {
   method: string | undefined;
@@ -177,6 +178,38 @@ test("RqliteHttpClient.commit(): posts ?transaction, the right body shape, and r
 
     const lost = await client.commit([page], 999, 1000, 10);
     assert.equal(lost, false);
+  } finally {
+    await mock.close();
+  }
+});
+
+test("prefetchAllPages: fetches every page in 5 batched round trips, not one request per page", async () => {
+  const PAGE_COUNT = 23; // deliberately not a multiple of 5, to exercise the uneven last batch
+  const mock = await startMockServer((req) => ({
+    results: (req.body.batch as { page_no: number }[]).map((item) => ({
+      values: [[Buffer.from(`page-${item.page_no}`).toString("base64")]],
+    })),
+  }));
+  try {
+    const client = new RqliteHttpClient(`http://127.0.0.1:${mock.port}`, "key");
+    const log: string[] = [];
+    const pages = await prefetchAllPages(client, PAGE_COUNT, 7, "user-1", (m) => log.push(m));
+
+    assert.equal(mock.requests.length, 5, "must batch into exactly 5 round trips, not 23");
+    assert.equal(pages.size, PAGE_COUNT);
+    for (let pageNo = 1; pageNo <= PAGE_COUNT; pageNo++) {
+      assert.equal(Buffer.from(pages.get(pageNo)!).toString("utf8"), `page-${pageNo}`);
+    }
+    assert.equal(log.length, 5, "should log progress once per round trip");
+    assert.ok(log[0]!.includes(`1-`) && log[0]!.includes(`of ${PAGE_COUNT}`));
+
+    const [firstReq] = mock.requests;
+    assert.deepEqual(
+      firstReq?.body.batch.map((b: any) => b.snapshot),
+      Array(firstReq?.body.batch.length).fill(7),
+      "every page request must be pinned to the given snapshot",
+    );
+    assert.equal(firstReq?.body.target_db_id, "user-1");
   } finally {
     await mock.close();
   }
