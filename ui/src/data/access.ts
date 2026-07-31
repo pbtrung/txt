@@ -27,9 +27,10 @@ export function setReadPosition(
     s.bindInt64(3, txtId);
   });
   const changed = db.changes();
-  if (changed !== 1) {
-    verbose(`access: setReadPosition txtId=${txtId} matched ${changed} row(s), expected 1`);
-  }
+  verbose(
+    `access: setReadPosition txtId=${txtId} matched ${changed} row(s)` +
+      (changed !== 1 ? " (expected 1)" : ""),
+  );
 }
 
 /** "Remove from recently opened" (LibraryScreen.tsx) -- resets a document's
