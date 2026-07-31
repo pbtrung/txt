@@ -1,8 +1,15 @@
 // Holds the unlocked vault session in memory only -- never persisted to
 // localStorage/sessionStorage -- for the lifetime of the page. A reload
 // always lands back on the Unlock screen.
+//
+// Unlike the old Turso-backed session, "unlocked" here means a real
+// SQLCipher database is open against a lazy remote VFS (remoteVfs.ts):
+// pages are fetched from rqlite on demand, through a worker+Atomics bridge
+// (remotePageClient.ts), and writes stay in memory until explicitly
+// committed back (see commitOrThrow below). No umk/priv_key/isAdmin -- the
+// api_key that opens the page store is the only credential there is, and
+// there is no sharing system in this schema at all.
 
-import type { Client } from "@libsql/core/api";
 import type { AwsClient } from "aws4fetch";
 import {
   createContext,
@@ -14,44 +21,19 @@ import {
   type ReactNode,
 } from "react";
 
-import {
-  loadOrInitAccess,
-  removeAccessEntry as removeAccessEntryData,
-  setReadPosition as setReadPositionData,
-  type AccessMap,
-  type ReadPosition,
-} from "../data/access";
-import {
-  addBookmark as addBookmarkData,
-  loadOrInitBookmarks,
-  removeAllBookmarksForTxt,
-  removeBookmark as removeBookmarkData,
-  type BookmarksMap,
-} from "../data/bookmarks";
-import { deleteTxtRows } from "../data/adminTxt";
-import { resolveUserUmk } from "../data/adminUsers";
-import { shareRecipientIds } from "../data/adminShares";
-import { isAdminToken } from "../crypto/jwt";
-import {
-  fetchR2Config,
-  partRawPaths,
-  resolveUserAndCheckPassword,
-  unwrapPrivKey,
-  unwrapTxtKey,
-  unwrapUmk,
-} from "../data/owner";
-import { createDb } from "../data/db";
-import { createR2Client, deleteObject } from "../data/r2";
-import { parseCreds, type Creds } from "../data/creds";
-import {
-  loadTxtMetadata,
-  removeTxtMetadataEntry,
-  saveBookMetadata,
-  type BookInfo,
-  type BookMetadataEdits,
-  type RawMetadataState,
-} from "../data/metadata";
-import type { R2Config } from "../data/r2Config";
+import * as access from "../data/access";
+import type { AccessMap, ReadPosition } from "../data/access";
+import * as bookmarks from "../data/bookmarks";
+import type { BookmarksMap } from "../data/bookmarks";
+import { loadCredsFromFile, type Creds } from "../data/creds";
+import { loadLibrary } from "../data/library";
+import type { BookInfo } from "../data/metadata";
+import { createR2Client } from "../data/r2";
+import { resultRows, RqliteHttpClient } from "../data/rqliteHttpClient";
+import { registerRemoteVfs, type RemoteVfsHandle } from "../data/remoteVfs";
+import { startRemotePageWorker, type RemotePageBridge } from "../data/remotePageClient";
+import { SqliteDb } from "../data/sqliteDb";
+import { loadWasm } from "../data/wasmLoader";
 import { verbose } from "../log";
 
 export type VaultStatus = "locked" | "unlocking" | "unlocked";
@@ -67,17 +49,11 @@ export interface VaultProgress {
 }
 
 const UNLOCK_PHASES = [
-  "Signing you in",
-  "Unwrapping your keys",
+  "Connecting to your vault",
+  "Opening your database",
   "Loading your books",
-  "Loading your read progress",
-  "Loading your bookmarks",
 ] as const;
-const REFRESH_PHASES = [
-  "Loading your books",
-  "Loading your read progress",
-  "Loading your bookmarks",
-] as const;
+const REFRESH_PHASES = ["Loading your books", "Loading your bookmarks"] as const;
 
 function phaseProgress(phases: readonly string[], index: number): VaultProgress {
   return { label: phases[index], step: index + 1, total: phases.length };
@@ -85,35 +61,12 @@ function phaseProgress(phases: readonly string[], index: number): VaultProgress 
 
 export interface VaultSession {
   creds: Creds;
-  db: Client;
-  userId: number;
-  umk: Uint8Array;
-  r2Config: R2Config;
+  db: SqliteDb;
+  vfs: RemoteVfsHandle;
+  rqliteClient: RqliteHttpClient;
+  pageWorker: RemotePageBridge;
   r2Client: AwsClient;
   metadataById: Map<number, BookInfo>;
-  /** The raw encrypted-content state metadataById was derived from --
-   * cached here (populated at unlock/refresh, kept in lockstep by
-   * updateBookMetadata/deleteTxt after every write of their own) purely so
-   * an edit or delete can skip re-fetching+re-decrypting+re-decompressing
-   * this account's entire txt_metadata R2 object a second time. Trusted
-   * only between explicit refreshes -- same tradeoff metadataById itself
-   * already makes for changes from outside this session (e.g. a
-   * concurrent --txt-ingest); see loadRawMetadataState's own comment. */
-  rawMetadataState: RawMetadataState | null;
-  txtAccessKey: Uint8Array;
-  bookmarkKey: Uint8Array;
-  /** This account's own key_store keypair private key, unwrapped under its
-   * own umk (owner.ts's unwrapPrivKey) -- needed to Decapsulate a
-   * txt_shares grant back down to a shared document's txt_key (see
-   * owner.ts's unwrapTxtKey fallback), the same way umk itself unwraps an
-   * owned txt.txt_key directly. Every account has a key_store row, so this
-   * is fetched unconditionally, not just for non-admin sessions. */
-  privKey: Uint8Array;
-  /** Whether creds.tursoAuthToken is an admin-shaped token (see
-   * crypto/jwt.ts's isAdminToken) -- a client-local, load-time fact, not
-   * something looked up from the database (docs/credentials.md's "How a
-   * client knows its own role"). Gates the Manage screen. */
-  isAdmin: boolean;
 }
 
 export interface VaultContextValue {
@@ -134,25 +87,9 @@ export interface VaultContextValue {
     txtId: number,
     partNum: number,
     line: number,
-    txtPreview: string,
+    preview: string,
   ) => Promise<void>;
-  removeBookmarkEntry: (txtId: number, createdAt: number) => Promise<void>;
-  /** Admin Manage screen: deletes one of the admin's own txt -- its R2 part
-   * objects, its Turso rows (data/adminTxt.ts), and its txt_metadata entry
-   * -- then scrubs this txt_id's txt_access/bookmarks entries and drops it
-   * from the in-memory metadataById so the screen reflects the deletion
-   * immediately. Requires a write-capable r2Client (see r2.ts). */
-  deleteTxt: (txtId: number) => Promise<void>;
-  /** Admin Manage screen: overwrites one of the admin's own txt's curated
-   * metadata fields (data/metadata.ts's saveBookMetadata), then refreshes
-   * its entry in the in-memory metadataById. Requires a write-capable
-   * r2Client. `onProgress`, if given, is forwarded to saveBookMetadata --
-   * see its own doc comment. */
-  updateBookMetadata: (
-    txtId: number,
-    edits: BookMetadataEdits,
-    onProgress?: (label: string) => void,
-  ) => Promise<void>;
+  removeBookmarkEntry: (bookmarkId: number) => Promise<void>;
 }
 
 const VaultContext = createContext<VaultContextValue | null>(null);
@@ -161,41 +98,96 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+interface Meta {
+  currentVersion: number;
+  pageCount: number;
+  pageSize: number;
+}
+
+async function fetchMeta(client: RqliteHttpClient): Promise<Meta> {
+  const row = resultRows(await client.query("GET_META", [{}]))[0];
+  if (!row) throw new Error("this account hasn't committed a database yet");
+  return { currentVersion: Number(row[0]), pageCount: Number(row[1]), pageSize: Number(row[2]) };
+}
+
+interface OpenedVault {
+  db: SqliteDb;
+  vfs: RemoteVfsHandle;
+  rqliteClient: RqliteHttpClient;
+  pageWorker: RemotePageBridge;
+  r2Client: AwsClient;
+}
+
+/** Opens (or re-opens, for refresh()) this account's SQLCipher db against a
+ * fresh lazy VFS -- a brand new worker/VFS/backed-path per call, never
+ * reused, since sqlite3_vfs_register has no "replace" semantics: a second
+ * registration under a name already in use would just be shadowed, silently
+ * keeping the *first* session's (by-then-closed) page callbacks alive. */
+async function openVault(creds: Creds): Promise<OpenedVault> {
+  const rqliteClient = new RqliteHttpClient(creds.rqliteUrl, creds.apiKey);
+  const meta = await fetchMeta(rqliteClient);
+  const pageWorker = await startRemotePageWorker(
+    creds.rqliteUrl,
+    creds.apiKey,
+    meta.pageSize,
+    meta.currentVersion,
+  );
+  const sessionId = crypto.randomUUID();
+  const backedPath = `/vault-${sessionId}.db`;
+  const mod = await loadWasm();
+  const vfs = registerRemoteVfs(mod, {
+    name: `remotevfs-${sessionId}`,
+    pageSize: meta.pageSize,
+    pageCount: meta.pageCount,
+    currentVersion: meta.currentVersion,
+    backedPath,
+    fetchPage: pageWorker.fetchPage,
+  });
+  const db = await SqliteDb.open(backedPath, { vfsName: vfs.name, rawKey: creds.userRootKey });
+  const r2Client = createR2Client(creds.r2Config);
+  return { db, vfs, rqliteClient, pageWorker, r2Client };
+}
+
+/** Flushes dirty pages via one atomic COMMIT (see remoteVfs.ts). Throws if
+ * another writer's commit won the CAS race first -- rare for a single-user
+ * reading app (another tab/device writing at the same instant), but real,
+ * and not automatically resolved here: the caller is told to reload rather
+ * than risk silently merging conflicting writes at the page level. */
+async function commitOrThrow(vfs: RemoteVfsHandle, client: RqliteHttpClient): Promise<void> {
+  const ok = await vfs.commit(client);
+  if (!ok) {
+    throw new Error("Another session updated this vault. Please reload and try again.");
+  }
+}
+
+function fetchTxtKey(db: SqliteDb, txtId: number): Uint8Array {
+  const stmt = db.prepare("SELECT txt_key FROM txt WHERE id = ?;");
+  stmt.bindInt64(1, txtId);
+  const found = stmt.step();
+  const key = found ? stmt.columnBlob(0) : null;
+  stmt.finalize();
+  if (!key) throw new Error(`no txt row for txt_id=${txtId}`);
+  return key;
+}
+
 export function VaultProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<VaultStatus>("locked");
   const [session, setSession] = useState<VaultSession | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [accessMap, setAccessMapState] = useState<AccessMap>(new Map());
-  const [bookmarksMap, setBookmarksMapState] = useState<BookmarksMap>(new Map());
+  const [accessMap, setAccessMap] = useState<AccessMap>(new Map());
+  const [bookmarksMap, setBookmarksMap] = useState<BookmarksMap>(new Map());
   const [refreshing, setRefreshing] = useState(false);
   const [progress, setProgress] = useState<VaultProgress | null>(null);
   const txtKeyCache = useRef(new Map<number, Uint8Array>());
 
-  // Mirrors of the two maps above, updated synchronously (unlike state,
-  // which only lands after a re-render) -- mutators read from these so two
-  // rapid-fire calls (e.g. bookmarking two lines back to back) each build on
-  // the other's result instead of both starting from the same stale map.
-  const accessMapRef = useRef<AccessMap>(accessMap);
-  const bookmarksMapRef = useRef<BookmarksMap>(bookmarksMap);
-
-  const setAccessMap = useCallback((next: AccessMap) => {
-    accessMapRef.current = next;
-    setAccessMapState(next);
-  }, []);
-  const setBookmarksMap = useCallback((next: BookmarksMap) => {
-    bookmarksMapRef.current = next;
-    setBookmarksMapState(next);
-  }, []);
-
-  // Serializes recordReadPosition/removeAccessEntry/addBookmarkEntry/
-  // removeBookmarkEntry: each reads accessMapRef/bookmarksMapRef, computes
-  // the next map, and only updates that ref once its own DB write settles --
-  // so two calls fired back to back (before either awaits) would otherwise
-  // both read the *same* pre-mutation ref value and race to overwrite each
-  // other's write with a full-blob UPDATE that doesn't know about the
-  // other's change. Queuing every mutation through this one promise chain
-  // ensures each starts only after the previous one's ref update has
-  // landed, so it always builds on the latest state instead of a stale one.
+  // Serializes every write against the vfs's shared dirty-page state
+  // (recordReadPosition/removeAccessEntry/addBookmarkEntry/
+  // removeBookmarkEntry): commit() reads and clears that state, so two
+  // writes racing ahead of their own `await commitOrThrow` would otherwise
+  // both compute the same base version and double-commit (or spuriously
+  // trip the "another session" error against each other, not a real
+  // external writer). Queuing every mutation through one promise chain
+  // means each write+commit fully lands before the next one starts.
   const mutationQueue = useRef(Promise.resolve());
   const enqueueMutation = useCallback(<T,>(run: () => Promise<T>): Promise<T> => {
     const result = mutationQueue.current.then(run, run);
@@ -206,142 +198,74 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     return result;
   }, []);
 
-  const unlock = useCallback(
-    async (file: File) => {
-      setStatus("unlocking");
-      setError(null);
+  const unlock = useCallback(async (file: File) => {
+    setStatus("unlocking");
+    setError(null);
+    setProgress(phaseProgress(UNLOCK_PHASES, 0));
+    let opened: OpenedVault | null = null;
+    try {
+      verbose("unlock: reading creds file", file.name);
+      const creds = await loadCredsFromFile(file);
+
+      setProgress(phaseProgress(UNLOCK_PHASES, 1));
+      verbose("unlock: opening vault against the lazy remote VFS");
+      opened = await openVault(creds);
+
+      setProgress(phaseProgress(UNLOCK_PHASES, 2));
+      verbose("unlock: loading library");
+      const { metadataById, accessMap: initialAccessMap } = await loadLibrary(opened.db);
+      const initialBookmarksMap = bookmarks.loadBookmarksMap(opened.db);
+
+      txtKeyCache.current = new Map();
+      setAccessMap(initialAccessMap);
+      setBookmarksMap(initialBookmarksMap);
+      setSession({ creds, ...opened, metadataById });
+      setStatus("unlocked");
       setProgress(null);
-      try {
-        verbose("unlock: reading config file", file.name);
-        const text = await file.text();
-        const creds = parseCreds(JSON.parse(text));
-        verbose("unlock: config parsed for username", creds.username);
-
-        const db = createDb(creds);
-        setProgress(phaseProgress(UNLOCK_PHASES, 0));
-        verbose("unlock: resolving user id and checking password");
-        const { userId, passwordOk } = await resolveUserAndCheckPassword(db, creds);
-        if (!passwordOk) {
-          throw new Error("Incorrect password for this account.");
-        }
-        verbose("unlock: resolved user id, password OK", userId);
-
-        setProgress(phaseProgress(UNLOCK_PHASES, 1));
-        verbose("unlock: unwrapping umk");
-        const umk = await unwrapUmk(db, creds, userId);
-        verbose("unlock: unwrapping key_store keypair");
-        const privKey = await unwrapPrivKey(db, userId, umk);
-        verbose("unlock: fetching r2 config");
-        const r2Config = await fetchR2Config(db, userId, umk);
-        const r2Client = createR2Client(r2Config);
-
-        // Everything the Library screen needs, loaded once here rather than
-        // per-book: exactly three requests (metadata, access, bookmarks),
-        // each a single row scoped to this user.
-        setProgress(phaseProgress(UNLOCK_PHASES, 2));
-        verbose("unlock: loading txt metadata");
-        const { state: rawMetadataState, metadataById } = await loadTxtMetadata(
-          db,
-          userId,
-          umk,
-          r2Client,
-          r2Config,
-        );
-        setProgress(phaseProgress(UNLOCK_PHASES, 3));
-        verbose("unlock: loading access map");
-        const { txtAccessKey, accessMap: initialAccessMap } = await loadOrInitAccess(
-          db,
-          userId,
-          umk,
-        );
-        setProgress(phaseProgress(UNLOCK_PHASES, 4));
-        verbose("unlock: loading bookmarks");
-        const { bookmarkKey, bookmarksMap: initialBookmarksMap } = await loadOrInitBookmarks(
-          db,
-          userId,
-          umk,
-        );
-
-        txtKeyCache.current = new Map();
-        setAccessMap(initialAccessMap);
-        setBookmarksMap(initialBookmarksMap);
-        const isAdmin = isAdminToken(creds.tursoAuthToken);
-        setSession({
-          creds,
-          db,
-          userId,
-          umk,
-          r2Config,
-          r2Client,
-          metadataById,
-          rawMetadataState,
-          txtAccessKey,
-          bookmarkKey,
-          privKey,
-          isAdmin,
-        });
-        setStatus("unlocked");
-        setProgress(null);
-        verbose("unlock: done");
-      } catch (err) {
-        verbose("unlock: failed", err);
-        setSession(null);
-        setStatus("locked");
-        setError(errorMessage(err) || "Failed to unlock your library.");
-        setProgress(null);
-      }
-    },
-    [setAccessMap, setBookmarksMap],
-  );
+      verbose("unlock: done");
+    } catch (err) {
+      verbose("unlock: failed", err);
+      opened?.pageWorker.terminate();
+      opened?.db.close();
+      setSession(null);
+      setStatus("locked");
+      setError(errorMessage(err) || "Failed to unlock your library.");
+      setProgress(null);
+    }
+  }, []);
 
   const lock = useCallback(() => {
     txtKeyCache.current = new Map();
+    session?.pageWorker.terminate();
+    session?.db.close();
     setSession(null);
     setAccessMap(new Map());
     setBookmarksMap(new Map());
     setStatus("locked");
     setError(null);
-  }, [setAccessMap, setBookmarksMap]);
+  }, [session]);
 
-  // Re-loads exactly the three requests unlock() makes up front (metadata,
-  // access, bookmarks) -- for the Library screen's manual refresh button,
-  // so a book ingested/shared, or a bookmark/read-position added, from
-  // elsewhere since unlocking shows up without a full re-unlock. Rethrows
-  // on failure rather than swallowing it (unlike the best-effort per-user
-  // blob *writes* elsewhere in this file) so the Library screen's button
-  // can surface it -- the user explicitly asked for fresh data, so a
-  // silent no-op would be misleading.
+  // Fully re-opens the db against a fresh VFS/worker (rather than reusing
+  // the existing connection) so a document ingested elsewhere since unlock
+  // -- more pages, a higher page_count -- is actually visible: this
+  // session's VFS pins the page_count/version it saw at open time, the same
+  // way any snapshot-based reader does (docs/data_model.md).
   const refresh = useCallback(async () => {
     if (!session) throw new Error("vault is locked");
     setRefreshing(true);
     setProgress(phaseProgress(REFRESH_PHASES, 0));
     try {
-      verbose("refresh: loading txt metadata");
-      const { state: rawMetadataState, metadataById } = await loadTxtMetadata(
-        session.db,
-        session.userId,
-        session.umk,
-        session.r2Client,
-        session.r2Config,
-      );
+      verbose("refresh: re-opening vault");
+      const opened = await openVault(session.creds);
+      verbose("refresh: loading library");
+      const { metadataById, accessMap: nextAccessMap } = await loadLibrary(opened.db);
       setProgress(phaseProgress(REFRESH_PHASES, 1));
-      verbose("refresh: loading access map");
-      const { txtAccessKey, accessMap: nextAccessMap } = await loadOrInitAccess(
-        session.db,
-        session.userId,
-        session.umk,
-      );
-      setProgress(phaseProgress(REFRESH_PHASES, 2));
-      verbose("refresh: loading bookmarks");
-      const { bookmarkKey, bookmarksMap: nextBookmarksMap } = await loadOrInitBookmarks(
-        session.db,
-        session.userId,
-        session.umk,
-      );
+      const nextBookmarksMap = bookmarks.loadBookmarksMap(opened.db);
 
-      setSession((prev) =>
-        prev ? { ...prev, metadataById, rawMetadataState, txtAccessKey, bookmarkKey } : prev,
-      );
+      session.pageWorker.terminate();
+      session.db.close();
+      txtKeyCache.current = new Map();
+      setSession((prev) => (prev ? { ...prev, ...opened, metadataById } : prev));
       setAccessMap(nextAccessMap);
       setBookmarksMap(nextBookmarksMap);
       verbose("refresh: done");
@@ -349,22 +273,14 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       setRefreshing(false);
       setProgress(null);
     }
-  }, [session, setAccessMap, setBookmarksMap]);
+  }, [session]);
 
   const getTxtKey = useCallback(
     async (txtId: number): Promise<Uint8Array> => {
       const cached = txtKeyCache.current.get(txtId);
       if (cached) return cached;
-      if (!session) {
-        throw new Error("vault is locked");
-      }
-      const txtKey = await unwrapTxtKey(
-        session.db,
-        txtId,
-        session.userId,
-        session.umk,
-        session.privKey,
-      );
+      if (!session) throw new Error("vault is locked");
+      const txtKey = fetchTxtKey(session.db, txtId);
       txtKeyCache.current.set(txtId, txtKey);
       return txtKey;
     },
@@ -375,190 +291,49 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     async (txtId: number, position: ReadPosition) => {
       if (!session) throw new Error("vault is locked");
       await enqueueMutation(async () => {
-        const next = await setReadPositionData(
-          session.db,
-          session.userId,
-          session.txtAccessKey,
-          accessMapRef.current,
-          txtId,
-          position,
-        );
-        setAccessMap(next);
+        access.setReadPosition(session.db, txtId, position.lastPartNum, position.lastAccessedMs);
+        await commitOrThrow(session.vfs, session.rqliteClient);
+        setAccessMap((prev) => new Map(prev).set(txtId, position));
       });
     },
-    [session, setAccessMap, enqueueMutation],
+    [session, enqueueMutation],
   );
 
   const removeAccessEntry = useCallback(
     async (txtId: number) => {
       if (!session) throw new Error("vault is locked");
       await enqueueMutation(async () => {
-        const next = await removeAccessEntryData(
-          session.db,
-          session.userId,
-          session.txtAccessKey,
-          accessMapRef.current,
-          txtId,
-        );
-        setAccessMap(next);
+        access.clearReadPosition(session.db, txtId);
+        await commitOrThrow(session.vfs, session.rqliteClient);
+        setAccessMap((prev) => {
+          const next = new Map(prev);
+          next.delete(txtId);
+          return next;
+        });
       });
     },
-    [session, setAccessMap, enqueueMutation],
+    [session, enqueueMutation],
   );
 
   const addBookmarkEntry = useCallback(
-    async (txtId: number, partNum: number, line: number, txtPreview: string) => {
+    async (txtId: number, partNum: number, line: number, preview: string) => {
       if (!session) throw new Error("vault is locked");
       await enqueueMutation(async () => {
-        const next = await addBookmarkData(
-          session.db,
-          session.userId,
-          session.bookmarkKey,
-          bookmarksMapRef.current,
-          txtId,
-          partNum,
-          line,
-          txtPreview,
-        );
-        setBookmarksMap(next);
+        bookmarks.addBookmark(session.db, txtId, partNum, line, preview, Date.now());
+        await commitOrThrow(session.vfs, session.rqliteClient);
+        setBookmarksMap(bookmarks.loadBookmarksMap(session.db));
       });
     },
-    [session, setBookmarksMap, enqueueMutation],
+    [session, enqueueMutation],
   );
 
   const removeBookmarkEntry = useCallback(
-    async (txtId: number, createdAt: number) => {
+    async (bookmarkId: number) => {
       if (!session) throw new Error("vault is locked");
       await enqueueMutation(async () => {
-        const next = await removeBookmarkData(
-          session.db,
-          session.userId,
-          session.bookmarkKey,
-          bookmarksMapRef.current,
-          txtId,
-          createdAt,
-        );
-        setBookmarksMap(next);
-      });
-    },
-    [session, setBookmarksMap, enqueueMutation],
-  );
-
-  const deleteTxt = useCallback(
-    async (txtId: number) => {
-      if (!session) throw new Error("vault is locked");
-      await enqueueMutation(async () => {
-        // R2 parts first, then Turso rows -- same order as txt/delete.py's
-        // TxtDeleter, so a failure partway through never leaves a Turso row
-        // pointing at parts that are already gone. Requires a write-capable
-        // r2Client (see r2.ts's createR2Client) -- only ever true for an
-        // admin session with read-write keys in r2_config today.
-        const txtKey = await getTxtKey(txtId);
-        const rawPaths = await partRawPaths(session.db, txtId, txtKey);
-        await Promise.all(
-          rawPaths.map((rawPath) => deleteObject(session.r2Client, session.r2Config, rawPath)),
-        );
-
-        // Scrub the copy grantShare (adminShares.ts) made in each
-        // recipient's own txt_metadata, so deleting this txt doesn't leave a
-        // phantom (now-undecryptable) Library entry behind for anyone it
-        // was shared with. Must run before deleteTxtRows below, which
-        // deletes these txt_shares rows. Same policy as
-        // adminShares.ts's revokeShare: a recipient's escrow lookup failing
-        // is a hard failure -- this throws (leaving the txt, and every
-        // share, untouched) rather than proceeding and leaving that
-        // recipient's copy stale.
-        const recipientIds = await shareRecipientIds(session.db, txtId);
-        for (const toUserId of recipientIds) {
-          const recipientUmk = await resolveUserUmk(session.db, session.umk, toUserId);
-          if (!recipientUmk) {
-            throw new Error(`couldn't recover user_id=${toUserId}'s umk via their escrowed creds`);
-          }
-          await removeTxtMetadataEntry(
-            session.db,
-            toUserId,
-            recipientUmk,
-            session.r2Client,
-            session.r2Config,
-            txtId,
-          );
-        }
-
-        await deleteTxtRows(session.db, txtId);
-        const nextRawMetadataState = await removeTxtMetadataEntry(
-          session.db,
-          session.userId,
-          session.umk,
-          session.r2Client,
-          session.r2Config,
-          txtId,
-          undefined,
-          session.rawMetadataState,
-        );
-        const nextAccess = await removeAccessEntryData(
-          session.db,
-          session.userId,
-          session.txtAccessKey,
-          accessMapRef.current,
-          txtId,
-        );
-        setAccessMap(nextAccess);
-        const nextBookmarks = await removeAllBookmarksForTxt(
-          session.db,
-          session.userId,
-          session.bookmarkKey,
-          bookmarksMapRef.current,
-          txtId,
-        );
-        setBookmarksMap(nextBookmarks);
-        txtKeyCache.current.delete(txtId);
-        setSession((prev) => {
-          if (!prev) return prev;
-          const nextMetadataById = new Map(prev.metadataById);
-          nextMetadataById.delete(txtId);
-          return {
-            ...prev,
-            metadataById: nextMetadataById,
-            rawMetadataState: nextRawMetadataState,
-          };
-        });
-      });
-    },
-    [session, setAccessMap, setBookmarksMap, enqueueMutation, getTxtKey],
-  );
-
-  const updateBookMetadata = useCallback(
-    async (txtId: number, edits: BookMetadataEdits, onProgress?: (label: string) => void) => {
-      if (!session) throw new Error("vault is locked");
-      await enqueueMutation(async () => {
-        // saveBookMetadata already derives the updated BookInfo from the
-        // same in-memory content it just wrote (via toBookInfo) -- a
-        // second getBookInfo() call here used to re-fetch and re-decrypt
-        // this account's *entire* txt_metadata object all over again just
-        // to read back the one entry already sitting in hand, doubling
-        // this save's R2 round-trip for no reason (the original source of
-        // "Edit -> Save is slow" for any account with more than a handful
-        // of books). Passing the session's own cached rawMetadataState in
-        // goes further: saveBookMetadata skips re-fetching it at all
-        // (rather than just not fetching it *twice*), so only its
-        // "Uploading changes" phase ever actually hits the network here.
-        const { info, state } = await saveBookMetadata(
-          session.db,
-          session.userId,
-          session.umk,
-          session.r2Client,
-          session.r2Config,
-          txtId,
-          edits,
-          onProgress,
-          session.rawMetadataState,
-        );
-        setSession((prev) => {
-          if (!prev) return prev;
-          const nextMetadataById = new Map(prev.metadataById);
-          nextMetadataById.set(txtId, info);
-          return { ...prev, metadataById: nextMetadataById, rawMetadataState: state };
-        });
+        bookmarks.removeBookmark(session.db, bookmarkId);
+        await commitOrThrow(session.vfs, session.rqliteClient);
+        setBookmarksMap(bookmarks.loadBookmarksMap(session.db));
       });
     },
     [session, enqueueMutation],
@@ -581,8 +356,6 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       removeAccessEntry,
       addBookmarkEntry,
       removeBookmarkEntry,
-      deleteTxt,
-      updateBookMetadata,
     }),
     [
       status,
@@ -600,8 +373,6 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       removeAccessEntry,
       addBookmarkEntry,
       removeBookmarkEntry,
-      deleteTxt,
-      updateBookMetadata,
     ],
   );
 

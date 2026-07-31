@@ -3,26 +3,34 @@ import { describe, expect, it } from "vitest";
 import { CredsError, parseCreds } from "./creds";
 import { bytesToBase64 } from "../crypto/bytes";
 
-function validConfig(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+function validR2Config(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    turso_database_url: "libsql://example.turso.io",
-    turso_auth_token: "token",
-    username: "alice",
-    username_lookup_key: bytesToBase64(new Uint8Array(32)),
-    password: "hunter2",
-    display_name: "Alice",
+    endpoint: "https://example.r2.cloudflarestorage.com",
+    region: "auto",
+    bucket: "txt-parts",
+    read_only_access_key_id: "ro-key-id",
+    read_only_secret_access_key: "ro-secret",
+    ...overrides,
+  };
+}
+
+function validCreds(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    rqlite_url: "https://rqlite.example.com:4001",
+    api_key: "some-api-key",
     user_root_key: bytesToBase64(new Uint8Array(256)),
+    r2_config: validR2Config(),
     ...overrides,
   };
 }
 
 describe("parseCreds", () => {
-  it("parses a valid config", () => {
-    const creds = parseCreds(validConfig());
-    expect(creds.username).toBe("alice");
-    expect(creds.displayName).toBe("Alice");
-    expect(creds.usernameLookupKey.length).toBe(32);
+  it("parses a valid creds file", () => {
+    const creds = parseCreds(validCreds());
+    expect(creds.rqliteUrl).toBe("https://rqlite.example.com:4001");
+    expect(creds.apiKey).toBe("some-api-key");
     expect(creds.userRootKey.length).toBe(256);
+    expect(creds.r2Config.bucket).toBe("txt-parts");
   });
 
   it("rejects a non-object", () => {
@@ -31,23 +39,23 @@ describe("parseCreds", () => {
   });
 
   it("rejects a missing required string field", () => {
-    const config = validConfig();
-    delete config.username;
-    expect(() => parseCreds(config)).toThrow("username is required");
-  });
-
-  it("rejects a username_lookup_key shorter than the minimum length", () => {
-    const config = validConfig({ username_lookup_key: bytesToBase64(new Uint8Array(16)) });
-    expect(() => parseCreds(config)).toThrow("username_lookup_key too short");
+    const creds = validCreds();
+    delete creds.rqlite_url;
+    expect(() => parseCreds(creds)).toThrow("rqlite_url is required");
   });
 
   it("rejects a user_root_key shorter than the minimum length", () => {
-    const config = validConfig({ user_root_key: bytesToBase64(new Uint8Array(64)) });
-    expect(() => parseCreds(config)).toThrow("user_root_key too short");
+    const creds = validCreds({ user_root_key: bytesToBase64(new Uint8Array(64)) });
+    expect(() => parseCreds(creds)).toThrow("user_root_key too short");
   });
 
   it("rejects invalid base64", () => {
-    const config = validConfig({ user_root_key: "not-valid-base64!!!" });
-    expect(() => parseCreds(config)).toThrow(CredsError);
+    const creds = validCreds({ user_root_key: "not-valid-base64!!!" });
+    expect(() => parseCreds(creds)).toThrow(CredsError);
+  });
+
+  it("rejects a missing/invalid r2_config", () => {
+    const creds = validCreds({ r2_config: {} });
+    expect(() => parseCreds(creds)).toThrow(CredsError);
   });
 });

@@ -1,14 +1,18 @@
 import { describe, expect, it } from "vitest";
 
-import { aeadDecrypt, aeadEncrypt, hkdf, hmacSha3_256, pbkdf2Sha3_256 } from "./leancryptoLoader";
-import { bytesToHex, hexToBytes } from "./testUtil";
+import { aeadDecrypt, aeadEncrypt, hkdf } from "./wasmLoader";
+import { bytesToHex, hexToBytes } from "../crypto/testUtil";
 
-// Known-good vectors cross-checked by hand against the real native
-// leancrypto library (via txt/leancrypto.py's ctypes bindings) -- see
-// docs/ui.md's implementation plan. These pin that cross-check down as a
-// permanent regression test.
+// Same known-good vectors as the old crypto/leancryptoLoader.test.ts
+// (cross-checked by hand against the real native leancrypto library, see
+// docs/ui.md's implementation plan) -- HKDF-SHA3-512 and Ascon-Keccak AEAD
+// are the same underlying primitive regardless of which C API wraps them
+// (sqlcipher.js's simpler lc_wasm_hkdf_sha3_512/lc_wasm_aead_* wrapper
+// functions here, vs. the old leancrypto.js's raw lc_hkdf/lc_ak_alloc_taglen
+// context API), so identical inputs must still produce identical output --
+// this doubles as a cross-check that the two wasm builds agree.
 
-describe("leancryptoLoader", () => {
+describe("wasmLoader", () => {
   it("HKDF-SHA3-512 matches the native leancrypto output", async () => {
     const ikm = Uint8Array.from({ length: 64 }, (_, i) => i);
     const salt = Uint8Array.from({ length: 64 }, (_, i) => i + 64);
@@ -17,25 +21,6 @@ describe("leancryptoLoader", () => {
       "79dd56727a360e40c4561bd6f893e378479d84b698de1d0bd6b0590572e36780cdcdd74a9f6693aaed1461ef858d38c" +
         "da7ae4b32fa48294bfe2c120705283eb90857b02c1507e3b581338e9984405a67292fbd11608f2ceeab3a962584248c" +
         "ffdd35cad3abfb1ab55b75733ae6d37467e73feca916893daceed6ec1fcdcf2b8e",
-    );
-  });
-
-  it("HMAC-SHA3-256 matches the native leancrypto output", async () => {
-    const key = new TextEncoder().encode("k".repeat(16));
-    const data = new TextEncoder().encode("hello world");
-    const out = await hmacSha3_256(key, data);
-    expect(bytesToHex(out)).toBe(
-      "09d657bafbe49950f21340e41188aee5f403536db9c0a227e05ee68382ae70f6",
-    );
-  });
-
-  it("PBKDF2-HMAC-SHA3-256 matches the native leancrypto output", async () => {
-    const password = new TextEncoder().encode("password123");
-    const salt = Uint8Array.from({ length: 32 }, (_, i) => i);
-    const out = await pbkdf2Sha3_256(password, salt, 1000, 64);
-    expect(bytesToHex(out)).toBe(
-      "593dc3eb6cf6571d928819a219be8f946c15c2bb3adf0bd2e5e6b639fb909c31cfc79c2e12432dfbe599a0b7752a3ef" +
-        "39490f67608413c77a7aad449a0404c75",
     );
   });
 

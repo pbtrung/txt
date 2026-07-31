@@ -1,643 +1,295 @@
 // @vitest-environment jsdom
-import { act, renderHook, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+//
+// Mocks only the two things that genuinely can't run under Vitest/jsdom --
+// real network (RqliteHttpClient) and a real browser Worker
+// (remotePageClient.ts's startRemotePageWorker) -- and lets everything else
+// (SqliteDb, registerRemoteVfs, loadWasm) run for real against a small,
+// genuine SQLCipher database built the same way remoteVfs.test.ts's own
+// fixture is, so this still exercises the real VFS/commit wiring, not just
+// mocked plumbing.
 
+import { act, renderHook, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { randomBytes } from "node:crypto";
+
+import { bytesToBase64 } from "../crypto/bytes";
+import { SqliteDb } from "../data/sqliteDb";
+import { loadWasm } from "../data/wasmLoader";
+
+// jsdom (needed below for renderHook) makes isBrowser() true, which would
+// otherwise send wasmLoader.ts down the real <script src="/sqlcipher.js">
+// path -- jsdom never actually executes that tag, so the load hangs forever.
+// Force the Node import() path instead, same as every other data-layer test
+// (those run under the default "node" environment, where isBrowser() is
+// naturally false already).
+vi.mock("../env", () => ({ isBrowser: () => false }));
+vi.mock("../data/r2", () => ({ createR2Client: vi.fn(() => ({})) }));
+vi.mock("../data/remotePageClient", () => ({ startRemotePageWorker: vi.fn() }));
+vi.mock("../data/rqliteHttpClient", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../data/rqliteHttpClient")>();
+  return { ...actual, RqliteHttpClient: vi.fn() };
+});
+
+import { RqliteHttpClient, type RqliteResult } from "../data/rqliteHttpClient";
+import { startRemotePageWorker } from "../data/remotePageClient";
 import { useVault, VaultProvider } from "./VaultContext";
 
-vi.mock("../data/db", () => ({ createDb: vi.fn(() => ({ execute: vi.fn() })) }));
-vi.mock("../data/r2", () => ({
-  createR2Client: vi.fn(() => ({ fetch: vi.fn() })),
-  deleteObject: vi.fn(),
-}));
-vi.mock("../data/owner", () => ({
-  resolveUserAndCheckPassword: vi.fn(),
-  unwrapUmk: vi.fn(),
-  unwrapPrivKey: vi.fn(),
-  unwrapTxtKey: vi.fn(),
-  fetchR2Config: vi.fn(),
-  partRawPaths: vi.fn(),
-}));
-vi.mock("../data/adminUsers", () => ({ resolveUserUmk: vi.fn() }));
-vi.mock("../data/metadata", () => ({
-  loadTxtMetadata: vi.fn(),
-  saveBookMetadata: vi.fn(),
-  removeTxtMetadataEntry: vi.fn(),
-}));
-vi.mock("../data/access", () => ({
-  loadOrInitAccess: vi.fn(),
-  setReadPosition: vi.fn(),
-  removeAccessEntry: vi.fn(),
-}));
-vi.mock("../data/bookmarks", () => ({
-  loadOrInitBookmarks: vi.fn(),
-  addBookmark: vi.fn(),
-  removeBookmark: vi.fn(),
-  removeAllBookmarksForTxt: vi.fn(),
-}));
-vi.mock("../data/adminTxt", () => ({ deleteTxtRows: vi.fn() }));
-vi.mock("../data/adminShares", () => ({ shareRecipientIds: vi.fn() }));
-
-import * as accessData from "../data/access";
-import type { AccessMap } from "../data/access";
-import * as adminShares from "../data/adminShares";
-import * as adminTxt from "../data/adminTxt";
-import * as adminUsers from "../data/adminUsers";
-import * as bookmarksData from "../data/bookmarks";
-import * as metadata from "../data/metadata";
-import type { BookInfo } from "../data/metadata";
-import * as owner from "../data/owner";
-import * as r2 from "../data/r2";
-
-/** Wires up the three post-auth loads (metadata/access/bookmarks) that
- * unlock() now performs, so a successful-unlock test doesn't need to spell
- * this out every time. */
-function mockLibraryLoads() {
-  vi.mocked(metadata.loadTxtMetadata).mockResolvedValue({ state: null, metadataById: new Map() });
-  vi.mocked(accessData.loadOrInitAccess).mockResolvedValue({
-    txtAccessKey: new Uint8Array(64),
-    accessMap: new Map(),
-  });
-  vi.mocked(bookmarksData.loadOrInitBookmarks).mockResolvedValue({
-    bookmarkKey: new Uint8Array(64),
-    bookmarksMap: new Map(),
-  });
+interface DbFixture {
+  rootKey: Uint8Array;
+  pages: Uint8Array[];
+  pageSize: number;
+  pageCount: number;
 }
 
-const CONFIG = {
-  turso_database_url: "libsql://example",
-  turso_auth_token: "token",
-  username: "alice",
-  username_lookup_key: btoa("x".repeat(32)),
-  password: "hunter2",
-  display_name: "Alice",
-  user_root_key: btoa("x".repeat(256)),
-};
+let buildCounter = 0;
+
+async function buildVaultDb(): Promise<DbFixture> {
+  const rootKey = randomBytes(256);
+  const path = `/vaultcontext-test-build-${buildCounter++}.db`;
+  const db = await SqliteDb.open(path, { rawKey: rootKey });
+  const pageSizeStmt = db.prepare("PRAGMA page_size;");
+  pageSizeStmt.step();
+  const pageSize = Number(pageSizeStmt.columnInt64(0));
+  pageSizeStmt.finalize();
+
+  db.exec(`
+    CREATE TABLE txt (
+      id INTEGER PRIMARY KEY, txt_key BLOB NOT NULL, name TEXT NOT NULL,
+      metadata BLOB, last_part_num INTEGER, last_accessed INTEGER
+    );
+    CREATE TABLE txt_parts (
+      id INTEGER PRIMARY KEY, txt_id INTEGER NOT NULL, part_num INTEGER NOT NULL,
+      path TEXT NOT NULL UNIQUE
+    );
+    CREATE TABLE txt_bookmarks (
+      id INTEGER PRIMARY KEY, txt_id INTEGER NOT NULL, part_num INTEGER NOT NULL,
+      line INTEGER NOT NULL, preview TEXT NOT NULL, created_at INTEGER NOT NULL,
+      UNIQUE (txt_id, part_num, line)
+    );
+  `);
+  db.run("INSERT INTO txt (id, txt_key, name) VALUES (1, x'00', ?);", (s) =>
+    s.bindText(1, "doc-one.txt"),
+  );
+  db.close();
+
+  const mod = await loadWasm();
+  const bytes = mod.FS.readFile(path);
+  const pageCount = bytes.length / pageSize;
+  const pages: Uint8Array[] = [];
+  for (let i = 0; i < pageCount; i++) pages.push(bytes.slice(i * pageSize, (i + 1) * pageSize));
+  return { rootKey, pages, pageSize, pageCount };
+}
+
+/** Wires the two mocked externals (RqliteHttpClient, startRemotePageWorker)
+ * to serve `fixture`'s pages, so unlock()/refresh() can open a real db
+ * through the real VFS without any actual network or Worker. */
+function mockBackend(
+  fixture: DbFixture,
+  opts: { currentVersion?: number; commitOk?: boolean } = {},
+) {
+  const currentVersion = opts.currentVersion ?? 1;
+  const commit = vi.fn().mockResolvedValue(opts.commitOk ?? true);
+  const query = vi.fn(async (statementId: string): Promise<RqliteResult[]> => {
+    if (statementId === "GET_META") {
+      return [{ values: [[currentVersion, fixture.pageCount, fixture.pageSize]] }];
+    }
+    throw new Error(`mockBackend: unexpected query ${statementId}`);
+  });
+  vi.mocked(RqliteHttpClient).mockImplementation(function (this: unknown) {
+    return { query, commit } as unknown as RqliteHttpClient;
+  } as unknown as typeof RqliteHttpClient);
+  const terminate = vi.fn();
+  vi.mocked(startRemotePageWorker).mockResolvedValue({
+    fetchPage: (pageNo: number) => fixture.pages[pageNo - 1]!,
+    terminate,
+  });
+  return { commit, terminate, query };
+}
 
 function fakeFile(contents: unknown): File {
-  return new File([JSON.stringify(contents)], "config.json", { type: "application/json" });
+  return new File([JSON.stringify(contents)], "creds.json", { type: "application/json" });
+}
+
+function fakeCredsJson(rootKey: Uint8Array): Record<string, unknown> {
+  return {
+    rqlite_url: "https://rqlite.example.com",
+    api_key: "test-api-key",
+    user_root_key: bytesToBase64(rootKey),
+    r2_config: {
+      endpoint: "https://example.r2.cloudflarestorage.com",
+      region: "auto",
+      bucket: "txt-parts",
+      read_only_access_key_id: "ro-id",
+      read_only_secret_access_key: "ro-secret",
+    },
+  };
 }
 
 function renderVault() {
   return renderHook(() => useVault(), { wrapper: VaultProvider });
 }
 
-describe("VaultProvider", () => {
-  // verbose logging defaults to on (see src/log.ts) -- unlock() logs each of
-  // its steps unconditionally, so silence that rather than let it clutter
-  // every test run's output.
-  beforeEach(() => {
-    vi.spyOn(console, "log").mockImplementation(() => {});
+async function unlockWith(fixture: DbFixture, backendOpts?: { commitOk?: boolean }) {
+  const backend = mockBackend(fixture, backendOpts);
+  const { result } = renderVault();
+  await act(async () => {
+    await result.current.unlock(fakeFile(fakeCredsJson(fixture.rootKey)));
   });
+  await waitFor(() => expect(result.current.status).toBe("unlocked"));
+  return { result, backend };
+}
+
+describe("VaultProvider", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it("unlocks successfully when every step succeeds", async () => {
-    vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({
-      userId: 42,
-      passwordOk: true,
-    });
-    vi.mocked(owner.unwrapUmk).mockResolvedValue(new Uint8Array(64).fill(1));
-    vi.mocked(owner.unwrapPrivKey).mockResolvedValue(new Uint8Array(64).fill(2));
-    vi.mocked(owner.fetchR2Config).mockResolvedValue({
-      endpoint: "https://x",
-      region: "auto",
-      bucket: "b",
-      readOnlyAccessKeyId: "id",
-      readOnlySecretAccessKey: "secret",
-    });
-    mockLibraryLoads();
+  it("unlocks successfully and loads metadataById/accessMap/bookmarksMap from the real db", async () => {
+    const fixture = await buildVaultDb();
+    const { result } = await unlockWith(fixture);
 
-    const { result } = renderVault();
-    expect(result.current.status).toBe("locked");
-
-    await act(async () => {
-      await result.current.unlock(fakeFile(CONFIG));
-    });
-
-    await waitFor(() => expect(result.current.status).toBe("unlocked"));
-    expect(result.current.session?.userId).toBe(42);
-    expect(result.current.session?.creds.displayName).toBe("Alice");
+    expect(result.current.session?.creds.rqliteUrl).toBe("https://rqlite.example.com");
+    expect(result.current.session?.metadataById.get(1)?.title).toBe("doc-one.txt");
+    expect(result.current.accessMap.size).toBe(0); // never opened yet
+    expect(result.current.bookmarksMap.size).toBe(0);
     expect(result.current.error).toBeNull();
   });
 
-  it("moves progress through each unlock phase, then clears it", async () => {
-    let resolveAuth: (auth: { userId: number; passwordOk: boolean }) => void = () => {};
-    vi.mocked(owner.resolveUserAndCheckPassword).mockReturnValue(
-      new Promise((resolve) => {
-        resolveAuth = resolve;
-      }),
-    );
-    vi.mocked(owner.unwrapUmk).mockResolvedValue(new Uint8Array(64).fill(1));
-    vi.mocked(owner.unwrapPrivKey).mockResolvedValue(new Uint8Array(64).fill(2));
-    vi.mocked(owner.fetchR2Config).mockResolvedValue({
-      endpoint: "https://x",
-      region: "auto",
-      bucket: "b",
-      readOnlyAccessKeyId: "id",
-      readOnlySecretAccessKey: "secret",
-    });
-    mockLibraryLoads();
-
-    const { result } = renderVault();
-    expect(result.current.progress).toBeNull();
-
-    let unlockPromise: Promise<void> = Promise.resolve();
-    act(() => {
-      unlockPromise = result.current.unlock(fakeFile(CONFIG));
-    });
-    // "Signing you in" covers resolveUserAndCheckPassword -- stalled on it,
-    // so this is where progress should sit until it resolves.
-    await waitFor(() =>
-      expect(result.current.progress).toEqual({ label: "Signing you in", step: 1, total: 5 }),
-    );
-
-    await act(async () => {
-      resolveAuth({ userId: 42, passwordOk: true });
-      await unlockPromise;
-    });
-
-    expect(result.current.status).toBe("unlocked");
-    expect(result.current.progress).toBeNull();
-  });
-
-  it("splits the library-loading phase into its three actual requests, not one big step", async () => {
-    vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({
-      userId: 42,
-      passwordOk: true,
-    });
-    vi.mocked(owner.unwrapUmk).mockResolvedValue(new Uint8Array(64).fill(1));
-    vi.mocked(owner.unwrapPrivKey).mockResolvedValue(new Uint8Array(64).fill(2));
-    vi.mocked(owner.fetchR2Config).mockResolvedValue({
-      endpoint: "https://x",
-      region: "auto",
-      bucket: "b",
-      readOnlyAccessKeyId: "id",
-      readOnlySecretAccessKey: "secret",
-    });
-    vi.mocked(metadata.loadTxtMetadata).mockResolvedValue({ state: null, metadataById: new Map() });
-    let resolveAccess: (value: {
-      txtAccessKey: Uint8Array;
-      accessMap: AccessMap;
-    }) => void = () => {};
-    vi.mocked(accessData.loadOrInitAccess).mockReturnValue(
-      new Promise((resolve) => {
-        resolveAccess = resolve;
-      }),
-    );
-    vi.mocked(bookmarksData.loadOrInitBookmarks).mockResolvedValue({
-      bookmarkKey: new Uint8Array(64),
-      bookmarksMap: new Map(),
-    });
-
-    const { result } = renderVault();
-    let unlockPromise: Promise<void> = Promise.resolve();
-    act(() => {
-      unlockPromise = result.current.unlock(fakeFile(CONFIG));
-    });
-    // Stalled on loadOrInitAccess -- if the whole library load were still
-    // one "Loading your library" step, this would still show the
-    // metadata step's own label, not its own phase.
-    await waitFor(() =>
-      expect(result.current.progress).toEqual({
-        label: "Loading your read progress",
-        step: 4,
-        total: 5,
-      }),
-    );
-
-    await act(async () => {
-      resolveAccess({ txtAccessKey: new Uint8Array(64), accessMap: new Map() });
-      await unlockPromise;
-    });
-    expect(result.current.status).toBe("unlocked");
-  });
-
-  it("clears progress if unlock fails", async () => {
-    vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({
-      userId: 42,
-      passwordOk: false,
+  it("reports an error and stays locked when GET_META fails", async () => {
+    const fixture = await buildVaultDb();
+    vi.mocked(RqliteHttpClient).mockImplementation(function (this: unknown) {
+      return {
+        query: vi.fn().mockRejectedValue(new Error("network down")),
+        commit: vi.fn(),
+      } as unknown as RqliteHttpClient;
+    } as unknown as typeof RqliteHttpClient);
+    vi.mocked(startRemotePageWorker).mockResolvedValue({
+      fetchPage: (pageNo: number) => fixture.pages[pageNo - 1]!,
+      terminate: vi.fn(),
     });
 
     const { result } = renderVault();
     await act(async () => {
-      await result.current.unlock(fakeFile(CONFIG));
+      await result.current.unlock(fakeFile(fakeCredsJson(fixture.rootKey)));
     });
 
     expect(result.current.status).toBe("locked");
-    expect(result.current.progress).toBeNull();
-  });
-
-  it("stays locked and reports an error for an invalid config file", async () => {
-    const { result } = renderVault();
-
-    await act(async () => {
-      await result.current.unlock(fakeFile({ not: "a valid config" }));
-    });
-
-    expect(result.current.status).toBe("locked");
+    expect(result.current.error).toContain("network down");
     expect(result.current.session).toBeNull();
+  });
+
+  it("reports a friendly error for a malformed creds file", async () => {
+    const { result } = renderVault();
+    await act(async () => {
+      await result.current.unlock(new File(["not json"], "creds.json"));
+    });
+    expect(result.current.status).toBe("locked");
     expect(result.current.error).toBeTruthy();
   });
 
-  it("stays locked when the password check fails", async () => {
-    vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({
-      userId: 42,
-      passwordOk: false,
-    });
-
-    const { result } = renderVault();
-    await act(async () => {
-      await result.current.unlock(fakeFile(CONFIG));
-    });
-
-    expect(result.current.status).toBe("locked");
-    expect(result.current.error).toMatch(/incorrect password/i);
-  });
-
-  it("serializes concurrent bookmark additions so neither overwrites the other", async () => {
-    vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({
-      userId: 42,
-      passwordOk: true,
-    });
-    vi.mocked(owner.unwrapUmk).mockResolvedValue(new Uint8Array(64).fill(1));
-    vi.mocked(owner.unwrapPrivKey).mockResolvedValue(new Uint8Array(64).fill(2));
-    vi.mocked(owner.fetchR2Config).mockResolvedValue({
-      endpoint: "https://x",
-      region: "auto",
-      bucket: "b",
-      readOnlyAccessKeyId: "id",
-      readOnlySecretAccessKey: "secret",
-    });
-    mockLibraryLoads();
-
-    // A faithful-enough stand-in for the real addBookmark (bookmarks.ts):
-    // read-modify-write off whatever map it's handed.
-    let createdAt = 0;
-    vi.mocked(bookmarksData.addBookmark).mockImplementation(
-      async (_db, _userId, _key, currentMap, txtId, partNum, line, txtPreview) => {
-        const next = new Map(currentMap);
-        next.set(txtId, [
-          ...(next.get(txtId) ?? []),
-          { partNum, line, txtPreview, createdAt: ++createdAt },
-        ]);
-        return next;
-      },
-    );
-
-    const { result } = renderVault();
-    await act(async () => {
-      await result.current.unlock(fakeFile(CONFIG));
-    });
-    await waitFor(() => expect(result.current.status).toBe("unlocked"));
-
-    // Fired back to back, neither awaited before the other starts -- exactly
-    // the "two rapid-fire calls" scenario accessMapRef/bookmarksMapRef exist
-    // to handle. Without serializing through enqueueMutation, both would read
-    // the same pre-mutation bookmarksMap and one addition would silently
-    // overwrite the other.
-    await act(async () => {
-      await Promise.all([
-        result.current.addBookmarkEntry(1, 1, 1, "first"),
-        result.current.addBookmarkEntry(1, 1, 2, "second"),
-      ]);
-    });
-
-    expect(result.current.bookmarksMap.get(1)).toHaveLength(2);
-  });
-
-  it("deleteTxt removes the txt's rows, access/bookmarks entries, and its in-memory metadata", async () => {
-    vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({
-      userId: 42,
-      passwordOk: true,
-    });
-    vi.mocked(owner.unwrapUmk).mockResolvedValue(new Uint8Array(64).fill(1));
-    vi.mocked(owner.unwrapPrivKey).mockResolvedValue(new Uint8Array(64).fill(2));
-    vi.mocked(owner.fetchR2Config).mockResolvedValue({
-      endpoint: "https://x",
-      region: "auto",
-      bucket: "b",
-      readOnlyAccessKeyId: "id",
-      readOnlySecretAccessKey: "secret",
-    });
-    const bookInfo = {
-      txtId: 7,
-      name: "book.txt",
-      title: "Book",
-      subjects: [],
-      rawMetadata: [],
-    } as BookInfo;
-    vi.mocked(metadata.loadTxtMetadata).mockResolvedValue({
-      state: null,
-      metadataById: new Map([[7, bookInfo]]),
-    });
-    vi.mocked(accessData.loadOrInitAccess).mockResolvedValue({
-      txtAccessKey: new Uint8Array(64),
-      accessMap: new Map([[7, { lastPartNum: 1, lastAccessedMs: 100 }]]),
-    });
-    vi.mocked(bookmarksData.loadOrInitBookmarks).mockResolvedValue({
-      bookmarkKey: new Uint8Array(64),
-      bookmarksMap: new Map(),
-    });
-    vi.mocked(adminTxt.deleteTxtRows).mockResolvedValue(undefined);
-    vi.mocked(adminShares.shareRecipientIds).mockResolvedValue([]);
-    vi.mocked(owner.unwrapTxtKey).mockResolvedValue(new Uint8Array(64).fill(9));
-    vi.mocked(owner.partRawPaths).mockResolvedValue(["path-1", "path-2"]);
-    vi.mocked(r2.deleteObject).mockResolvedValue(undefined);
-    vi.mocked(metadata.removeTxtMetadataEntry).mockResolvedValue(null);
-    vi.mocked(accessData.removeAccessEntry).mockImplementation(
-      async (_db, _userId, _key, currentMap, txtId) => {
-        const next = new Map(currentMap);
-        next.delete(txtId);
-        return next;
-      },
-    );
-    vi.mocked(bookmarksData.removeAllBookmarksForTxt).mockResolvedValue(new Map());
-
-    const { result } = renderVault();
-    await act(async () => {
-      await result.current.unlock(fakeFile(CONFIG));
-    });
-    await waitFor(() => expect(result.current.status).toBe("unlocked"));
-    expect(result.current.session?.metadataById.has(7)).toBe(true);
-
-    await act(async () => {
-      await result.current.deleteTxt(7);
-    });
-
-    expect(owner.partRawPaths).toHaveBeenCalledWith(expect.anything(), 7, expect.any(Uint8Array));
-    expect(r2.deleteObject).toHaveBeenCalledTimes(2);
-    expect(r2.deleteObject).toHaveBeenCalledWith(expect.anything(), expect.anything(), "path-1");
-    expect(r2.deleteObject).toHaveBeenCalledWith(expect.anything(), expect.anything(), "path-2");
-    expect(adminTxt.deleteTxtRows).toHaveBeenCalledWith(expect.anything(), 7);
-    expect(metadata.removeTxtMetadataEntry).toHaveBeenCalledWith(
-      expect.anything(),
-      42,
-      expect.anything(),
-      expect.anything(),
-      expect.anything(),
-      7,
-      undefined,
-      null,
-    );
-    expect(accessData.removeAccessEntry).toHaveBeenCalledWith(
-      expect.anything(),
-      42,
-      expect.anything(),
-      expect.anything(),
-      7,
-    );
-    expect(bookmarksData.removeAllBookmarksForTxt).toHaveBeenCalledWith(
-      expect.anything(),
-      42,
-      expect.anything(),
-      expect.anything(),
-      7,
-    );
-    expect(result.current.accessMap.has(7)).toBe(false);
-    expect(result.current.session?.metadataById.has(7)).toBe(false);
-  });
-
-  it("deleteTxt scrubs each recipient's copied metadata entry before deleting the txt_shares rows", async () => {
-    vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({
-      userId: 42,
-      passwordOk: true,
-    });
-    vi.mocked(owner.unwrapUmk).mockResolvedValue(new Uint8Array(64).fill(1));
-    vi.mocked(owner.fetchR2Config).mockResolvedValue({
-      endpoint: "https://x",
-      region: "auto",
-      bucket: "b",
-      readOnlyAccessKeyId: "id",
-      readOnlySecretAccessKey: "secret",
-    });
-    mockLibraryLoads();
-    vi.mocked(adminTxt.deleteTxtRows).mockResolvedValue(undefined);
-    vi.mocked(owner.unwrapTxtKey).mockResolvedValue(new Uint8Array(64).fill(9));
-    vi.mocked(owner.partRawPaths).mockResolvedValue([]);
-    vi.mocked(r2.deleteObject).mockResolvedValue(undefined);
-    vi.mocked(accessData.removeAccessEntry).mockResolvedValue(new Map());
-    vi.mocked(bookmarksData.removeAllBookmarksForTxt).mockResolvedValue(new Map());
-
-    vi.mocked(adminShares.shareRecipientIds).mockResolvedValue([2, 3]);
-    vi.mocked(adminUsers.resolveUserUmk).mockResolvedValue(new Uint8Array(64).fill(5));
-    vi.mocked(metadata.removeTxtMetadataEntry).mockResolvedValue(null);
-
-    const { result } = renderVault();
-    await act(async () => {
-      await result.current.unlock(fakeFile(CONFIG));
-    });
-    await waitFor(() => expect(result.current.status).toBe("unlocked"));
-
-    await act(async () => {
-      await result.current.deleteTxt(7);
-    });
-
-    expect(adminShares.shareRecipientIds).toHaveBeenCalledWith(expect.anything(), 7);
-    for (const toUserId of [2, 3]) {
-      expect(metadata.removeTxtMetadataEntry).toHaveBeenCalledWith(
-        expect.anything(),
-        toUserId,
-        expect.any(Uint8Array),
-        expect.anything(),
-        expect.anything(),
-        7,
-      );
-    }
-    expect(adminTxt.deleteTxtRows).toHaveBeenCalledWith(expect.anything(), 7);
-
-    // Cleanup runs before the txt_shares rows (and the txt itself) are gone.
-    const cleanupCallOrder = vi.mocked(adminShares.shareRecipientIds).mock.invocationCallOrder[0];
-    const deleteRowsCallOrder = vi.mocked(adminTxt.deleteTxtRows).mock.invocationCallOrder[0];
-    expect(cleanupCallOrder).toBeLessThan(deleteRowsCallOrder);
-  });
-
-  it("deleteTxt throws (and never deletes any rows) when a recipient's umk can't be recovered -- same hard-failure policy as revokeShare", async () => {
-    vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({
-      userId: 42,
-      passwordOk: true,
-    });
-    vi.mocked(owner.unwrapUmk).mockResolvedValue(new Uint8Array(64).fill(1));
-    vi.mocked(owner.fetchR2Config).mockResolvedValue({
-      endpoint: "https://x",
-      region: "auto",
-      bucket: "b",
-      readOnlyAccessKeyId: "id",
-      readOnlySecretAccessKey: "secret",
-    });
-    mockLibraryLoads();
-    vi.mocked(owner.unwrapTxtKey).mockResolvedValue(new Uint8Array(64).fill(9));
-    vi.mocked(owner.partRawPaths).mockResolvedValue([]);
-    vi.mocked(r2.deleteObject).mockResolvedValue(undefined);
-
-    vi.mocked(adminShares.shareRecipientIds).mockResolvedValue([2]);
-    vi.mocked(adminUsers.resolveUserUmk).mockResolvedValue(null);
-
-    const { result } = renderVault();
-    await act(async () => {
-      await result.current.unlock(fakeFile(CONFIG));
-    });
-    await waitFor(() => expect(result.current.status).toBe("unlocked"));
-
-    // Clear call history accumulated by unlock()/earlier tests sharing these
-    // module-level mocks -- what matters here is calls made *by this
-    // deleteTxt call specifically*, not "ever, across the whole file".
-    vi.mocked(metadata.removeTxtMetadataEntry).mockClear();
-    vi.mocked(adminTxt.deleteTxtRows).mockClear();
-
-    await expect(result.current.deleteTxt(7)).rejects.toThrow(/couldn't recover/i);
-
-    expect(metadata.removeTxtMetadataEntry).not.toHaveBeenCalled();
-    expect(adminTxt.deleteTxtRows).not.toHaveBeenCalled();
-  });
-
-  it("deleteTxt throws when the vault is locked", async () => {
-    const { result } = renderVault();
-    await expect(result.current.deleteTxt(7)).rejects.toThrow("vault is locked");
-  });
-
-  it("lock() clears the session and returns to locked", async () => {
-    vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({
-      userId: 42,
-      passwordOk: true,
-    });
-    vi.mocked(owner.unwrapUmk).mockResolvedValue(new Uint8Array(64).fill(1));
-    vi.mocked(owner.unwrapPrivKey).mockResolvedValue(new Uint8Array(64).fill(2));
-    vi.mocked(owner.fetchR2Config).mockResolvedValue({
-      endpoint: "https://x",
-      region: "auto",
-      bucket: "b",
-      readOnlyAccessKeyId: "id",
-      readOnlySecretAccessKey: "secret",
-    });
-    mockLibraryLoads();
-
-    const { result } = renderVault();
-    await act(async () => {
-      await result.current.unlock(fakeFile(CONFIG));
-    });
-    await waitFor(() => expect(result.current.status).toBe("unlocked"));
+  it("lock() terminates the page worker and clears session/maps", async () => {
+    const fixture = await buildVaultDb();
+    const { result, backend } = await unlockWith(fixture);
 
     act(() => result.current.lock());
 
     expect(result.current.status).toBe("locked");
     expect(result.current.session).toBeNull();
+    expect(result.current.accessMap.size).toBe(0);
+    expect(backend.terminate).toHaveBeenCalledOnce();
   });
 
-  describe("refresh", () => {
-    async function unlockedResult() {
-      vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({
-        userId: 42,
-        passwordOk: true,
-      });
-      vi.mocked(owner.unwrapUmk).mockResolvedValue(new Uint8Array(64).fill(1));
-      vi.mocked(owner.unwrapPrivKey).mockResolvedValue(new Uint8Array(64).fill(2));
-      vi.mocked(owner.fetchR2Config).mockResolvedValue({
-        endpoint: "https://x",
-        region: "auto",
-        bucket: "b",
-        readOnlyAccessKeyId: "id",
-        readOnlySecretAccessKey: "secret",
-      });
-      mockLibraryLoads();
+  it("getTxtKey reads txt.txt_key from the open db and caches it thereafter", async () => {
+    const fixture = await buildVaultDb();
+    const { result } = await unlockWith(fixture);
 
-      const { result } = renderVault();
-      await act(async () => {
-        await result.current.unlock(fakeFile(CONFIG));
-      });
-      await waitFor(() => expect(result.current.status).toBe("unlocked"));
-      return result;
-    }
+    let key: Uint8Array | undefined;
+    await act(async () => {
+      key = await result.current.getTxtKey(1);
+    });
+    expect(key).toEqual(new Uint8Array([0]));
 
-    it("re-loads metadata, access, and bookmarks", async () => {
-      const result = await unlockedResult();
-      expect(result.current.session?.metadataById.size).toBe(0);
-      expect(result.current.accessMap.size).toBe(0);
-      expect(result.current.bookmarksMap.size).toBe(0);
+    await act(async () => {
+      await result.current.getTxtKey(1); // second call: served from cache, no re-query needed
+    });
+  });
 
-      const freshMetadata = new Map([[7, { txtId: 7 } as unknown as BookInfo]]);
-      vi.mocked(metadata.loadTxtMetadata).mockResolvedValue({
-        state: null,
-        metadataById: freshMetadata,
-      });
-      vi.mocked(accessData.loadOrInitAccess).mockResolvedValue({
-        txtAccessKey: new Uint8Array(64),
-        accessMap: new Map([[7, { lastPartNum: 3, lastAccessedMs: 1 }]]),
-      });
-      vi.mocked(bookmarksData.loadOrInitBookmarks).mockResolvedValue({
-        bookmarkKey: new Uint8Array(64),
-        bookmarksMap: new Map([[7, [{ partNum: 3, line: 1, txtPreview: "x", createdAt: 1 }]]]),
-      });
+  it("getTxtKey throws for a nonexistent txt_id", async () => {
+    const fixture = await buildVaultDb();
+    const { result } = await unlockWith(fixture);
+    await expect(result.current.getTxtKey(999)).rejects.toThrow("no txt row for txt_id=999");
+  });
 
-      await act(async () => {
-        await result.current.refresh();
-      });
+  it("recordReadPosition writes+commits, then reflects the new position in accessMap", async () => {
+    const fixture = await buildVaultDb();
+    const { result, backend } = await unlockWith(fixture);
 
-      expect(result.current.session?.metadataById).toBe(freshMetadata);
-      expect(result.current.accessMap.get(7)).toEqual({ lastPartNum: 3, lastAccessedMs: 1 });
-      expect(result.current.bookmarksMap.get(7)).toHaveLength(1);
+    await act(async () => {
+      await result.current.recordReadPosition(1, { lastPartNum: 3, lastAccessedMs: 5000 });
     });
 
-    it("toggles refreshing on for the duration of the call", async () => {
-      const result = await unlockedResult();
-      expect(result.current.refreshing).toBe(false);
+    expect(result.current.accessMap.get(1)).toEqual({ lastPartNum: 3, lastAccessedMs: 5000 });
+    expect(backend.commit).toHaveBeenCalledOnce();
+  });
 
-      let resolveMetadata: (value: metadata.LoadedTxtMetadata) => void = () => {};
-      vi.mocked(metadata.loadTxtMetadata).mockReturnValue(
-        new Promise((resolve) => {
-          resolveMetadata = resolve;
-        }),
-      );
+  it("removeAccessEntry clears the read position from accessMap", async () => {
+    const fixture = await buildVaultDb();
+    const { result } = await unlockWith(fixture);
 
-      let refreshPromise: Promise<void> = Promise.resolve();
-      act(() => {
-        refreshPromise = result.current.refresh();
-      });
-      await waitFor(() => expect(result.current.refreshing).toBe(true));
-
-      await act(async () => {
-        resolveMetadata({ state: null, metadataById: new Map() });
-        await refreshPromise;
-      });
-      expect(result.current.refreshing).toBe(false);
+    await act(async () => {
+      await result.current.recordReadPosition(1, { lastPartNum: 3, lastAccessedMs: 5000 });
+    });
+    await act(async () => {
+      await result.current.removeAccessEntry(1);
     });
 
-    it("moves progress through each refresh phase, then clears it", async () => {
-      const result = await unlockedResult();
-      expect(result.current.progress).toBeNull();
+    expect(result.current.accessMap.has(1)).toBe(false);
+  });
 
-      let resolveAccess: (value: {
-        txtAccessKey: Uint8Array;
-        accessMap: AccessMap;
-      }) => void = () => {};
-      vi.mocked(accessData.loadOrInitAccess).mockReturnValue(
-        new Promise((resolve) => {
-          resolveAccess = resolve;
-        }),
-      );
+  it("addBookmarkEntry / removeBookmarkEntry write+commit and refresh bookmarksMap", async () => {
+    const fixture = await buildVaultDb();
+    const { result } = await unlockWith(fixture);
 
-      let refreshPromise: Promise<void> = Promise.resolve();
-      act(() => {
-        refreshPromise = result.current.refresh();
-      });
-      await waitFor(() =>
-        expect(result.current.progress).toEqual({
-          label: "Loading your read progress",
-          step: 2,
-          total: 3,
-        }),
-      );
+    await act(async () => {
+      await result.current.addBookmarkEntry(1, 0, 5, "first line");
+    });
+    const added = result.current.bookmarksMap.get(1);
+    expect(added).toHaveLength(1);
+    expect(added![0]!.preview).toBe("first line");
 
-      await act(async () => {
-        resolveAccess({ txtAccessKey: new Uint8Array(64), accessMap: new Map() });
-        await refreshPromise;
-      });
-      expect(result.current.progress).toBeNull();
+    await act(async () => {
+      await result.current.removeBookmarkEntry(added![0]!.id);
+    });
+    expect(result.current.bookmarksMap.get(1) ?? []).toHaveLength(0);
+  });
+
+  it("surfaces a lost commit CAS as a thrown error, without losing the local write", async () => {
+    const fixture = await buildVaultDb();
+    const { result } = await unlockWith(fixture, { commitOk: false });
+
+    await expect(
+      act(async () => {
+        await result.current.recordReadPosition(1, { lastPartNum: 1, lastAccessedMs: 1 });
+      }),
+    ).rejects.toThrow("Another session updated this vault");
+  });
+
+  it("refresh() re-opens against a fresh worker and reloads the library", async () => {
+    const fixture = await buildVaultDb();
+    const { result, backend } = await unlockWith(fixture);
+
+    const secondTerminate = vi.fn();
+    vi.mocked(startRemotePageWorker).mockResolvedValue({
+      fetchPage: (pageNo: number) => fixture.pages[pageNo - 1]!,
+      terminate: secondTerminate,
     });
 
-    it("throws when the vault is locked", async () => {
-      const { result } = renderVault();
-      await expect(result.current.refresh()).rejects.toThrow(/locked/i);
+    await act(async () => {
+      await result.current.refresh();
     });
+
+    expect(backend.terminate).toHaveBeenCalledOnce(); // old worker torn down
+    expect(result.current.session?.metadataById.get(1)?.title).toBe("doc-one.txt");
+    expect(result.current.refreshing).toBe(false);
   });
 });

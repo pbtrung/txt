@@ -1,22 +1,20 @@
-// Parses/validates the config JSON this UI is unlocked with. Mirrors
-// txt/creds.py's Creds base class -- same fields and the same validation --
-// except there is no r2_config field here: unlike admin_cred_template.json/
-// user_cred_template.json, this UI's config carries no R2 keys at all.
-// r2_config is fetched from Turso's r2_config table and decrypted with the
-// account's umk instead (see src/data/owner.ts's fetchR2Config), per
-// docs/data_model.md.
+// Replaces the old username/password/Turso unlock flow entirely. The
+// unlock file (see screens/Unlock/UnlockScreen.tsx) is now a small JSON
+// bundle of everything needed to open this account's SQLCipher db directly
+// -- no server round trip to resolve a password or look up R2 credentials
+// first. Field names mirror txt/creds.ts's snake_case (this project's one
+// convention for ops-authored credential JSON, e.g. out_creds.json) --
+// parseCreds is the snake_case-JSON -> camelCase-object boundary, same
+// pattern r2Config.ts's parseR2Config already uses for its nested object.
 
 import { base64ToBytes } from "../crypto/bytes";
-import { USERNAME_LOOKUP_KEY_MIN_LEN, USER_ROOT_KEY_MIN_LEN } from "../crypto/constants";
+import { parseR2Config, type R2Config } from "./r2Config";
 
 export interface Creds {
-  tursoDatabaseUrl: string;
-  tursoAuthToken: string;
-  username: string;
-  usernameLookupKey: Uint8Array;
-  password: string;
-  displayName: string;
+  rqliteUrl: string;
+  apiKey: string;
   userRootKey: Uint8Array;
+  r2Config: R2Config;
 }
 
 export class CredsError extends Error {}
@@ -29,42 +27,43 @@ function requireString(data: Record<string, unknown>, field: string): string {
   return value;
 }
 
-/** Parses the config file's JSON contents into validated Creds. */
+/** Parses the unlock file's JSON contents into validated Creds. */
 export function parseCreds(json: unknown): Creds {
   if (typeof json !== "object" || json === null) {
-    throw new CredsError("config must be a JSON object");
+    throw new CredsError("creds file must be a JSON object");
   }
   const data = json as Record<string, unknown>;
 
-  const tursoDatabaseUrl = requireString(data, "turso_database_url");
-  const tursoAuthToken = requireString(data, "turso_auth_token");
-  const username = requireString(data, "username");
-  const password = requireString(data, "password");
-  const displayName = requireString(data, "display_name");
+  const rqliteUrl = requireString(data, "rqlite_url");
+  const apiKey = requireString(data, "api_key");
 
-  let usernameLookupKey: Uint8Array;
   let userRootKey: Uint8Array;
   try {
-    usernameLookupKey = base64ToBytes(requireString(data, "username_lookup_key"));
     userRootKey = base64ToBytes(requireString(data, "user_root_key"));
   } catch {
-    throw new CredsError("username_lookup_key/user_root_key must be valid base64");
+    throw new CredsError("user_root_key must be valid base64");
   }
-
-  if (usernameLookupKey.length < USERNAME_LOOKUP_KEY_MIN_LEN) {
-    throw new CredsError("username_lookup_key too short");
-  }
-  if (userRootKey.length < USER_ROOT_KEY_MIN_LEN) {
+  if (userRootKey.length < 256) {
     throw new CredsError("user_root_key too short");
   }
 
-  return {
-    tursoDatabaseUrl,
-    tursoAuthToken,
-    username,
-    usernameLookupKey,
-    password,
-    displayName,
-    userRootKey,
-  };
+  let r2Config: R2Config;
+  try {
+    r2Config = parseR2Config(data.r2_config);
+  } catch (err) {
+    throw new CredsError(err instanceof Error ? err.message : String(err));
+  }
+
+  return { rqliteUrl, apiKey, userRootKey, r2Config };
+}
+
+export async function loadCredsFromFile(file: File): Promise<Creds> {
+  const text = await file.text();
+  let json: unknown;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new CredsError("creds file is not valid JSON");
+  }
+  return parseCreds(json);
 }
