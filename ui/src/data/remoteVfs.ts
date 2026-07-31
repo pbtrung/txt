@@ -162,13 +162,6 @@ export function registerRemoteVfs(mod: WasmModule, opts: RemoteVfsOptions): Remo
   }
 
   function xReadBacked(pBuf: number, iAmt: number, iOfst: number): number {
-    const pageSize = opts.pageSize;
-    const firstPageNo = Math.floor(iOfst / pageSize) + 1;
-    const lastPageNo = Math.floor((iOfst + iAmt - 1) / pageSize) + 1;
-    verbose(
-      `remoteVfs: xRead offset=${iOfst} amount=${iAmt} -> page(s) ${firstPageNo}` +
-        (lastPageNo !== firstPageNo ? `-${lastPageNo}` : ""),
-    );
     if (iOfst >= backedFileSize()) {
       mod.HEAPU8.fill(0, pBuf, pBuf + iAmt);
       return SQLITE_IOERR_SHORT_READ;
