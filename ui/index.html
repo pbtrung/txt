@@ -11,9 +11,10 @@
       are the load-bearing directives: same-origin scripts only (plus
       wasm-unsafe-eval, which leancrypto's Emscripten/WASM build needs to
       instantiate), no <object>/<embed>, no <base> tag hijacking relative
-      URLs. connect-src is intentionally unrestricted -- Turso's database URL
-      and R2's endpoint are per-account values from the user's own config/
-      r2_config, not fixed hosts this policy could otherwise pin down.
+      URLs. connect-src is intentionally unrestricted -- the rqlite deployment
+      URL and R2's endpoint are per-account values from the user's own creds
+      file (data/creds.ts), not fixed hosts this policy could otherwise pin
+      down.
       style-src allows 'unsafe-inline' for this app's own style={{...}}
       JSX props (developer-authored, not attacker-influenced -- DOMPurify's
       own attribute allowlist already excludes `style` from sanitized HTML).

@@ -12,33 +12,42 @@
 //   3. Writes dist/_headers (Cloudflare Pages' response-header config file --
 //      also understood by Netlify): narrows the direct-CDN-visit CSP's
 //      connect-src from index.html's own <meta> tag's deliberately-open '*'
-//      down to 'self' plus the Turso/R2 host patterns the app actually talks
-//      to, and sets Access-Control-Allow-Origin: null so local_index.html
-//      (opened via file://, sending Origin: null) can actually read the
-//      response bodies of its cross-origin fetches to manifest.json/
-//      manifest.sig/every other dist/ asset. _headers is a deploy-time
-//      config file, never itself served as a fetchable path, so it's
-//      written after buildManifest() runs, not before -- same reason
-//      manifest.json/manifest.sig are, below.
+//      down to 'self' plus the rqlite deployment/R2 host patterns the app
+//      actually talks to, and sets Access-Control-Allow-Origin: null so
+//      local_index.html (served from the cross-origin-isolated nginx
+//      location documented in docker/README.md, sending a real Origin, not
+//      opened bare via file://) can still read the response bodies of its
+//      cross-origin fetches to manifest.json/manifest.sig/every other dist/
+//      asset. _headers is a deploy-time config file, never itself served as
+//      a fetchable path, so it's written after buildManifest() runs, not
+//      before -- same reason manifest.json/manifest.sig are, below.
 //   4. Loads (or, only if absent, generates) an SLH-DSA-SHA2-256f keypair
-//      (@noble/post-quantum) from --admin-creds's slhdsa_256f_priv_key,
+//      (@noble/post-quantum) from --build-creds's slhdsa_256f_priv_key,
 //      signs manifest.json's literal bytes with it, and writes the raw
 //      signature to dist/manifest.sig. A freshly generated secret key gets
-//      written back into that same admin-creds file (nothing else in it is
+//      written back into that same build-creds file (nothing else in it is
 //      touched) -- an existing key is always reused so a rebuild doesn't
 //      silently invalidate every local_index.html copy already in the wild.
 //   5. Bundles ui/src/localIndex/main.ts (via Vite's own build API, iife
 //      format, so @noble/post-quantum and its own dependencies get inlined
 //      into one self-contained script -- no CDN/npm fetch at verify-time)
-//      with the derived public key and --admin-creds's asset_base_url baked
+//      with the derived public key and --build-creds's asset_base_url baked
 //      in, plus dist/index.html's own <title>/favicon (so the browser tab
 //      looks the same throughout the whole verify-then-render lifecycle,
 //      not just after the real app mounts), and writes the result to
 //      creds/local_index.html -- never dist/, so it's never uploaded to
-//      the CDN. This is the file a user opens directly (e.g. via file://)
-//      to verify everything before the real app ever renders; see
+//      the CDN. This is the file a user opens (over the cross-origin-
+//      isolated nginx location, not bare file://, per docker/README.md) to
+//      verify everything before the real app ever renders; see
 //      ui/src/localIndex/ for that verification logic and why it can't
 //      live inside dist/ itself.
+//
+// build-creds.json (gitignored, ui/build-creds.json by default) is a small,
+// operator-owned deployment config -- asset_base_url/rqlite_host/
+// slhdsa_256f_priv_key are all build-time secrets/facts about *this
+// deployment*, unrelated to any individual end user's own vault creds (see
+// data/creds.ts) -- so it gets its own file rather than reusing the old
+// admin_creds.json shape from the Turso-backed design.
 
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
@@ -54,22 +63,23 @@ const INDEX_HTML_PATH = join(DIST_DIR, "index.html");
 const CREDS_DIR = resolve(UI_DIR, "..", "creds");
 const LOCAL_INDEX_PATH = join(CREDS_DIR, "local_index.html");
 const VERIFIER_ENTRY = join(UI_DIR, "src", "localIndex", "main.ts");
+const DEFAULT_BUILD_CREDS_PATH = join(UI_DIR, "build-creds.json");
 
 function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === "--admin-creds") return { adminCredsPath: argv[i + 1] };
-    if (arg.startsWith("--admin-creds="))
-      return { adminCredsPath: arg.slice("--admin-creds=".length) };
+    if (arg === "--build-creds") return { buildCredsPath: argv[i + 1] };
+    if (arg.startsWith("--build-creds="))
+      return { buildCredsPath: arg.slice("--build-creds=".length) };
   }
-  return { adminCredsPath: undefined };
+  return { buildCredsPath: DEFAULT_BUILD_CREDS_PATH };
 }
 
-function loadAdminCreds(path) {
+function loadBuildCreds(path) {
   try {
     return JSON.parse(readFileSync(path, "utf8"));
   } catch (err) {
-    throw new Error(`failed to read/parse --admin-creds file ${path}: ${err.message}`);
+    throw new Error(`failed to read/parse --build-creds file ${path}: ${err.message}`);
   }
 }
 
@@ -131,39 +141,46 @@ function buildManifest() {
 // Mirrors dist/index.html's own <meta> CSP (see that file's comment for why
 // every other directive is what it is) except connect-src, narrowed here
 // from that meta tag's deliberately-open '*' down to 'self' plus the two
-// host patterns the app actually talks to (a Turso database in the
-// aws-us-east-1 region, and R2's standard custom-domain pattern). A real
-// HTTP response header and a <meta> CSP both apply at once and combine by
-// intersection, so this tightens the effective policy for a direct CDN visit
-// without having to touch the per-account-agnostic meta tag itself.
-const DIST_CSP =
-  "default-src 'self'; " +
-  "script-src 'self' 'wasm-unsafe-eval'; " +
-  "style-src 'self' 'unsafe-inline'; " +
-  "img-src 'self' data:; " +
-  "font-src 'self' data:; " +
-  "connect-src 'self' https://*.aws-us-east-1.turso.io https://*.r2.cloudflarestorage.com; " +
-  "object-src 'none'; " +
-  "base-uri 'self'; " +
-  "form-action 'self';";
+// host patterns the app actually talks to: this deployment's own rqlite/
+// OpenResty endpoint (a single, operator-controlled host, unlike the old
+// Turso-backed design where every customer had their own database URL --
+// hence baking in the real host here instead of a wildcard) and R2's
+// standard custom-domain pattern. A real HTTP response header and a <meta>
+// CSP both apply at once and combine by intersection, so this tightens the
+// effective policy for a direct CDN visit without having to touch the
+// per-account-agnostic meta tag itself.
+function distCsp(rqliteHost) {
+  return (
+    "default-src 'self'; " +
+    "script-src 'self' 'wasm-unsafe-eval'; " +
+    "style-src 'self' 'unsafe-inline'; " +
+    "img-src 'self' data:; " +
+    "font-src 'self' data:; " +
+    `connect-src 'self' ${rqliteHost} https://*.r2.cloudflarestorage.com; ` +
+    "object-src 'none'; " +
+    "base-uri 'self'; " +
+    "form-action 'self';"
+  );
+}
 
-function writeHeadersFile() {
-  // Access-Control-Allow-Origin: null -- local_index.html (opened via
-  // file://) sends Origin: null on its cross-origin fetches of
-  // manifest.json/manifest.sig/every other dist/ asset; without this,
-  // the browser blocks reading the response body even though the request
-  // itself succeeds. Safe to allow broadly: these are public, non-secret
-  // build outputs whose integrity local_index.html itself checks via
-  // SLH-DSA/SHA-512, not via keeping them cross-origin-unreadable.
-  const headers = `/*\n  Content-Security-Policy: ${DIST_CSP}\n  Access-Control-Allow-Origin: null\n`;
+function writeHeadersFile(rqliteHost) {
+  // Access-Control-Allow-Origin: * -- local_index.html's own hosting origin
+  // (docker/README.md's cross-origin-isolated nginx location) is a real
+  // https:// origin now, not file://'s literal "null" -- an ACAO reflecting
+  // only "null" would satisfy file:// but not a real Origin header, so this
+  // needs the wildcard rather than the old exact-match value. Safe to allow
+  // broadly: these are public, non-secret, no-credentials build outputs
+  // whose integrity local_index.html itself checks via SLH-DSA/SHA-512, not
+  // via keeping them cross-origin-unreadable.
+  const headers = `/*\n  Content-Security-Policy: ${distCsp(rqliteHost)}\n  Access-Control-Allow-Origin: *\n`;
   writeFileSync(join(DIST_DIR, "_headers"), headers, "utf8");
 }
 
-/** Reuses slhdsa_256f_priv_key from adminCreds if it's a non-empty base64
+/** Reuses slhdsa_256f_priv_key from buildCreds if it's a non-empty base64
  * string; otherwise generates a fresh keypair. Never regenerates when a key
  * is already present. */
-function loadOrCreateKeypair(adminCreds) {
-  const raw = adminCreds.slhdsa_256f_priv_key;
+function loadOrCreateKeypair(buildCreds) {
+  const raw = buildCreds.slhdsa_256f_priv_key;
   if (typeof raw === "string" && raw.length > 0) {
     const secretKey = Buffer.from(raw, "base64");
     return { secretKey, publicKey: slh_dsa_sha2_256f.getPublicKey(secretKey), generated: false };
@@ -172,12 +189,12 @@ function loadOrCreateKeypair(adminCreds) {
   return { secretKey, publicKey, generated: true };
 }
 
-function requireAssetBaseUrl(adminCreds, adminCredsPath) {
-  const url = adminCreds.asset_base_url;
-  if (typeof url !== "string" || url.length === 0) {
-    throw new Error(`${adminCredsPath} has no asset_base_url field`);
+function requireStringField(buildCreds, buildCredsPath, field) {
+  const value = buildCreds[field];
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`${buildCredsPath} has no ${field} field`);
   }
-  return url;
+  return value;
 }
 
 /** Bundles ui/src/localIndex/main.ts into one self-contained IIFE script
@@ -256,22 +273,17 @@ function buildLocalIndexHtml(bundleCode, title, faviconDataUri) {
 }
 
 async function main() {
-  const { adminCredsPath } = parseArgs(process.argv.slice(2));
-  if (!adminCredsPath) {
-    throw new Error(
-      "Pass --admin-creds <path to admin_creds.json> -- this build step needs its asset_base_url and " +
-        "slhdsa_256f_priv_key fields.",
-    );
-  }
-  const adminCreds = loadAdminCreds(adminCredsPath);
-  const assetBaseUrl = requireAssetBaseUrl(adminCreds, adminCredsPath);
-  const { secretKey, publicKey, generated } = loadOrCreateKeypair(adminCreds);
+  const { buildCredsPath } = parseArgs(process.argv.slice(2));
+  const buildCreds = loadBuildCreds(buildCredsPath);
+  const assetBaseUrl = requireStringField(buildCreds, buildCredsPath, "asset_base_url");
+  const rqliteHost = requireStringField(buildCreds, buildCredsPath, "rqlite_host");
+  const { secretKey, publicKey, generated } = loadOrCreateKeypair(buildCreds);
 
   const originalHtml = readFileSync(INDEX_HTML_PATH, "utf8");
   writeFileSync(INDEX_HTML_PATH, addSri(originalHtml), "utf8");
 
   const manifest = buildManifest();
-  writeHeadersFile();
+  writeHeadersFile(rqliteHost);
   const manifestBytes = Buffer.from(JSON.stringify(manifest), "utf8");
   writeFileSync(join(DIST_DIR, "manifest.json"), manifestBytes);
   writeFileSync(
@@ -280,8 +292,8 @@ async function main() {
   );
 
   if (generated) {
-    adminCreds.slhdsa_256f_priv_key = Buffer.from(secretKey).toString("base64");
-    writeFileSync(adminCredsPath, JSON.stringify(adminCreds, null, 2) + "\n", "utf8");
+    buildCreds.slhdsa_256f_priv_key = Buffer.from(secretKey).toString("base64");
+    writeFileSync(buildCredsPath, JSON.stringify(buildCreds, null, 2) + "\n", "utf8");
   }
 
   const publicKeyB64 = Buffer.from(publicKey).toString("base64");
@@ -290,7 +302,7 @@ async function main() {
   mkdirSync(CREDS_DIR, { recursive: true });
   writeFileSync(LOCAL_INDEX_PATH, buildLocalIndexHtml(bundleCode, title, faviconDataUri), "utf8");
 
-  const keyNote = generated ? ` (generated a new keypair, written back to ${adminCredsPath})` : "";
+  const keyNote = generated ? ` (generated a new keypair, written back to ${buildCredsPath})` : "";
   console.log(`Signed ${Object.keys(manifest).length} asset(s) with SLH-DSA-SHA2-256f${keyNote}.`);
   console.log(`Wrote ${relative(resolve(UI_DIR, ".."), LOCAL_INDEX_PATH)}`);
 }
