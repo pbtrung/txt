@@ -354,10 +354,7 @@ export async function loadLibraryHandler() {
 export function loadBookmarksMapHandler() {
   const { db } = requireOpen();
   const map = bookmarks.loadBookmarksMap(db);
-  verbose(
-    `dbWorker: loadBookmarksMap -- ${map.size} txt_id(s) with bookmarks: ` +
-      `${JSON.stringify(Array.from(map.entries()))}`,
-  );
+  verbose(`dbWorker: loadBookmarksMap -- ${map.size} txt_id(s) with bookmarks`);
   return map;
 }
 
