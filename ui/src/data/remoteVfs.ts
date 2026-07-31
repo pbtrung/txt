@@ -24,6 +24,15 @@ const SQLITE_NOTFOUND = 12;
 const SQLITE_OPEN_DELETEONCLOSE = 0x00000008;
 const SQLITE_ACCESS_EXISTS = 0;
 
+// Bounds how much of a large document's pages stay resident across a long
+// reading session -- unbounded would otherwise grow forever, since nothing
+// ever evicted a page once fetched. 250 pages (~1MB at this build's 4KB
+// page size) is a small vault-wide budget, not per-document; the cache is
+// naturally reset to empty on refresh() anyway (state/VaultContext.tsx's
+// refresh path re-opens against a brand new registerRemoteVfs() call, a
+// fresh closure with its own fresh cache, not this one reused).
+const MAX_CACHED_PAGES = 250;
+
 export interface RemoteVfsOptions {
   name?: string;
   pageSize: number;
@@ -77,14 +86,32 @@ export function registerRemoteVfs(mod: WasmModule, opts: RemoteVfsOptions): Remo
   let tempCounter = 0;
   let ioMethodsPtr = 0;
 
-  function getPage(pageNo: number): Uint8Array {
+  function cacheGet(pageNo: number): Uint8Array | undefined {
     const cached = pageCache.get(pageNo);
+    if (cached) {
+      pageCache.delete(pageNo);
+      pageCache.set(pageNo, cached);
+    }
+    return cached;
+  }
+
+  function cacheSet(pageNo: number, bytes: Uint8Array): void {
+    pageCache.delete(pageNo);
+    pageCache.set(pageNo, bytes);
+    if (pageCache.size > MAX_CACHED_PAGES) {
+      const oldest = pageCache.keys().next().value;
+      if (oldest !== undefined) pageCache.delete(oldest);
+    }
+  }
+
+  function getPage(pageNo: number): Uint8Array {
+    const cached = cacheGet(pageNo);
     if (cached) return cached;
     const start = performance.now();
     const bytes = opts.fetchPage(pageNo);
     stats.roundtrips.push({ pageNo, ms: performance.now() - start });
     stats.bytesFetched += bytes.length;
-    pageCache.set(pageNo, bytes);
+    cacheSet(pageNo, bytes);
     return bytes;
   }
 
@@ -366,7 +393,7 @@ export function registerRemoteVfs(mod: WasmModule, opts: RemoteVfsOptions): Remo
     const ok = await client.commit(pages, currentVersion, newVersion, knownPageCount);
     if (!ok) return false;
     currentVersion = newVersion;
-    for (const [pageNo, data] of dirtyPages) pageCache.set(pageNo, data);
+    for (const [pageNo, data] of dirtyPages) cacheSet(pageNo, data);
     dirtyPages.clear();
     return true;
   }
