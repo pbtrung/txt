@@ -72,6 +72,7 @@ export interface WasmModule {
   _sqlite3_column_text(stmt: number, i: number): number;
   _sqlite3_column_int64(stmt: number, i: number): bigint;
   _sqlite3_last_insert_rowid(db: number): bigint;
+  _sqlite3_changes(db: number): number;
 
   /** See sqlcipher/js-vfs.mjs -- wires a JS-implemented sqlite3_vfs into the real C struct. */
   _sqlite3_js_vfs_register(

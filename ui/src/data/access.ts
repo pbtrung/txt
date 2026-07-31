@@ -5,6 +5,7 @@
 // query at read time (idx_txt_last_accessed backs it), not a bounded blob
 // a client has to prune.
 
+import { verbose } from "../log";
 import type { SqliteDb } from "./sqliteDb";
 
 export interface ReadPosition {
@@ -25,6 +26,10 @@ export function setReadPosition(
     s.bindInt64(2, lastAccessedMs);
     s.bindInt64(3, txtId);
   });
+  const changed = db.changes();
+  if (changed !== 1) {
+    verbose(`access: setReadPosition txtId=${txtId} matched ${changed} row(s), expected 1`);
+  }
 }
 
 /** "Remove from recently opened" (LibraryScreen.tsx) -- resets a document's

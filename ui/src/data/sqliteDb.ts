@@ -9,6 +9,8 @@
 import { type WasmModule, loadWasm, writeBuffer, readBuffer, cString } from "./wasmLoader";
 
 const SQLITE_OK = 0;
+const SQLITE_ROW = 100;
+const SQLITE_DONE = 101;
 const SQLITE_NULL = 5;
 const SQLITE_OPEN_READONLY = 0x00000001;
 const SQLITE_OPEN_READWRITE = 0x00000002;
@@ -84,6 +86,15 @@ export class SqliteDb {
     return this.mod._sqlite3_last_insert_rowid(this.db);
   }
 
+  /** Rows affected by the most recently completed INSERT/UPDATE/DELETE on
+   * this connection (sqlite3_changes) -- lets a caller confirm a write
+   * actually matched something, e.g. an UPDATE ... WHERE that silently
+   * matches zero rows is not an error (stepDone() still reports
+   * SQLITE_DONE), just a no-op that's otherwise invisible. */
+  changes(): number {
+    return this.mod._sqlite3_changes(this.db);
+  }
+
   private errmsg(): string {
     const p = this.mod._sqlite3_errmsg(this.db);
     return p ? this.mod.UTF8ToString(p) : "";
@@ -130,11 +141,20 @@ export class Statement {
   }
 
   step(): boolean {
-    return this.mod._sqlite3_step(this.stmt) === 100; // SQLITE_ROW
+    return this.mod._sqlite3_step(this.stmt) === SQLITE_ROW;
   }
 
+  /** Runs an INSERT/UPDATE/DELETE to completion. Unlike step() (where a
+   * non-ROW result is the ordinary, successful end of a SELECT), any
+   * result other than SQLITE_DONE here is a real failure (SQLITE_ERROR,
+   * SQLITE_CONSTRAINT, ...) that sqlite3_step's return value used to just
+   * be discarded rather than surfaced -- callers had no way to tell a
+   * failed write apart from a successful one. */
   stepDone(): void {
-    this.mod._sqlite3_step(this.stmt);
+    const rc = this.mod._sqlite3_step(this.stmt);
+    if (rc !== SQLITE_DONE) {
+      throw new Error(`stepDone failed: rc=${rc}`);
+    }
   }
 
   columnIsNull(i: number): boolean {
