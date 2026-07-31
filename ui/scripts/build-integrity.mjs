@@ -12,8 +12,8 @@
 //   3. Writes dist/_headers (Cloudflare Pages' response-header config file --
 //      also understood by Netlify): narrows the direct-CDN-visit CSP's
 //      connect-src from index.html's own <meta> tag's deliberately-open '*'
-//      down to 'self' plus the rqlite deployment/R2 host patterns the app
-//      actually talks to, and sets Access-Control-Allow-Origin: null so
+//      down to 'self' plus this deployment's own origin (asset_base_url's)
+//      and R2's host pattern, and sets Access-Control-Allow-Origin: null so
 //      local_index.html (served from the cross-origin-isolated nginx
 //      location documented in docker/README.md, sending a real Origin, not
 //      opened bare via file://) can still read the response bodies of its
@@ -43,11 +43,11 @@
 //      live inside dist/ itself.
 //
 // build-creds.json (gitignored, ui/build-creds.json by default) is a small,
-// operator-owned deployment config -- asset_base_url/rqlite_host/
-// slhdsa_256f_priv_key are all build-time secrets/facts about *this
-// deployment*, unrelated to any individual end user's own vault creds (see
-// data/creds.ts) -- so it gets its own file rather than reusing the old
-// admin_creds.json shape from the Turso-backed design.
+// operator-owned deployment config -- asset_base_url/slhdsa_256f_priv_key
+// are both build-time secrets/facts about *this deployment*, unrelated to
+// any individual end user's own vault creds (see data/creds.ts) -- so it
+// gets its own file rather than reusing the old admin_creds.json shape from
+// the Turso-backed design.
 
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
@@ -146,29 +146,28 @@ function buildManifest() {
 // Mirrors dist/index.html's own <meta> CSP (see that file's comment for why
 // every other directive is what it is) except connect-src, narrowed here
 // from that meta tag's deliberately-open '*' down to 'self' plus the two
-// host patterns the app actually talks to: this deployment's own rqlite/
-// OpenResty endpoint (a single, operator-controlled host, unlike the old
-// Turso-backed design where every customer had their own database URL --
-// hence baking in the real host here instead of a wildcard) and R2's
+// host patterns the app actually talks to: this deployment's own origin
+// (asset_base_url -- the same host/port this build's assets, and this
+// deployment's rqlite/OpenResty endpoint, are served from) and R2's
 // standard custom-domain pattern. A real HTTP response header and a <meta>
 // CSP both apply at once and combine by intersection, so this tightens the
 // effective policy for a direct CDN visit without having to touch the
 // per-account-agnostic meta tag itself.
-function distCsp(rqliteHost) {
+function distCsp(assetBaseUrl) {
   return (
     "default-src 'self'; " +
     "script-src 'self' 'wasm-unsafe-eval'; " +
     "style-src 'self' 'unsafe-inline'; " +
     "img-src 'self' data:; " +
     "font-src 'self' data:; " +
-    `connect-src 'self' ${rqliteHost} https://*.r2.cloudflarestorage.com; ` +
+    `connect-src 'self' ${new URL(assetBaseUrl).origin} https://*.r2.cloudflarestorage.com; ` +
     "object-src 'none'; " +
     "base-uri 'self'; " +
     "form-action 'self';"
   );
 }
 
-function writeHeadersFile(rqliteHost) {
+function writeHeadersFile(assetBaseUrl) {
   // Access-Control-Allow-Origin: * -- local_index.html's own hosting origin
   // (docker/README.md's cross-origin-isolated nginx location) is a real
   // https:// origin now, not file://'s literal "null" -- an ACAO reflecting
@@ -177,7 +176,7 @@ function writeHeadersFile(rqliteHost) {
   // broadly: these are public, non-secret, no-credentials build outputs
   // whose integrity local_index.html itself checks via SLH-DSA/SHA-512, not
   // via keeping them cross-origin-unreadable.
-  const headers = `/*\n  Content-Security-Policy: ${distCsp(rqliteHost)}\n  Access-Control-Allow-Origin: *\n`;
+  const headers = `/*\n  Content-Security-Policy: ${distCsp(assetBaseUrl)}\n  Access-Control-Allow-Origin: *\n`;
   writeFileSync(join(DIST_DIR, "_headers"), headers, "utf8");
 }
 
@@ -281,14 +280,13 @@ async function main() {
   const { buildCredsPath } = parseArgs(process.argv.slice(2));
   const buildCreds = loadBuildCreds(buildCredsPath);
   const assetBaseUrl = requireStringField(buildCreds, buildCredsPath, "asset_base_url");
-  const rqliteHost = requireStringField(buildCreds, buildCredsPath, "rqlite_host");
   const { secretKey, publicKey, generated } = loadOrCreateKeypair(buildCreds);
 
   const originalHtml = readFileSync(INDEX_HTML_PATH, "utf8");
   writeFileSync(INDEX_HTML_PATH, addSri(originalHtml), "utf8");
 
   const manifest = buildManifest();
-  writeHeadersFile(rqliteHost);
+  writeHeadersFile(assetBaseUrl);
   const manifestBytes = Buffer.from(JSON.stringify(manifest), "utf8");
   writeFileSync(join(DIST_DIR, "manifest.json"), manifestBytes);
   writeFileSync(

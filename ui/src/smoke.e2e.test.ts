@@ -236,13 +236,7 @@ describe("real end-to-end smoke test (browser Worker + SharedArrayBuffer + Atomi
     tmpDir = mkdtempSync(join(tmpdir(), "ui-smoke-"));
 
     const buildCredsPath = join(tmpDir, "build-creds.json");
-    writeFileSync(
-      buildCredsPath,
-      JSON.stringify({
-        asset_base_url: "https://example.invalid/",
-        rqlite_host: "https://example.invalid",
-      }),
-    );
+    writeFileSync(buildCredsPath, JSON.stringify({ asset_base_url: "https://example.invalid/" }));
     execFileSync("npm", ["run", "ui:build", "--", "--build-creds", buildCredsPath], {
       cwd: REPO_ROOT,
       stdio: "inherit",

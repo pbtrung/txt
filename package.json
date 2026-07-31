@@ -11,6 +11,7 @@
     "ui:dev": "vite --config ui/vite.config.ts",
     "ui:typecheck": "tsc -b ui/tsconfig.json",
     "ui:build": "tsc -b ui/tsconfig.json && vite build --config ui/vite.config.ts && rm -f ui/dist/sqlcipher.d.ts ui/dist/package.json ui/dist/js-vfs.mjs ui/dist/js-vfs.d.mts ui/dist/sqlcipher.js.symbols ui/dist/test-js-vfs.mjs ui/dist/test-roundtrip.mjs && node ui/scripts/build-integrity.mjs",
+    "postui:build": "rm -rf ui/node_modules",
     "ui:preview": "vite preview --config ui/vite.config.ts",
     "ui:test": "vitest run --config ui/vite.config.ts --exclude \"**/smoke.e2e.test.ts\"",
     "ui:test:watch": "vitest --config ui/vite.config.ts --exclude \"**/smoke.e2e.test.ts\"",
