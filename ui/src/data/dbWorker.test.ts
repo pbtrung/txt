@@ -31,7 +31,14 @@ interface DbFixture {
 
 let buildCounter = 0;
 
-async function buildVaultDb(): Promise<DbFixture> {
+async function buildVaultDb(
+  opts: {
+    r2Config?: {
+      readWriteAccessKeyId: string | null;
+      readWriteSecretAccessKey: string | null;
+    };
+  } = {},
+): Promise<DbFixture> {
   const rootKey = randomBytes(256);
   const path = `/dbworker-test-build-${buildCounter++}.db`;
   const db = await SqliteDb.open(path, { rawKey: rootKey });
@@ -54,11 +61,31 @@ async function buildVaultDb(): Promise<DbFixture> {
       line INTEGER NOT NULL, preview TEXT NOT NULL, created_at INTEGER NOT NULL,
       UNIQUE (txt_id, part_num, line)
     );
+    CREATE TABLE r2_config (
+      id INTEGER NOT NULL PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+      endpoint TEXT NOT NULL, region TEXT NOT NULL, bucket TEXT NOT NULL,
+      read_only_access_key_id TEXT NOT NULL, read_only_secret_access_key TEXT NOT NULL,
+      read_write_access_key_id TEXT, read_write_secret_access_key TEXT
+    );
   `);
   db.run("INSERT INTO txt (id, txt_key, name) VALUES (1, x'00', ?);", (s) =>
     s.bindText(1, "doc-one.txt"),
   );
   db.run("INSERT INTO txt_parts (txt_id, part_num, path) VALUES (1, 0, 'path-0');");
+  if (opts.r2Config) {
+    db.run(
+      `INSERT INTO r2_config (
+         id, endpoint, region, bucket, read_only_access_key_id, read_only_secret_access_key,
+         read_write_access_key_id, read_write_secret_access_key
+       ) VALUES (1, 'https://r2.example.com', 'auto', 'txt-bucket', 'ro-id', 'ro-secret', ?, ?);`,
+      (s) => {
+        if (opts.r2Config!.readWriteAccessKeyId === null) s.bindNull(1);
+        else s.bindText(1, opts.r2Config!.readWriteAccessKeyId);
+        if (opts.r2Config!.readWriteSecretAccessKey === null) s.bindNull(2);
+        else s.bindText(2, opts.r2Config!.readWriteSecretAccessKey);
+      },
+    );
+  }
   db.close();
 
   const mod = await loadWasm();
@@ -223,6 +250,46 @@ describe("dbWorker", () => {
       expect.any(Number),
       "admin-user-id",
     );
+  });
+
+  it("getR2Config/fetchR2Config reads r2_config's row, mapping NULL read_write_* to undefined", async () => {
+    const fixture = await buildVaultDb({
+      r2Config: { readWriteAccessKeyId: null, readWriteSecretAccessKey: null },
+    });
+    await openWith(fixture);
+
+    expect(dbWorker.fetchR2Config()).toEqual({
+      endpoint: "https://r2.example.com",
+      region: "auto",
+      bucket: "txt-bucket",
+      readOnlyAccessKeyId: "ro-id",
+      readOnlySecretAccessKey: "ro-secret",
+      readWriteAccessKeyId: undefined,
+      readWriteSecretAccessKey: undefined,
+    });
+  });
+
+  it("fetchR2Config reads the admin's populated read_write_* pair when present", async () => {
+    const fixture = await buildVaultDb({
+      r2Config: { readWriteAccessKeyId: "rw-id", readWriteSecretAccessKey: "rw-secret" },
+    });
+    await openWith(fixture);
+
+    expect(dbWorker.fetchR2Config()).toEqual({
+      endpoint: "https://r2.example.com",
+      region: "auto",
+      bucket: "txt-bucket",
+      readOnlyAccessKeyId: "ro-id",
+      readOnlySecretAccessKey: "ro-secret",
+      readWriteAccessKeyId: "rw-id",
+      readWriteSecretAccessKey: "rw-secret",
+    });
+  });
+
+  it("fetchR2Config throws when no r2_config row exists yet", async () => {
+    const fixture = await buildVaultDb(); // no r2Config seeded
+    await openWith(fixture);
+    expect(() => dbWorker.fetchR2Config()).toThrow("no r2_config row for this account");
   });
 
   it("refresh() re-opens against a fresh worker using the creds from open()", async () => {

@@ -30,6 +30,7 @@ import { loadCredsFromFile, type Creds } from "../data/creds";
 import { DbWorkerClient } from "../data/dbWorkerClient";
 import type { BookInfo } from "../data/metadata";
 import { createR2Client } from "../data/r2";
+import type { R2Config } from "../data/r2Config";
 import { verbose } from "../log";
 
 export type VaultStatus = "locked" | "unlocking" | "unlocked";
@@ -59,6 +60,7 @@ export interface VaultSession {
   creds: Creds;
   client: DbWorkerClient;
   r2Client: AwsClient;
+  r2Config: R2Config;
   metadataById: Map<number, BookInfo>;
 }
 
@@ -128,11 +130,12 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       verbose("unlock: loading library");
       const { metadataById, accessMap: initialAccessMap } = await client.loadLibrary();
       const initialBookmarksMap = await client.loadBookmarksMap();
+      const r2Config = await client.getR2Config();
 
       txtKeyCache.current = new Map();
       setAccessMap(initialAccessMap);
       setBookmarksMap(initialBookmarksMap);
-      setSession({ creds, client, r2Client: createR2Client(creds.r2Config), metadataById });
+      setSession({ creds, client, r2Client: createR2Client(r2Config), r2Config, metadataById });
       setStatus("unlocked");
       setProgress(null);
       verbose("unlock: done");

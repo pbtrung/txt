@@ -4,6 +4,7 @@ import {
   CleanBucketCommand,
   CollectGarbageCommand,
   VacuumCommand,
+  UpdateDbCommand,
   TestPerfCommand,
 } from "./commands.ts";
 
@@ -12,6 +13,7 @@ const USAGE = `usage:
   txt.ts --clean-bucket --creds <file> --db <file> [--dry-run] [--verbose]
   txt.ts --collect-garbage --db <file> [--dry-run] [--verbose]
   txt.ts --vacuum --creds <file> --db <file> [--verbose]
+  txt.ts --update-db --creds <file> --db <file> [--verbose]
   txt.ts --test-perf --creds <file> [--verbose]`;
 
 const OPTIONS = {
@@ -19,6 +21,7 @@ const OPTIONS = {
   "clean-bucket": { type: "boolean" },
   "collect-garbage": { type: "boolean" },
   vacuum: { type: "boolean" },
+  "update-db": { type: "boolean" },
   "test-perf": { type: "boolean" },
   "in-creds": { type: "string" },
   in: { type: "string" },
@@ -39,6 +42,7 @@ export async function main(argv: string[]): Promise<void> {
   if (values["clean-bucket"]) return runCleanBucket(values);
   if (values["collect-garbage"]) return runCollectGarbage(values);
   if (values.vacuum) return runVacuum(values);
+  if (values["update-db"]) return runUpdateDb(values);
   if (values["test-perf"]) return runTestPerf(values);
   throw new Error(USAGE);
 }
@@ -79,6 +83,14 @@ async function runCollectGarbage(values: Values): Promise<void> {
 
 async function runVacuum(values: Values): Promise<void> {
   await new VacuumCommand({
+    credsPath: requiredArg(values, "creds"),
+    dbPath: requiredArg(values, "db"),
+    verbose: !!values.verbose,
+  }).run();
+}
+
+async function runUpdateDb(values: Values): Promise<void> {
+  await new UpdateDbCommand({
     credsPath: requiredArg(values, "creds"),
     dbPath: requiredArg(values, "db"),
     verbose: !!values.verbose,

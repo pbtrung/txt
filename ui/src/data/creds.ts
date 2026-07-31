@@ -1,20 +1,21 @@
 // Replaces the old username/password/Turso unlock flow entirely. The
 // unlock file (see screens/Unlock/UnlockScreen.tsx) is now a small JSON
 // bundle of everything needed to open this account's SQLCipher db directly
-// -- no server round trip to resolve a password or look up R2 credentials
-// first. Field names mirror txt/creds.ts's snake_case (this project's one
-// convention for ops-authored credential JSON, e.g. out_creds.json) --
-// parseCreds is the snake_case-JSON -> camelCase-object boundary, same
-// pattern r2Config.ts's parseR2Config already uses for its nested object.
+// -- no server round trip to resolve a password first. Field names mirror
+// txt/creds.ts's snake_case (this project's one convention for ops-authored
+// credential JSON, e.g. out_creds.json) -- parseCreds is the
+// snake_case-JSON -> camelCase-object boundary. No r2_config here (unlike
+// txt/creds.ts's InCreds, which is a CLI operator's own file, not an end
+// user's unlock file): this account's R2 credentials live in its own
+// SQLCipher db (the r2_config table, docs/data_model.md) and are read from
+// there via dbWorker.ts's fetchR2Config, not bundled into this file.
 
 import { base64ToBytes } from "../crypto/bytes";
-import { parseR2Config, type R2Config } from "./r2Config";
 
 export interface Creds {
   rqliteUrl: string;
   apiKey: string;
   userRootKey: Uint8Array;
-  r2Config: R2Config;
 }
 
 export class CredsError extends Error {}
@@ -47,14 +48,7 @@ export function parseCreds(json: unknown): Creds {
     throw new CredsError("user_root_key too short");
   }
 
-  let r2Config: R2Config;
-  try {
-    r2Config = parseR2Config(data.r2_config);
-  } catch (err) {
-    throw new CredsError(err instanceof Error ? err.message : String(err));
-  }
-
-  return { rqliteUrl, apiKey, userRootKey, r2Config };
+  return { rqliteUrl, apiKey, userRootKey };
 }
 
 export async function loadCredsFromFile(file: File): Promise<Creds> {

@@ -54,6 +54,10 @@ export class DbWorkerClient {
     return this.call("getTxtKey", txtId);
   }
 
+  getR2Config(): Promise<import("./r2Config").R2Config> {
+    return this.call("getR2Config");
+  }
+
   loadLibrary(): Promise<import("./library").LibrarySnapshot> {
     return this.call("loadLibrary");
   }

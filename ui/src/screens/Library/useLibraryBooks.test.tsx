@@ -43,6 +43,7 @@ const session: VaultContextModule.VaultSession = {
   creds: {} as never,
   client: {} as never,
   r2Client: {} as never,
+  r2Config: {} as never,
   metadataById,
 };
 

@@ -168,7 +168,7 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
         rawPath = fetched;
         rawPathCache.current.set(currentPartNum, rawPath);
       }
-      return fetchPart(session.r2Client, session.creds.r2Config, txtKey, rawPath);
+      return fetchPart(session.r2Client, session.r2Config, txtKey, rawPath);
     })()
       .then((text) => {
         if (cancelled) return;

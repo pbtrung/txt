@@ -45,9 +45,10 @@ function mockVault(
   metadataById: Map<number, BookInfo> = new Map(),
 ) {
   const session = {
-    creds: { r2Config: {} as R2Config } as VaultContextModule.VaultSession["creds"],
+    creds: {} as VaultContextModule.VaultSession["creds"],
     client: { partCount, partRawPath } as unknown as VaultContextModule.VaultSession["client"],
     r2Client: {} as AwsClient,
+    r2Config: {} as R2Config,
     metadataById,
   };
   vi.mocked(VaultContextModule.useVault).mockReturnValue({
@@ -103,7 +104,7 @@ describe("useReaderBook", () => {
     await waitFor(() => expect(result.current.partText).toBe("Part fourteen's text."));
     expect(partsModule.fetchPart).toHaveBeenCalledWith(
       session.r2Client,
-      session.creds.r2Config,
+      session.r2Config,
       expect.any(Uint8Array),
       "path-14",
     );

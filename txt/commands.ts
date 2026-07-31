@@ -19,6 +19,7 @@ import {
   rootKeyBytes,
   type OutCreds,
   type PerfCreds,
+  type R2Config,
 } from "./creds.ts";
 import { BlobCipher } from "./blobCipher.ts";
 import { R2Client } from "./r2.ts";
@@ -292,6 +293,87 @@ export class VacuumCommand extends Command<VacuumOptions> {
     rqliteDb.vacuum();
     const after = statSync(this.opts.dbPath).size;
     console.log(`\nrqlite_txt.db: ${before} -> ${after} bytes`);
+  }
+}
+
+// ===========================================================================
+// --update-db: writes/upserts r2_config's single row (docs/data_model.md)
+// into the admin's own user SQLCipher database, from --creds's r2_config
+// field -- the R2/S3 credentials ui/ reads to fetch (and, for the admin,
+// write) document part content, instead of bundling them into its own
+// unlock creds file.
+// ===========================================================================
+
+const R2_CONFIG_DDL = `
+  CREATE TABLE IF NOT EXISTS r2_config (
+    id                           INTEGER NOT NULL PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    endpoint                     TEXT NOT NULL,
+    region                       TEXT NOT NULL,
+    bucket                       TEXT NOT NULL,
+    read_only_access_key_id      TEXT NOT NULL,
+    read_only_secret_access_key  TEXT NOT NULL,
+    read_write_access_key_id     TEXT,
+    read_write_secret_access_key TEXT
+  );
+`;
+
+export interface UpdateDbOptions {
+  credsPath: string;
+  dbPath: string;
+  verbose: boolean;
+}
+
+export class UpdateDbCommand extends Command<UpdateDbOptions> {
+  async run(): Promise<void> {
+    const creds = loadInCreds(this.opts.credsPath);
+    const rqliteDb = await RqliteDb.openExisting(this.opts.dbPath);
+    try {
+      const userId = rqliteDb.findAdminUserId();
+      if (!userId) {
+        console.log("no admin account found; nothing to update");
+        return;
+      }
+      await this.writeR2Config(rqliteDb, userId, rootKeyBytes(creds), creds.r2_config);
+    } finally {
+      rqliteDb.close();
+    }
+  }
+
+  private async writeR2Config(
+    rqliteDb: RqliteDb,
+    userId: string,
+    rawKey: Buffer,
+    r2Config: R2Config,
+  ): Promise<void> {
+    const before = rqliteDb.latestPages(userId);
+    const userDb = await SqliteDb.open("/update-db-user.db", { preload: before.bytes, rawKey });
+    userDb.exec(R2_CONFIG_DDL);
+    userDb.run(
+      `INSERT INTO r2_config (
+         id, endpoint, region, bucket,
+         read_only_access_key_id, read_only_secret_access_key,
+         read_write_access_key_id, read_write_secret_access_key
+       ) VALUES (1, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (id) DO UPDATE SET
+         endpoint=excluded.endpoint, region=excluded.region, bucket=excluded.bucket,
+         read_only_access_key_id=excluded.read_only_access_key_id,
+         read_only_secret_access_key=excluded.read_only_secret_access_key,
+         read_write_access_key_id=excluded.read_write_access_key_id,
+         read_write_secret_access_key=excluded.read_write_secret_access_key;`,
+      (s) => {
+        s.bindText(1, r2Config.endpoint);
+        s.bindText(2, r2Config.region);
+        s.bindText(3, r2Config.bucket);
+        s.bindText(4, r2Config.read_only_access_key_id);
+        s.bindText(5, r2Config.read_only_secret_access_key);
+        s.bindText(6, r2Config.read_write_access_key_id);
+        s.bindText(7, r2Config.read_write_secret_access_key);
+      },
+    );
+    const after = userDb.readBytes();
+    userDb.close();
+    rqliteDb.commit(userId, before.pageSize, after);
+    this.log(`r2_config written to user database (db_id=${userId})`);
   }
 }
 

@@ -25,6 +25,7 @@ interface FakeClient {
   loadLibrary: ReturnType<typeof vi.fn>;
   loadBookmarksMap: ReturnType<typeof vi.fn>;
   getTxtKey: ReturnType<typeof vi.fn>;
+  getR2Config: ReturnType<typeof vi.fn>;
   recordReadPosition: ReturnType<typeof vi.fn>;
   removeAccessEntry: ReturnType<typeof vi.fn>;
   addBookmarkEntry: ReturnType<typeof vi.fn>;
@@ -44,6 +45,13 @@ function fakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
     }),
     loadBookmarksMap: vi.fn().mockResolvedValue(new Map()),
     getTxtKey: vi.fn().mockResolvedValue(new Uint8Array([0])),
+    getR2Config: vi.fn().mockResolvedValue({
+      endpoint: "https://example.r2.cloudflarestorage.com",
+      region: "auto",
+      bucket: "txt-parts",
+      readOnlyAccessKeyId: "ro-id",
+      readOnlySecretAccessKey: "ro-secret",
+    }),
     recordReadPosition: vi.fn().mockResolvedValue(undefined),
     removeAccessEntry: vi.fn().mockResolvedValue(undefined),
     addBookmarkEntry: vi.fn().mockResolvedValue(new Map()),
@@ -70,13 +78,6 @@ function fakeCredsJson(): Record<string, unknown> {
     rqlite_url: "https://rqlite.example.com",
     api_key: "test-api-key",
     user_root_key: bytesToBase64(new Uint8Array(256)),
-    r2_config: {
-      endpoint: "https://example.r2.cloudflarestorage.com",
-      region: "auto",
-      bucket: "txt-parts",
-      read_only_access_key_id: "ro-id",
-      read_only_secret_access_key: "ro-secret",
-    },
   };
 }
 

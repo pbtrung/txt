@@ -26,6 +26,7 @@ import * as access from "./access";
 import * as bookmarks from "./bookmarks";
 import { loadLibrary } from "./library";
 import * as owner from "./owner";
+import { parseR2Config, type R2Config } from "./r2Config";
 import { RqliteHttpClient, resolveTargetDbId, resultRows } from "./rqliteHttpClient";
 import { registerRemoteVfs, type RemoteVfsHandle } from "./remoteVfs";
 import { startRemotePageWorker, type RemotePageBridge } from "./remotePageClient";
@@ -136,6 +137,36 @@ export function fetchTxtKey(txtId: number): Uint8Array {
   return key;
 }
 
+/** Reads r2_config's single row (docs/data_model.md) straight off this
+ * account's own SQLCipher db -- not from the unlock creds file, see
+ * creds.ts's own comment. read_write_access_key_id/secret are NULL for
+ * every db except the admin's own, hence columnIsNull rather than
+ * columnText for those two. */
+export function fetchR2Config(): R2Config {
+  const { db } = requireOpen();
+  const stmt = db.prepare(
+    `SELECT endpoint, region, bucket, read_only_access_key_id, read_only_secret_access_key,
+            read_write_access_key_id, read_write_secret_access_key
+     FROM r2_config WHERE id = 1;`,
+  );
+  const found = stmt.step();
+  if (!found) {
+    stmt.finalize();
+    throw new Error("no r2_config row for this account");
+  }
+  const raw = {
+    endpoint: stmt.columnText(0),
+    region: stmt.columnText(1),
+    bucket: stmt.columnText(2),
+    read_only_access_key_id: stmt.columnText(3),
+    read_only_secret_access_key: stmt.columnText(4),
+    read_write_access_key_id: stmt.columnIsNull(5) ? undefined : stmt.columnText(5),
+    read_write_secret_access_key: stmt.columnIsNull(6) ? undefined : stmt.columnText(6),
+  };
+  stmt.finalize();
+  return parseR2Config(raw);
+}
+
 export async function loadLibraryHandler() {
   const { db } = requireOpen();
   return loadLibrary(db);
@@ -196,6 +227,7 @@ const handlers: Record<string, (...args: any[]) => unknown> = {
   close,
   refresh,
   getTxtKey: fetchTxtKey,
+  getR2Config: fetchR2Config,
   loadLibrary: loadLibraryHandler,
   loadBookmarksMap: loadBookmarksMapHandler,
   recordReadPosition,

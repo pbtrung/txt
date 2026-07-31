@@ -1,15 +1,13 @@
-// R2 connection info, mirrors txt/creds.py's R2Config dataclass -- except
-// here it's parsed from the decrypted r2_config.config JSON blob (see
-// owner.ts's fetchR2Config), not from a local credential file.
+// R2 connection info, mirrors txt/creds.ts's R2Config interface -- except
+// here it's parsed from this account's own r2_config table row (one row
+// per SQLCipher db, docs/data_model.md), fetched via dbWorker.ts's
+// fetchR2Config, not from a local credential file.
 //
-// Every account's row holds the read-only pair when first created
-// (txt/admin.py's _ensure_r2_config), regardless of role. The one documented
-// exception: txt.py --update-r2-config can add the admin's own read-write
-// pair into their own row afterward (see docs/data_model.md,
-// docs/credentials.md) -- an admin-only, opt-in change to a row that
-// otherwise never carries write access. read_write_access_key_id/secret are
-// therefore optional here, not rejected outright the way an earlier version
-// of this parser did.
+// Every account's row holds a full read-only pair. read_write_access_key_id/
+// read_write_secret_access_key are only populated for the admin account --
+// the one whose row txt.ts --update-db writes with both pairs -- and NULL
+// for every regular user's own database, so they're optional here rather
+// than required.
 
 export interface R2Config {
   endpoint: string;

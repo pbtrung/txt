@@ -83,6 +83,18 @@ node txt.ts --vacuum --creds creds.json --db rqlite_txt.db [--verbose]
 - `--creds` — same shape as `--out-creds` above; only `user_root_key` is actually used, to open the user database, but `api_key` still has to be present since both commands share the same loader/validation.
 - `--verbose` — logs the user database's byte size before/after its own rebuild.
 
+## `--update-db`
+
+Writes/upserts `r2_config`'s single row ([data_model.md](data_model.md)) into the admin's own user SQLCipher database, from `--creds`'s `r2_config` field — the R2/S3 credentials `ui/` reads to fetch (and, for the admin, write) document part content, instead of bundling them into its own unlock creds file. Creates the table if it doesn't exist yet (a database migrated before this command existed won't have it); safe to re-run any time credentials rotate — a second run overwrites the same single row rather than adding another.
+
+```
+node txt.ts --update-db --creds creds.json --db rqlite_txt.db [--verbose]
+```
+
+- `--creds` — same shape as `--clean-bucket`'s above (`user_root_key` + `r2_config`, both pairs of R2 keys populated — this command always targets the admin account, which per [data_model.md](data_model.md) needs full read-write access, not just read-only).
+- `--db` — the rqlite-schema database to write into.
+- `--verbose` — logs the `db_id` the row was written to.
+
 ## `--test-perf`
 
 Opens a real, remote user database over real HTTP to a live OpenResty+rqlite deployment (`docker/`), reading it lazily -- one page fetched on demand as SQLite actually asks for it, cached for the rest of the run -- instead of the "read every page, build the full db in memory" model every other command here uses (`RqliteDb.latestPages`/`UserDb.resume`). Runs 5 fixed `SELECT`s against it and reports network round trips, per-round-trip and total timing, and bytes fetched, so that tradeoff is measured rather than assumed.
