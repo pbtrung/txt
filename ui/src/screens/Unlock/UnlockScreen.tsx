@@ -31,25 +31,42 @@ export function UnlockScreen() {
 
   return (
     <div className="d-flex align-items-center justify-content-center vh-100">
-      <div className="text-center position-relative" style={{ maxWidth: "24rem" }}>
+      <div className="text-center" style={{ maxWidth: "24rem" }}>
         <div className="mb-4">
           <Wordmark size="lg" />
         </div>
 
-        <button
-          type="button"
-          className="btn btn-primary d-flex align-items-center gap-2 px-3 py-2 mx-auto"
-          onClick={() => inputRef.current?.click()}
-          disabled={unlocking}
-        >
-          <i className="bi bi-file-earmark fs-5" aria-hidden="true" />
-          <span className="text-start lh-sm">
-            <span className="d-block fw-semibold small">
-              {unlocking ? "Unlocking…" : "Choose File"}
+        {/* position-relative wraps just the button (not the status block
+            below) so the error box, anchored to *this* wrapper's own
+            bottom edge, sits directly under the button -- not under the
+            status block's own reserved (but often invisible) height, which
+            would otherwise leave a large dead gap above the error. */}
+        <div className="position-relative">
+          <button
+            type="button"
+            className="btn btn-primary d-flex align-items-center gap-2 px-3 py-2 mx-auto"
+            onClick={() => inputRef.current?.click()}
+            disabled={unlocking}
+          >
+            <i className="bi bi-file-earmark fs-5" aria-hidden="true" />
+            <span className="text-start lh-sm">
+              <span className="d-block fw-semibold small">
+                {unlocking ? "Unlocking…" : "Choose File"}
+              </span>
+              <span className="d-block small fw-normal">to unlock your library</span>
             </span>
-            <span className="d-block small fw-normal">to unlock your library</span>
-          </span>
-        </button>
+          </button>
+
+          {error && (
+            <div
+              className="alert alert-danger mt-2 position-absolute start-0 end-0"
+              style={{ top: "100%" }}
+              role="alert"
+            >
+              {error}
+            </div>
+          )}
+        </div>
 
         {/* role="status" on the wrapper, not the (otherwise unlabeled)
             spinner glyph itself -- it's a live region, so the two text
@@ -76,22 +93,6 @@ export function UnlockScreen() {
             {progress?.label ?? "Setting up your library"}…
           </div>
         </div>
-
-        {/* Absolutely positioned, not part of normal flow: the outer wrapper
-            centers this whole card with vh-100/align-items-center, so an
-            error box that instead grew the card's own height (mounting
-            in-flow) would shift the wordmark/button above it every time an
-            error appeared or was cleared. top: 100% anchors it flush under
-            the card regardless. */}
-        {error && (
-          <div
-            className="alert alert-danger mt-3 position-absolute start-0 end-0"
-            style={{ top: "100%" }}
-            role="alert"
-          >
-            {error}
-          </div>
-        )}
 
         <input
           ref={inputRef}
