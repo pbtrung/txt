@@ -90,13 +90,16 @@ local function key_hash(raw_key)
 end
 
 local function query_identity(hash)
+  -- rqlite's named-params shape is a two-element array [sql, params], not an
+  -- object with query/named_params keys -- the latter is silently rejected
+  -- with a 400 by rqlite itself.
   local body = cjson.encode({ {
-    query = [[
+    [[
       SELECT u.user_id, u.role FROM api_keys k
       JOIN users u ON u.user_id = k.user_id
       WHERE k.key_hash = :key_hash AND k.revoked_at IS NULL AND u.disabled = 0
     ]],
-    named_params = { key_hash = hash },
+    { key_hash = hash },
   } })
   local res = ngx.location.capture("/internal/rqlite/db/query", {
     method = ngx.HTTP_POST,
@@ -199,12 +202,12 @@ local function build_commit_statements(db_id, commit)
 
   return {
     insert_stmt, -- rqlite's positional-params form: {sql, p1, p2, ...}
-    {
-      query = [[
+    { -- rqlite's named-params form: {sql, params}, not {query=, named_params=}
+      [[
         UPDATE db_meta SET current_version=:new_version, page_count=:page_count, needs_gc=1
         WHERE db_id=:db_id AND current_version=:old_version
       ]],
-      named_params = {
+      {
         new_version = commit.new_version,
         page_count = commit.page_count,
         db_id = db_id,
@@ -225,7 +228,7 @@ local function build_user_statements(body, user_id)
   local statements = {}
   for _, params in ipairs(require_batch(body)) do
     params.db_id = user_id -- forced, never read from the client
-    table.insert(statements, { query = stmt.query, named_params = params })
+    table.insert(statements, { stmt.query, params })
   end
   return statements
 end
@@ -249,7 +252,7 @@ local function build_admin_statements(body)
     if not body.target_db_id then fail(400, body.statementId .. " as admin requires target_db_id") end
     for _, params in ipairs(batch) do
       params.db_id = body.target_db_id
-      table.insert(statements, { query = user_tmpl.query, named_params = params })
+      table.insert(statements, { user_tmpl.query, params })
     end
   else
     if admin_tmpl.forced_params and not body.target_db_id then
@@ -257,7 +260,7 @@ local function build_admin_statements(body)
     end
     for _, params in ipairs(batch) do
       if admin_tmpl.forced_params then admin_tmpl.forced_params(params, body.target_db_id) end
-      table.insert(statements, { query = admin_tmpl.query, named_params = params })
+      table.insert(statements, { admin_tmpl.query, params })
     end
   end
   return statements
