@@ -11,7 +11,9 @@ import * as useLibraryBooksModule from "./useLibraryBooks";
 import type { LibraryBook } from "./libraryModel";
 
 vi.mock("../../state/VaultContext", async () => {
-  const actual = await vi.importActual<typeof import("../../state/VaultContext")>("../../state/VaultContext");
+  const actual = await vi.importActual<typeof import("../../state/VaultContext")>(
+    "../../state/VaultContext",
+  );
   return { ...actual, useVault: vi.fn() };
 });
 vi.mock("./useLibraryBooks", () => ({ useLibraryBooks: vi.fn() }));
@@ -136,7 +138,9 @@ describe("LibraryScreen", () => {
     const lessons = screen.getByText("21 Lessons for the 21st Century");
     const whiteOrder = screen.getByText("The White Order");
     // lastAccessedMs: 3000 for "21 Lessons" vs 2000 for "The White Order" -- more recent first.
-    expect(lessons.compareDocumentPosition(whiteOrder) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(
+      lessons.compareDocumentPosition(whiteOrder) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     // "Never Opened Yet" has no read position, so it shouldn't appear in Recent.
     expect(screen.queryByText("Never Opened Yet")).not.toBeInTheDocument();
   });
@@ -201,7 +205,10 @@ describe("LibraryScreen", () => {
   describe("virtualization", () => {
     function renderLibraryWithBooks(manyBooks: LibraryBook[]) {
       setVaultMock(new Map(), false);
-      vi.mocked(useLibraryBooksModule.useLibraryBooks).mockReturnValue({ books: manyBooks, loading: false });
+      vi.mocked(useLibraryBooksModule.useLibraryBooks).mockReturnValue({
+        books: manyBooks,
+        loading: false,
+      });
       return render(libraryTree());
     }
 
@@ -264,7 +271,10 @@ describe("LibraryScreen", () => {
         ],
       ]);
       setVaultMock(manyBookmarks, false);
-      vi.mocked(useLibraryBooksModule.useLibraryBooks).mockReturnValue({ books: [books[0]], loading: false });
+      vi.mocked(useLibraryBooksModule.useLibraryBooks).mockReturnValue({
+        books: [books[0]],
+        loading: false,
+      });
       render(libraryTree());
 
       const rows = screen.getAllByText(/Preview line \d+/);
@@ -314,7 +324,9 @@ describe("LibraryScreen", () => {
     it("positions the dropdown to grow rightward (it's anchored at the left edge, not the right)", async () => {
       renderLibrary();
       await userEvent.click(screen.getByRole("button", { name: /library menu/i }));
-      const menu = screen.getAllByRole("button", { name: /All books/ })[0].closest(".dropdown-menu");
+      const menu = screen
+        .getAllByRole("button", { name: /All books/ })[0]
+        .closest(".dropdown-menu");
       expect(menu).toHaveClass("app-dropdown-menu-start");
     });
 
@@ -356,7 +368,9 @@ describe("LibraryScreen", () => {
       const refreshButton = screen.getByRole("button", { name: /refresh library/i });
       expect(refreshButton).not.toHaveTextContent("Refresh");
       const lockButton = screen.getByRole("button", { name: /^lock$/i });
-      expect(refreshButton.compareDocumentPosition(lockButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(
+        refreshButton.compareDocumentPosition(lockButton) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
     });
 
     it("calls refresh() when clicked", async () => {
@@ -445,12 +459,16 @@ describe("LibraryScreen", () => {
     it("navigates to the reader at that exact part and line when clicked", async () => {
       renderLibrary(bookmarksMap);
       await userEvent.click(screen.getByText(/Powerful white mages killed/));
-      await waitFor(() => expect(screen.getByText(/Reader for \/read\/1\?part=14&line=1/)).toBeInTheDocument());
+      await waitFor(() =>
+        expect(screen.getByText(/Reader for \/read\/1\?part=14&line=1/)).toBeInTheDocument(),
+      );
     });
 
     it("deletes a bookmark via its delete button", async () => {
       renderLibrary(bookmarksMap);
-      const row = screen.getByText(/Powerful white mages killed/).closest('[role="button"]') as HTMLElement;
+      const row = screen
+        .getByText(/Powerful white mages killed/)
+        .closest('[role="button"]') as HTMLElement;
       await userEvent.click(within(row).getByRole("button", { name: /remove this bookmark/i }));
       expect(removeBookmarkEntry).toHaveBeenCalledWith(1, 1000);
     });

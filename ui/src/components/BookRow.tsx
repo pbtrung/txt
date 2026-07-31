@@ -48,14 +48,20 @@ export function BookRow({ book, onClick, onDelete, hidePartNum, selected, style 
       <span className="overflow-hidden" style={{ minWidth: 0 }}>
         <span className="d-block fw-semibold text-truncate">{book.info.title}</span>
         {subtitle && (
-          <span className={`d-block small text-truncate ${selected ? "" : "text-body-secondary"}`}>{subtitle}</span>
+          <span className={`d-block small text-truncate ${selected ? "" : "text-body-secondary"}`}>
+            {subtitle}
+          </span>
         )}
       </span>
       <span className="d-flex align-items-center gap-2 flex-shrink-0">
         {status === "in-progress" && !hidePartNum && (
-          <span className={`small text-nowrap ${selected ? "" : "text-body-secondary"}`}>Part {book.lastPartNum}</span>
+          <span className={`small text-nowrap ${selected ? "" : "text-body-secondary"}`}>
+            Part {book.lastPartNum}
+          </span>
         )}
-        {onDelete && <DeleteButton onClick={onDelete} ariaLabel={`Remove ${book.info.title} from Recent`} />}
+        {onDelete && (
+          <DeleteButton onClick={onDelete} ariaLabel={`Remove ${book.info.title} from Recent`} />
+        )}
       </span>
     </ClickableRow>
   );

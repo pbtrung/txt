@@ -62,7 +62,11 @@ export class ErrorBoundary extends Component<Props, State> {
         className="position-fixed top-0 start-0 w-100 h-100 bg-body d-flex align-items-center justify-content-center p-4"
         style={{ zIndex: 2000 }}
       >
-        <div className="alert alert-danger d-flex flex-column gap-2 w-100" role="alert" style={{ maxWidth: "28rem" }}>
+        <div
+          className="alert alert-danger d-flex flex-column gap-2 w-100"
+          role="alert"
+          style={{ maxWidth: "28rem" }}
+        >
           <div className="d-flex align-items-start justify-content-between gap-3">
             <div>{error.message || "Something went wrong."}</div>
             <button
@@ -74,7 +78,9 @@ export class ErrorBoundary extends Component<Props, State> {
               <i className="bi bi-x-lg" aria-hidden="true" />
             </button>
           </div>
-          <div className="small text-body-secondary">You'll need to unlock your library again to continue.</div>
+          <div className="small text-body-secondary">
+            You'll need to unlock your library again to continue.
+          </div>
         </div>
       </div>
     );

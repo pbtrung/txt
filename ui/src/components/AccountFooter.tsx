@@ -36,7 +36,11 @@ export function AccountFooter({
           title={refreshAriaLabel}
         >
           {refreshing ? (
-            <span className="spinner-border spinner-border-sm text-primary" role="status" aria-hidden="true" />
+            <span
+              className="spinner-border spinner-border-sm text-primary"
+              role="status"
+              aria-hidden="true"
+            />
           ) : (
             <i className="bi bi-arrow-clockwise text-primary" aria-hidden="true" />
           )}

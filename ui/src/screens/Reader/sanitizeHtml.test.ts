@@ -8,7 +8,9 @@ describe("sanitizeDescriptionHtml", () => {
     const result = sanitizeDescriptionHtml(
       "<p>Cerryl learns that he has <b>inherited</b> his father's <i>magic</i>.</p>",
     );
-    expect(result).toBe("<p>Cerryl learns that he has <b>inherited</b> his father's <i>magic</i>.</p>");
+    expect(result).toBe(
+      "<p>Cerryl learns that he has <b>inherited</b> his father's <i>magic</i>.</p>",
+    );
   });
 
   it("strips script tags and their content entirely", () => {
@@ -49,7 +51,9 @@ describe("sanitizeDescriptionHtml", () => {
 
 describe("descriptionPlainText", () => {
   it("strips all markup, keeping only the text", () => {
-    const result = descriptionPlainText("<p>Cerryl learns that he has <b>inherited</b> his father's magic.</p>");
+    const result = descriptionPlainText(
+      "<p>Cerryl learns that he has <b>inherited</b> his father's magic.</p>",
+    );
     expect(result).toBe("Cerryl learns that he has inherited his father's magic.");
   });
 

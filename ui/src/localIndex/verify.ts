@@ -24,7 +24,8 @@ import { verbose } from "../log";
 
 export class VerificationError extends Error {}
 
-export type VerifyProgress = "fetching-manifest" | "verifying-signature" | "fetching-assets" | "verifying-hashes";
+export type VerifyProgress =
+  "fetching-manifest" | "verifying-signature" | "fetching-assets" | "verifying-hashes";
 
 async function fetchBytes(url: string): Promise<Uint8Array<ArrayBuffer>> {
   const res = await fetch(url);
@@ -59,7 +60,9 @@ export async function verifyAssets(
   onProgress("verifying-signature");
   if (!slh_dsa_sha2_256f.verify(sigBytes, manifestBytes, publicKey)) {
     verbose("localIndex: manifest.json failed its SLH-DSA signature check");
-    throw new VerificationError("manifest.json failed its SLH-DSA signature check -- refusing to load anything");
+    throw new VerificationError(
+      "manifest.json failed its SLH-DSA signature check -- refusing to load anything",
+    );
   }
   verbose("localIndex: manifest.json signature OK");
 
@@ -67,7 +70,9 @@ export async function verifyAssets(
   try {
     manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as Record<string, string>;
   } catch (err) {
-    throw new VerificationError(`manifest.json is signed correctly but isn't valid JSON: ${String(err)}`);
+    throw new VerificationError(
+      `manifest.json is signed correctly but isn't valid JSON: ${String(err)}`,
+    );
   }
   const paths = Object.keys(manifest);
   if (paths.length === 0) {
@@ -76,7 +81,9 @@ export async function verifyAssets(
 
   onProgress("fetching-assets");
   verbose(`localIndex: fetching ${paths.length} asset(s)`);
-  const fetched = await Promise.all(paths.map(async (path) => [path, await fetchBytes(`${base}${path}`)] as const));
+  const fetched = await Promise.all(
+    paths.map(async (path) => [path, await fetchBytes(`${base}${path}`)] as const),
+  );
 
   onProgress("verifying-hashes");
   const verified = new Map<string, Uint8Array>();
@@ -86,7 +93,9 @@ export async function verifyAssets(
     const expected = manifest[path];
     if (actual !== expected) {
       verbose(`localIndex: ${path} failed its SHA-512 check`);
-      throw new VerificationError(`${path} failed its SHA-512 check -- expected ${expected}, got ${actual}`);
+      throw new VerificationError(
+        `${path} failed its SHA-512 check -- expected ${expected}, got ${actual}`,
+      );
     }
     verbose(`localIndex: verified OK: ${path}`);
     verified.set(path, bytes);

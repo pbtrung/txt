@@ -98,7 +98,9 @@ function LibraryNavContent({
             onClick={() => selectView({ kind: "all" })}
           />
         </div>
-        <div className="text-body-secondary small fw-semibold text-uppercase mt-3 mb-1 px-2">Browse</div>
+        <div className="text-body-secondary small fw-semibold text-uppercase mt-3 mb-1 px-2">
+          Browse
+        </div>
         <div className="list-group list-group-flush">
           <NavItem
             active={view.kind === "browse" && view.dimension === "author"}
@@ -136,8 +138,16 @@ function LibraryNavContent({
 }
 
 export function LibraryScreen() {
-  const { lock, refresh, refreshing, progress, session, bookmarksMap, removeAccessEntry, removeBookmarkEntry } =
-    useVault();
+  const {
+    lock,
+    refresh,
+    refreshing,
+    progress,
+    session,
+    bookmarksMap,
+    removeAccessEntry,
+    removeBookmarkEntry,
+  } = useVault();
   const navigate = useNavigate();
   const { books, loading } = useLibraryBooks();
   const [view, setView] = useState<View>({ kind: "recent" });
@@ -178,7 +188,10 @@ export function LibraryScreen() {
     [recent, search],
   );
   const metadataById = useMemo(() => new Map((books ?? []).map((b) => [b.txtId, b.info])), [books]);
-  const recentBookmarkItems = useMemo(() => recentBookmarks(bookmarksMap, metadataById), [bookmarksMap, metadataById]);
+  const recentBookmarkItems = useMemo(
+    () => recentBookmarks(bookmarksMap, metadataById),
+    [bookmarksMap, metadataById],
+  );
 
   // The "all"/"browseValue" views' book list, sorted (and for browseValue,
   // dimension-filtered) -- memoized separately from the search-query
@@ -187,7 +200,8 @@ export function LibraryScreen() {
   // library on every keystroke.
   const baseBookList = useMemo<LibraryBook[] | null>(() => {
     if (view.kind === "all") return allBooksSorted(books ?? []);
-    if (view.kind === "browseValue") return booksForDimensionValue(books ?? [], view.dimension, view.value);
+    if (view.kind === "browseValue")
+      return booksForDimensionValue(books ?? [], view.dimension, view.value);
     return null;
   }, [books, view]);
 
@@ -216,7 +230,9 @@ export function LibraryScreen() {
     headingDetail = `${all.length} book${all.length === 1 ? "" : "s"}`;
     bookList = all;
   } else if (view.kind === "browse") {
-    const entries = { author: authorEntries, subject: subjectEntries, publisher: publisherEntries }[view.dimension];
+    const entries = { author: authorEntries, subject: subjectEntries, publisher: publisherEntries }[
+      view.dimension
+    ];
     heading = DIMENSION_LABEL[view.dimension];
     headingDetail = `${entries.length}`;
     browseList = entries;
@@ -365,12 +381,17 @@ export function LibraryScreen() {
           // re-announced as progress updates them (mirrors Unlock's own
           // spinner). A non-breaking space holds the first line's height
           // even before the first phase lands.
-          <div className="flex-grow-1 d-flex flex-column align-items-center justify-content-center gap-1" role="status">
+          <div
+            className="flex-grow-1 d-flex flex-column align-items-center justify-content-center gap-1"
+            role="status"
+          >
             <div className="spinner-border text-primary mb-1" aria-hidden="true" />
             <div className="small text-body-secondary">
               {progress ? `Step ${progress.step} of ${progress.total}` : " "}
             </div>
-            <div className="small text-body-secondary">{progress?.label ?? "Refreshing your library"}…</div>
+            <div className="small text-body-secondary">
+              {progress?.label ?? "Refreshing your library"}…
+            </div>
           </div>
         ) : (
           <>
@@ -476,7 +497,9 @@ export function LibraryScreen() {
                         <span className="text-truncate" style={{ minWidth: 0 }}>
                           {entry.value}
                         </span>
-                        <span className="text-body-secondary flex-shrink-0 ms-2">{entry.count}</span>
+                        <span className="text-body-secondary flex-shrink-0 ms-2">
+                          {entry.count}
+                        </span>
                       </button>
                     )}
                   />

@@ -59,7 +59,8 @@ function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--admin-creds") return { adminCredsPath: argv[i + 1] };
-    if (arg.startsWith("--admin-creds=")) return { adminCredsPath: arg.slice("--admin-creds=".length) };
+    if (arg.startsWith("--admin-creds="))
+      return { adminCredsPath: arg.slice("--admin-creds=".length) };
   }
   return { adminCredsPath: undefined };
 }
@@ -100,7 +101,9 @@ function toPosixPath(p) {
 function addIntegrityToTags(html, tagRegex, urlAttrName) {
   return html.replace(tagRegex, (tag) => {
     if (/\sintegrity=/.test(tag)) {
-      throw new Error(`tag already has an integrity attribute -- run this script only once per build: ${tag}`);
+      throw new Error(
+        `tag already has an integrity attribute -- run this script only once per build: ${tag}`,
+      );
     }
     const match = new RegExp(`\\s${urlAttrName}="([^"]+)"`).exec(tag);
     if (!match) return tag;
@@ -271,7 +274,10 @@ async function main() {
   writeHeadersFile();
   const manifestBytes = Buffer.from(JSON.stringify(manifest), "utf8");
   writeFileSync(join(DIST_DIR, "manifest.json"), manifestBytes);
-  writeFileSync(join(DIST_DIR, "manifest.sig"), Buffer.from(slh_dsa_sha2_256f.sign(manifestBytes, secretKey)));
+  writeFileSync(
+    join(DIST_DIR, "manifest.sig"),
+    Buffer.from(slh_dsa_sha2_256f.sign(manifestBytes, secretKey)),
+  );
 
   if (generated) {
     adminCreds.slhdsa_256f_priv_key = Buffer.from(secretKey).toString("base64");

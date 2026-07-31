@@ -20,7 +20,8 @@ describe("truncatePreview", () => {
   });
 
   it("truncates to maxLen and appends an ellipsis", () => {
-    const line = "Powerful white mages killed Cerryl's father to protect their control of the world's magic.";
+    const line =
+      "Powerful white mages killed Cerryl's father to protect their control of the world's magic.";
     const result = truncatePreview(line, 60);
     expect(result.length).toBeLessThanOrEqual(61); // 60 chars + "…"
     expect(result.endsWith("…")).toBe(true);

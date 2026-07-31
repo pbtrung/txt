@@ -43,7 +43,11 @@ import { BrowserRouter, MemoryRouter } from "react-router-dom";
 
 function historyApiUsable(): boolean {
   try {
-    window.history.replaceState(window.history.state, "", location.pathname + location.search + location.hash);
+    window.history.replaceState(
+      window.history.state,
+      "",
+      location.pathname + location.search + location.hash,
+    );
     return true;
   } catch {
     return false;

@@ -72,7 +72,9 @@ describe("toBookInfo", () => {
       description: "A book about things.",
       subject: ["Fantasy"],
     };
-    expect(toBookInfo(1, "book.epub.txt", metadata).rawMetadata).toEqual([{ key: "title", values: ["Some Book"] }]);
+    expect(toBookInfo(1, "book.epub.txt", metadata).rawMetadata).toEqual([
+      { key: "title", values: ["Some Book"] },
+    ]);
   });
 });
 

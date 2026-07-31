@@ -4,7 +4,14 @@ import { describe, expect, it, vi } from "vitest";
 import { deleteTxtRows } from "./adminTxt";
 
 function emptyResult() {
-  return { rows: [], columns: [], columnTypes: [], rowsAffected: 0, lastInsertRowid: undefined, toJSON: () => ({}) };
+  return {
+    rows: [],
+    columns: [],
+    columnTypes: [],
+    rowsAffected: 0,
+    lastInsertRowid: undefined,
+    toJSON: () => ({}),
+  };
 }
 
 describe("deleteTxtRows", () => {

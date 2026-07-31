@@ -52,22 +52,36 @@ beforeAll(async () => {
   umk = new Uint8Array(64).fill(3);
   umkBlob = await blob.encrypt(creds.userRootKey, umk);
   pwSalt = new Uint8Array(32).fill(5);
-  pwHash = await pbkdf2Sha3_256(new TextEncoder().encode(creds.password), pwSalt, PBKDF2_ITERATIONS, PW_HASH_LEN);
+  pwHash = await pbkdf2Sha3_256(
+    new TextEncoder().encode(creds.password),
+    pwSalt,
+    PBKDF2_ITERATIONS,
+    PW_HASH_LEN,
+  );
 });
 
 describe("resolveUserAndCheckPassword", () => {
   it("resolves the user id and reports passwordOk: true for the correct password -- one query, not two", async () => {
     const db = fakeClient({
-      "FROM users WHERE username_hash": [{ id: 42, pw_salt: pwSalt.buffer, pw_hash: pwHash.buffer }],
+      "FROM users WHERE username_hash": [
+        { id: 42, pw_salt: pwSalt.buffer, pw_hash: pwHash.buffer },
+      ],
     });
-    expect(await owner.resolveUserAndCheckPassword(db, creds)).toEqual({ userId: 42, passwordOk: true });
+    expect(await owner.resolveUserAndCheckPassword(db, creds)).toEqual({
+      userId: 42,
+      passwordOk: true,
+    });
   });
 
   it("reports passwordOk: false for the wrong password", async () => {
     const db = fakeClient({
-      "FROM users WHERE username_hash": [{ id: 42, pw_salt: pwSalt.buffer, pw_hash: pwHash.buffer }],
+      "FROM users WHERE username_hash": [
+        { id: 42, pw_salt: pwSalt.buffer, pw_hash: pwHash.buffer },
+      ],
     });
-    expect(await owner.resolveUserAndCheckPassword(db, { ...creds, password: "wrong-password" })).toEqual({
+    expect(
+      await owner.resolveUserAndCheckPassword(db, { ...creds, password: "wrong-password" }),
+    ).toEqual({
       userId: 42,
       passwordOk: false,
     });
@@ -101,7 +115,9 @@ describe("fetchR2Config", () => {
       read_only_access_key_id: "ro-id",
       read_only_secret_access_key: "ro-secret",
     };
-    const configBlob = await blob.encrypt(umk, new TextEncoder().encode(JSON.stringify(r2Json)), { compressed: true });
+    const configBlob = await blob.encrypt(umk, new TextEncoder().encode(JSON.stringify(r2Json)), {
+      compressed: true,
+    });
     const db = fakeClient({ "FROM r2_config": [{ config: configBlob.buffer }] });
     const result = await owner.fetchR2Config(db, 42, umk);
     expect(result).toEqual({
@@ -135,8 +151,14 @@ describe("unwrapTxtKey / partRawPaths / partRawPath / partCount", () => {
   it("unwraps a txt_key, decrypts every part's path, and counts parts", async () => {
     const txtKey = new Uint8Array(64).fill(11);
     const txtKeyBlob = await blob.encrypt(umk, txtKey);
-    const path1 = await blob.encrypt(txtKey, new TextEncoder().encode("0000000000000000000000000000001"));
-    const path2 = await blob.encrypt(txtKey, new TextEncoder().encode("0000000000000000000000000000002"));
+    const path1 = await blob.encrypt(
+      txtKey,
+      new TextEncoder().encode("0000000000000000000000000000001"),
+    );
+    const path2 = await blob.encrypt(
+      txtKey,
+      new TextEncoder().encode("0000000000000000000000000000002"),
+    );
 
     const db = fakeClient({
       "FROM txt WHERE id": [{ txt_key: txtKeyBlob.buffer }],
@@ -157,7 +179,10 @@ describe("unwrapTxtKey / partRawPaths / partRawPath / partCount", () => {
 
   it("partRawPath decrypts a single part's path -- one row-read, not every part in the document", async () => {
     const txtKey = new Uint8Array(64).fill(11);
-    const path1 = await blob.encrypt(txtKey, new TextEncoder().encode("0000000000000000000000000000001"));
+    const path1 = await blob.encrypt(
+      txtKey,
+      new TextEncoder().encode("0000000000000000000000000000001"),
+    );
     const db = fakeClient({ "FROM txt_parts": [{ path: path1.buffer }] });
     expect(await owner.partRawPath(db, 7, 1, txtKey)).toBe("0000000000000000000000000000001");
   });

@@ -123,7 +123,9 @@ describe("ReaderScreen", () => {
 
     it("adapts the reading column's max-width in ch, not a fixed pixel value, so line length stays ~70 characters at any font size", () => {
       renderReader(baseResult());
-      const line = screen.getByText("First paragraph of part 14.").closest(".reader-font") as HTMLElement;
+      const line = screen
+        .getByText("First paragraph of part 14.")
+        .closest(".reader-font") as HTMLElement;
       expect(line.style.maxWidth).toBe("70ch");
     });
 
@@ -131,12 +133,16 @@ describe("ReaderScreen", () => {
       renderReader(baseResult());
       const select = fontSizeSelect();
       const previous = screen.getByRole("button", { name: /previous/i });
-      expect(select.compareDocumentPosition(previous) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(
+        select.compareDocumentPosition(previous) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
     });
 
     it("resizes the reading pane's text when changed", async () => {
       renderReader(baseResult());
-      const line = screen.getByText("First paragraph of part 14.").closest(".reader-font") as HTMLElement;
+      const line = screen
+        .getByText("First paragraph of part 14.")
+        .closest(".reader-font") as HTMLElement;
       expect(line.style.fontSize).toBe("18px");
 
       await userEvent.selectOptions(fontSizeSelect(), "24");
@@ -238,7 +244,11 @@ describe("ReaderScreen", () => {
     });
 
     it("renders HTML formatting in a short description (e.g. Calibre-style OPF markup)", async () => {
-      renderReader(baseResult({ info: { ...baseResult().info!, description: "<b>Bold</b> and <i>italic</i> text." } }));
+      renderReader(
+        baseResult({
+          info: { ...baseResult().info!, description: "<b>Bold</b> and <i>italic</i> text." },
+        }),
+      );
       await openInfo();
       const bold = screen.getByText("Bold");
       expect(bold.tagName).toBe("B");
@@ -251,7 +261,8 @@ describe("ReaderScreen", () => {
         baseResult({
           info: {
             ...baseResult().info!,
-            description: '<img src=x onerror="window.__pwned__=true">Safe text<script>window.__pwned__=true</script>',
+            description:
+              '<img src=x onerror="window.__pwned__=true">Safe text<script>window.__pwned__=true</script>',
           },
         }),
       );
@@ -392,8 +403,14 @@ describe("ReaderScreen", () => {
 
   it("marks an already-bookmarked line's gutter icon as pressed", () => {
     renderReader(baseResult());
-    expect(screen.getByRole("button", { name: /bookmark line 1/i })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("button", { name: /bookmark line 2/i })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: /bookmark line 1/i })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: /bookmark line 2/i })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
   });
 
   it("scrolls to the target line once its text is ready", () => {

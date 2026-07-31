@@ -64,8 +64,15 @@ export function VirtualizedListGroup<T>({
   }
 
   return (
-    <div ref={scrollRef} className={`overflow-auto ${className ?? ""}`} style={{ minHeight: 0, ...style }}>
-      <div className="list-group list-group-flush position-relative" style={{ height: virtualizer.getTotalSize() }}>
+    <div
+      ref={scrollRef}
+      className={`overflow-auto ${className ?? ""}`}
+      style={{ minHeight: 0, ...style }}
+    >
+      <div
+        className="list-group list-group-flush position-relative"
+        style={{ height: virtualizer.getTotalSize() }}
+      >
         {virtualizer.getVirtualItems().map((virtualRow) => {
           const item = items[virtualRow.index];
           return cloneElement(renderRow(item), {

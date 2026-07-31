@@ -45,14 +45,18 @@ describe("boot", () => {
   });
 
   it("shows the failure and never renders when verification fails", async () => {
-    vi.mocked(verifyAssets).mockRejectedValue(new Error("manifest.json failed its SLH-DSA signature check"));
+    vi.mocked(verifyAssets).mockRejectedValue(
+      new Error("manifest.json failed its SLH-DSA signature check"),
+    );
 
     await boot(ASSET_BASE_URL, PUBLIC_KEY_B64);
 
     expect(renderApp).not.toHaveBeenCalled();
     const status = document.getElementById("boot-status")!;
     expect(status).not.toBeNull();
-    expect(status.querySelector("p")!.textContent).toBe("manifest.json failed its SLH-DSA signature check");
+    expect(status.querySelector("p")!.textContent).toBe(
+      "manifest.json failed its SLH-DSA signature check",
+    );
   });
 
   it("shows the failure when rendering itself throws", async () => {

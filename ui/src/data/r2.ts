@@ -71,7 +71,11 @@ async function withRetries(what: string, run: () => Promise<Response>): Promise<
 }
 
 /** Fetches one R2 object, retrying with backoff before giving up. */
-export async function getObject(client: AwsClient, config: R2Config, key: string): Promise<Uint8Array> {
+export async function getObject(
+  client: AwsClient,
+  config: R2Config,
+  key: string,
+): Promise<Uint8Array> {
   const response = await withRetries(`R2 GET ${key}`, () => client.fetch(objectUrl(config, key)));
   return new Uint8Array(await response.arrayBuffer());
 }
@@ -80,7 +84,12 @@ export async function getObject(client: AwsClient, config: R2Config, key: string
  * with backoff before giving up. Requires a write-capable client (see
  * createR2Client) -- an R2 bucket policy that only grants a read-only key
  * pair GET/HEAD/LIST rejects this regardless of what this function does. */
-export async function putObject(client: AwsClient, config: R2Config, key: string, body: Uint8Array): Promise<void> {
+export async function putObject(
+  client: AwsClient,
+  config: R2Config,
+  key: string,
+  body: Uint8Array,
+): Promise<void> {
   await withRetries(`R2 PUT ${key}`, () =>
     client.fetch(objectUrl(config, key), { method: "PUT", body: body as BodyInit }),
   );
@@ -88,6 +97,12 @@ export async function putObject(client: AwsClient, config: R2Config, key: string
 
 /** Deletes one R2 object, retrying with backoff before giving up. Same
  * write-capable-client requirement as putObject. */
-export async function deleteObject(client: AwsClient, config: R2Config, key: string): Promise<void> {
-  await withRetries(`R2 DELETE ${key}`, () => client.fetch(objectUrl(config, key), { method: "DELETE" }));
+export async function deleteObject(
+  client: AwsClient,
+  config: R2Config,
+  key: string,
+): Promise<void> {
+  await withRetries(`R2 DELETE ${key}`, () =>
+    client.fetch(objectUrl(config, key), { method: "DELETE" }),
+  );
 }

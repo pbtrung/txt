@@ -21,7 +21,14 @@ export function ClickableRow({ onClick, className, style, children }: ClickableR
   }
 
   return (
-    <div role="button" tabIndex={0} className={className} style={style} onClick={onClick} onKeyDown={handleKeyDown}>
+    <div
+      role="button"
+      tabIndex={0}
+      className={className}
+      style={style}
+      onClick={onClick}
+      onKeyDown={handleKeyDown}
+    >
       {children}
     </div>
   );

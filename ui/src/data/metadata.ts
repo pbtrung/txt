@@ -62,7 +62,12 @@ function textsOf(value: OpfValue | undefined): string[] {
 // their own special-purpose rendering in the curated summary above this
 // section (description gets sanitized/truncated HTML, subject becomes
 // badges) -- showing them again here as raw text would just be redundant.
-const HIDDEN_METADATA_KEYS = new Set(["calibre:rating", "calibre:title_sort", "description", "subject"]);
+const HIDDEN_METADATA_KEYS = new Set([
+  "calibre:rating",
+  "calibre:title_sort",
+  "description",
+  "subject",
+]);
 
 // Internal field names shown under their plainer meaning instead.
 const RENAMED_METADATA_KEYS: Record<string, string> = {
@@ -92,7 +97,9 @@ export function formatOpfDate(raw: string): string {
   const [, year, month, day, hour, minute, second] = match;
   const hasTime = hour !== undefined;
   const isMidnight = hasTime && hour === "00" && minute === "00" && second === "00";
-  const date = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour ?? 0), Number(minute ?? 0)));
+  const date = new Date(
+    Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour ?? 0), Number(minute ?? 0)),
+  );
   const dateText = new Intl.DateTimeFormat("en-US", {
     year: "numeric",
     month: "long",
@@ -100,9 +107,11 @@ export function formatOpfDate(raw: string): string {
     timeZone: "UTC",
   }).format(date);
   if (!hasTime || isMidnight) return dateText;
-  const timeText = new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", timeZone: "UTC" }).format(
-    date,
-  );
+  const timeText = new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: "UTC",
+  }).format(date);
   return `${dateText}, ${timeText}`;
 }
 

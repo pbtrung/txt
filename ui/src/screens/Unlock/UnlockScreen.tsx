@@ -44,7 +44,9 @@ export function UnlockScreen() {
         >
           <i className="bi bi-file-earmark fs-5" aria-hidden="true" />
           <span className="text-start lh-sm">
-            <span className="d-block fw-semibold small">{unlocking ? "Unlocking…" : "Choose File"}</span>
+            <span className="d-block fw-semibold small">
+              {unlocking ? "Unlocking…" : "Choose File"}
+            </span>
             <span className="d-block small fw-normal">to unlock your library</span>
           </span>
         </button>
@@ -70,7 +72,9 @@ export function UnlockScreen() {
           <div className="small text-body-secondary">
             {progress ? `Step ${progress.step} of ${progress.total}` : " "}
           </div>
-          <div className="small text-body-secondary">{progress?.label ?? "Setting up your library"}…</div>
+          <div className="small text-body-secondary">
+            {progress?.label ?? "Setting up your library"}…
+          </div>
         </div>
 
         {error && (

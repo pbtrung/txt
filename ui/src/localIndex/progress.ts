@@ -19,7 +19,11 @@
 // since neither theme.css nor the icon font is loaded pre-verification.
 
 export type ProgressStepId =
-  "fetching-manifest" | "verifying-signature" | "fetching-assets" | "verifying-hashes" | "loading-application";
+  | "fetching-manifest"
+  | "verifying-signature"
+  | "fetching-assets"
+  | "verifying-hashes"
+  | "loading-application";
 
 const STEPS: { id: ProgressStepId; label: string }[] = [
   { id: "fetching-manifest", label: "Fetching manifest" },
@@ -77,7 +81,8 @@ export function mountProgressUI(container: HTMLElement = document.body): Progres
 
   // Matches UnlockScreen.tsx's inner `text-center` box, `style={{ maxWidth: "24rem" }}`.
   const inner = document.createElement("div");
-  inner.style.cssText = "max-width: 24rem; width: 100%; padding: 0 1.5rem; text-align: center; box-sizing: border-box;";
+  inner.style.cssText =
+    "max-width: 24rem; width: 100%; padding: 0 1.5rem; text-align: center; box-sizing: border-box;";
 
   // Matches Wordmark size="lg" (`d-inline-flex align-items-center gap-2
   // fs-2`) inside UnlockScreen.tsx's `<div className="mb-4">`. Bootstrap's
@@ -128,7 +133,8 @@ export function mountProgressUI(container: HTMLElement = document.body): Progres
   // step counter/label, same 0.25rem gap-1 (plus the spinner's own
   // mb-1 above) Unlock itself uses, not a wider one.
   const progress = document.createElement("div");
-  progress.style.cssText = "display: flex; flex-direction: column; align-items: center; gap: 0.25rem;";
+  progress.style.cssText =
+    "display: flex; flex-direction: column; align-items: center; gap: 0.25rem;";
 
   // Matches `small text-body-secondary` (0.875rem, Bootstrap's secondary text color).
   const stepCounter = document.createElement("div");

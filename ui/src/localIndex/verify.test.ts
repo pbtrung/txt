@@ -60,7 +60,12 @@ describe("verifyAssets", () => {
 
     expect(Array.from(verified.get("index.html")!)).toEqual(Array.from(INDEX_HTML));
     expect(Array.from(verified.get("assets/app.js")!)).toEqual(Array.from(APP_JS));
-    expect(progress).toEqual(["fetching-manifest", "verifying-signature", "fetching-assets", "verifying-hashes"]);
+    expect(progress).toEqual([
+      "fetching-manifest",
+      "verifying-signature",
+      "fetching-assets",
+      "verifying-hashes",
+    ]);
   });
 
   it("rejects a manifest whose signature doesn't verify", async () => {
@@ -68,8 +73,12 @@ describe("verifyAssets", () => {
     const { publicKey: wrongPublicKey } = slh_dsa_sha2_256f.keygen();
     vi.stubGlobal("fetch", fakeFetch({ "manifest.json": manifestBytes, "manifest.sig": sig }));
 
-    await expect(verifyAssets(ASSET_BASE_URL, wrongPublicKey, () => {})).rejects.toThrow(VerificationError);
-    await expect(verifyAssets(ASSET_BASE_URL, wrongPublicKey, () => {})).rejects.toThrow(/signature check/);
+    await expect(verifyAssets(ASSET_BASE_URL, wrongPublicKey, () => {})).rejects.toThrow(
+      VerificationError,
+    );
+    await expect(verifyAssets(ASSET_BASE_URL, wrongPublicKey, () => {})).rejects.toThrow(
+      /signature check/,
+    );
   });
 
   it("rejects a manifest signed correctly but tampered with after signing", async () => {
@@ -77,7 +86,9 @@ describe("verifyAssets", () => {
     const tampered = new TextEncoder().encode(JSON.stringify({ "index.html": "not-a-real-hash" }));
     vi.stubGlobal("fetch", fakeFetch({ "manifest.json": tampered, "manifest.sig": sig }));
 
-    await expect(verifyAssets(ASSET_BASE_URL, publicKey, () => {})).rejects.toThrow(/signature check/);
+    await expect(verifyAssets(ASSET_BASE_URL, publicKey, () => {})).rejects.toThrow(
+      /signature check/,
+    );
   });
 
   it("rejects an asset whose bytes don't match its recorded hash", async () => {
@@ -92,7 +103,9 @@ describe("verifyAssets", () => {
       }),
     );
 
-    await expect(verifyAssets(ASSET_BASE_URL, publicKey, () => {})).rejects.toThrow(/assets\/app\.js/);
+    await expect(verifyAssets(ASSET_BASE_URL, publicKey, () => {})).rejects.toThrow(
+      /assets\/app\.js/,
+    );
   });
 
   it("rejects when a manifest-listed asset is missing", async () => {
@@ -111,6 +124,8 @@ describe("verifyAssets", () => {
     const sig = slh_dsa_sha2_256f.sign(emptyManifestBytes, secretKey);
     vi.stubGlobal("fetch", fakeFetch({ "manifest.json": emptyManifestBytes, "manifest.sig": sig }));
 
-    await expect(verifyAssets(ASSET_BASE_URL, publicKey, () => {})).rejects.toThrow(/lists no files/);
+    await expect(verifyAssets(ASSET_BASE_URL, publicKey, () => {})).rejects.toThrow(
+      /lists no files/,
+    );
   });
 });

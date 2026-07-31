@@ -46,7 +46,12 @@ export function Modal({ title, onClose, children }: ModalProps) {
           for the rare panel taller than even this. */}
       <div
         className="modal-dialog-anim bg-body rounded-4 shadow-lg p-3"
-        style={{ width: "34rem", maxWidth: "92vw", maxHeight: "calc(100vh - 2rem)", overflowY: "auto" }}
+        style={{
+          width: "34rem",
+          maxWidth: "92vw",
+          maxHeight: "calc(100vh - 2rem)",
+          overflowY: "auto",
+        }}
         role="dialog"
         aria-modal="true"
         aria-label={title}

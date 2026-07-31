@@ -70,7 +70,14 @@ export interface LeancryptoModule {
     out: number,
     outLen: number,
   ): number;
-  _lc_hmac(hash: number, key: number, keyLen: number, data: number, dataLen: number, out: number): number;
+  _lc_hmac(
+    hash: number,
+    key: number,
+    keyLen: number,
+    data: number,
+    dataLen: number,
+    out: number,
+  ): number;
   _lc_pbkdf2(
     hash: number,
     password: number,
@@ -226,7 +233,17 @@ export async function hkdf(ikm: Uint8Array, salt: Uint8Array, length: number): P
   const saltPtr = writeBytes(mod, salt);
   const outPtr = mod._malloc(length || 1);
   try {
-    const ret = mod._lc_hkdf(sha3_512, ikmPtr, ikm.length, saltPtr, salt.length, 0, 0, outPtr, length);
+    const ret = mod._lc_hkdf(
+      sha3_512,
+      ikmPtr,
+      ikm.length,
+      saltPtr,
+      salt.length,
+      0,
+      0,
+      outPtr,
+      length,
+    );
     check(ret, "lc_hkdf");
     return readBytes(mod, outPtr, length);
   } finally {
@@ -266,7 +283,16 @@ export async function pbkdf2Sha3_256(
   const saltPtr = writeBytes(mod, salt);
   const outPtr = mod._malloc(keyLen || 1);
   try {
-    const ret = mod._lc_pbkdf2(sha3_256, pwPtr, password.length, saltPtr, salt.length, iterations, outPtr, keyLen);
+    const ret = mod._lc_pbkdf2(
+      sha3_256,
+      pwPtr,
+      password.length,
+      saltPtr,
+      salt.length,
+      iterations,
+      outPtr,
+      keyLen,
+    );
     check(ret, "lc_pbkdf2");
     return readBytes(mod, outPtr, keyLen);
   } finally {
@@ -344,7 +370,16 @@ export async function aeadDecrypt(
     ctx = mod.HEAPU32[ctxPtrPtr / 4];
     check(mod._lc_aead_setkey(ctx, keyPtr, key.length, ivPtr, iv.length), "lc_aead_setkey");
     check(
-      mod._lc_aead_decrypt(ctx, ctPtr, ptPtr, ciphertext.length, aadPtr, aad.length, tagPtr, tag.length),
+      mod._lc_aead_decrypt(
+        ctx,
+        ctPtr,
+        ptPtr,
+        ciphertext.length,
+        aadPtr,
+        aad.length,
+        tagPtr,
+        tag.length,
+      ),
       "lc_aead_decrypt",
     );
     return readBytes(mod, ptPtr, ciphertext.length);
@@ -383,7 +418,11 @@ export interface KemEncapsulation {
   ss: Uint8Array;
 }
 
-export async function kemEncapsulate(pk: Uint8Array, ctLen: number, ssLen: number): Promise<KemEncapsulation> {
+export async function kemEncapsulate(
+  pk: Uint8Array,
+  ctLen: number,
+  ssLen: number,
+): Promise<KemEncapsulation> {
   const { mod } = await getLeancrypto();
   const pkPtr = writeBytes(mod, pk);
   const ctPtr = mod._malloc(ctLen);
@@ -398,7 +437,11 @@ export async function kemEncapsulate(pk: Uint8Array, ctLen: number, ssLen: numbe
   }
 }
 
-export async function kemDecapsulate(sk: Uint8Array, ct: Uint8Array, ssLen: number): Promise<Uint8Array> {
+export async function kemDecapsulate(
+  sk: Uint8Array,
+  ct: Uint8Array,
+  ssLen: number,
+): Promise<Uint8Array> {
   const { mod } = await getLeancrypto();
   const skPtr = writeBytes(mod, sk);
   const ctPtr = writeBytes(mod, ct);

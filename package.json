@@ -3,25 +3,44 @@
   "version": "0.9999",
   "private": true,
   "type": "module",
-  "workspaces": [
-    "ui"
-  ],
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --test txt/*.test.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "ui:dev": "npm run dev --workspace ui",
-    "ui:build": "npm run build --workspace ui",
-    "ui:test": "npm run test --workspace ui",
-    "ui:typecheck": "npm run typecheck --workspace ui"
+    "ui:dev": "vite --config ui/vite.config.ts",
+    "ui:typecheck": "tsc -b ui/tsconfig.json",
+    "ui:build": "tsc -b ui/tsconfig.json && vite build --config ui/vite.config.ts && rm -f ui/dist/sqlcipher.d.ts ui/dist/package.json ui/dist/js-vfs.mjs ui/dist/js-vfs.d.mts ui/dist/sqlcipher.js.symbols ui/dist/test-js-vfs.mjs ui/dist/test-roundtrip.mjs && node ui/scripts/build-integrity.mjs",
+    "ui:preview": "vite preview --config ui/vite.config.ts",
+    "ui:test": "vitest run --config ui/vite.config.ts",
+    "ui:test:watch": "vitest --config ui/vite.config.ts"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1100.0"
+    "@aws-sdk/client-s3": "^3.1100.0",
+    "@fontsource/literata": "^5.3.0",
+    "@noble/post-quantum": "^0.6.1",
+    "@tanstack/react-virtual": "^3.14.9",
+    "aws4fetch": "^1.0.20",
+    "bootstrap": "^5.3.8",
+    "bootstrap-icons": "^1.13.1",
+    "brotli-wasm": "^3.0.1",
+    "dompurify": "^3.4.12",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-router-dom": "^7.18.2"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^7.0.0",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
     "@types/node": "^26.1.2",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^6.0.5",
+    "jsdom": "^30.0.1",
     "prettier": "^3.9.6",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "vite": "^8.2.0",
+    "vitest": "^4.1.10"
   }
 }

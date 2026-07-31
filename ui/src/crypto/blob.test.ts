@@ -40,10 +40,16 @@ describe("blob", () => {
 
   it("round-trips a compressed (brotli) JSON payload", async () => {
     const ikm = crypto.getRandomValues(new Uint8Array(64));
-    const payload = new TextEncoder().encode(JSON.stringify({ a: 1, b: [1, 2, 3], s: "x".repeat(500) }));
+    const payload = new TextEncoder().encode(
+      JSON.stringify({ a: 1, b: [1, 2, 3], s: "x".repeat(500) }),
+    );
     const encoded = await blob.encrypt(ikm, payload, { compressed: true });
     const decoded = await blob.decrypt(ikm, encoded, true);
-    expect(JSON.parse(new TextDecoder().decode(decoded))).toEqual({ a: 1, b: [1, 2, 3], s: "x".repeat(500) });
+    expect(JSON.parse(new TextDecoder().decode(decoded))).toEqual({
+      a: 1,
+      b: [1, 2, 3],
+      s: "x".repeat(500),
+    });
   });
 
   it("rejects a blob with the wrong IKM", async () => {

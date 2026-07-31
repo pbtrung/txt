@@ -5,7 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useVault, VaultProvider } from "./VaultContext";
 
 vi.mock("../data/db", () => ({ createDb: vi.fn(() => ({ execute: vi.fn() })) }));
-vi.mock("../data/r2", () => ({ createR2Client: vi.fn(() => ({ fetch: vi.fn() })), deleteObject: vi.fn() }));
+vi.mock("../data/r2", () => ({
+  createR2Client: vi.fn(() => ({ fetch: vi.fn() })),
+  deleteObject: vi.fn(),
+}));
 vi.mock("../data/owner", () => ({
   resolveUserAndCheckPassword: vi.fn(),
   unwrapUmk: vi.fn(),
@@ -50,7 +53,10 @@ import * as r2 from "../data/r2";
  * this out every time. */
 function mockLibraryLoads() {
   vi.mocked(metadata.loadTxtMetadata).mockResolvedValue({ state: null, metadataById: new Map() });
-  vi.mocked(accessData.loadOrInitAccess).mockResolvedValue({ txtAccessKey: new Uint8Array(64), accessMap: new Map() });
+  vi.mocked(accessData.loadOrInitAccess).mockResolvedValue({
+    txtAccessKey: new Uint8Array(64),
+    accessMap: new Map(),
+  });
   vi.mocked(bookmarksData.loadOrInitBookmarks).mockResolvedValue({
     bookmarkKey: new Uint8Array(64),
     bookmarksMap: new Map(),
@@ -87,7 +93,10 @@ describe("VaultProvider", () => {
   });
 
   it("unlocks successfully when every step succeeds", async () => {
-    vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({ userId: 42, passwordOk: true });
+    vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({
+      userId: 42,
+      passwordOk: true,
+    });
     vi.mocked(owner.unwrapUmk).mockResolvedValue(new Uint8Array(64).fill(1));
     vi.mocked(owner.unwrapPrivKey).mockResolvedValue(new Uint8Array(64).fill(2));
     vi.mocked(owner.fetchR2Config).mockResolvedValue({
@@ -139,7 +148,9 @@ describe("VaultProvider", () => {
     });
     // "Signing you in" covers resolveUserAndCheckPassword -- stalled on it,
     // so this is where progress should sit until it resolves.
-    await waitFor(() => expect(result.current.progress).toEqual({ label: "Signing you in", step: 1, total: 5 }));
+    await waitFor(() =>
+      expect(result.current.progress).toEqual({ label: "Signing you in", step: 1, total: 5 }),
+    );
 
     await act(async () => {
       resolveAuth({ userId: 42, passwordOk: true });
@@ -151,7 +162,10 @@ describe("VaultProvider", () => {
   });
 
   it("splits the library-loading phase into its three actual requests, not one big step", async () => {
-    vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({ userId: 42, passwordOk: true });
+    vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({
+      userId: 42,
+      passwordOk: true,
+    });
     vi.mocked(owner.unwrapUmk).mockResolvedValue(new Uint8Array(64).fill(1));
     vi.mocked(owner.unwrapPrivKey).mockResolvedValue(new Uint8Array(64).fill(2));
     vi.mocked(owner.fetchR2Config).mockResolvedValue({
@@ -162,7 +176,10 @@ describe("VaultProvider", () => {
       readOnlySecretAccessKey: "secret",
     });
     vi.mocked(metadata.loadTxtMetadata).mockResolvedValue({ state: null, metadataById: new Map() });
-    let resolveAccess: (value: { txtAccessKey: Uint8Array; accessMap: AccessMap }) => void = () => {};
+    let resolveAccess: (value: {
+      txtAccessKey: Uint8Array;
+      accessMap: AccessMap;
+    }) => void = () => {};
     vi.mocked(accessData.loadOrInitAccess).mockReturnValue(
       new Promise((resolve) => {
         resolveAccess = resolve;
@@ -182,7 +199,11 @@ describe("VaultProvider", () => {
     // one "Loading your library" step, this would still show the
     // metadata step's own label, not its own phase.
     await waitFor(() =>
-      expect(result.current.progress).toEqual({ label: "Loading your read progress", step: 4, total: 5 }),
+      expect(result.current.progress).toEqual({
+        label: "Loading your read progress",
+        step: 4,
+        total: 5,
+      }),
     );
 
     await act(async () => {
@@ -193,7 +214,10 @@ describe("VaultProvider", () => {
   });
 
   it("clears progress if unlock fails", async () => {
-    vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({ userId: 42, passwordOk: false });
+    vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({
+      userId: 42,
+      passwordOk: false,
+    });
 
     const { result } = renderVault();
     await act(async () => {
@@ -217,7 +241,10 @@ describe("VaultProvider", () => {
   });
 
   it("stays locked when the password check fails", async () => {
-    vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({ userId: 42, passwordOk: false });
+    vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({
+      userId: 42,
+      passwordOk: false,
+    });
 
     const { result } = renderVault();
     await act(async () => {
@@ -229,7 +256,10 @@ describe("VaultProvider", () => {
   });
 
   it("serializes concurrent bookmark additions so neither overwrites the other", async () => {
-    vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({ userId: 42, passwordOk: true });
+    vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({
+      userId: 42,
+      passwordOk: true,
+    });
     vi.mocked(owner.unwrapUmk).mockResolvedValue(new Uint8Array(64).fill(1));
     vi.mocked(owner.unwrapPrivKey).mockResolvedValue(new Uint8Array(64).fill(2));
     vi.mocked(owner.fetchR2Config).mockResolvedValue({
@@ -247,7 +277,10 @@ describe("VaultProvider", () => {
     vi.mocked(bookmarksData.addBookmark).mockImplementation(
       async (_db, _userId, _key, currentMap, txtId, partNum, line, txtPreview) => {
         const next = new Map(currentMap);
-        next.set(txtId, [...(next.get(txtId) ?? []), { partNum, line, txtPreview, createdAt: ++createdAt }]);
+        next.set(txtId, [
+          ...(next.get(txtId) ?? []),
+          { partNum, line, txtPreview, createdAt: ++createdAt },
+        ]);
         return next;
       },
     );
@@ -274,7 +307,10 @@ describe("VaultProvider", () => {
   });
 
   it("deleteTxt removes the txt's rows, access/bookmarks entries, and its in-memory metadata", async () => {
-    vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({ userId: 42, passwordOk: true });
+    vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({
+      userId: 42,
+      passwordOk: true,
+    });
     vi.mocked(owner.unwrapUmk).mockResolvedValue(new Uint8Array(64).fill(1));
     vi.mocked(owner.unwrapPrivKey).mockResolvedValue(new Uint8Array(64).fill(2));
     vi.mocked(owner.fetchR2Config).mockResolvedValue({
@@ -284,8 +320,17 @@ describe("VaultProvider", () => {
       readOnlyAccessKeyId: "id",
       readOnlySecretAccessKey: "secret",
     });
-    const bookInfo = { txtId: 7, name: "book.txt", title: "Book", subjects: [], rawMetadata: [] } as BookInfo;
-    vi.mocked(metadata.loadTxtMetadata).mockResolvedValue({ state: null, metadataById: new Map([[7, bookInfo]]) });
+    const bookInfo = {
+      txtId: 7,
+      name: "book.txt",
+      title: "Book",
+      subjects: [],
+      rawMetadata: [],
+    } as BookInfo;
+    vi.mocked(metadata.loadTxtMetadata).mockResolvedValue({
+      state: null,
+      metadataById: new Map([[7, bookInfo]]),
+    });
     vi.mocked(accessData.loadOrInitAccess).mockResolvedValue({
       txtAccessKey: new Uint8Array(64),
       accessMap: new Map([[7, { lastPartNum: 1, lastAccessedMs: 100 }]]),
@@ -300,11 +345,13 @@ describe("VaultProvider", () => {
     vi.mocked(owner.partRawPaths).mockResolvedValue(["path-1", "path-2"]);
     vi.mocked(r2.deleteObject).mockResolvedValue(undefined);
     vi.mocked(metadata.removeTxtMetadataEntry).mockResolvedValue(null);
-    vi.mocked(accessData.removeAccessEntry).mockImplementation(async (_db, _userId, _key, currentMap, txtId) => {
-      const next = new Map(currentMap);
-      next.delete(txtId);
-      return next;
-    });
+    vi.mocked(accessData.removeAccessEntry).mockImplementation(
+      async (_db, _userId, _key, currentMap, txtId) => {
+        const next = new Map(currentMap);
+        next.delete(txtId);
+        return next;
+      },
+    );
     vi.mocked(bookmarksData.removeAllBookmarksForTxt).mockResolvedValue(new Map());
 
     const { result } = renderVault();
@@ -352,7 +399,10 @@ describe("VaultProvider", () => {
   });
 
   it("deleteTxt scrubs each recipient's copied metadata entry before deleting the txt_shares rows", async () => {
-    vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({ userId: 42, passwordOk: true });
+    vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({
+      userId: 42,
+      passwordOk: true,
+    });
     vi.mocked(owner.unwrapUmk).mockResolvedValue(new Uint8Array(64).fill(1));
     vi.mocked(owner.fetchR2Config).mockResolvedValue({
       endpoint: "https://x",
@@ -403,7 +453,10 @@ describe("VaultProvider", () => {
   });
 
   it("deleteTxt throws (and never deletes any rows) when a recipient's umk can't be recovered -- same hard-failure policy as revokeShare", async () => {
-    vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({ userId: 42, passwordOk: true });
+    vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({
+      userId: 42,
+      passwordOk: true,
+    });
     vi.mocked(owner.unwrapUmk).mockResolvedValue(new Uint8Array(64).fill(1));
     vi.mocked(owner.fetchR2Config).mockResolvedValue({
       endpoint: "https://x",
@@ -444,7 +497,10 @@ describe("VaultProvider", () => {
   });
 
   it("lock() clears the session and returns to locked", async () => {
-    vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({ userId: 42, passwordOk: true });
+    vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({
+      userId: 42,
+      passwordOk: true,
+    });
     vi.mocked(owner.unwrapUmk).mockResolvedValue(new Uint8Array(64).fill(1));
     vi.mocked(owner.unwrapPrivKey).mockResolvedValue(new Uint8Array(64).fill(2));
     vi.mocked(owner.fetchR2Config).mockResolvedValue({
@@ -470,9 +526,12 @@ describe("VaultProvider", () => {
 
   describe("refresh", () => {
     async function unlockedResult() {
-      vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({ userId: 42, passwordOk: true });
+      vi.mocked(owner.resolveUserAndCheckPassword).mockResolvedValue({
+        userId: 42,
+        passwordOk: true,
+      });
       vi.mocked(owner.unwrapUmk).mockResolvedValue(new Uint8Array(64).fill(1));
-    vi.mocked(owner.unwrapPrivKey).mockResolvedValue(new Uint8Array(64).fill(2));
+      vi.mocked(owner.unwrapPrivKey).mockResolvedValue(new Uint8Array(64).fill(2));
       vi.mocked(owner.fetchR2Config).mockResolvedValue({
         endpoint: "https://x",
         region: "auto",
@@ -497,7 +556,10 @@ describe("VaultProvider", () => {
       expect(result.current.bookmarksMap.size).toBe(0);
 
       const freshMetadata = new Map([[7, { txtId: 7 } as unknown as BookInfo]]);
-      vi.mocked(metadata.loadTxtMetadata).mockResolvedValue({ state: null, metadataById: freshMetadata });
+      vi.mocked(metadata.loadTxtMetadata).mockResolvedValue({
+        state: null,
+        metadataById: freshMetadata,
+      });
       vi.mocked(accessData.loadOrInitAccess).mockResolvedValue({
         txtAccessKey: new Uint8Array(64),
         accessMap: new Map([[7, { lastPartNum: 3, lastAccessedMs: 1 }]]),
@@ -544,7 +606,10 @@ describe("VaultProvider", () => {
       const result = await unlockedResult();
       expect(result.current.progress).toBeNull();
 
-      let resolveAccess: (value: { txtAccessKey: Uint8Array; accessMap: AccessMap }) => void = () => {};
+      let resolveAccess: (value: {
+        txtAccessKey: Uint8Array;
+        accessMap: AccessMap;
+      }) => void = () => {};
       vi.mocked(accessData.loadOrInitAccess).mockReturnValue(
         new Promise((resolve) => {
           resolveAccess = resolve;
@@ -556,7 +621,11 @@ describe("VaultProvider", () => {
         refreshPromise = result.current.refresh();
       });
       await waitFor(() =>
-        expect(result.current.progress).toEqual({ label: "Loading your read progress", step: 2, total: 3 }),
+        expect(result.current.progress).toEqual({
+          label: "Loading your read progress",
+          step: 2,
+          total: 3,
+        }),
       );
 
       await act(async () => {

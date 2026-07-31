@@ -152,7 +152,9 @@ export function ReaderScreen() {
   // appears.
   useEffect(() => {
     if (loading || partTextLoading || partText === null || targetLine === null) return;
-    document.getElementById(lineElementId(targetLine))?.scrollIntoView({ behavior: "smooth", block: "center" });
+    document
+      .getElementById(lineElementId(targetLine))
+      ?.scrollIntoView({ behavior: "smooth", block: "center" });
     clearTargetLine();
   }, [loading, partTextLoading, partText, targetLine, clearTargetLine]);
   const bookmarkedLines = useMemo(
@@ -169,7 +171,9 @@ export function ReaderScreen() {
   // current part out of a book with no parts, so show "-" for both instead
   // of a real-looking but meaningless number.
   const partCountKnown = partCount > 0;
-  const seriesLabel = info?.series ? `${info.series}${info.seriesIndex ? `, #${info.seriesIndex}` : ""}` : null;
+  const seriesLabel = info?.series
+    ? `${info.series}${info.seriesIndex ? `, #${info.seriesIndex}` : ""}`
+    : null;
   // Calibre/OPF descriptions commonly carry HTML (see sanitizeHtml.ts) --
   // and this book's metadata may come from a document someone else shared
   // with this account, so it must be sanitized before rendering. The
@@ -235,11 +239,15 @@ export function ReaderScreen() {
         <div className="flex-grow-1 text-truncate">
           <div className="text-truncate">
             <span className="fw-semibold">{info?.title ?? `txt_${numericTxtId}`}</span>
-            {info?.author && <span className="text-body-secondary d-none d-sm-inline"> / {info.author}</span>}
+            {info?.author && (
+              <span className="text-body-secondary d-none d-sm-inline"> / {info.author}</span>
+            )}
           </div>
           {/* Below sm there's no room to share a line with the title -- the
               author gets its own second line instead of being squeezed in. */}
-          {info?.author && <div className="text-body-secondary small text-truncate d-sm-none">{info.author}</div>}
+          {info?.author && (
+            <div className="text-body-secondary small text-truncate d-sm-none">{info.author}</div>
+          )}
         </div>
 
         <div ref={infoMenu.ref} className="dropdown position-relative">
@@ -292,7 +300,9 @@ export function ReaderScreen() {
                   values, so nothing from the catalog entry is hidden. */}
               {info && info.rawMetadata.length > 0 && (
                 <div className="mt-3 pt-2 border-top">
-                  <div className="text-body-secondary text-uppercase small fw-semibold mb-1">All metadata</div>
+                  <div className="text-body-secondary text-uppercase small fw-semibold mb-1">
+                    All metadata
+                  </div>
                   <div className="small">
                     {info.rawMetadata.map((field) => (
                       <div key={field.key} className="d-flex gap-2">
@@ -321,7 +331,10 @@ export function ReaderScreen() {
             larger one). It's still a *max*-width: on a narrow viewport the
             column is capped by the available width same as before, just
             with fewer than 70 characters per line rather than overflowing. */}
-        <div className="mx-auto reader-font" style={{ maxWidth: "70ch", fontSize: `${fontSizePx}px` }}>
+        <div
+          className="mx-auto reader-font"
+          style={{ maxWidth: "70ch", fontSize: `${fontSizePx}px` }}
+        >
           {!loading && (
             <div className="small text-body-secondary text-uppercase mb-3">
               Part {currentPartNum} of {partCount}
@@ -341,7 +354,11 @@ export function ReaderScreen() {
               const lineNum = i + 1;
               const isBookmarked = bookmarkedLines.has(lineNum);
               return (
-                <div key={lineNum} id={lineElementId(lineNum)} className="reader-line d-flex align-items-start gap-2">
+                <div
+                  key={lineNum}
+                  id={lineElementId(lineNum)}
+                  className="reader-line d-flex align-items-start gap-2"
+                >
                   <button
                     type="button"
                     className={`bookmark-toggle btn btn-sm p-0 border-0 bg-transparent lh-1 mt-1 ${
@@ -352,7 +369,10 @@ export function ReaderScreen() {
                     aria-label={`Bookmark line ${lineNum}`}
                     title={`Bookmark line ${lineNum}`}
                   >
-                    <i className={`bi ${isBookmarked ? "bi-bookmark-fill" : "bi-bookmark"}`} aria-hidden="true" />
+                    <i
+                      className={`bi ${isBookmarked ? "bi-bookmark-fill" : "bi-bookmark"}`}
+                      aria-hidden="true"
+                    />
                   </button>
                   <p className="flex-grow-1">{line}</p>
                 </div>
@@ -409,7 +429,9 @@ export function ReaderScreen() {
               style={{ width: `calc(${partCountDigits}ch + 2rem)` }}
               value={partCountKnown ? partInput : "-"}
               disabled={loading || !partCountKnown}
-              onChange={(event) => setPartInput(event.target.value.replace(/\D/g, "").slice(0, partCountDigits))}
+              onChange={(event) =>
+                setPartInput(event.target.value.replace(/\D/g, "").slice(0, partCountDigits))
+              }
               onBlur={commitPartInput}
               onKeyDown={(event) => {
                 if (event.key === "Enter") {
@@ -448,7 +470,9 @@ export function ReaderScreen() {
               className="dropdown-menu app-dropdown-menu app-dropdown-menu-up show p-3"
               style={{ width: "20rem", maxWidth: "90vw", maxHeight: "70vh", overflowY: "auto" }}
             >
-              {bookmarks.length === 0 && <p className="small text-body-secondary mb-0">No bookmarks yet.</p>}
+              {bookmarks.length === 0 && (
+                <p className="small text-body-secondary mb-0">No bookmarks yet.</p>
+              )}
               {bookmarks.map((bookmark) => (
                 <BookmarkRow
                   key={bookmark.createdAt}

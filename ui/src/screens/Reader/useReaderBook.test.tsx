@@ -16,7 +16,9 @@ import { useReaderBook } from "./useReaderBook";
 vi.mock("../../data/owner");
 vi.mock("../../data/parts");
 vi.mock("../../state/VaultContext", async () => {
-  const actual = await vi.importActual<typeof import("../../state/VaultContext")>("../../state/VaultContext");
+  const actual = await vi.importActual<typeof import("../../state/VaultContext")>(
+    "../../state/VaultContext",
+  );
   return { ...actual, useVault: vi.fn() };
 });
 
@@ -76,7 +78,9 @@ function mockVault(
 
 function renderReaderBook(txtId: number, initialPath = "/") {
   return renderHook(() => useReaderBook(txtId), {
-    wrapper: ({ children }) => <MemoryRouter initialEntries={[initialPath]}>{children}</MemoryRouter>,
+    wrapper: ({ children }) => (
+      <MemoryRouter initialEntries={[initialPath]}>{children}</MemoryRouter>
+    ),
   });
 }
 
@@ -85,7 +89,9 @@ describe("useReaderBook", () => {
     const session = mockVault(
       new Map([[7, { lastPartNum: 14, lastAccessedMs: 1 }]]),
       new Map(),
-      new Map([[7, { txtId: 7, name: "n", title: "The White Order", subjects: [], rawMetadata: [] }]]),
+      new Map([
+        [7, { txtId: 7, name: "n", title: "The White Order", subjects: [], rawMetadata: [] }],
+      ]),
     );
     vi.mocked(ownerModule.partCount).mockResolvedValue(41);
     mockPartRawPath(Array.from({ length: 41 }, (_, i) => `path-${i + 1}`));
@@ -107,7 +113,10 @@ describe("useReaderBook", () => {
       expect.any(Uint8Array),
       "path-14",
     );
-    expect(recordReadPosition).toHaveBeenCalledWith(7, expect.objectContaining({ lastPartNum: 14 }));
+    expect(recordReadPosition).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ lastPartNum: 14 }),
+    );
   });
 
   it("defaults to part 1 when there's no saved read position", async () => {
@@ -125,7 +134,9 @@ describe("useReaderBook", () => {
     mockVault(new Map([[3, { lastPartNum: 1, lastAccessedMs: 1 }]]));
     vi.mocked(ownerModule.partCount).mockResolvedValue(5);
     mockPartRawPath(["p1", "p2", "p3", "p4", "p5"]);
-    vi.mocked(partsModule.fetchPart).mockImplementation(async (_c, _cfg, _key, path) => `text for ${path}`);
+    vi.mocked(partsModule.fetchPart).mockImplementation(
+      async (_c, _cfg, _key, path) => `text for ${path}`,
+    );
 
     const { result } = renderReaderBook(3, "/?part=4");
     await waitFor(() => expect(result.current.loading).toBe(false));
@@ -136,7 +147,9 @@ describe("useReaderBook", () => {
     mockVault(new Map([[3, { lastPartNum: 1, lastAccessedMs: 1 }]]));
     vi.mocked(ownerModule.partCount).mockResolvedValue(5);
     mockPartRawPath(["p1", "p2", "p3", "p4", "p5"]);
-    vi.mocked(partsModule.fetchPart).mockImplementation(async (_c, _cfg, _key, path) => `text for ${path}`);
+    vi.mocked(partsModule.fetchPart).mockImplementation(
+      async (_c, _cfg, _key, path) => `text for ${path}`,
+    );
 
     const { result } = renderReaderBook(3, "/?part=4&line=7");
     await waitFor(() => expect(result.current.loading).toBe(false));
@@ -148,7 +161,9 @@ describe("useReaderBook", () => {
     mockVault();
     vi.mocked(ownerModule.partCount).mockResolvedValue(5);
     mockPartRawPath(["p1", "p2", "p3", "p4", "p5"]);
-    vi.mocked(partsModule.fetchPart).mockImplementation(async (_c, _cfg, _key, path) => `text for ${path}`);
+    vi.mocked(partsModule.fetchPart).mockImplementation(
+      async (_c, _cfg, _key, path) => `text for ${path}`,
+    );
 
     const { result } = renderReaderBook(9);
     await waitFor(() => expect(result.current.loading).toBe(false));
@@ -190,7 +205,9 @@ describe("useReaderBook", () => {
     mockVault(new Map([[9, { lastPartNum: 1, lastAccessedMs: 1 }]]));
     vi.mocked(ownerModule.partCount).mockResolvedValue(3);
     mockPartRawPath(["p1", "p2", "p3"]);
-    vi.mocked(partsModule.fetchPart).mockImplementation(async (_c, _cfg, _key, path) => `text for ${path}`);
+    vi.mocked(partsModule.fetchPart).mockImplementation(
+      async (_c, _cfg, _key, path) => `text for ${path}`,
+    );
 
     const { result } = renderReaderBook(9);
     await waitFor(() => expect(result.current.partText).toBe("text for p1"));

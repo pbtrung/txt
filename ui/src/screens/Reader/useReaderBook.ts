@@ -43,8 +43,15 @@ export interface UseReaderBookResult {
 }
 
 export function useReaderBook(txtId: number): UseReaderBookResult {
-  const { session, getTxtKey, accessMap, bookmarksMap, recordReadPosition, addBookmarkEntry, removeBookmarkEntry } =
-    useVault();
+  const {
+    session,
+    getTxtKey,
+    accessMap,
+    bookmarksMap,
+    recordReadPosition,
+    addBookmarkEntry,
+    removeBookmarkEntry,
+  } = useVault();
   const [searchParams] = useSearchParams();
 
   const [loading, setLoading] = useState(true);
@@ -88,7 +95,10 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
     rawPathCache.current = new Map();
 
     (async () => {
-      const [txtKey, count] = await Promise.all([getTxtKey(txtId), fetchPartCount(session.db, txtId)]);
+      const [txtKey, count] = await Promise.all([
+        getTxtKey(txtId),
+        fetchPartCount(session.db, txtId),
+      ]);
       if (cancelled) return;
 
       txtKeyRef.current = txtKey;
@@ -101,7 +111,9 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
       const requestedPart = Number(searchParams.get("part"));
       const requestedLine = Number(searchParams.get("line"));
       const initialPart =
-        Number.isInteger(requestedPart) && requestedPart > 0 ? requestedPart : (accessMap.get(txtId)?.lastPartNum ?? 1);
+        Number.isInteger(requestedPart) && requestedPart > 0
+          ? requestedPart
+          : (accessMap.get(txtId)?.lastPartNum ?? 1);
       setCurrentPartNum(clampPartNum(initialPart, count));
       if (
         Number.isInteger(requestedPart) &&
@@ -149,7 +161,8 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
       let rawPath = rawPathCache.current.get(currentPartNum);
       if (rawPath === undefined) {
         const fetched = await partRawPath(session.db, txtId, currentPartNum, txtKey);
-        if (!fetched) throw new Error(`no txt_parts row for txt_id=${txtId}, part_num=${currentPartNum}`);
+        if (!fetched)
+          throw new Error(`no txt_parts row for txt_id=${txtId}, part_num=${currentPartNum}`);
         rawPath = fetched;
         rawPathCache.current.set(currentPartNum, rawPath);
       }

@@ -16,7 +16,9 @@ describe("encode", () => {
   });
 
   it("matches txt/base32.py's encode() for all-0xff bytes", () => {
-    expect(encode(new Uint8Array(32).fill(0xff))).toBe("zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzg");
+    expect(encode(new Uint8Array(32).fill(0xff))).toBe(
+      "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzg",
+    );
   });
 
   it("matches txt/base32.py's encode() for all-zero bytes", () => {

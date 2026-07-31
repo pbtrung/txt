@@ -17,7 +17,9 @@ function describeExecuteCall(stmtOrSql: InStatement | string, args?: InArgs): st
   if (typeof stmtOrSql === "string") {
     return args === undefined ? stmtOrSql : `${stmtOrSql} ${JSON.stringify(args)}`;
   }
-  return stmtOrSql.args === undefined ? stmtOrSql.sql : `${stmtOrSql.sql} ${JSON.stringify(stmtOrSql.args)}`;
+  return stmtOrSql.args === undefined
+    ? stmtOrSql.sql
+    : `${stmtOrSql.sql} ${JSON.stringify(stmtOrSql.args)}`;
 }
 
 /** Wraps every db.execute() call with verbose logging (see src/log.ts) --
@@ -39,7 +41,9 @@ function withRequestLogging(client: Client): Client {
         verbose(`db.execute: ${description}`);
         try {
           const result =
-            typeof stmtOrSql === "string" ? await target.execute(stmtOrSql, args) : await target.execute(stmtOrSql);
+            typeof stmtOrSql === "string"
+              ? await target.execute(stmtOrSql, args)
+              : await target.execute(stmtOrSql);
           verbose(`db.execute done: ${description} -> ${result.rows.length} row(s)`);
           return result;
         } catch (err) {

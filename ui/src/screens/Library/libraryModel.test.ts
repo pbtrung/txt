@@ -79,8 +79,14 @@ describe("recentBooks", () => {
 describe("allBooksSorted", () => {
   it("sorts by title", () => {
     const books = [
-      book({ txtId: 1, info: { txtId: 1, name: "b", title: "Beta", subjects: [], rawMetadata: [] } }),
-      book({ txtId: 2, info: { txtId: 2, name: "a", title: "Alpha", subjects: [], rawMetadata: [] } }),
+      book({
+        txtId: 1,
+        info: { txtId: 1, name: "b", title: "Beta", subjects: [], rawMetadata: [] },
+      }),
+      book({
+        txtId: 2,
+        info: { txtId: 2, name: "a", title: "Alpha", subjects: [], rawMetadata: [] },
+      }),
     ];
     expect(allBooksSorted(books).map((b) => b.info.title)).toEqual(["Alpha", "Beta"]);
   });
@@ -201,7 +207,9 @@ describe("recentBookmarks", () => {
   });
 
   it("falls back to a placeholder title when metadata is missing", () => {
-    const bookmarksMap: BookmarksMap = new Map([[9, [{ partNum: 1, line: 1, txtPreview: "x", createdAt: 1000 }]]]);
+    const bookmarksMap: BookmarksMap = new Map([
+      [9, [{ partNum: 1, line: 1, txtPreview: "x", createdAt: 1000 }]],
+    ]);
     const items = recentBookmarks(bookmarksMap, new Map());
     expect(items[0].info.title).toBe("txt_9");
   });

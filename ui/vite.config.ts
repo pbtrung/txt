@@ -35,6 +35,15 @@ function sqlcipherJsIntegrity(): string {
 }
 
 export default defineConfig({
+  // Explicit, not left to default to process.cwd(): there's a single
+  // package.json at the repo root now (no ui/package.json, no npm
+  // workspaces), so root scripts invoke vite/vitest with
+  // `--config ui/vite.config.ts` from the repo root, not from inside ui/
+  // itself. Vite's own default for `root` is process.cwd() (not "wherever
+  // this config file lives"), so without this, index.html/src resolution
+  // would silently look in the wrong directory whenever a script runs from
+  // the repo root instead of ui/.
+  root: UI_DIR,
   plugins: [react()],
   publicDir: SQLCIPHER_DIR,
   define: {

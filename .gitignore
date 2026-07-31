@@ -6,8 +6,10 @@ yarn-error.log*
 pnpm-debug.log*
 .pnpm-store/
 dist/
+dist-ssr/
 build/
 coverage/
+*.local
 .env
 .env.*
 !.env.example
@@ -40,4 +42,8 @@ creds/
 !package-lock.json
 !tsconfig.json
 !.prettierrc.json
+!ui/tsconfig.app.json
+!ui/tsconfig.node.json
+!ui/src/**/*.json
 *.db
+txt_*/

@@ -30,7 +30,10 @@ export function bookStatus(book: LibraryBook): BookStatus {
 /** Every book this account has, combining metadata with its read position
  * (if any) -- both already loaded once, in full, during unlock (see
  * VaultContext), so this is a synchronous, in-memory combine, not a fetch. */
-export function buildLibraryBooks(metadataById: Map<number, BookInfo>, accessMap: AccessMap): LibraryBook[] {
+export function buildLibraryBooks(
+  metadataById: Map<number, BookInfo>,
+  accessMap: AccessMap,
+): LibraryBook[] {
   return Array.from(metadataById.entries()).map(([txtId, info]) => {
     const position = accessMap.get(txtId);
     return {
@@ -89,7 +92,11 @@ export function browseEntries(books: LibraryBook[], dimension: BrowseDimension):
     .sort((a, b) => a.value.localeCompare(b.value));
 }
 
-export function booksForDimensionValue(books: LibraryBook[], dimension: BrowseDimension, value: string): LibraryBook[] {
+export function booksForDimensionValue(
+  books: LibraryBook[],
+  dimension: BrowseDimension,
+  value: string,
+): LibraryBook[] {
   return allBooksSorted(books.filter((book) => dimensionValues(book, dimension).includes(value)));
 }
 
@@ -103,7 +110,10 @@ export interface RecentBookmarkItem {
 }
 
 /** Every bookmark across every book, flattened and most-recently-created first. */
-export function recentBookmarks(bookmarksMap: BookmarksMap, metadataById: Map<number, BookInfo>): RecentBookmarkItem[] {
+export function recentBookmarks(
+  bookmarksMap: BookmarksMap,
+  metadataById: Map<number, BookInfo>,
+): RecentBookmarkItem[] {
   const items: RecentBookmarkItem[] = [];
   for (const [txtId, entries] of bookmarksMap) {
     const info = metadataById.get(txtId) ?? {

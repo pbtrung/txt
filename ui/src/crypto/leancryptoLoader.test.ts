@@ -24,7 +24,9 @@ describe("leancryptoLoader", () => {
     const key = new TextEncoder().encode("k".repeat(16));
     const data = new TextEncoder().encode("hello world");
     const out = await hmacSha3_256(key, data);
-    expect(bytesToHex(out)).toBe("09d657bafbe49950f21340e41188aee5f403536db9c0a227e05ee68382ae70f6");
+    expect(bytesToHex(out)).toBe(
+      "09d657bafbe49950f21340e41188aee5f403536db9c0a227e05ee68382ae70f6",
+    );
   });
 
   it("PBKDF2-HMAC-SHA3-256 matches the native leancrypto output", async () => {
@@ -40,7 +42,9 @@ describe("leancryptoLoader", () => {
   it("Ascon-Keccak AEAD encrypt matches the native leancrypto output", async () => {
     const key = Uint8Array.from({ length: 64 }, (_, i) => i);
     const iv = Uint8Array.from({ length: 64 }, (_, i) => i + 64);
-    const aad = new TextEncoder().encode("AADDATA1234567890123456789012345678901234567890123456789012345678");
+    const aad = new TextEncoder().encode(
+      "AADDATA1234567890123456789012345678901234567890123456789012345678",
+    );
     const pt = new TextEncoder().encode("hello leancrypto aead roundtrip test payload");
     const { ciphertext, tag } = await aeadEncrypt(key, iv, aad, pt, 64);
     expect(bytesToHex(ciphertext)).toBe(
@@ -54,7 +58,9 @@ describe("leancryptoLoader", () => {
   it("Ascon-Keccak AEAD decrypt recovers the plaintext", async () => {
     const key = Uint8Array.from({ length: 64 }, (_, i) => i);
     const iv = Uint8Array.from({ length: 64 }, (_, i) => i + 64);
-    const aad = new TextEncoder().encode("AADDATA1234567890123456789012345678901234567890123456789012345678");
+    const aad = new TextEncoder().encode(
+      "AADDATA1234567890123456789012345678901234567890123456789012345678",
+    );
     const ciphertext = hexToBytes(
       "ddc5654d645ea318b3c34d76d14acf1e4f5e52500bc1c836b1b0eb1e9a2918e971cc46441ec9ff3b92f81188",
     );

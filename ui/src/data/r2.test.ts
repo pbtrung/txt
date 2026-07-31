@@ -12,7 +12,9 @@ const config: R2Config = {
   readOnlySecretAccessKey: "ro-secret",
 };
 
-function fakeAwsClient(fetchImpl: (url: string, init?: RequestInit) => Promise<Response>): AwsClient {
+function fakeAwsClient(
+  fetchImpl: (url: string, init?: RequestInit) => Promise<Response>,
+): AwsClient {
   return { fetch: vi.fn(fetchImpl) } as unknown as AwsClient;
 }
 

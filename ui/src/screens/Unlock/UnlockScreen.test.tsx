@@ -8,7 +8,9 @@ import { UnlockScreen } from "./UnlockScreen";
 import * as VaultContextModule from "../../state/VaultContext";
 
 vi.mock("../../state/VaultContext", async () => {
-  const actual = await vi.importActual<typeof import("../../state/VaultContext")>("../../state/VaultContext");
+  const actual = await vi.importActual<typeof import("../../state/VaultContext")>(
+    "../../state/VaultContext",
+  );
   return { ...actual, useVault: vi.fn() };
 });
 
@@ -77,7 +79,10 @@ describe("UnlockScreen", () => {
   });
 
   it("shows a spinner and status line while unlocking", () => {
-    vi.mocked(VaultContextModule.useVault).mockReturnValue({ ...baseVaultValue(), status: "unlocking" });
+    vi.mocked(VaultContextModule.useVault).mockReturnValue({
+      ...baseVaultValue(),
+      status: "unlocking",
+    });
     renderUnlock();
     expect(screen.getByRole("status")).toBeInTheDocument();
     expect(screen.getByText(/setting up your library/i)).toBeInTheDocument();
@@ -99,7 +104,10 @@ describe("UnlockScreen", () => {
   });
 
   it("navigates to /library once unlocked", async () => {
-    vi.mocked(VaultContextModule.useVault).mockReturnValue({ ...baseVaultValue(), status: "unlocked" });
+    vi.mocked(VaultContextModule.useVault).mockReturnValue({
+      ...baseVaultValue(),
+      status: "unlocked",
+    });
     renderUnlock();
     await waitFor(() => expect(screen.getByText("Library screen")).toBeInTheDocument());
   });

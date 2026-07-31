@@ -35,7 +35,10 @@ export interface UserAuth {
  * only when the username itself doesn't resolve to any row; a resolved user
  * with the wrong password comes back as passwordOk: false, same as before. */
 export async function resolveUserAndCheckPassword(db: Client, creds: Creds): Promise<UserAuth> {
-  const usernameHash = await hmacSha3_256(creds.usernameLookupKey, new TextEncoder().encode(creds.username));
+  const usernameHash = await hmacSha3_256(
+    creds.usernameLookupKey,
+    new TextEncoder().encode(creds.username),
+  );
   const result = await db.execute({
     sql: "SELECT id, pw_salt, pw_hash FROM users WHERE username_hash = ?",
     args: [usernameHash],
@@ -57,7 +60,10 @@ export async function resolveUserAndCheckPassword(db: Client, creds: Creds): Pro
 }
 
 export async function unwrapUmk(db: Client, creds: Creds, userId: number): Promise<Uint8Array> {
-  const result = await db.execute({ sql: "SELECT umk FROM umk_store WHERE user_id = ?", args: [userId] });
+  const result = await db.execute({
+    sql: "SELECT umk FROM umk_store WHERE user_id = ?",
+    args: [userId],
+  });
   const row = result.rows[0];
   if (!row) {
     throw new OwnerError(`no umk_store row for user_id=${userId}`);
@@ -65,8 +71,15 @@ export async function unwrapUmk(db: Client, creds: Creds, userId: number): Promi
   return blob.decrypt(creds.userRootKey, requireBlobBytes(row.umk, "umk_store.umk"));
 }
 
-export async function fetchR2Config(db: Client, userId: number, umk: Uint8Array): Promise<R2Config> {
-  const result = await db.execute({ sql: "SELECT config FROM r2_config WHERE user_id = ?", args: [userId] });
+export async function fetchR2Config(
+  db: Client,
+  userId: number,
+  umk: Uint8Array,
+): Promise<R2Config> {
+  const result = await db.execute({
+    sql: "SELECT config FROM r2_config WHERE user_id = ?",
+    args: [userId],
+  });
   const row = result.rows[0];
   if (!row) {
     throw new OwnerError(`no r2_config row for user_id=${userId}`);
@@ -78,8 +91,15 @@ export async function fetchR2Config(db: Client, userId: number, umk: Uint8Array)
  * Decapsulate a txt_shares grant (unwrapTxtKey's fallback below) back down
  * to a shared txt_key, the same way a document owner's own umk unwraps
  * their own txt.txt_key directly. */
-export async function unwrapPrivKey(db: Client, userId: number, umk: Uint8Array): Promise<Uint8Array> {
-  const result = await db.execute({ sql: "SELECT priv_key FROM key_store WHERE user_id = ?", args: [userId] });
+export async function unwrapPrivKey(
+  db: Client,
+  userId: number,
+  umk: Uint8Array,
+): Promise<Uint8Array> {
+  const result = await db.execute({
+    sql: "SELECT priv_key FROM key_store WHERE user_id = ?",
+    args: [userId],
+  });
   const row = result.rows[0];
   if (!row) {
     throw new OwnerError(`no key_store row for user_id=${userId}`);
@@ -139,7 +159,11 @@ export async function unwrapTxtKey(
  * uses partRawPath below instead: it only ever shows one part at a time, so
  * fetching every part's path up front cost one row-read per part just to
  * open a book, regardless of how much of it actually gets read. */
-export async function partRawPaths(db: Client, txtId: number, txtKey: Uint8Array): Promise<string[]> {
+export async function partRawPaths(
+  db: Client,
+  txtId: number,
+  txtKey: Uint8Array,
+): Promise<string[]> {
   const result = await db.execute({
     sql: "SELECT path FROM txt_parts WHERE txt_id = ? ORDER BY part_num ASC",
     args: [txtId],
@@ -172,7 +196,10 @@ export async function partRawPath(
 }
 
 export async function partCount(db: Client, txtId: number): Promise<number> {
-  const result = await db.execute({ sql: "SELECT count FROM part_count WHERE txt_id = ?", args: [txtId] });
+  const result = await db.execute({
+    sql: "SELECT count FROM part_count WHERE txt_id = ?",
+    args: [txtId],
+  });
   const row = result.rows[0];
   return row ? Number(row.count) : 0;
 }

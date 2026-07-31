@@ -9,7 +9,8 @@ import type { CSSProperties } from "react";
 import { ClickableRow } from "./ClickableRow";
 import { DeleteButton } from "./DeleteButton";
 
-const DEFAULT_CLASS_NAME = "list-group-item list-group-item-action d-flex align-items-start gap-3 py-3";
+const DEFAULT_CLASS_NAME =
+  "list-group-item list-group-item-action d-flex align-items-start gap-3 py-3";
 
 interface BookmarkRowProps {
   title?: string;
@@ -42,7 +43,9 @@ export function BookmarkRow({
         <span className="d-block small text-body-secondary">
           Part {partNum} · Line {line}
         </span>
-        <span className="d-block text-body-secondary fst-italic small text-truncate">&ldquo;{txtPreview}&rdquo;</span>
+        <span className="d-block text-body-secondary fst-italic small text-truncate">
+          &ldquo;{txtPreview}&rdquo;
+        </span>
       </span>
       <DeleteButton onClick={onDelete} ariaLabel={deleteAriaLabel} />
     </ClickableRow>

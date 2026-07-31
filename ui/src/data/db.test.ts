@@ -49,8 +49,14 @@ describe("createDb's request logging", () => {
     const db = createDb(CREDS);
     await db.execute({ sql: "SELECT id FROM users WHERE id = ?", args: [1] });
 
-    expect(console.log).toHaveBeenCalledWith("[verbose]", expect.stringContaining("db.execute: SELECT id FROM users"));
-    expect(console.log).toHaveBeenCalledWith("[verbose]", expect.stringContaining("db.execute done"));
+    expect(console.log).toHaveBeenCalledWith(
+      "[verbose]",
+      expect.stringContaining("db.execute: SELECT id FROM users"),
+    );
+    expect(console.log).toHaveBeenCalledWith(
+      "[verbose]",
+      expect.stringContaining("db.execute done"),
+    );
   });
 
   it("logs a failed request instead of swallowing the error", async () => {
@@ -60,7 +66,11 @@ describe("createDb's request logging", () => {
 
     const db = createDb(CREDS);
     await expect(db.execute({ sql: "SELECT 1", args: [] })).rejects.toThrow("boom");
-    expect(console.log).toHaveBeenCalledWith("[verbose]", expect.stringContaining("db.execute failed"), err);
+    expect(console.log).toHaveBeenCalledWith(
+      "[verbose]",
+      expect.stringContaining("db.execute failed"),
+      err,
+    );
   });
 
   it("passes non-execute properties through untouched", async () => {

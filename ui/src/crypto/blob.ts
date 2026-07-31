@@ -8,7 +8,10 @@ import { concatBytes, randomBytes } from "./bytes";
 import * as brotli from "./brotli";
 import { aeadDecrypt, aeadEncrypt, hkdf } from "./leancryptoLoader";
 
-async function derive(ikm: Uint8Array, salt: Uint8Array): Promise<{ key: Uint8Array; iv: Uint8Array }> {
+async function derive(
+  ikm: Uint8Array,
+  salt: Uint8Array,
+): Promise<{ key: Uint8Array; iv: Uint8Array }> {
   const okm = await hkdf(ikm, salt, c.OKM_LEN);
   return { key: okm.slice(0, c.KEY_LEN), iv: okm.slice(c.KEY_LEN) };
 }
@@ -19,7 +22,11 @@ export interface EncryptOptions {
 }
 
 /** compressed:true brotli-compresses payload first, for structured (e.g. JSON) payloads. */
-export async function encrypt(ikm: Uint8Array, payload: Uint8Array, options: EncryptOptions = {}): Promise<Uint8Array> {
+export async function encrypt(
+  ikm: Uint8Array,
+  payload: Uint8Array,
+  options: EncryptOptions = {},
+): Promise<Uint8Array> {
   const salt = options.salt ?? randomBytes(c.SALT_LEN);
   const plaintext = options.compressed ? await brotli.compress(payload) : payload;
   const { key, iv } = await derive(ikm, salt);
@@ -29,7 +36,11 @@ export async function encrypt(ikm: Uint8Array, payload: Uint8Array, options: Enc
 }
 
 /** compressed:true must match the compressed value used to encrypt this blob. */
-export async function decrypt(ikm: Uint8Array, blob: Uint8Array, compressed = false): Promise<Uint8Array> {
+export async function decrypt(
+  ikm: Uint8Array,
+  blob: Uint8Array,
+  compressed = false,
+): Promise<Uint8Array> {
   if (blob.length < c.BLOB_MIN_LEN) {
     throw new Error("blob shorter than minimum valid length");
   }

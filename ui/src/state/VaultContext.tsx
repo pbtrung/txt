@@ -4,7 +4,15 @@
 
 import type { Client } from "@libsql/core/api";
 import type { AwsClient } from "aws4fetch";
-import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 import {
   loadOrInitAccess,
@@ -65,7 +73,11 @@ const UNLOCK_PHASES = [
   "Loading your read progress",
   "Loading your bookmarks",
 ] as const;
-const REFRESH_PHASES = ["Loading your books", "Loading your read progress", "Loading your bookmarks"] as const;
+const REFRESH_PHASES = [
+  "Loading your books",
+  "Loading your read progress",
+  "Loading your bookmarks",
+] as const;
 
 function phaseProgress(phases: readonly string[], index: number): VaultProgress {
   return { label: phases[index], step: index + 1, total: phases.length };
@@ -118,7 +130,12 @@ export interface VaultContextValue {
   getTxtKey: (txtId: number) => Promise<Uint8Array>;
   recordReadPosition: (txtId: number, position: ReadPosition) => Promise<void>;
   removeAccessEntry: (txtId: number) => Promise<void>;
-  addBookmarkEntry: (txtId: number, partNum: number, line: number, txtPreview: string) => Promise<void>;
+  addBookmarkEntry: (
+    txtId: number,
+    partNum: number,
+    line: number,
+    txtPreview: string,
+  ) => Promise<void>;
   removeBookmarkEntry: (txtId: number, createdAt: number) => Promise<void>;
   /** Admin Manage screen: deletes one of the admin's own txt -- its R2 part
    * objects, its Turso rows (data/adminTxt.ts), and its txt_metadata entry
@@ -131,7 +148,11 @@ export interface VaultContextValue {
    * its entry in the in-memory metadataById. Requires a write-capable
    * r2Client. `onProgress`, if given, is forwarded to saveBookMetadata --
    * see its own doc comment. */
-  updateBookMetadata: (txtId: number, edits: BookMetadataEdits, onProgress?: (label: string) => void) => Promise<void>;
+  updateBookMetadata: (
+    txtId: number,
+    edits: BookMetadataEdits,
+    onProgress?: (label: string) => void,
+  ) => Promise<void>;
 }
 
 const VaultContext = createContext<VaultContextValue | null>(null);
@@ -219,13 +240,27 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         // each a single row scoped to this user.
         setProgress(phaseProgress(UNLOCK_PHASES, 2));
         verbose("unlock: loading txt metadata");
-        const { state: rawMetadataState, metadataById } = await loadTxtMetadata(db, userId, umk, r2Client, r2Config);
+        const { state: rawMetadataState, metadataById } = await loadTxtMetadata(
+          db,
+          userId,
+          umk,
+          r2Client,
+          r2Config,
+        );
         setProgress(phaseProgress(UNLOCK_PHASES, 3));
         verbose("unlock: loading access map");
-        const { txtAccessKey, accessMap: initialAccessMap } = await loadOrInitAccess(db, userId, umk);
+        const { txtAccessKey, accessMap: initialAccessMap } = await loadOrInitAccess(
+          db,
+          userId,
+          umk,
+        );
         setProgress(phaseProgress(UNLOCK_PHASES, 4));
         verbose("unlock: loading bookmarks");
-        const { bookmarkKey, bookmarksMap: initialBookmarksMap } = await loadOrInitBookmarks(db, userId, umk);
+        const { bookmarkKey, bookmarksMap: initialBookmarksMap } = await loadOrInitBookmarks(
+          db,
+          userId,
+          umk,
+        );
 
         txtKeyCache.current = new Map();
         setAccessMap(initialAccessMap);
@@ -304,7 +339,9 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         session.umk,
       );
 
-      setSession((prev) => (prev ? { ...prev, metadataById, rawMetadataState, txtAccessKey, bookmarkKey } : prev));
+      setSession((prev) =>
+        prev ? { ...prev, metadataById, rawMetadataState, txtAccessKey, bookmarkKey } : prev,
+      );
       setAccessMap(nextAccessMap);
       setBookmarksMap(nextBookmarksMap);
       verbose("refresh: done");
@@ -321,7 +358,13 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       if (!session) {
         throw new Error("vault is locked");
       }
-      const txtKey = await unwrapTxtKey(session.db, txtId, session.userId, session.umk, session.privKey);
+      const txtKey = await unwrapTxtKey(
+        session.db,
+        txtId,
+        session.userId,
+        session.umk,
+        session.privKey,
+      );
       txtKeyCache.current.set(txtId, txtKey);
       return txtKey;
     },
@@ -412,7 +455,9 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         // admin session with read-write keys in r2_config today.
         const txtKey = await getTxtKey(txtId);
         const rawPaths = await partRawPaths(session.db, txtId, txtKey);
-        await Promise.all(rawPaths.map((rawPath) => deleteObject(session.r2Client, session.r2Config, rawPath)));
+        await Promise.all(
+          rawPaths.map((rawPath) => deleteObject(session.r2Client, session.r2Config, rawPath)),
+        );
 
         // Scrub the copy grantShare (adminShares.ts) made in each
         // recipient's own txt_metadata, so deleting this txt doesn't leave a
@@ -429,7 +474,14 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           if (!recipientUmk) {
             throw new Error(`couldn't recover user_id=${toUserId}'s umk via their escrowed creds`);
           }
-          await removeTxtMetadataEntry(session.db, toUserId, recipientUmk, session.r2Client, session.r2Config, txtId);
+          await removeTxtMetadataEntry(
+            session.db,
+            toUserId,
+            recipientUmk,
+            session.r2Client,
+            session.r2Config,
+            txtId,
+          );
         }
 
         await deleteTxtRows(session.db, txtId);
@@ -464,7 +516,11 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           if (!prev) return prev;
           const nextMetadataById = new Map(prev.metadataById);
           nextMetadataById.delete(txtId);
-          return { ...prev, metadataById: nextMetadataById, rawMetadataState: nextRawMetadataState };
+          return {
+            ...prev,
+            metadataById: nextMetadataById,
+            rawMetadataState: nextRawMetadataState,
+          };
         });
       });
     },

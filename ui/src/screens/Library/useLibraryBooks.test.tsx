@@ -9,7 +9,9 @@ import * as VaultContextModule from "../../state/VaultContext";
 import { useLibraryBooks } from "./useLibraryBooks";
 
 vi.mock("../../state/VaultContext", async () => {
-  const actual = await vi.importActual<typeof import("../../state/VaultContext")>("../../state/VaultContext");
+  const actual = await vi.importActual<typeof import("../../state/VaultContext")>(
+    "../../state/VaultContext",
+  );
   return { ...actual, useVault: vi.fn() };
 });
 

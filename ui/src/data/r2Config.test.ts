@@ -43,7 +43,12 @@ describe("parseR2Config", () => {
 
   it("rejects a missing required field", () => {
     expect(() =>
-      parseR2Config({ endpoint: "https://x", region: "auto", bucket: "b", read_only_access_key_id: "id" }),
+      parseR2Config({
+        endpoint: "https://x",
+        region: "auto",
+        bucket: "b",
+        read_only_access_key_id: "id",
+      }),
     ).toThrow("read_only_secret_access_key is required");
   });
 
