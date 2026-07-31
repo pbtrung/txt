@@ -63,11 +63,14 @@ Each admin statement's forced fields come from its own `forced_params` function 
 ```
 docker build --build-arg RQLITE_VERSION=10.2.7 -t txt-rqlite docker/
 docker run -p 4001:4001 -p 4002:4002 \
+  --hostname txt-rqlite \
   -e NGINX_USER=admin -e NGINX_PASSWORD=<shared secret> \
   -v rqlite-data:/rqlite/file/data \
   txt-rqlite
 ```
 
 `NGINX_USER`/`NGINX_PASSWORD` are required — without both, `entrypoint.sh` never creates `/etc/nginx/.htpasswd`, and `auth_basic` (mandatory on the whole server block) will fail every request, including `auth_perms.lua`'s own internal auth lookup.
+
+`--hostname` is required too, for a reason that only bites on a *second* run: `entrypoint.sh` (unmodified from the reference project) derives `-node-id` from `hostname` and the Raft/HTTP advertised addresses from `hostname -f` whenever `NODE_ID`/`HTTP_ADV_ADDR`/`RAFT_ADV_ADDR` aren't set explicitly. Docker assigns a fresh random hostname to every new container, so recreating the container without a fixed `--hostname` (or those env vars) changes this node's Raft identity on every `docker run`. rqlite's own clustering guide is explicit that a node's ID "shouldn't change, once chosen," and that recovering from a changed address requires "a quorum (at least) of nodes up and running" *besides* the one whose identity changed -- a single node has no such quorum, so once its identity drifts it can never re-elect itself leader against its own persisted configuration again (surfaces as a permanent "not leader" error on every write/restore). Keep `--hostname` (or `-e NODE_ID=...`) fixed across every recreation of this container, not just its first run, and prefer `docker start` on the same container over re-running `docker run` where possible.
 
 Per-tenant access is separate from that shared basic-auth secret: each real client authenticates with its own API key (`Authorization: Bearer <raw key>`), issued and hashed into `api_keys.key_hash` the way `txt.ts --migrate` does it — see the root [README.md](../README.md) and [docs/data_model.md](../docs/data_model.md).
