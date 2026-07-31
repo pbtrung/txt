@@ -1,6 +1,6 @@
 // The *Command classes behind txt.ts's flags
 // (--clean-bucket/--collect-garbage/--vacuum/--migrate/--test-perf/
-// --test-write), plus the two small single-consumer helpers only --migrate needs (randomPath,
+// --test-write/--remote-vacuum), plus the two small single-consumer helpers only --migrate needs (randomPath,
 // mapLimit -- each used to be its own file; nothing else ever imported
 // them, so there was no reuse to lose by inlining them here). Kept in one
 // file rather than five: each command was already its own small class, and
@@ -36,6 +36,7 @@ import { RqliteHttpClient, resolveTargetDbId, fetchMeta, type Meta } from "./rql
 import { startRemotePageWorker, type RemotePageBridge } from "./remotePageClient.ts";
 import { loadWasm } from "./wasm.ts";
 import { registerRemoteVfs, type RemoteVfsStats, type RemoteVfsHandle } from "./remoteVfs.ts";
+import { RemoteRqliteDb, sweepGarbageRemote } from "./remoteGc.ts";
 
 /**
  * Shared by every command below: owns `opts` and the verbose-gated `log()`
@@ -293,6 +294,71 @@ export class VacuumCommand extends Command<VacuumOptions> {
     rqliteDb.vacuum();
     const after = statSync(this.opts.dbPath).size;
     console.log(`\nrqlite_txt.db: ${before} -> ${after} bytes`);
+  }
+}
+
+// ===========================================================================
+// --remote-vacuum: --vacuum's remote counterpart -- same three steps (vacuum
+// the user SQLCipher database, collect the pages that superseded, vacuum
+// the page store's own backing SQLite database), but over the network
+// against a live deployment via --creds, with no local file access to
+// rqlite_txt.db at all. Requires an admin-role api_key: both the page-store
+// vacuum and every garbage-collection query go through RAW_QUERY
+// (docker/auth_perms.lua), which only admin can call.
+// ===========================================================================
+
+export interface RemoteVacuumOptions {
+  credsPath: string;
+  verbose: boolean;
+}
+
+export class RemoteVacuumCommand extends Command<RemoteVacuumOptions> {
+  async run(): Promise<void> {
+    const creds = loadPerfCreds(this.opts.credsPath);
+    this.progress(`Loaded creds from ${this.opts.credsPath}`);
+    const client = new RqliteHttpClient(creds.rqlite_url, creds.api_key);
+    const targetDbId = await resolveTargetDbId(client, creds.api_key);
+    if (!targetDbId) {
+      throw new Error("--remote-vacuum requires an admin-role api_key (RAW_QUERY is admin-only)");
+    }
+    await this.vacuumUserDb(creds);
+    await this.collectGarbage(client, targetDbId);
+    await this.vacuumRqliteDb(client, targetDbId);
+  }
+
+  private async vacuumUserDb(creds: PerfCreds): Promise<void> {
+    const session = await openRemoteSession(creds, false, (m) => this.log(m));
+    try {
+      this.progress("Vacuuming the user database (remote)...");
+      session.db.exec("VACUUM;");
+      const ok = await session.vfs.commit(session.client);
+      if (!ok) throw new Error("commit lost the CAS race -- rerun --remote-vacuum");
+      this.progress(`Committed at version ${session.vfs.getCurrentVersion()}`);
+    } finally {
+      await closeRemoteSession(session);
+    }
+  }
+
+  private async collectGarbage(client: RqliteHttpClient, targetDbId: string): Promise<void> {
+    this.progress("Collecting garbage (remote)...");
+    const remoteDb = new RemoteRqliteDb(client, targetDbId);
+    const result = await sweepGarbageRemote(remoteDb, {
+      dryRun: false,
+      verbose: this.opts.verbose,
+    });
+    if (result.skipped) {
+      this.progress("needs_gc is not set; nothing has changed since the last sweep");
+      return;
+    }
+    this.progress(
+      `collected ${result.pagesRemoved} stale page version(s), ${result.readersRemoved} expired reader lease(s)`,
+    );
+  }
+
+  private async vacuumRqliteDb(client: RqliteHttpClient, targetDbId: string): Promise<void> {
+    this.progress("Vacuuming the page store's own database (remote)...");
+    await new RemoteRqliteDb(client, targetDbId).vacuum();
+    this.progress("Done.");
   }
 }
 
@@ -826,6 +892,52 @@ interface Session {
   db: SqliteDb;
 }
 
+/** Opens a real, remote user database (worker + lazy VFS + SqliteDb), the
+ * same way for every command that needs one (TestWriteCommand,
+ * RemoteVacuumCommand) -- used to be duplicated as TestWriteCommand's own
+ * private method. */
+async function openRemoteSession(
+  creds: PerfCreds,
+  readOnly: boolean,
+  log: (message: string) => void,
+): Promise<Session> {
+  const client = new RqliteHttpClient(creds.rqlite_url, creds.api_key);
+  const targetDbId = await resolveTargetDbId(client, creds.api_key);
+  const meta = await fetchMeta(client, targetDbId);
+  log(
+    `open() targetDbId=${targetDbId ?? "(none -- user-role key)"} ` +
+      `currentVersion=${meta.currentVersion} pageCount=${meta.pageCount}`,
+  );
+  const bridge = await startRemotePageWorker(
+    creds.rqlite_url,
+    creds.api_key,
+    meta.pageSize,
+    meta.currentVersion,
+    targetDbId,
+  );
+  const mod = await loadWasm();
+  const vfs = registerRemoteVfs(mod, {
+    pageSize: meta.pageSize,
+    pageCount: meta.pageCount,
+    currentVersion: meta.currentVersion,
+    backedPath: BACKED_PATH,
+    fetchPage: bridge.fetchPage,
+    targetDbId,
+    log,
+  });
+  const db = await SqliteDb.open(BACKED_PATH, {
+    vfsName: vfs.name,
+    rawKey: rootKeyBytes(creds),
+    readOnly,
+  });
+  return { client, targetDbId, bridge, vfs, db };
+}
+
+async function closeRemoteSession(session: Session): Promise<void> {
+  session.db.close();
+  await session.bridge.terminate();
+}
+
 export class TestWriteCommand extends Command<TestWriteOptions> {
   async run(): Promise<TestWriteResult> {
     writeFileSync(this.opts.logFilePath, ""); // fresh log file per run
@@ -850,7 +962,7 @@ export class TestWriteCommand extends Command<TestWriteOptions> {
   }
 
   private async writeSession(creds: PerfCreds): Promise<Written> {
-    const session = await this.openSession(creds, false);
+    const session = await openRemoteSession(creds, false, (m) => this.log(m));
     try {
       const picked = this.pickTargetRow(session.db);
       const written = this.performWrites(session.db, picked);
@@ -860,52 +972,17 @@ export class TestWriteCommand extends Command<TestWriteOptions> {
       this.progress(`Committed at version ${session.vfs.getCurrentVersion()}`);
       return written;
     } finally {
-      session.db.close();
-      await session.bridge.terminate();
+      await closeRemoteSession(session);
     }
   }
 
   private async readBackSession(creds: PerfCreds, txtId: number): Promise<ReadBack> {
-    const session = await this.openSession(creds, true);
+    const session = await openRemoteSession(creds, true, (m) => this.log(m));
     try {
       return this.readBack(session.db, txtId);
     } finally {
-      session.db.close();
-      await session.bridge.terminate();
+      await closeRemoteSession(session);
     }
-  }
-
-  private async openSession(creds: PerfCreds, readOnly: boolean): Promise<Session> {
-    const client = new RqliteHttpClient(creds.rqlite_url, creds.api_key);
-    const targetDbId = await resolveTargetDbId(client, creds.api_key);
-    const meta = await fetchMeta(client, targetDbId);
-    this.log(
-      `open() targetDbId=${targetDbId ?? "(none -- user-role key)"} ` +
-        `currentVersion=${meta.currentVersion} pageCount=${meta.pageCount}`,
-    );
-    const bridge = await startRemotePageWorker(
-      creds.rqlite_url,
-      creds.api_key,
-      meta.pageSize,
-      meta.currentVersion,
-      targetDbId,
-    );
-    const mod = await loadWasm();
-    const vfs = registerRemoteVfs(mod, {
-      pageSize: meta.pageSize,
-      pageCount: meta.pageCount,
-      currentVersion: meta.currentVersion,
-      backedPath: BACKED_PATH,
-      fetchPage: bridge.fetchPage,
-      targetDbId,
-      log: (message) => this.log(message),
-    });
-    const db = await SqliteDb.open(BACKED_PATH, {
-      vfsName: vfs.name,
-      rawKey: rootKeyBytes(creds),
-      readOnly,
-    });
-    return { client, targetDbId, bridge, vfs, db };
   }
 
   private pickTargetRow(db: SqliteDb): { txtId: number; priorLastPartNum: number | null } {

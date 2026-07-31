@@ -4,6 +4,7 @@ import {
   CleanBucketCommand,
   CollectGarbageCommand,
   VacuumCommand,
+  RemoteVacuumCommand,
   UpdateDbCommand,
   TestPerfCommand,
   TestWriteCommand,
@@ -14,6 +15,7 @@ const USAGE = `usage:
   txt.ts --clean-bucket --creds <file> --db <file> [--dry-run] [--verbose]
   txt.ts --collect-garbage --db <file> [--dry-run] [--verbose]
   txt.ts --vacuum --creds <file> --db <file> [--verbose]
+  txt.ts --remote-vacuum --creds <file> [--verbose]
   txt.ts --update-db --creds <file> --db <file> [--verbose]
   txt.ts --test-perf --creds <file> [--verbose]
   txt.ts --test-write --creds <file> [--log-file <file>] [--verbose]`;
@@ -23,6 +25,7 @@ const OPTIONS = {
   "clean-bucket": { type: "boolean" },
   "collect-garbage": { type: "boolean" },
   vacuum: { type: "boolean" },
+  "remote-vacuum": { type: "boolean" },
   "update-db": { type: "boolean" },
   "test-perf": { type: "boolean" },
   "test-write": { type: "boolean" },
@@ -46,6 +49,7 @@ export async function main(argv: string[]): Promise<void> {
   if (values["clean-bucket"]) return runCleanBucket(values);
   if (values["collect-garbage"]) return runCollectGarbage(values);
   if (values.vacuum) return runVacuum(values);
+  if (values["remote-vacuum"]) return runRemoteVacuum(values);
   if (values["update-db"]) return runUpdateDb(values);
   if (values["test-perf"]) return runTestPerf(values);
   if (values["test-write"]) return runTestWrite(values);
@@ -90,6 +94,13 @@ async function runVacuum(values: Values): Promise<void> {
   await new VacuumCommand({
     credsPath: requiredArg(values, "creds"),
     dbPath: requiredArg(values, "db"),
+    verbose: !!values.verbose,
+  }).run();
+}
+
+async function runRemoteVacuum(values: Values): Promise<void> {
+  await new RemoteVacuumCommand({
+    credsPath: requiredArg(values, "creds"),
     verbose: !!values.verbose,
   }).run();
 }
