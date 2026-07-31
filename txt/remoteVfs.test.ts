@@ -121,6 +121,15 @@ test("registerRemoteVfs.primeCache: pre-seeded pages are read without ever calli
   }
 });
 
+/** Decodes rqliteHttpClient.ts's encodeBlobParam's x'...' hex-literal form
+ * back into raw bytes -- this fake server stands in for what real rqlite
+ * does with a BLOB param, so it has to understand the same wire format the
+ * real client actually sends. */
+function decodeBlobParam(value: string): Buffer {
+  const hex = value.slice(2, -1); // strip the x'...' wrapper
+  return Buffer.from(hex, "hex");
+}
+
 /** A tiny fake page store behind a real HTTP server -- COMMIT is the only
  * statement actually exercised over the wire (fetchPage below reads
  * straight out of the same in-memory map, exactly like prefetch bypasses a
@@ -144,7 +153,7 @@ function startFakePageStore(): Promise<{
       const won = body.commit.old_version === version;
       if (won) {
         for (const p of body.commit.pages)
-          pages.set(`${p.page_no}@${body.commit.new_version}`, Buffer.from(p.data));
+          pages.set(`${p.page_no}@${body.commit.new_version}`, decodeBlobParam(p.data));
         version = body.commit.new_version;
       }
       res.writeHead(200, { "Content-Type": "application/json" });

@@ -181,9 +181,13 @@ export function decodeBlobColumn(value: unknown): Buffer {
 
 /** rqlite BLOB positional params must be hex x'...' or a numeric byte array
  * -- NOT base64, unlike the query-result encoding decodeBlobColumn above
- * decodes. Used when sending page.data on COMMIT. */
-export function encodeBlobParam(bytes: Uint8Array): number[] {
-  return Array.from(bytes);
+ * decodes. Used when sending page.data on COMMIT. Hex, not the numeric
+ * array form: ~2 chars/byte versus ~3.5-3.7 (decimal digits + commas),
+ * shrinking every COMMIT body by roughly 44% -- directly what let
+ * INCREMENTAL_VACUUM_PAGE_COUNT (commands.ts) stay small enough to fit
+ * docker/nginx.conf's client_body_buffer_size/client_max_body_size. */
+export function encodeBlobParam(bytes: Uint8Array): string {
+  return `x'${Buffer.from(bytes).toString("hex")}'`;
 }
 
 /**

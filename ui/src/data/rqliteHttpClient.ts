@@ -169,9 +169,13 @@ export function decodeBlobColumn(value: unknown): Uint8Array {
 
 /** rqlite BLOB positional params must be hex x'...' or a numeric byte array
  * -- NOT base64, unlike the query-result encoding decodeBlobColumn above
- * decodes. Used when sending page.data on COMMIT (remoteVfs.ts). */
-export function encodeBlobParam(bytes: Uint8Array): number[] {
-  return Array.from(bytes);
+ * decodes. Used when sending page.data on COMMIT (remoteVfs.ts). Hex, not
+ * the numeric array form: ~2 chars/byte versus ~3.5-3.7 (decimal digits +
+ * commas), shrinking every COMMIT body by roughly 44%. */
+export function encodeBlobParam(bytes: Uint8Array): string {
+  let hex = "";
+  for (let i = 0; i < bytes.length; i++) hex += bytes[i]!.toString(16).padStart(2, "0");
+  return `x'${hex}'`;
 }
 
 /** SHA3-256 of apiKey, base64-encoded -- matches docker/auth_perms.lua's own

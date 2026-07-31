@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from "vitest";
 import http from "node:http";
-import { RqliteHttpClient } from "./rqliteHttpClient";
+import { RqliteHttpClient, encodeBlobParam } from "./rqliteHttpClient";
 
 interface CapturedRequest {
   url: string | undefined;
@@ -104,5 +104,13 @@ describe("RqliteHttpClient.commit()", () => {
     } finally {
       await mock.close();
     }
+  });
+});
+
+describe("encodeBlobParam", () => {
+  it("encodes as an x'...' hex literal, not a numeric byte array", () => {
+    expect(encodeBlobParam(new Uint8Array([1, 2, 3]))).toBe("x'010203'");
+    expect(encodeBlobParam(new Uint8Array([0, 255, 16]))).toBe("x'00ff10'");
+    expect(encodeBlobParam(new Uint8Array([]))).toBe("x''");
   });
 });

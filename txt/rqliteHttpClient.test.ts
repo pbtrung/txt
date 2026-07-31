@@ -13,6 +13,7 @@ import {
   RqliteHttpClient,
   resultRows,
   decodeBlobColumn,
+  encodeBlobParam,
   type RqliteResult,
 } from "./rqliteHttpClient.ts";
 import { prefetchAllPages } from "./commands.ts";
@@ -151,6 +152,12 @@ test("decodeBlobColumn: decodes base64, rejects non-string values", () => {
   assert.throws(() => decodeBlobColumn(42), /expected base64 blob string/);
 });
 
+test("encodeBlobParam: encodes as an x'...' hex literal, not a numeric byte array", () => {
+  assert.equal(encodeBlobParam(new Uint8Array([1, 2, 3])), "x'010203'");
+  assert.equal(encodeBlobParam(new Uint8Array([0, 255, 16])), "x'00ff10'");
+  assert.equal(encodeBlobParam(new Uint8Array([])), "x''");
+});
+
 test("RqliteHttpClient.commit(): posts ?transaction, the right body shape, and reports CAS win/loss", async () => {
   const mock = await startMockServer((req) => ({
     results: [
@@ -168,7 +175,7 @@ test("RqliteHttpClient.commit(): posts ?transaction, the right body shape, and r
     assert.deepEqual(mock.requests[0]?.body, {
       statementId: "COMMIT",
       commit: {
-        pages: [{ page_no: 3, data: [1, 2, 3] }],
+        pages: [{ page_no: 3, data: "x'010203'" }],
         old_version: 5,
         new_version: 6,
         page_count: 10,

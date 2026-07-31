@@ -413,11 +413,13 @@ export class ConvertAutoVacuumCommand extends Command<ConvertAutoVacuumOptions> 
 // size ratio -- picked with real margin under both
 // docker/nginx.conf's client_body_buffer_size (4m: a request over this
 // spills to disk, and auth_perms.lua can't read a disk-buffered body at
-// all) and client_max_body_size (50m), using the ~14KB-per-encoded-page
-// figure client_body_buffer_size's own comment already established: even a
-// generous 3x multiplier puts 50 pages at ~2.1MB, comfortably under 4m.
-// Tune down further if a real deployment still sees oversized commits, or
-// up if 50 pages/run reclaims space too slowly to keep up with writes.
+// all) and client_max_body_size (50m), using the ~8KB-per-encoded-page
+// figure client_body_buffer_size's own comment establishes (rqliteHttpClient.ts's
+// encodeBlobParam sends hex, not the older, larger numeric-byte-array
+// form): even a generous 3x multiplier puts 50 pages at ~1.2MB, well under
+// 4m, with room to spare. Tune down further if a real deployment still
+// sees oversized commits, or up if 50 pages/run reclaims space too slowly
+// to keep up with writes.
 const INCREMENTAL_VACUUM_PAGE_COUNT = 50;
 
 export interface RemoteVacuumOptions {
