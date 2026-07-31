@@ -1,6 +1,6 @@
 # Data Model — rqlite
 
-This project stores each user's data as their own SQLCipher-encrypted SQLite database, not as rows in a shared multi-tenant database. That per-user database's schema is described below under **User SQLCipher Database**. It's persisted as a sequence of encrypted pages in rqlite, described under **rqlite Page Store**. Account/auth data (who a user is, their API key, their rate tier) lives once, at the page-store level — never duplicated inside each tenant's own database.
+This project stores each user's data as their own SQLCipher-encrypted SQLite database, not as rows in a shared multi-tenant database. That per-user database's schema is described below under **User SQLCipher Database**. It's persisted as a sequence of encrypted pages in rqlite, described under **rqlite Page Store**. Account/auth data (who a user is, their API key) lives once, at the page-store level — never duplicated inside each tenant's own database.
 
 ## rqlite Page Store
 
@@ -18,18 +18,8 @@ Every timestamp column in this schema (`created_at`, `revoked_at`, `lease_expire
 CREATE TABLE users (
   user_id    TEXT PRIMARY KEY,
   role       TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),
-  rate_tier  TEXT NOT NULL DEFAULT 'free' REFERENCES rate_tiers(tier_id),
   disabled   INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL
-);
-
--- Referenced by users.rate_tier. A row per tier keeps the set of valid
--- tiers extensible (add a row) without a migration, while still rejecting
--- a typo'd tier at write time the way users.role's CHECK does.
-CREATE TABLE rate_tiers (
-  tier_id TEXT    PRIMARY KEY,
-  rate    INTEGER NOT NULL,  -- requests/sec
-  burst   INTEGER NOT NULL
 );
 
 CREATE TABLE api_keys (
@@ -73,8 +63,7 @@ CREATE TABLE gc_runs (
 
 ### Tables
 
-- **`users`** — one row per account. `user_id` is a UUIDv4 (stored as `TEXT`), generated once at account creation — not a sequential integer, since this value doubles as `db_id`, the tenant boundary, and a guessable/sortable ID would let one tenant enumerate or infer the existence of others. `role` gates admin-only operations. `rate_tier` is a foreign key into `rate_tiers`, looked up alongside auth to pick a rate-limit rate/burst pair — an unrecognized tier is rejected at write time instead of silently falling through a lookup elsewhere. `disabled` is a kill switch independent of the account's `api_keys` row — it can lock an account out even if its key hasn't been individually revoked.
-- **`rate_tiers`** — the closed set of valid `users.rate_tier` values and the rate/burst pair each one maps to. Adding a tier is an `INSERT`, not a migration; removing one that's still referenced is rejected by the foreign key rather than orphaning accounts on a now-meaningless tier string.
+- **`users`** — one row per account. `user_id` is a UUIDv4 (stored as `TEXT`), generated once at account creation — not a sequential integer, since this value doubles as `db_id`, the tenant boundary, and a guessable/sortable ID would let one tenant enumerate or infer the existence of others. `role` gates admin-only operations. `disabled` is a kill switch independent of the account's `api_keys` row — it can lock an account out even if its key hasn't been individually revoked.
 - **`api_keys`** — exactly one live key per user (`user_id` is the primary key itself). Issuing a new key for a user replaces the old one outright — `DELETE`+`INSERT`, or an `UPDATE` of `key_hash` in place — there is no overlap window where two keys work at once. Simpler than a rotation design, at the cost of a hard cutover: replacing a key immediately invalidates whatever client was using the old one, with no grace period. `key_hash` is the SHA3-256 of the raw key, base64-encoded, never the raw key itself. `revoked_at` is nullable (`NULL` = not revoked); setting it is meant to kill the key immediately, subject to however long the OpenResty auth-cache TTL takes to stop trusting the old value on every replica.
 - **`pages`** — one row per committed version of one page of one tenant's DB. `data` is opaque SQLCipher ciphertext; rqlite never decrypts it or holds the key. Rows are never updated or deleted by a writer — a commit is always a new `INSERT` with `version = current_version + 1`, which is what makes an in-flight reader's pinned snapshot immune to being mutated out from under it. `idx_pages_lookup` (`db_id, page_no, version DESC`) exists because the primary key's own index is ascending-only; the descending companion lets "latest version at or before my snapshot" (`WHERE db_id=? AND page_no=? AND version<=? ORDER BY version DESC LIMIT 1`) resolve without a reverse scan.
 - **`db_meta`** — one row per tenant: the table of contents for a SQLCipher DB. `current_version` is the latest committed version, snapshotted by readers at `BEGIN`. `page_count`/`page_size` back the SQLite VFS's `xFileSize` **for a writer opening at the current version only** — the column isn't versioned, so a reader pinned to an older `snapshot_version` must derive its own file size from its own snapshotted page 1 (SQLite's database header encodes page count there as of whichever version wrote it), never from this column, which only ever reflects the tenant's latest state. `needs_gc` is set to 1 by every committing writer and cleared by the GC sweep, so the daily GC job only touches tenants that actually changed instead of scanning every tenant every run.
@@ -101,7 +90,6 @@ CREATE TABLE gc_runs (
 ### Design Notes
 
 - **Read consistency for pinning a snapshot.** `BEGIN` should read `current_version` at `strong` or `weak` rqlite consistency, not `none` — see the schema intro. This bounds staleness; it isn't a correctness requirement, since `pages`/`db_meta` replicate atomically together regardless of consistency level.
-- **`rate_tiers` as a reference table rather than a `CHECK`.** `role` uses an inline `CHECK` because its two values are fixed for the life of the schema; `rate_tier` uses a foreign key into `rate_tiers` instead, because new tiers are expected to be added over time and a `CHECK` would need a migration for each one.
 - **`db_id` is a `users.user_id` value, not an independent tenant identifier.** All four `db_id` columns (`pages`, `db_meta`, `active_readers`, plus the `users` table itself) are tied together by foreign keys now, so a page row can't outlive, or exist without, its owning account.
 
 ## User SQLCipher Database

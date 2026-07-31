@@ -18,12 +18,11 @@ import {
   type TxtMetadataMap,
 } from "./oldVault.ts";
 import { UserDb } from "./userDb.ts";
-import { RqliteDb, type RateTier } from "./rqliteDb.ts";
+import { RqliteDb } from "./rqliteDb.ts";
 import { randomPath } from "./base32.ts";
 import { mapLimit } from "./concurrency.ts";
 
 const PART_CONCURRENCY = 16;
-const DEFAULT_RATE_TIER: RateTier = { tierId: "free", rate: 10, burst: 20 };
 
 export interface MigrateOptions {
   inCredsPath: string;
@@ -76,7 +75,7 @@ export class MigrateCommand {
 
   private async openOutput(outCreds: OutCreds): Promise<void> {
     this.rqliteDb = await RqliteDb.open(this.opts.outPath);
-    const { userId, created } = this.rqliteDb.ensureAdmin(DEFAULT_RATE_TIER, outCreds.api_key);
+    const { userId, created } = this.rqliteDb.ensureAdmin(outCreds.api_key);
     this.userId = userId;
     const version = this.rqliteDb.currentVersion(userId);
     const rawKey = rootKeyBytes(outCreds);

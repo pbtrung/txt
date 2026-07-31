@@ -12,16 +12,9 @@ import { SqliteDb, type Statement } from "./sqlite.ts";
 const SCHEMA = `
 PRAGMA foreign_keys = ON;
 
-CREATE TABLE rate_tiers (
-  tier_id TEXT    PRIMARY KEY,
-  rate    INTEGER NOT NULL,
-  burst   INTEGER NOT NULL
-);
-
 CREATE TABLE users (
   user_id    TEXT PRIMARY KEY,
   role       TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),
-  rate_tier  TEXT NOT NULL DEFAULT 'free' REFERENCES rate_tiers(tier_id),
   disabled   INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL
 );
@@ -64,12 +57,6 @@ CREATE TABLE gc_runs (
   started_at INTEGER NOT NULL
 );
 `;
-
-export interface RateTier {
-  tierId: string;
-  rate: number;
-  burst: number;
-}
 
 export interface SeedResult {
   userId: string;
@@ -133,13 +120,13 @@ export class RqliteDb {
    * resuming, a non-empty apiKey still overwrites the stored key_hash --
    * out_creds.json is the source of truth on every run, not just the first.
    */
-  ensureAdmin(tier: RateTier, apiKey: string): SeedResult {
+  ensureAdmin(apiKey: string): SeedResult {
     const existingUserId = this.findAdminUserId();
     if (existingUserId) {
       if (apiKey) this.updateApiKeyHash(existingUserId, apiKey);
       return { userId: existingUserId, created: false };
     }
-    return this.seedAdmin(tier, apiKey);
+    return this.seedAdmin(apiKey);
   }
 
   /** The one admin account this tool ever creates, or null if none exists yet. */
@@ -150,30 +137,20 @@ export class RqliteDb {
     return userId;
   }
 
-  private seedAdmin(tier: RateTier, apiKey: string): SeedResult {
+  private seedAdmin(apiKey: string): SeedResult {
     const userId = randomUUID();
     const nowMs = Date.now();
-    this.insertRateTier(tier);
-    this.insertUser(userId, tier.tierId, nowMs);
+    this.insertUser(userId, nowMs);
     this.insertApiKey(userId, nowMs, apiKey);
     return { userId, created: true };
   }
 
-  private insertRateTier(tier: RateTier): void {
-    this.db.run("INSERT INTO rate_tiers (tier_id, rate, burst) VALUES (?, ?, ?);", (s) => {
-      s.bindText(1, tier.tierId);
-      s.bindInt64(2, tier.rate);
-      s.bindInt64(3, tier.burst);
-    });
-  }
-
-  private insertUser(userId: string, tierId: string, nowMs: number): void {
+  private insertUser(userId: string, nowMs: number): void {
     this.db.run(
-      "INSERT INTO users (user_id, role, rate_tier, disabled, created_at) VALUES (?, 'admin', ?, 0, ?);",
+      "INSERT INTO users (user_id, role, disabled, created_at) VALUES (?, 'admin', 0, ?);",
       (s) => {
         s.bindText(1, userId);
-        s.bindText(2, tierId);
-        s.bindInt64(3, nowMs);
+        s.bindInt64(2, nowMs);
       },
     );
   }

@@ -50,7 +50,7 @@ test("collect-garbage: dry-run changes nothing, a real run removes only supersed
 
   const rootKey = randomBytes(256);
   const rqliteDb = await RqliteDb.open(dbPath);
-  const { userId } = rqliteDb.ensureAdmin({ tierId: "free", rate: 10, burst: 20 }, "test-api-key");
+  const { userId } = rqliteDb.ensureAdmin("test-api-key");
 
   const userDb = await UserDb.create(rootKey);
   const commit = () => {
@@ -132,7 +132,7 @@ test("collect-garbage: with no active readers, keeps exactly one page row per pa
 
   const rootKey = randomBytes(256);
   const rqliteDb = await RqliteDb.open(dbPath);
-  const { userId } = rqliteDb.ensureAdmin({ tierId: "free", rate: 10, burst: 20 }, "test-api-key");
+  const { userId } = rqliteDb.ensureAdmin("test-api-key");
 
   const userDb = await UserDb.create(rootKey);
   const commit = () => {

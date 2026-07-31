@@ -59,7 +59,7 @@ async function buildRqliteFixture(): Promise<{
   }
 
   const rqliteDb = await RqliteDb.open(dbPath);
-  const { userId } = rqliteDb.ensureAdmin({ tierId: "free", rate: 10, burst: 20 }, "test-api-key");
+  const { userId } = rqliteDb.ensureAdmin("test-api-key");
   const userDb = await UserDb.create(rootKey);
   const txtId = userDb.insertTxt(randomBytes(128), "kept.txt", null, Date.now());
   userDb.insertPart(txtId, 0n, "kept-path-0");

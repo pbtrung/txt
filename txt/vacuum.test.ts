@@ -32,7 +32,7 @@ async function buildFixtureWithFreeSpace(): Promise<{
   }
 
   const rqliteDb = await RqliteDb.open(dbPath);
-  const { userId } = rqliteDb.ensureAdmin({ tierId: "free", rate: 10, burst: 20 }, "test-api-key");
+  const { userId } = rqliteDb.ensureAdmin("test-api-key");
 
   const userDb = await UserDb.create(rootKey);
   const padding = brotliCompressSync(randomBytes(2000)); // incompressible -- keeps rows page-sized
