@@ -12,7 +12,7 @@ Container image for one rqlite node, fronted by OpenResty acting as the "OpenRes
 
 ## `auth_perms.lua`
 
-Runs as `access_by_lua_file` on the `location ~ ^/db/(query|execute)$` block only — see `nginx.conf` above — so it never has to handle anything other than the envelope it defines. It replaces rqlite's native request body with rqlite's own, and lets nginx's existing `proxy_pass` forward the rewritten body on unchanged; it doesn't touch the URI or the response.
+Runs as `access_by_lua_file` on the `location ~ ^/db/(query|execute|request)$` block only — see `nginx.conf` above — so it never has to handle anything other than the envelope it defines. It replaces rqlite's native request body with rqlite's own, and lets nginx's existing `proxy_pass` forward the rewritten body on unchanged; it doesn't touch the URI or the response.
 
 **Request envelope.** An ordinary user never sends raw SQL. They send:
 
@@ -43,12 +43,13 @@ Admins add one more field, `target_db_id`, to act on a tenant other than themsel
 | statementId | who | forces | notes |
 |---|---|---|---|
 | `READ_PAGE` | user | `db_id` = caller | latest page version at or before `snapshot` |
+| `GET_META` | user | `db_id` = caller | read-only `current_version`/`page_count`/`page_size` for the caller's own db -- no admin needed just to open your own file |
 | `COMMIT` | user | `db_id` = caller | guarded INSERT + CAS UPDATE, one atomic rqlite batch |
-| `READ_PAGE` / `COMMIT` | admin | `db_id`/`target_db_id` = `body.target_db_id` (required) | admin acting *as* a tenant must name one explicitly — no implicit self |
+| `READ_PAGE` / `GET_META` / `COMMIT` | admin | `db_id`/`target_db_id` = `body.target_db_id` (required) | admin acting *as* a tenant must name one explicitly — no implicit self |
 | `LIST_USERS` | admin | *(none — not tenant-scoped)* | `:limit`/`:offset` come from the client batch item |
 | `REVOKE_KEY` | admin | `target_user_id` = `target_db_id`, `now` = `ngx.now()*1000` | `now` is server time, deliberately never client-supplied |
 | `FORCE_GC` | admin | `target_db_id` = `body.target_db_id` | sets `db_meta.needs_gc = 1` |
-| `INSPECT_META` | admin | `target_db_id` = `body.target_db_id` | reads one tenant's `db_meta` row |
+| `INSPECT_META` | admin | `target_db_id` = `body.target_db_id` | reads one tenant's whole `db_meta` row (`SELECT *`, includes `needs_gc`); `GET_META` is the read-only, non-admin subset of the same row |
 | `RAW_QUERY` | admin | *(none — no db_id, no template)* | literal SQL text per batch item; see below |
 
 Each admin statement's forced fields come from its own `forced_params` function rather than one field stamped onto every query — `LIST_USERS` isn't tenant-scoped at all, so it gets nothing forced.

@@ -8,18 +8,20 @@
 -- batch} envelope into rqlite's own statement list, injecting db_id
 -- server-side so it is never trusted from the client.
 --
--- Scope is deliberately narrow for ordinary users -- READ_PAGE + COMMIT
--- only, both hard-forced to db_id = caller's own user_id, so a user can never
--- read or write another tenant's rows. Admins get that same small set of
--- cross-tenant statements (LIST_USERS, REVOKE_KEY, FORCE_GC, INSPECT_META)
--- plus RAW_QUERY: literal, unrestricted SQL text executed as-is, no forced
--- db_id, no template. RAW_QUERY's trust boundary is the admin role itself,
--- not this file -- it exists because "admin can do any query" has no safe
--- way to auto-scope arbitrary SQL text to one tenant, so it isn't offered to
--- ordinary users at all. It does not (yet) manage active_readers snapshot
--- leases, and there's no audit_log table in docs/data_model.md, so admin
--- actions (including RAW_QUERY) aren't logged to the database here -- both
--- would need a schema addition first, not a silent invention in this file.
+-- Scope is deliberately narrow for ordinary users -- READ_PAGE, GET_META,
+-- and COMMIT only, all three hard-forced to db_id = caller's own user_id, so
+-- a user can never read or write another tenant's rows. Admins get that same
+-- small set of statements against any tenant (via target_db_id) plus a few
+-- cross-tenant-by-design ones (LIST_USERS, REVOKE_KEY, FORCE_GC,
+-- INSPECT_META), plus RAW_QUERY: literal, unrestricted SQL text executed
+-- as-is, no forced db_id, no template. RAW_QUERY's trust boundary is the
+-- admin role itself, not this file -- it exists because "admin can do any
+-- query" has no safe way to auto-scope arbitrary SQL text to one tenant, so
+-- it isn't offered to ordinary users at all. It does not (yet) manage
+-- active_readers snapshot leases, and there's no audit_log table in
+-- docs/data_model.md, so admin actions (including RAW_QUERY) aren't logged
+-- to the database here -- both would need a schema addition first, not a
+-- silent invention in this file.
 
 local cjson = require "cjson"
 local digest = require "resty.openssl.digest"
@@ -38,6 +40,18 @@ local USER_STATEMENTS = {
       SELECT data FROM pages
       WHERE db_id=:db_id AND page_no=:page_no AND version<=:snapshot
       ORDER BY version DESC LIMIT 1
+    ]],
+  },
+  -- Read-only, and deliberately not SELECT * -- needs_gc is server-internal
+  -- bookkeeping a client opening its own db has no use for. This is the
+  -- normal-user equivalent of admin's INSPECT_META: a caller needs its own
+  -- current_version/page_count/page_size to open a page-store-backed VFS at
+  -- all (xFileSize, and which snapshot to pin), and forcing db_id below
+  -- (same as every other USER_STATEMENTS entry) already scopes it to the
+  -- caller's own row -- no admin privilege required for this.
+  GET_META = {
+    query = [[
+      SELECT current_version, page_count, page_size FROM db_meta WHERE db_id=:db_id
     ]],
   },
 }
