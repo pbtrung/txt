@@ -2,7 +2,8 @@
 // envelope against docker/auth_perms.lua, using the browser's native fetch
 // instead of Node's. See docs/data_model.md for the wire shape.
 
-import { base64ToBytes } from "../crypto/bytes";
+import { sha3_256 } from "@noble/hashes/sha3.js";
+import { base64ToBytes, bytesToBase64 } from "../crypto/bytes";
 
 export interface RqliteResult {
   columns?: string[];
@@ -50,8 +51,9 @@ export class RqliteHttpClient {
     oldVersion: number,
     newVersion: number,
     pageCount: number,
+    targetDbId?: string,
   ): Promise<boolean> {
-    const body = {
+    const body: Record<string, unknown> = {
       statementId: "COMMIT",
       commit: {
         pages: pages.map((p) => ({ page_no: p.pageNo, data: encodeBlobParam(p.data) })),
@@ -60,6 +62,7 @@ export class RqliteHttpClient {
         page_count: pageCount,
       },
     };
+    if (targetDbId !== undefined) body.target_db_id = targetDbId;
     const res = await fetch(`${this.baseUrl}/db/execute`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${this.apiKey}` },
@@ -122,4 +125,40 @@ export function decodeBlobColumn(value: unknown): Uint8Array {
  * sending page.data on COMMIT (remoteVfs.ts). */
 export function encodeBlobParam(bytes: Uint8Array): number[] {
   return Array.from(bytes);
+}
+
+/** SHA3-256 of apiKey, base64-encoded -- matches docker/auth_perms.lua's own
+ * key_hash lookup (see docs/data_model.md), so this can find the same
+ * api_keys row server-side identity resolution would. Browser WebCrypto has
+ * no SHA3 (only the unrelated SHA-2 family), hence @noble/hashes here. */
+export function hashApiKey(apiKey: string): string {
+  return bytesToBase64(sha3_256(new TextEncoder().encode(apiKey)));
+}
+
+/**
+ * GET_META/READ_PAGE/COMMIT are ordinary user-level statements, forced to
+ * the caller's own db_id -- unless the key resolves to role='admin', which
+ * has no implicit self and needs target_db_id named explicitly (see
+ * docker/auth_perms.lua). Rather than requiring the caller to already know
+ * its own user_id, look it up the same way auth_perms.lua's own identity
+ * resolution does: api_keys.key_hash -> users.user_id, via the admin-only
+ * RAW_QUERY escape hatch. This only works for an admin key -- for a genuine
+ * user-role key it fails the same way any bogus statementId would (RAW_QUERY
+ * itself is admin-only), which is exactly how a plain user key is told apart
+ * from an admin one here. Mirrors txt/commands.ts's TestPerfCommand, which
+ * hit this identical requirement first.
+ */
+export async function resolveTargetDbId(
+  client: RqliteHttpClient,
+  apiKey: string,
+): Promise<string | undefined> {
+  const batch = [
+    { sql: "SELECT user_id FROM api_keys WHERE key_hash = ?", args: [hashApiKey(apiKey)] },
+  ];
+  try {
+    const row = resultRows(await client.query("RAW_QUERY", batch))[0];
+    return row ? String(row[0]) : undefined;
+  } catch {
+    return undefined; // not an admin key -- GET_META/READ_PAGE/COMMIT will force db_id server-side instead
+  }
 }

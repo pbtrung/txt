@@ -26,7 +26,7 @@ import * as access from "./access";
 import * as bookmarks from "./bookmarks";
 import { loadLibrary } from "./library";
 import * as owner from "./owner";
-import { RqliteHttpClient, resultRows } from "./rqliteHttpClient";
+import { RqliteHttpClient, resolveTargetDbId, resultRows } from "./rqliteHttpClient";
 import { registerRemoteVfs, type RemoteVfsHandle } from "./remoteVfs";
 import { startRemotePageWorker, type RemotePageBridge } from "./remotePageClient";
 import { SqliteDb } from "./sqliteDb";
@@ -55,8 +55,9 @@ function requireOpen(): { db: SqliteDb; vfs: RemoteVfsHandle; rqliteClient: Rqli
   return { db, vfs, rqliteClient };
 }
 
-async function fetchMeta(client: RqliteHttpClient): Promise<Meta> {
-  const row = resultRows(await client.query("GET_META", [{}]))[0];
+async function fetchMeta(client: RqliteHttpClient, targetDbId?: string): Promise<Meta> {
+  const extra = targetDbId !== undefined ? { target_db_id: targetDbId } : {};
+  const row = resultRows(await client.query("GET_META", [{}], extra))[0];
   if (!row) throw new Error("this account hasn't committed a database yet");
   return { currentVersion: Number(row[0]), pageCount: Number(row[1]), pageSize: Number(row[2]) };
 }
@@ -70,12 +71,19 @@ export async function open(creds: OpenCreds): Promise<void> {
   await close();
   storedCreds = creds;
   rqliteClient = new RqliteHttpClient(creds.rqliteUrl, creds.apiKey);
-  const meta = await fetchMeta(rqliteClient);
+  // This app's own account is itself role='admin' (the sole account
+  // --migrate creates -- see docs/data_model.md), which has no implicit
+  // "self" tenant and needs target_db_id named explicitly on every
+  // statement (docker/auth_perms.lua). undefined for a genuine user-role
+  // key, which the server forces to its own db_id regardless.
+  const targetDbId = await resolveTargetDbId(rqliteClient, creds.apiKey);
+  const meta = await fetchMeta(rqliteClient, targetDbId);
   pageWorker = await startRemotePageWorker(
     creds.rqliteUrl,
     creds.apiKey,
     meta.pageSize,
     meta.currentVersion,
+    targetDbId,
   );
   const sessionId = crypto.randomUUID();
   const backedPath = `/vault-${sessionId}.db`;
@@ -87,6 +95,7 @@ export async function open(creds: OpenCreds): Promise<void> {
     currentVersion: meta.currentVersion,
     backedPath,
     fetchPage: pageWorker.fetchPage,
+    targetDbId,
   });
   db = await SqliteDb.open(backedPath, { vfsName: vfs.name, rawKey: creds.userRootKey });
 }

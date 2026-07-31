@@ -40,6 +40,10 @@ export interface RemoteVfsOptions {
   currentVersion: number;
   backedPath: string;
   fetchPage: (pageNo: number) => Uint8Array;
+  /** Required on COMMIT when the caller's api key is role='admin' -- see
+   * rqliteHttpClient.ts's resolveTargetDbId. undefined for a genuine
+   * user-role key, which the server forces to its own db_id already. */
+  targetDbId?: string;
 }
 
 export interface RoundtripStat {
@@ -390,7 +394,13 @@ export function registerRemoteVfs(mod: WasmModule, opts: RemoteVfsOptions): Remo
     if (dirtyPages.size === 0) return true;
     const pages = Array.from(dirtyPages.entries()).map(([pageNo, data]) => ({ pageNo, data }));
     const newVersion = currentVersion + 1;
-    const ok = await client.commit(pages, currentVersion, newVersion, knownPageCount);
+    const ok = await client.commit(
+      pages,
+      currentVersion,
+      newVersion,
+      knownPageCount,
+      opts.targetDbId,
+    );
     if (!ok) return false;
     currentVersion = newVersion;
     for (const [pageNo, data] of dirtyPages) cacheSet(pageNo, data);

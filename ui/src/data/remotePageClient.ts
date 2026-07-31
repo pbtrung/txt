@@ -23,6 +23,7 @@ export async function startRemotePageWorker(
   apiKey: string,
   pageSize: number,
   snapshot: number,
+  targetDbId?: string,
 ): Promise<RemotePageBridge> {
   const controlSab = new SharedArrayBuffer(8);
   const dataSab = new SharedArrayBuffer(Math.max(pageSize, 4096) + 4096);
@@ -31,7 +32,15 @@ export async function startRemotePageWorker(
 
   const worker = new Worker(new URL("./remotePageWorker.ts", import.meta.url), { type: "module" });
   const ready = waitReady(worker);
-  worker.postMessage({ type: "start", rqliteUrl, apiKey, snapshot, controlSab, dataSab });
+  worker.postMessage({
+    type: "start",
+    rqliteUrl,
+    apiKey,
+    snapshot,
+    targetDbId,
+    controlSab,
+    dataSab,
+  });
   await ready;
 
   return {

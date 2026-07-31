@@ -5,10 +5,13 @@
 // and wakes it back up. See remotePageClient.ts for the main-thread side of
 // this protocol.
 //
-// No target_db_id here (unlike txt/remotePageWorker.ts's admin-acting-as-
-// another-tenant support) -- the browser UI is always the end user reading
-// their own vault, never an admin (the Manage screen is out of scope, see
-// CLAUDE.md's plan).
+// target_db_id is threaded through from dbWorker.ts's resolveTargetDbId
+// (rqliteHttpClient.ts), same as txt/remotePageWorker.ts's admin-acting-as-
+// a-tenant support -- this app's own account is itself role='admin' (the
+// sole account --migrate creates), so READ_PAGE needs it named explicitly
+// just like GET_META/COMMIT do (see docker/auth_perms.lua). It's still
+// undefined for a genuine user-role key, which the server forces to its
+// own db_id regardless.
 
 import { RqliteHttpClient, resultRows, decodeBlobColumn } from "./rqliteHttpClient";
 
@@ -17,6 +20,7 @@ interface StartMessage {
   rqliteUrl: string;
   apiKey: string;
   snapshot: number;
+  targetDbId?: string;
   controlSab: SharedArrayBuffer;
   dataSab: SharedArrayBuffer;
 }
@@ -33,6 +37,7 @@ let client: RqliteHttpClient;
 let control: Int32Array;
 let dataBuf: Uint8Array;
 let snapshot: number;
+let targetDbId: string | undefined;
 
 self.onmessage = (ev: MessageEvent<StartMessage | FetchMessage>) => {
   const msg = ev.data;
@@ -41,6 +46,7 @@ self.onmessage = (ev: MessageEvent<StartMessage | FetchMessage>) => {
     control = new Int32Array(msg.controlSab);
     dataBuf = new Uint8Array(msg.dataSab);
     snapshot = msg.snapshot;
+    targetDbId = msg.targetDbId;
     self.postMessage({ type: "ready" });
     return;
   }
@@ -58,7 +64,8 @@ async function handleFetch(pageNo: number): Promise<void> {
 
 async function fetchPage(pageNo: number): Promise<Uint8Array> {
   const batch = [{ page_no: pageNo, snapshot }];
-  const row = resultRows(await client.query("READ_PAGE", batch))[0];
+  const extra = targetDbId !== undefined ? { target_db_id: targetDbId } : {};
+  const row = resultRows(await client.query("READ_PAGE", batch, extra))[0];
   if (!row) throw new Error(`page ${pageNo} not found at or before snapshot ${snapshot}`);
   return decodeBlobColumn(row[0]);
 }

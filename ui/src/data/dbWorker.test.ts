@@ -71,11 +71,18 @@ async function buildVaultDb(): Promise<DbFixture> {
 
 function mockBackend(
   fixture: DbFixture,
-  opts: { currentVersion?: number; commitOk?: boolean } = {},
+  opts: { currentVersion?: number; commitOk?: boolean; adminUserId?: string } = {},
 ) {
   const currentVersion = opts.currentVersion ?? 1;
   const commit = vi.fn().mockResolvedValue(opts.commitOk ?? true);
   const query = vi.fn(async (statementId: string) => {
+    if (statementId === "RAW_QUERY") {
+      // Mirrors auth_perms.lua: RAW_QUERY is admin-only, so a non-admin key
+      // fails here the same way any unrecognized statementId would --
+      // resolveTargetDbId's own try/catch turns that into "undefined".
+      if (!opts.adminUserId) throw new Error("mockBackend: RAW_QUERY requires admin role");
+      return [{ values: [[opts.adminUserId]] }];
+    }
     if (statementId === "GET_META") {
       return [{ values: [[currentVersion, fixture.pageCount, fixture.pageSize]] }];
     }
@@ -186,6 +193,36 @@ describe("dbWorker", () => {
     await expect(
       dbWorker.recordReadPosition(1, { lastPartNum: 1, lastAccessedMs: 1 }),
     ).rejects.toThrow("Another session updated this vault");
+  });
+
+  it("resolves target_db_id for an admin-role key and threads it through GET_META/READ_PAGE/COMMIT", async () => {
+    const fixture = await buildVaultDb();
+    const backend = mockBackend(fixture, { adminUserId: "admin-user-id" });
+    await dbWorker.open({
+      rqliteUrl: "https://rqlite.example.com",
+      apiKey: "test-key",
+      userRootKey: fixture.rootKey,
+    });
+
+    expect(backend.query).toHaveBeenCalledWith("GET_META", [{}], {
+      target_db_id: "admin-user-id",
+    });
+    expect(startRemotePageWorker).toHaveBeenCalledWith(
+      "https://rqlite.example.com",
+      "test-key",
+      fixture.pageSize,
+      1,
+      "admin-user-id",
+    );
+
+    await dbWorker.recordReadPosition(1, { lastPartNum: 1, lastAccessedMs: 1 });
+    expect(backend.commit).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.any(Number),
+      expect.any(Number),
+      expect.any(Number),
+      "admin-user-id",
+    );
   });
 
   it("refresh() re-opens against a fresh worker using the creds from open()", async () => {
