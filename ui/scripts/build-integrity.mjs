@@ -12,14 +12,15 @@
 //   3. Writes dist/_headers (Cloudflare Pages' response-header config file --
 //      also understood by Netlify): narrows the direct-CDN-visit CSP's
 //      connect-src from index.html's own <meta> tag's deliberately-open '*'
-//      down to 'self' plus this deployment's own origin (asset_base_url's)
-//      and R2's host pattern, and sets Access-Control-Allow-Origin: null so
-//      local_index.html (served from the cross-origin-isolated nginx
-//      location documented in docker/README.md, sending a real Origin, not
-//      opened bare via file://) can still read the response bodies of its
-//      cross-origin fetches to manifest.json/manifest.sig/every other dist/
-//      asset. _headers is a deploy-time config file, never itself served as
-//      a fetchable path, so it's written after buildManifest() runs, not
+//      down to 'self' plus this deployment's own rqlite/OpenResty endpoint
+//      (--build-creds's rqlite_url) and R2's host pattern, and sets
+//      Access-Control-Allow-Origin: null so local_index.html (served from
+//      the cross-origin-isolated nginx location documented in
+//      docker/README.md, sending a real Origin, not opened bare via
+//      file://) can still read the response bodies of its cross-origin
+//      fetches to manifest.json/manifest.sig/every other dist/ asset.
+//      _headers is a deploy-time config file, never itself served as a
+//      fetchable path, so it's written after buildManifest() runs, not
 //      before -- same reason manifest.json/manifest.sig are, below.
 //   4. Loads (or, only if absent, generates) an SLH-DSA-SHA2-256f keypair
 //      (@noble/post-quantum) from --build-creds's slhdsa_256f_priv_key,
@@ -43,11 +44,15 @@
 //      live inside dist/ itself.
 //
 // build-creds.json (gitignored, ui/build-creds.json by default) is a small,
-// operator-owned deployment config -- asset_base_url/slhdsa_256f_priv_key
-// are both build-time secrets/facts about *this deployment*, unrelated to
-// any individual end user's own vault creds (see data/creds.ts) -- so it
-// gets its own file rather than reusing the old admin_creds.json shape from
-// the Turso-backed design.
+// operator-owned deployment config -- asset_base_url/rqlite_url/
+// slhdsa_256f_priv_key are all build-time secrets/facts about *this
+// deployment*, unrelated to any individual end user's own vault creds (see
+// data/creds.ts) -- so it gets its own file rather than reusing the old
+// admin_creds.json shape from the Turso-backed design. rqlite_url mirrors
+// data/creds.ts's own field name for the same concept (a Creds.rqlite_url
+// value one operator account would plausibly already have on hand), even
+// though this is a separate, deployment-level fact, not an end user's own
+// vault credential.
 
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
@@ -146,28 +151,29 @@ function buildManifest() {
 // Mirrors dist/index.html's own <meta> CSP (see that file's comment for why
 // every other directive is what it is) except connect-src, narrowed here
 // from that meta tag's deliberately-open '*' down to 'self' plus the two
-// host patterns the app actually talks to: this deployment's own origin
-// (asset_base_url -- the same host/port this build's assets, and this
-// deployment's rqlite/OpenResty endpoint, are served from) and R2's
+// host patterns the app actually talks to: this deployment's own rqlite/
+// OpenResty endpoint (a single, operator-controlled host, unlike the old
+// Turso-backed design where every customer had their own database URL --
+// hence baking in the real host here instead of a wildcard) and R2's
 // standard custom-domain pattern. A real HTTP response header and a <meta>
 // CSP both apply at once and combine by intersection, so this tightens the
 // effective policy for a direct CDN visit without having to touch the
 // per-account-agnostic meta tag itself.
-function distCsp(assetBaseUrl) {
+function distCsp(rqliteUrl) {
   return (
     "default-src 'self'; " +
     "script-src 'self' 'wasm-unsafe-eval'; " +
     "style-src 'self' 'unsafe-inline'; " +
     "img-src 'self' data:; " +
     "font-src 'self' data:; " +
-    `connect-src 'self' ${new URL(assetBaseUrl).origin} https://*.r2.cloudflarestorage.com; ` +
+    `connect-src 'self' ${new URL(rqliteUrl).origin} https://*.r2.cloudflarestorage.com; ` +
     "object-src 'none'; " +
     "base-uri 'self'; " +
     "form-action 'self';"
   );
 }
 
-function writeHeadersFile(assetBaseUrl) {
+function writeHeadersFile(rqliteUrl) {
   // Access-Control-Allow-Origin: * -- local_index.html's own hosting origin
   // (docker/README.md's cross-origin-isolated nginx location) is a real
   // https:// origin now, not file://'s literal "null" -- an ACAO reflecting
@@ -176,7 +182,7 @@ function writeHeadersFile(assetBaseUrl) {
   // broadly: these are public, non-secret, no-credentials build outputs
   // whose integrity local_index.html itself checks via SLH-DSA/SHA-512, not
   // via keeping them cross-origin-unreadable.
-  const headers = `/*\n  Content-Security-Policy: ${distCsp(assetBaseUrl)}\n  Access-Control-Allow-Origin: *\n`;
+  const headers = `/*\n  Content-Security-Policy: ${distCsp(rqliteUrl)}\n  Access-Control-Allow-Origin: *\n`;
   writeFileSync(join(DIST_DIR, "_headers"), headers, "utf8");
 }
 
@@ -280,13 +286,14 @@ async function main() {
   const { buildCredsPath } = parseArgs(process.argv.slice(2));
   const buildCreds = loadBuildCreds(buildCredsPath);
   const assetBaseUrl = requireStringField(buildCreds, buildCredsPath, "asset_base_url");
+  const rqliteUrl = requireStringField(buildCreds, buildCredsPath, "rqlite_url");
   const { secretKey, publicKey, generated } = loadOrCreateKeypair(buildCreds);
 
   const originalHtml = readFileSync(INDEX_HTML_PATH, "utf8");
   writeFileSync(INDEX_HTML_PATH, addSri(originalHtml), "utf8");
 
   const manifest = buildManifest();
-  writeHeadersFile(assetBaseUrl);
+  writeHeadersFile(rqliteUrl);
   const manifestBytes = Buffer.from(JSON.stringify(manifest), "utf8");
   writeFileSync(join(DIST_DIR, "manifest.json"), manifestBytes);
   writeFileSync(
