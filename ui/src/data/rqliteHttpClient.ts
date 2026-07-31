@@ -80,10 +80,11 @@ export class RqliteHttpClient {
     if (!res.ok) throw new Error(`rqlite /db/execute COMMIT failed: HTTP ${res.status}`);
     const decoded = (await res.json()) as { results?: RqliteResult[] };
     const results = decoded.results;
-    if (!results || results.length < 2) throw new Error("COMMIT: malformed rqlite response");
-    const casUpdate = results[1]!;
-    if (casUpdate.error) throw new Error(`COMMIT CAS update failed: ${casUpdate.error}`);
-    return (casUpdate.rows_affected ?? 0) > 0;
+    if (!results || results.length === 0) {
+      throw new Error("COMMIT: malformed rqlite response (no results)");
+    }
+    if (results.length < 2) throw shortResultsError(results);
+    return checkCommitResults(results, pages.length);
   }
 
   private async request(
@@ -112,6 +113,43 @@ export class RqliteHttpClient {
       throw new Error(`rqlite /db/${endpoint} ${statementId}: malformed response (no results)`);
     return decoded.results;
   }
+}
+
+/** Checks BOTH statements of the commit pattern -- not just the CAS update.
+ * A prior version of commit() only ever looked at results[1] (the UPDATE),
+ * silently ignoring whether the guarded page INSERT (results[0]) actually
+ * inserted anything: if it errored (e.g. a PRIMARY KEY conflict from a
+ * stray duplicate row) or inserted fewer rows than expected while the
+ * UPDATE still won its own CAS check, db_meta.current_version would
+ * advance while the page content itself silently never landed -- a real
+ * bug this exact gap let go undetected. */
+function checkCommitResults(results: RqliteResult[], pageCount: number): boolean {
+  const insert = results[0]!;
+  const casUpdate = results[1]!;
+  if (casUpdate.error) throw new Error(`COMMIT CAS update failed: ${casUpdate.error}`);
+  const casWon = (casUpdate.rows_affected ?? 0) > 0;
+  if (!casWon) return false;
+  if (insert.error) throw new Error(`COMMIT page insert failed: ${insert.error}`);
+  const inserted = insert.rows_affected ?? 0;
+  if (inserted !== pageCount) {
+    throw new Error(
+      `COMMIT inserted ${inserted} page row(s), expected ${pageCount} -- ` +
+        "CAS reported a win but the page insert didn't fully apply",
+    );
+  }
+  return true;
+}
+
+/** With ?transaction, rqlite stops (and returns fewer results than
+ * statements sent) the moment one statement in the batch errors -- the
+ * guarded page INSERT is statement 1, so a short results array almost
+ * always means it, not the CAS UPDATE, is what actually failed. Surfaces
+ * that statement's own SQL error instead of a generic "malformed response"
+ * that hides the real cause. */
+function shortResultsError(results: RqliteResult[]): Error {
+  const insert = results[0];
+  if (insert?.error) return new Error(`COMMIT page insert failed: ${insert.error}`);
+  return new Error(`COMMIT: malformed rqlite response (expected 2 results, got ${results.length})`);
 }
 
 /** The rows of one rqlite statement result, throwing if that statement itself failed. */

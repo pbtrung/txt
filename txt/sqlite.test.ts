@@ -47,3 +47,41 @@ test("Statement.stepDone(): does not throw for an ordinary successful write", as
   assert.doesNotThrow(() => db.run("INSERT INTO t (id, name, n) VALUES (2, 'b', 2);"));
   db.close();
 });
+
+// Regression test for docker/auth_perms.lua's build_commit_statements: its
+// guarded page INSERT used "FROM (VALUES ...) AS dirty(db_id, page_no,
+// version, data)" -- naming a derived table's columns via an explicit alias
+// list -- which is a newer SQLite grammar addition than the version rqlite
+// bundles, and failed with "near '(': syntax error" on every single commit,
+// silently (nothing checked this statement's own result before). Confirmed
+// failing identically against this project's own vendored SQLite build
+// before being fixed to select SQLite's own default column1/column2/...
+// names off an anonymous derived table instead. This test freezes the fix:
+// if this pattern is ever "cleaned up" back to the named form, it fails
+// immediately instead of silently breaking every commit again.
+test("guarded page INSERT pattern (docker/auth_perms.lua's build_commit_statements) parses and runs against the real vendored SQLite", async () => {
+  const db = await openTestDb();
+  db.exec("CREATE TABLE pages (db_id TEXT, page_no INTEGER, version INTEGER, data BLOB);");
+  db.exec("CREATE TABLE db_meta (db_id TEXT, current_version INTEGER);");
+  db.run("INSERT INTO db_meta VALUES ('u1', 5);");
+
+  db.run(
+    "INSERT INTO pages (db_id, page_no, version, data) " +
+      "SELECT column1, column2, column3, column4 FROM (VALUES (?,?,?,?), (?,?,?,?)) " +
+      "WHERE (SELECT current_version FROM db_meta WHERE db_id = ?) = ?;",
+    (s) => {
+      s.bindText(1, "u1");
+      s.bindInt64(2, 1);
+      s.bindInt64(3, 6);
+      s.bindBlob(4, new Uint8Array([1, 2, 3]));
+      s.bindText(5, "u1");
+      s.bindInt64(6, 2);
+      s.bindInt64(7, 6);
+      s.bindBlob(8, new Uint8Array([4, 5, 6]));
+      s.bindText(9, "u1");
+      s.bindInt64(10, 5);
+    },
+  );
+  assert.equal(db.changes(), 2);
+  db.close();
+});

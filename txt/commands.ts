@@ -829,6 +829,16 @@ interface Session {
 export class TestWriteCommand extends Command<TestWriteOptions> {
   async run(): Promise<TestWriteResult> {
     writeFileSync(this.opts.logFilePath, ""); // fresh log file per run
+    try {
+      return await this.runInner();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.progress(`FAILED: ${message}`);
+      throw err;
+    }
+  }
+
+  private async runInner(): Promise<TestWriteResult> {
     const creds = loadPerfCreds(this.opts.credsPath);
     this.progress(`Loaded creds from ${this.opts.credsPath}`);
     this.progress(`Full detail logged to ${this.opts.logFilePath} regardless of --verbose`);

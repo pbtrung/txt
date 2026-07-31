@@ -117,7 +117,14 @@ function startFakePageStore(): Promise<{
         version = body.commit.new_version;
       }
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ results: [{ rows_affected: 1 }, { rows_affected: won ? 1 : 0 }] }));
+      res.end(
+        JSON.stringify({
+          results: [
+            { rows_affected: won ? body.commit.pages.length : 0 },
+            { rows_affected: won ? 1 : 0 },
+          ],
+        }),
+      );
     });
   });
   return new Promise((resolve) => {

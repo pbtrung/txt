@@ -225,10 +225,19 @@ local function build_commit_statements(db_id, commit)
     table.insert(args, page.data)
   end
 
+  -- column1/column2/... (SQLite's own default names for an anonymous
+  -- VALUES-derived table), not "AS dirty(db_id, page_no, version, data)" --
+  -- that explicit column-naming syntax on a derived table is a newer SQLite
+  -- grammar addition than the version this deployment's rqlite bundles, and
+  -- fails with "near '(': syntax error" -- silently, since nothing checked
+  -- this statement's own result before (see rqliteHttpClient.ts's commit()
+  -- history). Confirmed empirically against this project's own vendored
+  -- SQLite build too, which fails identically on the named form and
+  -- succeeds on this one.
   local insert_sql = "INSERT INTO pages (db_id, page_no, version, data) "
-    .. "SELECT db_id, page_no, version, data FROM (VALUES "
+    .. "SELECT column1, column2, column3, column4 FROM (VALUES "
     .. table.concat(values_sql, ", ")
-    .. ") AS dirty(db_id, page_no, version, data) "
+    .. ") "
     .. "WHERE (SELECT current_version FROM db_meta WHERE db_id = ?) = ?"
   table.insert(args, db_id)
   table.insert(args, commit.old_version)
