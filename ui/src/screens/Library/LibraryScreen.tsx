@@ -64,7 +64,6 @@ function LibraryNavContent({
   authorEntries,
   subjectEntries,
   publisherEntries,
-  displayName,
   onLock,
   onRefresh,
   refreshing,
@@ -76,7 +75,6 @@ function LibraryNavContent({
   authorEntries: BrowseEntry[];
   subjectEntries: BrowseEntry[];
   publisherEntries: BrowseEntry[];
-  displayName: string | undefined;
   onLock: () => void;
   onRefresh: () => void;
   refreshing: boolean;
@@ -127,7 +125,6 @@ function LibraryNavContent({
           moved here from the top bar so they're part of "your account"
           rather than sitting next to the search field. */}
       <AccountFooter
-        displayName={displayName}
         onRefresh={onRefresh}
         onLock={onLock}
         refreshing={refreshing}
@@ -143,7 +140,6 @@ export function LibraryScreen() {
     refresh,
     refreshing,
     progress,
-    session,
     bookmarksMap,
     removeAccessEntry,
     removeBookmarkEntry,
@@ -311,7 +307,6 @@ export function LibraryScreen() {
                 authorEntries={authorEntries}
                 subjectEntries={subjectEntries}
                 publisherEntries={publisherEntries}
-                displayName={session?.creds.displayName}
                 onLock={lock}
                 onRefresh={() => void handleRefresh()}
                 refreshing={refreshing}
@@ -404,7 +399,6 @@ export function LibraryScreen() {
                 authorEntries={authorEntries}
                 subjectEntries={subjectEntries}
                 publisherEntries={publisherEntries}
-                displayName={session?.creds.displayName}
                 onLock={lock}
                 onRefresh={() => void handleRefresh()}
                 refreshing={refreshing}
@@ -467,7 +461,7 @@ export function LibraryScreen() {
                           line={item.line}
                           txtPreview={item.txtPreview}
                           onClick={() => openBookmark(item)}
-                          onDelete={() => void removeBookmarkEntry(item.txtId, item.createdAt)}
+                          onDelete={() => void removeBookmarkEntry(item.id)}
                           deleteAriaLabel={`Remove this bookmark in ${item.info.title}`}
                         />
                       )}

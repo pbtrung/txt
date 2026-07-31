@@ -5,13 +5,11 @@
 // separately-spaced buttons.
 
 export function AccountFooter({
-  displayName,
   onRefresh,
   onLock,
   refreshing,
   refreshAriaLabel,
 }: {
-  displayName: string | undefined;
   onRefresh: () => void;
   onLock: () => void;
   refreshing: boolean;
@@ -21,10 +19,6 @@ export function AccountFooter({
     <div className="border-top pt-2 mt-2 d-flex align-items-center justify-content-between gap-2">
       <span className="d-flex align-items-center gap-2 text-truncate">
         <i className="bi bi-person-circle text-body-secondary flex-shrink-0" aria-hidden="true" />
-        {/* No `small` here -- matches NavItem's own default (unstyled)
-            font-size, so the signed-in name reads at the same size as the
-            nav entries above it, not smaller. */}
-        <span className="text-body-secondary text-truncate">{displayName}</span>
       </span>
       <div className="btn-group flex-shrink-0" role="group" aria-label="Account actions">
         <button

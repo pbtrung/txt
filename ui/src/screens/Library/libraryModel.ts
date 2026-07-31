@@ -101,6 +101,7 @@ export function booksForDimensionValue(
 }
 
 export interface RecentBookmarkItem {
+  id: number;
   txtId: number;
   info: BookInfo;
   partNum: number;
@@ -125,11 +126,12 @@ export function recentBookmarks(
     };
     for (const entry of entries) {
       items.push({
+        id: entry.id,
         txtId,
         info,
         partNum: entry.partNum,
         line: entry.line,
-        txtPreview: entry.txtPreview,
+        txtPreview: entry.preview,
         createdAt: entry.createdAt,
       });
     }

@@ -36,8 +36,22 @@ function baseResult(overrides: Partial<UseReaderBookResult> = {}): UseReaderBook
     partText: "First paragraph of part 14.\n\nSecond paragraph.",
     partTextLoading: false,
     bookmarks: [
-      { partNum: 14, line: 1, txtPreview: "First paragraph of part 14.", createdAt: 3000 },
-      { partNum: 8, line: 2, txtPreview: "Some earlier line preview", createdAt: 2000 },
+      {
+        id: 1,
+        txtId: 1,
+        partNum: 14,
+        line: 1,
+        preview: "First paragraph of part 14.",
+        createdAt: 3000,
+      },
+      {
+        id: 2,
+        txtId: 1,
+        partNum: 8,
+        line: 2,
+        preview: "Some earlier line preview",
+        createdAt: 2000,
+      },
     ],
     targetLine: null,
     clearTargetLine: vi.fn(),
@@ -373,7 +387,7 @@ describe("ReaderScreen", () => {
       await openBookmarks();
       const row = screen.getByText("Part 8 · Line 2").closest('[role="button"]') as HTMLElement;
       await userEvent.click(within(row).getByRole("button", { name: /remove this bookmark/i }));
-      expect(removeBookmark).toHaveBeenCalledWith(2000);
+      expect(removeBookmark).toHaveBeenCalledWith(2);
       expect(goToBookmark).not.toHaveBeenCalled();
     });
   });

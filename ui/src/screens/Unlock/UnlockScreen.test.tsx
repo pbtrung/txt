@@ -43,8 +43,6 @@ function baseVaultValue(): VaultContextModule.VaultContextValue {
     removeAccessEntry: vi.fn(),
     addBookmarkEntry: vi.fn(),
     removeBookmarkEntry: vi.fn(),
-    deleteTxt: vi.fn(),
-    updateBookMetadata: vi.fn(),
   };
 }
 
@@ -92,11 +90,11 @@ describe("UnlockScreen", () => {
     vi.mocked(VaultContextModule.useVault).mockReturnValue({
       ...baseVaultValue(),
       status: "unlocking",
-      progress: { label: "Unwrapping your keys", step: 2, total: 3 },
+      progress: { label: "Opening your database", step: 2, total: 3 },
     });
     renderUnlock();
     const step = screen.getByText("Step 2 of 3");
-    const label = screen.getByText(/unwrapping your keys/i);
+    const label = screen.getByText(/opening your database/i);
     // Step counter on top, phase label underneath it.
     expect(step.compareDocumentPosition(label) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     // The generic fallback line is gone once a real phase label takes over.

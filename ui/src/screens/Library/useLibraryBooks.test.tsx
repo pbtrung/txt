@@ -1,5 +1,4 @@
 // @vitest-environment jsdom
-import type { Client } from "@libsql/core/api";
 import { renderHook } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { vi } from "vitest";
@@ -32,8 +31,6 @@ function mockVault(session: VaultContextModule.VaultSession | null, accessMap = 
     removeAccessEntry: vi.fn(),
     addBookmarkEntry: vi.fn(),
     removeBookmarkEntry: vi.fn(),
-    deleteTxt: vi.fn(),
-    updateBookMetadata: vi.fn(),
   });
 }
 
@@ -44,17 +41,12 @@ const metadataById = new Map<number, BookInfo>([
 
 const session: VaultContextModule.VaultSession = {
   creds: {} as never,
-  db: {} as Client,
-  userId: 42,
-  umk: new Uint8Array(64),
-  r2Config: {} as never,
+  db: {} as never,
+  vfs: {} as never,
+  rqliteClient: {} as never,
+  pageWorker: {} as never,
   r2Client: {} as never,
   metadataById,
-  rawMetadataState: null,
-  txtAccessKey: new Uint8Array(64),
-  bookmarkKey: new Uint8Array(64),
-  privKey: new Uint8Array(64),
-  isAdmin: false,
 };
 
 describe("useLibraryBooks", () => {

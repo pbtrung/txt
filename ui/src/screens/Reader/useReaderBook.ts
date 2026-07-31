@@ -12,7 +12,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
-import type { BookmarkEntry } from "../../data/bookmarks";
+import type { Bookmark } from "../../data/bookmarks";
 import type { BookInfo } from "../../data/metadata";
 import { partCount as fetchPartCount, partRawPath } from "../../data/owner";
 import { fetchPart } from "../../data/parts";
@@ -27,7 +27,7 @@ export interface UseReaderBookResult {
   currentPartNum: number;
   partText: string | null;
   partTextLoading: boolean;
-  bookmarks: BookmarkEntry[];
+  bookmarks: Bookmark[];
   /** A line to scroll/highlight once its part's text is ready -- set by
    * goToBookmark() or an initial ?part=&line= deep link, cleared by the
    * caller (ReaderScreen) once it's been acted on. */
@@ -39,7 +39,7 @@ export interface UseReaderBookResult {
   next: () => void;
   previous: () => void;
   bookmarkLine: (line: number, txtPreview: string) => void;
-  removeBookmark: (createdAt: number) => void;
+  removeBookmark: (bookmarkId: number) => void;
 }
 
 export function useReaderBook(txtId: number): UseReaderBookResult {
@@ -95,10 +95,8 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
     rawPathCache.current = new Map();
 
     (async () => {
-      const [txtKey, count] = await Promise.all([
-        getTxtKey(txtId),
-        fetchPartCount(session.db, txtId),
-      ]);
+      const txtKey = await getTxtKey(txtId);
+      const count = fetchPartCount(session.db, txtId);
       if (cancelled) return;
 
       txtKeyRef.current = txtKey;
@@ -160,13 +158,13 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
     (async () => {
       let rawPath = rawPathCache.current.get(currentPartNum);
       if (rawPath === undefined) {
-        const fetched = await partRawPath(session.db, txtId, currentPartNum, txtKey);
+        const fetched = partRawPath(session.db, txtId, currentPartNum);
         if (!fetched)
           throw new Error(`no txt_parts row for txt_id=${txtId}, part_num=${currentPartNum}`);
         rawPath = fetched;
         rawPathCache.current.set(currentPartNum, rawPath);
       }
-      return fetchPart(session.r2Client, session.r2Config, txtKey, rawPath);
+      return fetchPart(session.r2Client, session.creds.r2Config, txtKey, rawPath);
     })()
       .then((text) => {
         if (cancelled) return;
@@ -226,7 +224,7 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
     (line: number, txtPreview: string) => {
       const existing = bookmarks.find((b) => b.partNum === currentPartNum && b.line === line);
       if (existing) {
-        void removeBookmarkEntry(txtId, existing.createdAt);
+        void removeBookmarkEntry(existing.id);
       } else {
         void addBookmarkEntry(txtId, currentPartNum, line, txtPreview);
       }
@@ -235,10 +233,10 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
   );
 
   const removeBookmark = useCallback(
-    (createdAt: number) => {
-      void removeBookmarkEntry(txtId, createdAt);
+    (bookmarkId: number) => {
+      void removeBookmarkEntry(bookmarkId);
     },
-    [removeBookmarkEntry, txtId],
+    [removeBookmarkEntry],
   );
 
   return {

@@ -186,17 +186,37 @@ describe("recentBookmarks", () => {
       [
         7,
         [
-          { partNum: 14, line: 1, txtPreview: "Powerful white mages", createdAt: 1000 },
-          { partNum: 20, line: 2, txtPreview: "Cerryl witnessed", createdAt: 3000 },
+          {
+            id: 1,
+            txtId: 7,
+            partNum: 14,
+            line: 1,
+            preview: "Powerful white mages",
+            createdAt: 1000,
+          },
+          { id: 2, txtId: 7, partNum: 20, line: 2, preview: "Cerryl witnessed", createdAt: 3000 },
         ],
       ],
-      [8, [{ partNum: 2, line: 3, txtPreview: "She knew that fatphobia", createdAt: 2000 }]],
+      [
+        8,
+        [
+          {
+            id: 3,
+            txtId: 8,
+            partNum: 2,
+            line: 3,
+            preview: "She knew that fatphobia",
+            createdAt: 2000,
+          },
+        ],
+      ],
     ]);
 
     const items = recentBookmarks(bookmarksMap, metadataById);
 
     expect(items.map((i) => i.createdAt)).toEqual([3000, 2000, 1000]);
     expect(items[0]).toEqual({
+      id: 2,
       txtId: 7,
       info: metadataById.get(7),
       partNum: 20,
@@ -208,7 +228,7 @@ describe("recentBookmarks", () => {
 
   it("falls back to a placeholder title when metadata is missing", () => {
     const bookmarksMap: BookmarksMap = new Map([
-      [9, [{ partNum: 1, line: 1, txtPreview: "x", createdAt: 1000 }]],
+      [9, [{ id: 4, txtId: 9, partNum: 1, line: 1, preview: "x", createdAt: 1000 }]],
     ]);
     const items = recentBookmarks(bookmarksMap, new Map());
     expect(items[0].info.title).toBe("txt_9");

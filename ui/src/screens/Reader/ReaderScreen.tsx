@@ -475,12 +475,12 @@ export function ReaderScreen() {
               )}
               {bookmarks.map((bookmark) => (
                 <BookmarkRow
-                  key={bookmark.createdAt}
+                  key={bookmark.id}
                   partNum={bookmark.partNum}
                   line={bookmark.line}
-                  txtPreview={bookmark.txtPreview}
+                  txtPreview={bookmark.preview}
                   onClick={() => goToBookmark(bookmark.partNum, bookmark.line)}
-                  onDelete={() => removeBookmark(bookmark.createdAt)}
+                  onDelete={() => removeBookmark(bookmark.id)}
                   deleteAriaLabel={`Remove this bookmark (part ${bookmark.partNum}, line ${bookmark.line})`}
                   className="d-flex align-items-start gap-2 mb-2 w-100"
                 />

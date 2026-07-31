@@ -86,11 +86,10 @@ function setVaultMock(
   bookmarksMap: BookmarksMap,
   refreshing: boolean,
   progress: VaultContextModule.VaultProgress | null = null,
-  isAdmin = false,
 ) {
   vi.mocked(VaultContextModule.useVault).mockReturnValue({
     status: "unlocked",
-    session: { creds: { displayName: "Alice" }, isAdmin } as VaultContextModule.VaultSession,
+    session: {} as VaultContextModule.VaultSession,
     error: null,
     accessMap: new Map(),
     bookmarksMap,
@@ -104,8 +103,6 @@ function setVaultMock(
     removeAccessEntry,
     addBookmarkEntry: vi.fn(),
     removeBookmarkEntry,
-    deleteTxt: vi.fn(),
-    updateBookMetadata: vi.fn(),
   });
 }
 
@@ -263,9 +260,11 @@ describe("LibraryScreen", () => {
         [
           1,
           Array.from({ length: 500 }, (_, i) => ({
+            id: i,
+            txtId: 1,
             partNum: 1,
             line: i + 1,
-            txtPreview: `Preview line ${i}`,
+            preview: `Preview line ${i}`,
             createdAt: i,
           })),
         ],
@@ -341,11 +340,9 @@ describe("LibraryScreen", () => {
   });
 
   describe("account footer (bottom of the left pane)", () => {
-    it("shows the signed-in display name (with a leading user icon) and an icon-only Lock button", () => {
+    it("shows a user icon and an icon-only Lock button", () => {
       renderLibrary();
-      const name = screen.getByText("Alice");
-      expect(name).toBeInTheDocument();
-      expect(name.parentElement?.querySelector(".bi-person-circle")).not.toBeNull();
+      expect(document.querySelector(".bi-person-circle")).not.toBeNull();
       const lockButton = screen.getByRole("button", { name: /^lock$/i });
       expect(lockButton).not.toHaveTextContent("Lock");
     });
@@ -446,7 +443,19 @@ describe("LibraryScreen", () => {
 
   describe("Recent Bookmarks", () => {
     const bookmarksMap: BookmarksMap = new Map([
-      [1, [{ partNum: 14, line: 1, txtPreview: "Powerful white mages killed", createdAt: 1000 }]],
+      [
+        1,
+        [
+          {
+            id: 42,
+            txtId: 1,
+            partNum: 14,
+            line: 1,
+            preview: "Powerful white mages killed",
+            createdAt: 1000,
+          },
+        ],
+      ],
     ]);
 
     it("shows a bookmark row with the book title, part/line, and preview", () => {
@@ -470,24 +479,7 @@ describe("LibraryScreen", () => {
         .getByText(/Powerful white mages killed/)
         .closest('[role="button"]') as HTMLElement;
       await userEvent.click(within(row).getByRole("button", { name: /remove this bookmark/i }));
-      expect(removeBookmarkEntry).toHaveBeenCalledWith(1, 1000);
-    });
-  });
-
-  describe("account footer", () => {
-    it("is a link to /manage for an admin session", () => {
-      setVaultMock(new Map(), false, null, true);
-      vi.mocked(useLibraryBooksModule.useLibraryBooks).mockReturnValue({ books, loading: false });
-      render(libraryTree());
-      expect(screen.getByRole("link", { name: "Alice" })).toHaveAttribute("href", "/manage");
-    });
-
-    it("is plain text, not a link, for a regular-user session", () => {
-      setVaultMock(new Map(), false, null, false);
-      vi.mocked(useLibraryBooksModule.useLibraryBooks).mockReturnValue({ books, loading: false });
-      render(libraryTree());
-      expect(screen.queryByRole("link", { name: "Alice" })).not.toBeInTheDocument();
-      expect(screen.getByText("Alice")).toBeInTheDocument();
+      expect(removeBookmarkEntry).toHaveBeenCalledWith(42);
     });
   });
 });
