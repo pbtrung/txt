@@ -343,12 +343,22 @@ export function fetchVfsStats(): RemoteVfsStats {
 
 export async function loadLibraryHandler() {
   const { db } = requireOpen();
-  return loadLibrary(db);
+  const result = await loadLibrary(db);
+  verbose(
+    `dbWorker: loadLibrary -- ${result.metadataById.size} book(s), accessMap: ` +
+      `${JSON.stringify(Array.from(result.accessMap.entries()))}`,
+  );
+  return result;
 }
 
 export function loadBookmarksMapHandler() {
   const { db } = requireOpen();
-  return bookmarks.loadBookmarksMap(db);
+  const map = bookmarks.loadBookmarksMap(db);
+  verbose(
+    `dbWorker: loadBookmarksMap -- ${map.size} txt_id(s) with bookmarks: ` +
+      `${JSON.stringify(Array.from(map.entries()))}`,
+  );
+  return map;
 }
 
 export async function recordReadPosition(
@@ -356,6 +366,7 @@ export async function recordReadPosition(
   position: access.ReadPosition,
 ): Promise<void> {
   const { db } = requireOpen();
+  verbose(`dbWorker: recordReadPosition txtId=${txtId} ${JSON.stringify(position)}`);
   access.setReadPosition(db, txtId, position.lastPartNum, position.lastAccessedMs);
   await commitOrThrow();
 }
@@ -374,9 +385,14 @@ export async function addBookmarkEntry(
   createdAt: number,
 ) {
   const { db } = requireOpen();
+  verbose(`dbWorker: addBookmarkEntry txtId=${txtId} partNum=${partNum} line=${line}`);
   bookmarks.addBookmark(db, txtId, partNum, line, preview, createdAt);
   await commitOrThrow();
-  return bookmarks.loadBookmarksMap(db);
+  const map = bookmarks.loadBookmarksMap(db);
+  verbose(
+    `dbWorker: addBookmarkEntry -- now ${map.get(txtId)?.length ?? 0} bookmark(s) for txtId=${txtId}`,
+  );
+  return map;
 }
 
 export async function removeBookmarkEntry(bookmarkId: number) {
