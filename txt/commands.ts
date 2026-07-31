@@ -390,20 +390,35 @@ export class ConvertAutoVacuumCommand extends Command<ConvertAutoVacuumOptions> 
 // every garbage-collection query go through RAW_QUERY (docker/auth_perms.lua),
 // which only admin can call.
 //
-// Deliberately only two of --vacuum's three steps for now (collect garbage,
-// vacuum the page store's own backing SQLite database) -- NOT the user
-// SQLCipher database's own VACUUM. That step dirties essentially every page
-// in one commit, which (for a real vault) produced a body large enough to
-// fail outright ("fetch failed", not a clean HTTP error) against
-// docker/nginx.conf's client_max_body_size/client_body_buffer_size. Splitting
-// that single commit into multiple smaller round trips under the *same*
-// version turns out to need its own server-side protocol support (each
-// batch's guarded INSERT needs to check against old_version without a prior
-// batch's own CAS update having already moved current_version out from
-// under it, and the version can't actually activate -- i.e. become visible
-// to any reader -- until every batch has landed) -- not yet built. Re-add
-// the user-database vacuum step once that exists.
+// Runs an incremental_vacuum on the user database (bounded, see
+// INCREMENTAL_VACUUM_PAGE_COUNT below) rather than --vacuum's full user-
+// database VACUUM, which dirties essentially every page in one commit -- for
+// a real vault that produced a body large enough to fail outright ("fetch
+// failed", not a clean HTTP error) against docker/nginx.conf's
+// client_max_body_size/client_body_buffer_size. Splitting a full VACUUM's
+// single commit into multiple smaller round trips under the *same* version
+// would need its own server-side protocol support (each batch's guarded
+// INSERT needs to check against old_version without a prior batch's own CAS
+// update having already moved current_version out from under it, and the
+// version can't actually activate -- i.e. become visible to any reader --
+// until every batch has landed) that doesn't exist yet -- incremental_vacuum
+// sidesteps needing any of that, since each bounded call is already its own
+// small, complete commit. Only reclaims anything for a vault already
+// converted via --convert-auto-vacuum (auto_vacuum=INCREMENTAL) -- a no-op,
+// not an error, otherwise.
 // ===========================================================================
+
+// Each reclaimed page can touch a few more (the pointer-map entry tracking
+// it, the b-tree parent referencing it), so this isn't a 1:1 page-to-commit-
+// size ratio -- picked with real margin under both
+// docker/nginx.conf's client_body_buffer_size (4m: a request over this
+// spills to disk, and auth_perms.lua can't read a disk-buffered body at
+// all) and client_max_body_size (50m), using the ~14KB-per-encoded-page
+// figure client_body_buffer_size's own comment already established: even a
+// generous 3x multiplier puts 50 pages at ~2.1MB, comfortably under 4m.
+// Tune down further if a real deployment still sees oversized commits, or
+// up if 50 pages/run reclaims space too slowly to keep up with writes.
+const INCREMENTAL_VACUUM_PAGE_COUNT = 50;
 
 export interface RemoteVacuumOptions {
   credsPath: string;
@@ -419,8 +434,40 @@ export class RemoteVacuumCommand extends Command<RemoteVacuumOptions> {
     if (!targetDbId) {
       throw new Error("--remote-vacuum requires an admin-role api_key (RAW_QUERY is admin-only)");
     }
+    await this.incrementalVacuumUserDb(creds);
     await this.collectGarbage(client, targetDbId);
     await this.vacuumRqliteDb(client, targetDbId);
+  }
+
+  /** PRAGMA incremental_vacuum(N) reclaims up to N pages from the user
+   * database's own freelist -- a bounded, small piece of --vacuum's user-
+   * database step instead of one all-at-once VACUUM (which dirties
+   * essentially every page in one commit -- see this file's own comment on
+   * why that step isn't wired in here). A no-op, not an error, for a vault
+   * that hasn't been converted via --convert-auto-vacuum yet (auto_vacuum
+   * still NONE): isDirty() stays false and nothing gets committed. No
+   * prefetch here (unlike --test-write's opt-in) -- incremental_vacuum only
+   * touches a bounded handful of pages (the ones being moved, their
+   * pointer-map entries, and the b-tree parents referencing them), not the
+   * whole database, so there's nothing to gain from fetching everything
+   * up front. */
+  private async incrementalVacuumUserDb(creds: PerfCreds): Promise<void> {
+    const session = await openRemoteSession(creds, false, (m) => this.log(m));
+    try {
+      this.progress(`Running PRAGMA incremental_vacuum(${INCREMENTAL_VACUUM_PAGE_COUNT})...`);
+      session.db.exec(`PRAGMA incremental_vacuum(${INCREMENTAL_VACUUM_PAGE_COUNT});`);
+      if (!session.vfs.isDirty()) {
+        this.progress(
+          "nothing to reclaim (not yet converted to auto_vacuum=INCREMENTAL, or none free)",
+        );
+        return;
+      }
+      const ok = await session.vfs.commit(session.client);
+      if (!ok) throw new Error("commit lost the CAS race -- rerun --remote-vacuum");
+      this.progress(`Committed at version ${session.vfs.getCurrentVersion()}`);
+    } finally {
+      await closeRemoteSession(session);
+    }
   }
 
   private async collectGarbage(client: RqliteHttpClient, targetDbId: string): Promise<void> {
