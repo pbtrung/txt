@@ -194,10 +194,6 @@ export async function open(creds: OpenCreds): Promise<void> {
   // key, which the server forces to its own db_id regardless.
   targetDbId = await resolveTargetDbId(rqliteClient, creds.apiKey);
   const meta = await fetchMeta(rqliteClient, targetDbId);
-  verbose(
-    `dbWorker: open() targetDbId=${targetDbId ?? "(none -- user-role key)"} ` +
-      `currentVersion=${meta.currentVersion} pageCount=${meta.pageCount}`,
-  );
 
   // Registered immediately after pinning meta.currentVersion, before any of
   // the (potentially slow, for a large vault) prefetch/SqliteDb.open work
