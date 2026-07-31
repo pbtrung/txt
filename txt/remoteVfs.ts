@@ -85,20 +85,6 @@ export interface RemoteVfsHandle {
   primeCache(pages: Map<number, Uint8Array>): void;
 }
 
-/** Cheap FNV-1a checksum of a page's bytes, logged alongside every page
- * read/write below -- lets a page number's content be compared across two
- * unrelated log captures (e.g. a write and a later fresh-session read)
- * without diffing raw page bytes by hand. Not cryptographic, just a fast
- * "same content or not" fingerprint for debugging. */
-function fingerprint(bytes: Uint8Array): string {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < bytes.length; i++) {
-    h ^= bytes[i]!;
-    h = Math.imul(h, 0x01000193);
-  }
-  return (h >>> 0).toString(16).padStart(8, "0");
-}
-
 interface OpenFile {
   name: string;
   deleteOnClose: boolean;
@@ -124,18 +110,12 @@ export function registerRemoteVfs(mod: WasmModule, opts: RemoteVfsOptions): Remo
 
   function getPage(pageNo: number): Uint8Array {
     const cached = pageCache.get(pageNo);
-    if (cached) {
-      opts.log?.(`remoteVfs: getPage(${pageNo}) cache hit, fp=${fingerprint(cached)}`);
-      return cached;
-    }
+    if (cached) return cached;
     const start = performance.now();
     const bytes = opts.fetchPage(pageNo);
     stats.roundtrips.push({ pageNo, ms: performance.now() - start });
     stats.bytesFetched += bytes.length;
     pageCache.set(pageNo, bytes);
-    opts.log?.(
-      `remoteVfs: getPage(${pageNo}) fetched ${bytes.length} byte(s), fp=${fingerprint(bytes)}`,
-    );
     return bytes;
   }
 
@@ -453,8 +433,7 @@ export function registerRemoteVfs(mod: WasmModule, opts: RemoteVfsOptions): Remo
     const newVersion = currentVersion + 1;
     opts.log?.(
       `remoteVfs: commit ${currentVersion} -> ${newVersion}, ${pages.length} dirty page(s): ` +
-        `[${pages.map((p) => `${p.pageNo}(fp=${fingerprint(p.data)})`).join(", ")}], ` +
-        `knownPageCount=${knownPageCount}`,
+        `[${pages.map((p) => p.pageNo).join(", ")}], knownPageCount=${knownPageCount}`,
     );
     const ok = await client.commit(
       pages,
