@@ -28,11 +28,43 @@ export type VerifyProgress =
   "fetching-manifest" | "verifying-signature" | "fetching-assets" | "verifying-hashes";
 
 async function fetchBytes(url: string): Promise<Uint8Array<ArrayBuffer>> {
-  const res = await fetch(url);
+  let res: Response;
+  try {
+    res = await fetch(url);
+  } catch (err) {
+    throw fetchFailureError(url, err);
+  }
   if (!res.ok) {
     throw new VerificationError(`${url}: HTTP ${res.status}`);
   }
   return new Uint8Array(await res.arrayBuffer());
+}
+
+/** A bare network-level fetch failure (as opposed to an HTTP error status,
+ * handled above) from a file:// document is almost always Chrome (and
+ * likely other browsers) refusing the cross-origin request outright --
+ * DevTools reports this as an "Issue": "'file:' URLs are treated as unique
+ * security origins. Add an explicit CORS header...". That's misleading:
+ * ui/scripts/build-integrity.mjs's _headers already sets
+ * Access-Control-Allow-Origin: * on every dist/ path, but a wildcard
+ * doesn't reliably help here since file:// requests don't carry a normal
+ * Origin header for it to match against in the first place -- this isn't a
+ * server misconfiguration fetchBytes' caller can fix by tweaking headers.
+ * The actual fix is not using file:// at all: serving this same file over a
+ * trivial local HTTP server (e.g. `python3 -m http.server` from the folder
+ * it's in) gives it a normal http://localhost origin, where the existing
+ * wildcard CORS header works exactly as intended. */
+function fetchFailureError(url: string, cause: unknown): VerificationError {
+  const message = cause instanceof Error ? cause.message : String(cause);
+  const isFileOrigin = typeof location !== "undefined" && location.protocol === "file:";
+  if (!isFileOrigin) return new VerificationError(`failed to fetch ${url}: ${message}`);
+  return new VerificationError(
+    `failed to fetch ${url}: ${message} -- this page was opened directly via file://, which ` +
+      "browsers can block from fetching remote URLs even when the server allows it with a " +
+      "wildcard CORS header. Serve this file over a trivial local HTTP server instead (e.g. " +
+      "`python3 -m http.server` from the folder containing it, then open " +
+      "http://localhost:8000/local_index.html) and try again.",
+  );
 }
 
 async function sha512Base64(bytes: Uint8Array<ArrayBuffer>): Promise<string> {

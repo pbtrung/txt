@@ -118,6 +118,38 @@ describe("verifyAssets", () => {
     await expect(verifyAssets(ASSET_BASE_URL, publicKey, () => {})).rejects.toThrow(/HTTP 404/);
   });
 
+  it("wraps a bare network-level fetch failure with a plain message when not on file://", async () => {
+    const { publicKey } = await buildFixture();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("Failed to fetch");
+      }),
+    );
+
+    await expect(verifyAssets(ASSET_BASE_URL, publicKey, () => {})).rejects.toThrow(
+      /failed to fetch .*: Failed to fetch/,
+    );
+    await expect(verifyAssets(ASSET_BASE_URL, publicKey, () => {})).rejects.not.toThrow(
+      /file:\/\//,
+    );
+  });
+
+  it("adds an actionable file:// hint to a bare network-level fetch failure when opened via file://", async () => {
+    const { publicKey } = await buildFixture();
+    vi.stubGlobal("location", { protocol: "file:" });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("Failed to fetch");
+      }),
+    );
+
+    await expect(verifyAssets(ASSET_BASE_URL, publicKey, () => {})).rejects.toThrow(
+      /opened directly via file:\/\/.*local HTTP server/,
+    );
+  });
+
   it("rejects a manifest that lists no files", async () => {
     const { secretKey, publicKey } = slh_dsa_sha2_256f.keygen();
     const emptyManifestBytes = new TextEncoder().encode(JSON.stringify({}));
