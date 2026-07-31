@@ -13,7 +13,7 @@ import http from "node:http";
 import { SqliteDb } from "./sqlite.ts";
 import { BlobCipher } from "./blobCipher.ts";
 import { loadWasm } from "./wasm.ts";
-import { MigrateCommand } from "./migrate.ts";
+import { MigrateCommand } from "./commands.ts";
 
 interface MockR2 {
   port: number;

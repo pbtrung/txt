@@ -10,7 +10,7 @@ import fs from "node:fs";
 import http from "node:http";
 import { RqliteDb } from "./rqliteDb.ts";
 import { UserDb } from "./userDb.ts";
-import { CleanBucketCommand } from "./cleanBucket.ts";
+import { CleanBucketCommand } from "./commands.ts";
 
 interface MockR2 {
   port: number;

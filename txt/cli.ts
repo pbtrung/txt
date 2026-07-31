@@ -1,9 +1,11 @@
 import { parseArgs } from "node:util";
-import { MigrateCommand } from "./migrate.ts";
-import { CleanBucketCommand } from "./cleanBucket.ts";
-import { CollectGarbageCommand } from "./collectGarbage.ts";
-import { VacuumCommand } from "./vacuum.ts";
-import { TestPerfCommand } from "./testPerf.ts";
+import {
+  MigrateCommand,
+  CleanBucketCommand,
+  CollectGarbageCommand,
+  VacuumCommand,
+  TestPerfCommand,
+} from "./commands.ts";
 
 const USAGE = `usage:
   txt.ts --migrate --in-creds <file> --in <file> --out-creds <file> --out <file> [--no-delete] [--verbose]

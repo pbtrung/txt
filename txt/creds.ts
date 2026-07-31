@@ -45,31 +45,43 @@ function readJson(path: string): unknown {
   return JSON.parse(fs.readFileSync(path, "utf8"));
 }
 
+/** Throws `${path}: missing ${String(key)}` unless creds[key] is present -- every loader's first check. */
+function requireField<T extends object, K extends keyof T>(
+  path: string,
+  creds: Partial<T>,
+  key: K,
+): void {
+  if (!creds[key]) throw new Error(`${path}: missing ${String(key)}`);
+}
+
+/** Throws unless a base64 field decodes to at least minBytes raw bytes -- user_root_key/api_key's shared shape. */
+function requireMinBytes(path: string, field: string, base64: string, minBytes: number): void {
+  const len = Buffer.from(base64, "base64").length;
+  if (len < minBytes)
+    throw new Error(`${path}: ${field} must be >=${minBytes} raw bytes, got ${len}`);
+}
+
 export function loadInCreds(path: string): InCreds {
   const creds = readJson(path) as Partial<InCreds>;
-  if (!creds.user_root_key) throw new Error(`${path}: missing user_root_key`);
-  if (!creds.r2_config) throw new Error(`${path}: missing r2_config`);
+  requireField(path, creds, "user_root_key");
+  requireField(path, creds, "r2_config");
   return creds as InCreds;
 }
 
 export function loadOutCreds(path: string): OutCreds {
   const creds = readJson(path) as Partial<OutCreds>;
-  if (!creds.user_root_key) throw new Error(`${path}: missing user_root_key`);
-  const len = rootKeyBytes(creds as OutCreds).length;
-  if (len < 256) throw new Error(`${path}: user_root_key must be >=256 raw bytes, got ${len}`);
-  if (!creds.api_key) throw new Error(`${path}: missing api_key`);
-  const apiKeyLen = Buffer.from(creds.api_key, "base64").length;
-  if (apiKeyLen < 32)
-    throw new Error(`${path}: api_key must be >=32 raw bytes (base64), got ${apiKeyLen}`);
+  requireField(path, creds, "user_root_key");
+  requireMinBytes(path, "user_root_key", creds.user_root_key!, 256);
+  requireField(path, creds, "api_key");
+  requireMinBytes(path, "api_key", creds.api_key!, 32);
   return creds as OutCreds;
 }
 
 export function loadPerfCreds(path: string): PerfCreds {
   const creds = readJson(path) as Partial<PerfCreds>;
-  if (!creds.rqlite_url) throw new Error(`${path}: missing rqlite_url`);
-  if (!creds.api_key) throw new Error(`${path}: missing api_key`);
-  if (!creds.user_root_key) throw new Error(`${path}: missing user_root_key`);
-  const len = rootKeyBytes(creds as PerfCreds).length;
-  if (len < 256) throw new Error(`${path}: user_root_key must be >=256 raw bytes, got ${len}`);
+  requireField(path, creds, "rqlite_url");
+  requireField(path, creds, "api_key");
+  requireField(path, creds, "user_root_key");
+  requireMinBytes(path, "user_root_key", creds.user_root_key!, 256);
   return creds as PerfCreds;
 }

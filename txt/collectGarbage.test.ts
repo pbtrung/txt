@@ -12,7 +12,7 @@ import fs from "node:fs";
 import { RqliteDb } from "./rqliteDb.ts";
 import { UserDb } from "./userDb.ts";
 import { SqliteDb } from "./sqlite.ts";
-import { CollectGarbageCommand } from "./collectGarbage.ts";
+import { CollectGarbageCommand } from "./commands.ts";
 
 async function countRows(dbPath: string, sql: string): Promise<number> {
   const db = await SqliteDb.open("/collect-garbage-test-inspect.db", {

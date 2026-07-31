@@ -13,8 +13,7 @@ import fs, { statSync } from "node:fs";
 import { RqliteDb } from "./rqliteDb.ts";
 import { UserDb } from "./userDb.ts";
 import { SqliteDb } from "./sqlite.ts";
-import { VacuumCommand } from "./vacuum.ts";
-import { CollectGarbageCommand } from "./collectGarbage.ts";
+import { VacuumCommand, CollectGarbageCommand } from "./commands.ts";
 
 const DOC_COUNT = 200;
 
