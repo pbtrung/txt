@@ -71,7 +71,7 @@ interface DbMeta {
 }
 
 /** SHA3-256 of apiKey as given, base64-encoded -- matches the OpenResty auth layer's hash. */
-function hashApiKey(apiKey: string): string {
+export function hashApiKey(apiKey: string): string {
   return createHash("sha3-256").update(apiKey).digest("base64");
 }
 

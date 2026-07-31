@@ -21,6 +21,22 @@ export interface OutCreds {
   api_key: string;
 }
 
+export interface PerfCreds {
+  /** Base URL of a live OpenResty+rqlite deployment, e.g. "https://host:4001". */
+  rqlite_url: string;
+  /**
+   * Bearer token, base64 -- the caller's own api_key. If this resolves to
+   * role='admin', TestPerfCommand looks up that account's own user_id itself
+   * (api_keys.key_hash -> users.user_id, via RAW_QUERY) rather than needing
+   * it supplied here -- auth_perms.lua gives admin no implicit self, so
+   * acting on any tenant (including the admin's own account) needs an
+   * explicit target_db_id, but there's no reason the caller has to already
+   * know its own user_id to provide one.
+   */
+  api_key: string;
+  user_root_key: string;
+}
+
 export function rootKeyBytes(creds: { user_root_key: string }): Buffer {
   return Buffer.from(creds.user_root_key, "base64");
 }
@@ -46,4 +62,14 @@ export function loadOutCreds(path: string): OutCreds {
   if (apiKeyLen < 32)
     throw new Error(`${path}: api_key must be >=32 raw bytes (base64), got ${apiKeyLen}`);
   return creds as OutCreds;
+}
+
+export function loadPerfCreds(path: string): PerfCreds {
+  const creds = readJson(path) as Partial<PerfCreds>;
+  if (!creds.rqlite_url) throw new Error(`${path}: missing rqlite_url`);
+  if (!creds.api_key) throw new Error(`${path}: missing api_key`);
+  if (!creds.user_root_key) throw new Error(`${path}: missing user_root_key`);
+  const len = rootKeyBytes(creds as PerfCreds).length;
+  if (len < 256) throw new Error(`${path}: user_root_key must be >=256 raw bytes, got ${len}`);
+  return creds as PerfCreds;
 }

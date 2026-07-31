@@ -12,9 +12,28 @@ export interface WasmModule {
   getValue(ptr: number, type: string): number;
   HEAPU8: Uint8Array;
   HEAP32: Int32Array;
-  addFunction(fn: (...args: number[]) => number, signature: string): number;
+  // The callback's real param types vary per registered function, driven
+  // entirely by the runtime-only `signature` string (e.g. 'iiiij' means a
+  // 64-bit bigint 4th arg under this build's WASM_BIGINT) -- there's no way
+  // for a single static type to capture that, so callers keep their own
+  // functions concretely typed (number vs. bigint per param) and this
+  // declaration stays deliberately loose rather than forcing a false
+  // (number | bigint) union onto every parameter of every callback.
+  addFunction(fn: (...args: any[]) => number, signature: string): number;
   removeFunction(ptr: number): void;
   FS: { writeFile(path: string, data: Uint8Array): void; readFile(path: string): Uint8Array };
+  HEAPF64: Float64Array;
+
+  /** See sqlcipher/js-vfs.mjs -- wires a JS-implemented sqlite3_vfs into the real C struct. */
+  _sqlite3_js_vfs_register(
+    zName: number,
+    szOsFile: number,
+    mxPathname: number,
+    makeDefault: number,
+    methods: number,
+  ): number;
+  /** Address of the one shared sqlite3_io_methods struct js-vfs.mjs-style VFSes install. */
+  _sqlite3_js_vfs_io_methods(): number;
 
   _sqlite3_open(filename: number, ppDb: number): number;
   _sqlite3_open_v2(filename: number, ppDb: number, flags: number, vfs: number): number;
