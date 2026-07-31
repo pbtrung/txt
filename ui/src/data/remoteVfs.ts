@@ -14,6 +14,7 @@
 // worker/Atomics involvement for writes at all, only for the lazy reads
 // (see remotePageWorker.ts).
 
+import { verbose } from "../log";
 import type { WasmModule } from "./wasmLoader";
 import type { RqliteHttpClient } from "./rqliteHttpClient";
 
@@ -174,7 +175,11 @@ export function registerRemoteVfs(mod: WasmModule, opts: RemoteVfsOptions): Remo
   function dirtyPage(pageNo: number): Uint8Array {
     let page = dirtyPages.get(pageNo);
     if (page) return page;
-    const existing = pageNo <= originalPageCount ? getPage(pageNo) : new Uint8Array(opts.pageSize);
+    const isNewPage = pageNo > originalPageCount;
+    const existing = isNewPage ? new Uint8Array(opts.pageSize) : getPage(pageNo);
+    verbose(
+      `remoteVfs: dirtying page ${pageNo} (${isNewPage ? "new, beyond original page count " + originalPageCount : "existing, fetched/cached first"})`,
+    );
     page = existing.slice();
     dirtyPages.set(pageNo, page);
     return page;
@@ -184,6 +189,12 @@ export function registerRemoteVfs(mod: WasmModule, opts: RemoteVfsOptions): Remo
     const pageSize = opts.pageSize;
     const end = iOfst + iAmt;
     let pos = iOfst;
+    const firstPageNo = Math.floor(iOfst / pageSize) + 1;
+    const lastPageNo = Math.floor((end - 1) / pageSize) + 1;
+    verbose(
+      `remoteVfs: xWrite offset=${iOfst} amount=${iAmt} -> page(s) ${firstPageNo}` +
+        (lastPageNo !== firstPageNo ? `-${lastPageNo}` : ""),
+    );
     while (pos < end) {
       const pageNo = Math.floor(pos / pageSize) + 1;
       if (pageNo > knownPageCount) knownPageCount = pageNo;
@@ -412,6 +423,10 @@ export function registerRemoteVfs(mod: WasmModule, opts: RemoteVfsOptions): Remo
     if (dirtyPages.size === 0) return true;
     const pages = Array.from(dirtyPages.entries()).map(([pageNo, data]) => ({ pageNo, data }));
     const newVersion = currentVersion + 1;
+    verbose(
+      `remoteVfs: commit ${currentVersion} -> ${newVersion}, ${pages.length} dirty page(s): ` +
+        `[${pages.map((p) => p.pageNo).join(", ")}], knownPageCount=${knownPageCount}`,
+    );
     const ok = await client.commit(
       pages,
       currentVersion,
@@ -419,7 +434,10 @@ export function registerRemoteVfs(mod: WasmModule, opts: RemoteVfsOptions): Remo
       knownPageCount,
       opts.targetDbId,
     );
-    if (!ok) return false;
+    if (!ok) {
+      verbose(`remoteVfs: commit ${currentVersion} -> ${newVersion} lost the CAS race`);
+      return false;
+    }
     currentVersion = newVersion;
     for (const [pageNo, data] of dirtyPages) cacheSet(pageNo, data);
     dirtyPages.clear();
