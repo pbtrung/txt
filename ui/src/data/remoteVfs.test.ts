@@ -149,6 +149,67 @@ describe("registerRemoteVfs", () => {
     }
   });
 
+  it("commits only the pages a small write actually touched, not the whole database", async () => {
+    // Builds a real db large enough to span many pages (a big TEXT blob
+    // forces overflow pages), then makes one small, unrelated write and
+    // confirms the commit's dirty-page set is a tiny fraction of the total
+    // page count -- proving this is genuinely page-at-a-time, not a full
+    // re-upload of the database on every commit.
+    const rootKey = randomBytes(256);
+    const path = `/remote-vfs-sparse-write-${buildCounter++}.db`;
+    const db0 = await SqliteDb.open(path, { rawKey: rootKey });
+    const pageSizeStmt = db0.prepare("PRAGMA page_size;");
+    pageSizeStmt.step();
+    const pageSize = Number(pageSizeStmt.columnInt64(0));
+    pageSizeStmt.finalize();
+
+    db0.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT, blob TEXT);");
+    const bigText = "x".repeat(500_000); // forces many overflow pages
+    db0.run("INSERT INTO t (name, blob) VALUES (?, ?);", (s) => {
+      s.bindText(1, "big-row");
+      s.bindText(2, bigText);
+    });
+    db0.run("INSERT INTO t (name, blob) VALUES (?, ?);", (s) => {
+      s.bindText(1, "small-row");
+      s.bindText(2, "small");
+    });
+    db0.close();
+
+    const mod = await loadWasm();
+    const bytes = mod.FS.readFile(path);
+    const pageCount = bytes.length / pageSize;
+    const pages: Uint8Array[] = [];
+    for (let i = 0; i < pageCount; i++) pages.push(bytes.slice(i * pageSize, (i + 1) * pageSize));
+    expect(pageCount).toBeGreaterThan(20); // sanity: the big blob really did span many pages
+
+    const backedPath = "/remote-vfs-sparse-write.db";
+    const handle = registerRemoteVfs(mod, {
+      pageSize,
+      pageCount,
+      currentVersion: 1,
+      backedPath,
+      fetchPage: (pageNo) => pages[pageNo - 1]!,
+    });
+    const db = await SqliteDb.open(backedPath, { vfsName: handle.name, rawKey: rootKey });
+    try {
+      // Touches only the tiny "small-row" -- nowhere near the big blob's
+      // many overflow pages.
+      db.run("UPDATE t SET name = 'renamed' WHERE name = 'small-row';");
+
+      let dirtyCount = 0;
+      const client = fakeClient(async (pgs) => {
+        dirtyCount = pgs.length;
+        return true;
+      });
+      await handle.commit(client);
+
+      expect(dirtyCount).toBeGreaterThan(0);
+      expect(dirtyCount).toBeLessThan(pageCount / 4); // a small fraction, not the whole db
+    } finally {
+      db.close();
+    }
+  });
+
   it("leaves dirty pages intact when commit's CAS is lost, so the caller can retry", async () => {
     const { rootKey, pages, pageSize, pageCount } = await buildRealDb();
     const mod = await loadWasm();
