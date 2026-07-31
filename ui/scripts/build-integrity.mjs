@@ -9,19 +9,27 @@
 //      index.html itself unchanged.
 //   2. SHA-512s every file under dist/ (including the now-SRI-tagged
 //      index.html) into dist/manifest.json.
-//   3. Writes dist/_headers (Cloudflare Pages' response-header config file --
-//      also understood by Netlify): narrows the direct-CDN-visit CSP's
-//      connect-src from index.html's own <meta> tag's deliberately-open '*'
-//      down to 'self' plus this deployment's own rqlite/OpenResty endpoint
-//      (--build-creds's rqlite_url) and R2's host pattern, and sets
-//      Access-Control-Allow-Origin: null so local_index.html (served from
-//      the cross-origin-isolated nginx location documented in
-//      docker/README.md, sending a real Origin, not opened bare via
-//      file://) can still read the response bodies of its cross-origin
-//      fetches to manifest.json/manifest.sig/every other dist/ asset.
-//      _headers is a deploy-time config file, never itself served as a
-//      fetchable path, so it's written after buildManifest() runs, not
-//      before -- same reason manifest.json/manifest.sig are, below.
+//   3. Writes dist/_headers and dist/_redirects (Cloudflare Pages' own
+//      response-header/rewrite config files -- see docker/README.md; ui/
+//      deploys there, not from docker/, which is rqlite/OpenResty only).
+//      _headers narrows the direct-CDN-visit CSP's connect-src from
+//      index.html's own <meta> tag's deliberately-open '*' down to 'self'
+//      plus this deployment's own rqlite/OpenResty endpoint (--build-creds's
+//      rqlite_url) and R2's host pattern; sets Access-Control-Allow-Origin: *
+//      so local_index.html (served from this same Pages deployment, sending
+//      a real Origin, not opened bare via file://) can still read the
+//      response bodies of its cross-origin fetches to manifest.json/
+//      manifest.sig/every other dist/ asset; and sets
+//      Cross-Origin-Opener-Policy/Cross-Origin-Embedder-Policy, which is
+//      what makes SharedArrayBuffer available at all for data/dbWorker.ts's
+//      Worker+Atomics bridge -- there's no separate server config to set
+//      these on Cloudflare Pages, only this file. _redirects adds the SPA
+//      fallback react-router-dom's BrowserRouter needs (a direct hit or
+//      refresh on /library, /read/:txtId, ... must still resolve to
+//      index.html). Both are deploy-time config files, never themselves
+//      served as a fetchable path, so they're written after buildManifest()
+//      runs, not before -- same reason manifest.json/manifest.sig are,
+//      below.
 //   4. Loads (or, only if absent, generates) an SLH-DSA-SHA2-256f keypair
 //      (@noble/post-quantum) from --build-creds's slhdsa_256f_priv_key,
 //      signs manifest.json's literal bytes with it, and writes the raw
@@ -37,11 +45,11 @@
 //      looks the same throughout the whole verify-then-render lifecycle,
 //      not just after the real app mounts), and writes the result to
 //      creds/local_index.html -- never dist/, so it's never uploaded to
-//      the CDN. This is the file a user opens (over the cross-origin-
-//      isolated nginx location, not bare file://, per docker/README.md) to
-//      verify everything before the real app ever renders; see
-//      ui/src/localIndex/ for that verification logic and why it can't
-//      live inside dist/ itself.
+//      the CDN. This is the file a user opens (over the same
+//      cross-origin-isolated Cloudflare Pages deployment, not bare
+//      file:///content://, per docker/README.md) to verify everything
+//      before the real app ever renders; see ui/src/localIndex/ for that
+//      verification logic and why it can't live inside dist/ itself.
 //
 // build-creds.json (gitignored, ui/build-creds.json by default) is a small,
 // operator-owned deployment config -- asset_base_url/rqlite_url/
@@ -152,20 +160,23 @@ function buildManifest() {
 }
 
 // Mirrors dist/index.html's own <meta> CSP (see that file's comment for why
-// every other directive is what it is) except connect-src, narrowed here
-// from that meta tag's deliberately-open '*' down to 'self' plus the two
-// host patterns the app actually talks to: this deployment's own rqlite/
-// OpenResty endpoint (a single, operator-controlled host, unlike the old
-// Turso-backed design where every customer had their own database URL --
-// hence baking in the real host here instead of a wildcard) and R2's
-// standard custom-domain pattern. A real HTTP response header and a <meta>
-// CSP both apply at once and combine by intersection, so this tightens the
-// effective policy for a direct CDN visit without having to touch the
-// per-account-agnostic meta tag itself.
+// every other directive is what it is -- script-src's blob: matters
+// especially here: this is a real HTTP response header, unlike the meta
+// tag, so it's the one that actually gets inherited by data/dbWorker.ts's
+// Worker, where data/wasmLoader.ts's blob-URL import() of sqlcipher.js runs)
+// except connect-src, narrowed here from that meta tag's deliberately-open
+// '*' down to 'self' plus the two host patterns the app actually talks to:
+// this deployment's own rqlite/OpenResty endpoint (a single,
+// operator-controlled host, unlike the old Turso-backed design where every
+// customer had their own database URL -- hence baking in the real host here
+// instead of a wildcard) and R2's standard custom-domain pattern. A real
+// HTTP response header and a <meta> CSP both apply at once and combine by
+// intersection, so this tightens the effective policy for a direct CDN
+// visit without having to touch the per-account-agnostic meta tag itself.
 function distCsp(rqliteUrl) {
   return (
     "default-src 'self'; " +
-    "script-src 'self' 'wasm-unsafe-eval'; " +
+    "script-src 'self' 'wasm-unsafe-eval' blob:; " +
     "style-src 'self' 'unsafe-inline'; " +
     "img-src 'self' data:; " +
     "font-src 'self' data:; " +
@@ -176,17 +187,27 @@ function distCsp(rqliteUrl) {
   );
 }
 
+// See this file's own header comment for what each header is for.
+// `credentialless` (not the stricter `require-corp`) for COEP: `require-corp`
+// would also block the app's own cross-origin fetches to the rqlite API and
+// to R2, since neither service necessarily sends back a
+// Cross-Origin-Resource-Policy header of its own.
 function writeHeadersFile(rqliteUrl) {
-  // Access-Control-Allow-Origin: * -- local_index.html's own hosting origin
-  // (docker/README.md's cross-origin-isolated nginx location) is a real
-  // https:// origin now, not file://'s literal "null" -- an ACAO reflecting
-  // only "null" would satisfy file:// but not a real Origin header, so this
-  // needs the wildcard rather than the old exact-match value. Safe to allow
-  // broadly: these are public, non-secret, no-credentials build outputs
-  // whose integrity local_index.html itself checks via SLH-DSA/SHA-512, not
-  // via keeping them cross-origin-unreadable.
-  const headers = `/*\n  Content-Security-Policy: ${distCsp(rqliteUrl)}\n  Access-Control-Allow-Origin: *\n`;
+  const headers =
+    `/*\n` +
+    `  Content-Security-Policy: ${distCsp(rqliteUrl)}\n` +
+    `  Access-Control-Allow-Origin: *\n` +
+    `  Cross-Origin-Opener-Policy: same-origin\n` +
+    `  Cross-Origin-Embedder-Policy: credentialless\n`;
   writeFileSync(join(DIST_DIR, "_headers"), headers, "utf8");
+}
+
+// SPA fallback for react-router-dom's BrowserRouter (appRouter.ts), which
+// uses real URLs (/library, /read/:txtId) -- Cloudflare Pages' own rewrite
+// syntax (a trailing " 200" makes it a rewrite that keeps the request path,
+// not an HTTP redirect that would change the browser's URL to /index.html).
+function writeRedirectsFile() {
+  writeFileSync(join(DIST_DIR, "_redirects"), "/* /index.html 200\n", "utf8");
 }
 
 /** Reuses slhdsa_256f_priv_key from buildCreds if it's a non-empty base64
@@ -297,6 +318,7 @@ async function main() {
 
   const manifest = buildManifest();
   writeHeadersFile(rqliteUrl);
+  writeRedirectsFile();
   const manifestBytes = Buffer.from(JSON.stringify(manifest), "utf8");
   writeFileSync(join(DIST_DIR, "manifest.json"), manifestBytes);
   writeFileSync(

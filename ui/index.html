@@ -10,11 +10,16 @@
       change (e.g. widening its allowed tags). script-src/object-src/base-uri
       are the load-bearing directives: same-origin scripts only (plus
       wasm-unsafe-eval, which leancrypto's Emscripten/WASM build needs to
-      instantiate), no <object>/<embed>, no <base> tag hijacking relative
-      URLs. connect-src is intentionally unrestricted -- the rqlite deployment
-      URL and R2's endpoint are per-account values from the user's own creds
-      file (data/creds.ts), not fixed hosts this policy could otherwise pin
-      down.
+      instantiate, and blob:, which data/wasmLoader.ts's own fetch+verify+
+      blob-import of sqlcipher.js needs -- see that file's header comment;
+      this is a real HTTP response header too (dist/_headers,
+      build-integrity.mjs), not just this meta tag, specifically so it's
+      inherited by data/dbWorker.ts's Worker, where that import actually
+      happens -- a meta-tag CSP alone is never inherited by a Worker), no
+      <object>/<embed>, no <base> tag hijacking relative URLs. connect-src is
+      intentionally unrestricted -- the rqlite deployment URL and R2's
+      endpoint are per-account values from the user's own creds file
+      (data/creds.ts), not fixed hosts this policy could otherwise pin down.
       style-src allows 'unsafe-inline' for this app's own style={{...}}
       JSX props (developer-authored, not attacker-influenced -- DOMPurify's
       own attribute allowlist already excludes `style` from sanitized HTML).
@@ -27,7 +32,7 @@
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src *; object-src 'none'; base-uri 'self'; form-action 'self';"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src *; object-src 'none'; base-uri 'self'; form-action 'self';"
     />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Skypiea</title>

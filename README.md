@@ -8,7 +8,7 @@ A private, end-to-end encrypted reading vault. Documents are chunked into parts,
 - **Per-user database, not shared rows** — one SQLCipher-encrypted SQLite database per user, persisted page-by-page in rqlite's own page-store schema.
 - **`ui/`** — the browser reading app end users actually use: a React/Vite frontend that opens a user's SQLCipher database lazily and read-write, page by page, directly against a live `docker/` deployment (no full-database download). See [ui/](ui/) and [docker/README.md](docker/README.md#serving-ui).
 - **`txt.ts`**, the admin CLI — brings an existing vault onto this schema (`--migrate`), then maintains it day to day (`--clean-bucket`, `--collect-garbage`, `--vacuum`) and measures the lazy-remote-read tradeoff (`--test-perf`). See [docs/cli.md](docs/cli.md) for the full command reference.
-- **`docker/`** — an OpenResty + rqlite container image fronting the page store with per-tenant API-key auth, forced tenant isolation, and health checks, plus a second location serving `ui/`. See [docker/README.md](docker/README.md).
+- **`docker/`** — an OpenResty + rqlite container image fronting the page store with per-tenant API-key auth, forced tenant isolation, and health checks. See [docker/README.md](docker/README.md).
 
 See [docs/data_model.md](docs/data_model.md) for both schemas (the page store and the per-user database) and the reasoning behind every design choice in them, and [docs/crypto.md](docs/crypto.md) for the blob format used wherever content needs its own encryption outside the SQLCipher file.
 
@@ -41,4 +41,4 @@ npm run ui:test     # unit/component tests (real SQLCipher db, mocked network/Wo
 npm run ui:test:e2e # real headless Chromium against a real build (needs Chromium locally)
 ```
 
-`ui:build` needs `ui/build-creds.json` (gitignored) — see `ui/scripts/build-integrity.mjs`'s own header comment for its shape. Deploying the result behind `docker/`'s cross-origin-isolated hosting is covered in [docker/README.md](docker/README.md#serving-ui).
+`ui:build` needs `ui/build-creds.json` (gitignored) — see `ui/scripts/build-integrity.mjs`'s own header comment for its shape. `dist/` deploys to Cloudflare Pages, not `docker/` (rqlite/OpenResty only) — see [docker/README.md](docker/README.md#serving-ui).

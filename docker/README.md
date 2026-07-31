@@ -6,7 +6,7 @@ Container image for one rqlite node, fronted by OpenResty acting as the "OpenRes
 
 - **`Dockerfile`** — `alpine:edge` base; installs `rqlited`/`rqlite`/`rqbench` (pinned via `ARG RQLITE_VERSION`, default `10.2.7`) and `openresty` (Alpine's own `community` repo package, not openresty.org's separate apk repo). Also creates the unprivileged `rqlite` user (uid/gid 1000) rqlited actually runs as. `HEALTHCHECK` polls rqlited's own `/readyz` directly on its internal `127.0.0.1:14001` (bypassing nginx/`auth_basic` entirely) every 30s -- `/readyz` covers node/leader/store health, not just "is the process up," so it would have caught the earlier stuck-Raft-identity ("not leader") failure automatically. Assumes the default nginx-fronted deployment; running with `NGINX_CONF=""` or a custom `-http-addr` needs its own `--health-cmd` override.
 - **`entrypoint.sh`** — unmodified from the reference project. Assembles `rqlited`'s flags from `-*` args or env vars (`NODE_ID`, `HTTP_ADDR`, `RAFT_ADDR`, `RQLITE_BACKUP_CONF`, `SQLITE_EXTENSIONS`, `ENABLE_FK`, ...), renders `nginx.conf` through `envsubst` (restricted to `$NGINX_HTPASSWD` only, so nginx's own `$host`/`$remote_addr`/etc. pass through untouched), starts OpenResty (Alpine's `openresty` package installs its nginx binary as `/usr/sbin/nginx`, so this needs no changes for the OpenResty swap), then `exec su-exec rqlite rqlited ...` — rqlited is the only process that drops root.
-- **`nginx.conf`** — OpenResty config with two server blocks. Port 4001: the page-store API. `auth_basic` (shared htpasswd) gates the server block as a coarse perimeter check, but is switched back `off` on `location ~ ^/db/(query|execute|request)$`, which instead runs `auth_perms.lua` before proxying to rqlite's real HTTP API on `127.0.0.1:14001` — HTTP allows only one `Authorization` header per request, so a client's `Bearer <key>` (what the Lua script needs) can never also satisfy `auth_basic`'s `Basic <creds>` there, and leaving `auth_basic` on that location would reject every real client before the Lua script ever ran. `location = /healthz`, also `auth_basic off`, is a dedicated unauthenticated proxy to rqlite's own `/readyz`, for external platform health checks that can't supply Basic auth -- see [below](#external-health-checks). Everything else (`/status`, `/readyz`, `/nodes`, `/db/backup`, `/db/load`, ...) falls through the plain `location /` passthrough, still behind `auth_basic`, since `auth_perms.lua` only understands the `{statementId, batch}` envelope, not rqlite's native request shapes. `location /internal/rqlite/` is the Lua script's own internal-only route back into rqlite for its auth lookup, also `auth_basic off` since it's `internal;` (unreachable from outside) and otherwise inherits the same client `Authorization: Bearer` header that would trip `auth_basic` there too. Port 4002: public static hosting for the built `ui/` app -- see [below](#serving-ui).
+- **`nginx.conf`** — OpenResty config for the page-store API, port 4001 only -- this image is rqlite/OpenResty only; `ui/` deploys separately to Cloudflare Pages, see [below](#serving-ui). `auth_basic` (shared htpasswd) gates the server block as a coarse perimeter check, but is switched back `off` on `location ~ ^/db/(query|execute|request)$`, which instead runs `auth_perms.lua` before proxying to rqlite's real HTTP API on `127.0.0.1:14001` — HTTP allows only one `Authorization` header per request, so a client's `Bearer <key>` (what the Lua script needs) can never also satisfy `auth_basic`'s `Basic <creds>` there, and leaving `auth_basic` on that location would reject every real client before the Lua script ever ran. That same location also handles CORS (an `OPTIONS` preflight short-circuit plus `Access-Control-Allow-*` headers on every response, success or `auth_perms.lua`'s own rejection) -- the browser calls this API directly, cross-origin, from wherever `ui/` is hosted (a Cloudflare Pages domain, or a local Vite dev server during development); a wildcard `Access-Control-Allow-Origin` is safe here since auth is a Bearer token, not a cookie, so there's no ambient credential a cross-origin page could ride along with. `location = /healthz`, also `auth_basic off`, is a dedicated unauthenticated proxy to rqlite's own `/readyz`, for external platform health checks that can't supply Basic auth -- see [below](#external-health-checks). Everything else (`/status`, `/readyz`, `/nodes`, `/db/backup`, `/db/load`, ...) falls through the plain `location /` passthrough, still behind `auth_basic`, since `auth_perms.lua` only understands the `{statementId, batch}` envelope, not rqlite's native request shapes. `location /internal/rqlite/` is the Lua script's own internal-only route back into rqlite for its auth lookup, also `auth_basic off` since it's `internal;` (unreachable from outside) and otherwise inherits the same client `Authorization: Bearer` header that would trip `auth_basic` there too.
 - **`auth_perms.lua`** — the auth layer itself; see [below](#auth_permslua) for detail.
 - **`backup.conf.json.example`** — example `-auto-backup` config for rqlited (rqlite's own JSON schema, not something this project defines): periodic S3 upload of the whole `rqlite_txt.db`. Copy it, fill in the `$VAR` placeholders (or point `RQLITE_BACKUP_CONF` env var at a rendered version), and pass the result via `RQLITE_BACKUP_CONF`.
 
@@ -79,20 +79,12 @@ POST to `/db/query` for reads, `/db/execute` for writes — same as every other 
 
 ```
 docker build --build-arg RQLITE_VERSION=10.2.7 -t txt-rqlite docker/
-docker run -p 4001:4001 -p 4002:4002 \
+docker run -p 4001:4001 \
   --hostname txt-rqlite \
   -e NGINX_USER=admin -e NGINX_PASSWORD=<shared secret> \
   -v rqlite-data:/rqlite/file/data \
-  -v $(pwd)/dist:/var/www/ui:ro \
   txt-rqlite
 ```
-
-The `dist:/var/www/ui` mount is optional -- omit it (or point it at an
-empty directory) if this deployment doesn't serve the browser app at all.
-Build `dist/` first with `npm run ui:build` (see [below](#serving-ui)) --
-it's a separate, ordinary static-asset build with no dependency on this
-image, not something baked into it, so this Dockerfile stays focused on
-rqlite+OpenResty and doesn't need its own Node build stage.
 
 `NGINX_USER`/`NGINX_PASSWORD` are required — without both, `entrypoint.sh` never creates `/etc/nginx/.htpasswd`, and `auth_basic_user_file` (referenced at the server block level, so it must exist even though `location /db/...` and `location /internal/rqlite/` switch `auth_basic off`) will fail every request still gated by it, i.e. the `location /` passthrough.
 
@@ -100,16 +92,7 @@ rqlite+OpenResty and doesn't need its own Node build stage.
 
 ## Serving `ui/`
 
-Port 4002 is a second, separate server block: plain static hosting for `dist/` (the browser app -- `docker build`/`ui:build`/... at the [repo root](../package.json)), unauthenticated (there's nothing tenant-scoped in a static JS/CSS bundle) and cross-origin-isolated:
-
-```
-Cross-Origin-Opener-Policy:   same-origin
-Cross-Origin-Embedder-Policy: credentialless
-```
-
-This is what makes `SharedArrayBuffer` available at all -- `ui/src/data/remotePageClient.ts`'s lazy-VFS page fetching bridges a synchronous WASM VFS callback to a real `Worker` via `SharedArrayBuffer`/`Atomics.wait`, and browsers only expose `SharedArrayBuffer` to a page that's cross-origin isolated. `credentialless`, not the stricter `require-corp`: `require-corp` would also block the app's own cross-origin `fetch`es to the rqlite API (port 4001) and to R2, since neither service necessarily sends back a `Cross-Origin-Resource-Policy` header of its own.
-
-Build the app first:
+This image is rqlite/OpenResty only -- `ui/` deploys separately, to [Cloudflare Pages](https://pages.cloudflare.com/), not from this container. Build it first:
 
 ```
 npm run ui:build
@@ -117,7 +100,12 @@ npm run ui:build
 
 `ui:build` (see the root `package.json`) needs `ui/build-creds.json` -- a small, gitignored, deployment-owned config (`asset_base_url`, `rqlite_url`, and a `slhdsa_256f_priv_key` it generates and writes back on first use if absent), distinct from any end user's own vault creds file (`ui/src/data/creds.ts`'s `{rqlite_url, api_key, user_root_key, r2_config}` -- `rqlite_url` reuses that same field name for the same concept, even though this is a separate, deployment-level fact). `rqlite_url`'s origin backs `dist/_headers`' CSP `connect-src`. Defaults to that path; point it at a different file with `npm run ui:build -- path/to/creds.json` (or `--build-creds path/to/creds.json`) -- either way, a missing `slhdsa_256f_priv_key` in that file gets generated and written back, an existing one is always reused. See `ui/scripts/build-integrity.mjs`'s own header comment for exactly what each field does.
 
-**`local_index.html`** (written to `creds/local_index.html`, never `dist/`) is meant to be opened from this same cross-origin-isolated origin now -- `https://<host>:4002/../local_index.html` or wherever it's placed alongside the served assets -- not via a bare `file://` path. That's a deliberate change from the file-based design this project's crypto layer otherwise still supports: a `file://` document can never be cross-origin isolated, so it could verify the signed manifest and inline the verified JS, but the app it booted would have no working lazy VFS. Serving it over real HTTP still defends against the threat this mechanism actually targets -- a compromised or MITM'd asset CDN/`asset_base_url` -- just not literal air-gapped, network-disconnected verification.
+Deploy `dist/` as a Cloudflare Pages project (`wrangler pages deploy dist/`, or connect the repo and set the build output directory to `dist/` -- `npm run ui:build` as the build command). Cloudflare Pages reads `dist/_headers`/`dist/_redirects` natively, both written by `build-integrity.mjs`:
+
+- **`_headers`** sets, for every path: the direct-CDN-visit CSP (narrowed `connect-src`, see above), `Access-Control-Allow-Origin: *` (so `local_index.html`, served from this same deployment, can read its own cross-origin fetches to `manifest.json`/`manifest.sig`), and `Cross-Origin-Opener-Policy: same-origin` / `Cross-Origin-Embedder-Policy: credentialless`. The COOP/COEP pair is what makes `SharedArrayBuffer` available at all -- `ui/src/data/dbWorker.ts`'s Worker + `SharedArrayBuffer` + `Atomics.wait` bridge needs it, and browsers only expose `SharedArrayBuffer` to a page that's cross-origin isolated. `credentialless`, not the stricter `require-corp`: `require-corp` would also block the app's own cross-origin `fetch`es to the rqlite API and to R2, since neither service necessarily sends back a `Cross-Origin-Resource-Policy` header of its own. There's no separate server config to set these on Cloudflare Pages -- this file is the only place they're set.
+- **`_redirects`** is the SPA fallback react-router-dom's `BrowserRouter` (`appRouter.ts`) needs -- real URLs (`/library`, `/read/:txtId`), so a direct hit or refresh on one of those must still resolve to `index.html` (a rewrite, via the trailing ` 200`, not an HTTP redirect that would change the browser's URL).
+
+**`local_index.html`** (written to `creds/local_index.html`, never `dist/`) is meant to be kept and opened locally -- `file://` on desktop, `content://`/whatever the platform-native equivalent is on Android/iOS -- so a user can independently verify the signed manifest and the inlined verifier JS itself before trusting anything served from `asset_base_url`, without depending on that origin being reachable or honest at verification time. A `file://`/`content://` document can never be cross-origin isolated, though, so the full app (which needs the Worker+`SharedArrayBuffer`+`Atomics` bridge, see `ui/src/data/dbWorker.ts`) can't actually boot there -- see `ui/src/localIndex/`'s own comments for the fallback this triggers instead (verify, then point the user at opening the real deployment in a browser).
 
 ## External health checks
 

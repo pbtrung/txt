@@ -21,13 +21,7 @@ COPY entrypoint.sh /script/
 COPY auth_perms.lua /script/
 COPY nginx.conf /script/nginx.conf
 
-# Bind-mounted at run time with the separately-built ui/dist/ (see
-# README.md's "Build & run" and `npm run ui:build`) -- created here so
-# nginx's port-4002 server block has somewhere to serve from even before
-# any mount is attached.
-RUN mkdir -p /var/www/ui
-
-EXPOSE 4001 4002
+EXPOSE 4001
 
 # Checks rqlited directly on its internal port (bypassing nginx/auth_basic
 # entirely, the same 127.0.0.1:14001 nginx.conf's own /internal/rqlite/

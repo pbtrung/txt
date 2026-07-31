@@ -9,9 +9,10 @@
 // found to stall indefinitely in at least one sandboxed dev environment").
 //
 // This spins up: a real built dist/ (via the actual `npm run ui:build`
-// pipeline) served with the same Cross-Origin-Opener-Policy/
-// Cross-Origin-Embedder-Policy headers docker/nginx.conf's port-4002 block
-// sets; a minimal fake rqlite backend that speaks auth_perms.lua's exact
+// pipeline) served with the real headers build-integrity.mjs generated
+// (dist/_headers -- Cross-Origin-Opener-Policy/Cross-Origin-Embedder-Policy,
+// the same ones a real Cloudflare Pages deployment would apply from that
+// same file); a minimal fake rqlite backend that speaks auth_perms.lua's exact
 // wire protocol (GET_META/READ_PAGE/COMMIT) backed by a real SQLCipher db's
 // real pages; and a real headless Chromium (via playwright-core, driving
 // the system browser directly -- no bundled browser download). It drives
@@ -181,10 +182,28 @@ function startFakeBackend(
   });
 }
 
-/** Serves dist/ with the same COOP/COEP headers docker/nginx.conf's
- * port-4002 block sets -- this is what makes SharedArrayBuffer available at
- * all, so the test would fail early (no SharedArrayBuffer) if this were
- * missing, the same way a misconfigured deployment would. */
+/** Cloudflare Pages' own _headers format: a path pattern line (e.g. "/*")
+ * followed by indented "Name: value" lines. build-integrity.mjs only ever
+ * writes one "/*" block, so this doesn't need to track which pattern a
+ * header belongs to -- just collect every indented line. */
+function parseHeadersFile(): Record<string, string> {
+  const content = readFileSync(join(DIST_DIR, "_headers"), "utf8");
+  const headers: Record<string, string> = {};
+  for (const line of content.split("\n")) {
+    if (!/^[ \t]/.test(line)) continue; // path pattern line (unindented), skip
+    const idx = line.indexOf(":");
+    if (idx === -1) continue;
+    headers[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+  }
+  return headers;
+}
+
+/** Serves dist/ applying the real headers build-integrity.mjs generated
+ * (dist/_headers) -- not a hardcoded copy of what they should be, so this
+ * genuinely verifies that file's own content (including
+ * Cross-Origin-Opener-Policy/Cross-Origin-Embedder-Policy, without which
+ * SharedArrayBuffer wouldn't be available and this test would fail early)
+ * rather than just re-asserting values that could silently drift from it. */
 function startStaticServer(): Promise<{ url: string; close: () => Promise<void> }> {
   const mimeTypes: Record<string, string> = {
     ".html": "text/html",
@@ -196,9 +215,9 @@ function startStaticServer(): Promise<{ url: string; close: () => Promise<void> 
     ".woff2": "font/woff2",
     ".json": "application/json",
   };
+  const headers = parseHeadersFile();
   const server = http.createServer((req, res) => {
-    res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
-    res.setHeader("Cross-Origin-Embedder-Policy", "credentialless");
+    for (const [name, value] of Object.entries(headers)) res.setHeader(name, value);
     let filePath = join(DIST_DIR, decodeURIComponent((req.url ?? "/").split("?")[0]!));
     if (filePath.endsWith("/")) filePath = join(filePath, "index.html");
     try {
@@ -207,7 +226,7 @@ function startStaticServer(): Promise<{ url: string; close: () => Promise<void> 
       res.setHeader("Content-Type", mimeTypes[ext] ?? "application/octet-stream");
       res.end(data);
     } catch {
-      // SPA fallback, same as nginx.conf's try_files ... /index.html
+      // SPA fallback, same as dist/_redirects' "/* /index.html 200" rewrite.
       const indexData = readFileSync(join(DIST_DIR, "index.html"));
       res.setHeader("Content-Type", "text/html");
       res.end(indexData);
@@ -236,12 +255,22 @@ describe("real end-to-end smoke test (browser Worker + SharedArrayBuffer + Atomi
   beforeAll(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), "ui-smoke-"));
 
+    // The fake backend's real bound port has to be known *before* the
+    // build, not after: dist/_headers' CSP connect-src is derived from
+    // build-creds.json's rqlite_url at build time, and now that this test's
+    // own static server actually applies that real header (rather than a
+    // hand-picked COOP/COEP-only subset, see startStaticServer()'s own
+    // comment), a placeholder rqlite_url that doesn't match the backend's
+    // real origin would have the browser's own CSP block every fetch to it.
+    fakeDb = await buildFakeDb();
+    backend = await startFakeBackend(fakeDb);
+
     const buildCredsPath = join(tmpDir, "build-creds.json");
     writeFileSync(
       buildCredsPath,
       JSON.stringify({
         asset_base_url: "https://example.invalid/",
-        rqlite_url: "https://example.invalid",
+        rqlite_url: backend.url,
       }),
     );
     execFileSync("npm", ["run", "ui:build", "--", "--build-creds", buildCredsPath], {
@@ -249,8 +278,6 @@ describe("real end-to-end smoke test (browser Worker + SharedArrayBuffer + Atomi
       stdio: "inherit",
     });
 
-    fakeDb = await buildFakeDb();
-    backend = await startFakeBackend(fakeDb);
     staticServer = await startStaticServer();
 
     const credsPath = join(tmpDir, "creds.json");
