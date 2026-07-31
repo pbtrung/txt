@@ -128,20 +128,12 @@ async function fetchMeta(client: RqliteHttpClient, targetDbId?: string): Promise
 // comment). Fixed there instead, so batch size is unbounded again here.
 const PREFETCH_ROUND_TRIPS = 5;
 
-// Deliberately much smaller than MAX_CACHED_PAGES: prefetching is meant to
-// cover the *typical* metadata working set (txt/txt_parts/txt_bookmarks/
-// r2_config, plus whatever schema/index pages back them) in a handful of
-// fast round trips, not to front-load the entire cache budget -- a vault
-// with many thousands of pages (mostly other documents' own content, not
-// needed until that specific document is opened) turned "prefetch
-// everything up to the cache size" into a single ~80-second stall on every
-// unlock once MAX_CACHED_PAGES grew large, almost entirely bandwidth-bound
-// (a few thousand pages is several MB of page data). Pages beyond this
-// limit still fall back correctly to an individual live fetch the moment
-// SQLite's own xRead callback actually needs them (remotePageWorker.ts),
-// same as any page evicted from the LRU cache -- this only trades a little
-// of that later per-page latency for a fast, bounded unlock now.
-const PREFETCH_PAGE_LIMIT = 500;
+// Independent of MAX_CACHED_PAGES in principle (see prefetchPages' own doc
+// comment -- prefetching everything up to the cache size can mean several
+// MB, several dozen seconds, on a large vault, almost entirely bandwidth-
+// bound), but currently set equal to it: prefetch the whole cache budget
+// upfront rather than leaving anything to a later live fetch.
+const PREFETCH_PAGE_LIMIT = 4000;
 
 /** Eagerly fetches this account's pages in a handful of batched round trips
  * right after open() learns the page count, instead of leaving every one

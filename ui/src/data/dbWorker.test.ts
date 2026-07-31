@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { randomBytes } from "node:crypto";
 
 import { bytesToBase64 } from "../crypto/bytes";
+import { MAX_CACHED_PAGES } from "./remoteVfs";
 import { SqliteDb } from "./sqliteDb";
 import { loadWasm } from "./wasmLoader";
 
@@ -264,18 +265,16 @@ describe("dbWorker", () => {
 
   it("caps prefetch at PREFETCH_PAGE_LIMIT even for a much bigger vault, not the full page count", async () => {
     const fixture = await buildVaultDb();
-    // Simulates a vault far larger than MAX_CACHED_PAGES's own budget --
-    // prefetch must still stop at its own (much smaller) limit rather than
-    // scaling up with page count, which is what made a real large vault's
-    // unlock take ~80s (bandwidth-bound: a few thousand pages of page data
-    // in one batched request).
-    const backend = await openWith(fixture, { reportedPageCount: 10_000 });
+    // Simulates a vault far larger than PREFETCH_PAGE_LIMIT/MAX_CACHED_PAGES
+    // -- prefetch must still stop at its own limit rather than scaling up
+    // with page count without bound.
+    const backend = await openWith(fixture, { reportedPageCount: MAX_CACHED_PAGES * 3 });
 
     const requestedPageNos = backend.query.mock.calls
       .filter(([statementId]) => statementId === "READ_PAGE")
       .flatMap(([, batch]) => (batch as { page_no: number }[]).map((b) => b.page_no));
     expect(requestedPageNos.length).toBeGreaterThan(0);
-    expect(Math.max(...requestedPageNos)).toBeLessThanOrEqual(500); // PREFETCH_PAGE_LIMIT
+    expect(Math.max(...requestedPageNos)).toBeLessThanOrEqual(MAX_CACHED_PAGES); // PREFETCH_PAGE_LIMIT currently equals this
   });
 
   it("getTxtKey/fetchTxtKey reads txt.txt_key from the real db", async () => {
