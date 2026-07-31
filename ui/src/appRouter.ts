@@ -59,30 +59,3 @@ function historyApiUsable(): boolean {
 export function pickRouterComponent(): ComponentType<{ children?: ReactNode }> {
   return historyApiUsable() ? BrowserRouter : MemoryRouter;
 }
-
-// Cached after the first call, unlike historyApiUsable() itself -- whether
-// the History API works is fixed for the life of a given document (a
-// file://, content://, or normal http(s) load doesn't change mid-session),
-// so there's no reason for every InternalLink render to repeat the (harmless
-// but real) replaceState() probe. Kept as its own function, rather than
-// having pickRouterComponent cache internally, so appRouter.test.ts's
-// per-case mocking of window.history (expecting each call to re-detect
-// live) keeps working unmodified.
-let memoryRouterActive: boolean | null = null;
-
-/** True once this document has settled on MemoryRouter (opaque origin --
- * local_index.html's file://, or Android's content:// equivalent -- see
- * pickRouterComponent above). InternalLink uses this to decide whether a
- * same-screen navigation can safely be a real `<a href>` (BrowserRouter: the
- * href is same-origin and correct) or needs to render as a hrefless button
- * instead (MemoryRouter: any `<a href>` -- even a root-relative one like
- * "/manage" -- resolves against the `<base>` render.ts points at
- * asset_base_url, so hovering it previews, and a new-tab/middle-click would
- * actually perform, a live unverified fetch straight to the CDN -- exactly
- * the gap local_index.html exists to close). */
-export function isMemoryRouterActive(): boolean {
-  if (memoryRouterActive === null) {
-    memoryRouterActive = !historyApiUsable();
-  }
-  return memoryRouterActive;
-}

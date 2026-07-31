@@ -65,7 +65,6 @@ function LibraryNavContent({
   subjectEntries,
   publisherEntries,
   displayName,
-  isAdmin,
   onLock,
   onRefresh,
   refreshing,
@@ -78,7 +77,6 @@ function LibraryNavContent({
   subjectEntries: BrowseEntry[];
   publisherEntries: BrowseEntry[];
   displayName: string | undefined;
-  isAdmin: boolean;
   onLock: () => void;
   onRefresh: () => void;
   refreshing: boolean;
@@ -125,14 +123,9 @@ function LibraryNavContent({
 
       {/* Who's signed in, and the (now icon-only) Refresh/Lock actions --
           moved here from the top bar so they're part of "your account"
-          rather than sitting next to the search field. For an admin
-          session, the name itself is a link to the Manage screen
-          (RequireAdmin guards the route too, so this is purely "don't
-          offer it" for a regular user, not the actual enforcement --
-          that's Turso's own token grants). */}
+          rather than sitting next to the search field. */}
       <AccountFooter
         displayName={displayName}
-        manageLink={isAdmin}
         onRefresh={onRefresh}
         onLock={onLock}
         refreshing={refreshing}
@@ -303,7 +296,6 @@ export function LibraryScreen() {
                 subjectEntries={subjectEntries}
                 publisherEntries={publisherEntries}
                 displayName={session?.creds.displayName}
-                isAdmin={session?.isAdmin ?? false}
                 onLock={lock}
                 onRefresh={() => void handleRefresh()}
                 refreshing={refreshing}
@@ -392,7 +384,6 @@ export function LibraryScreen() {
                 subjectEntries={subjectEntries}
                 publisherEntries={publisherEntries}
                 displayName={session?.creds.displayName}
-                isAdmin={session?.isAdmin ?? false}
                 onLock={lock}
                 onRefresh={() => void handleRefresh()}
                 refreshing={refreshing}

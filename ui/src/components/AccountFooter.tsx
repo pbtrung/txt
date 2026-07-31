@@ -1,26 +1,17 @@
 // The nav's account footer -- person icon, display name, Refresh/Lock --
-// pinned to the bottom of both Library's and Manage's left nav (the lg+
-// sidebar and the below-lg dropdown alike). Refresh/Lock render as one
-// merged Bootstrap button group (adjoining borders, no gap between them)
-// rather than two separately-spaced buttons. Library's own name is a
-// link to /manage for an admin session (RequireAdmin guards the route
-// itself; this is just "don't offer it" for a regular user, not the
-// real enforcement); Manage's is always plain text, since that screen
-// already *is* where that link would go.
-
-import { InternalLink } from "./InternalLink";
+// pinned to the bottom of Library's left nav (the lg+ sidebar and the
+// below-lg dropdown alike). Refresh/Lock render as one merged Bootstrap
+// button group (adjoining borders, no gap between them) rather than two
+// separately-spaced buttons.
 
 export function AccountFooter({
   displayName,
-  manageLink = false,
   onRefresh,
   onLock,
   refreshing,
   refreshAriaLabel,
 }: {
   displayName: string | undefined;
-  /** Renders displayName as a link to /manage instead of plain text. */
-  manageLink?: boolean;
   onRefresh: () => void;
   onLock: () => void;
   refreshing: boolean;
@@ -33,13 +24,7 @@ export function AccountFooter({
         {/* No `small` here -- matches NavItem's own default (unstyled)
             font-size, so the signed-in name reads at the same size as the
             nav entries above it, not smaller. */}
-        {manageLink ? (
-          <InternalLink to="/manage" className="text-truncate">
-            {displayName}
-          </InternalLink>
-        ) : (
-          <span className="text-body-secondary text-truncate">{displayName}</span>
-        )}
+        <span className="text-body-secondary text-truncate">{displayName}</span>
       </span>
       <div className="btn-group flex-shrink-0" role="group" aria-label="Account actions">
         <button
