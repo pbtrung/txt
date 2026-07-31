@@ -74,6 +74,15 @@ export interface RemoteVfsHandle {
    * calls find them already resident instead of each triggering its own
    * individual network round trip. */
   primeCache(pages: Map<number, Uint8Array>): void;
+  /** The version last successfully committed (or the version opened at, if
+   * nothing's been committed yet this session). dbWorker.ts reads this
+   * right after a successful commit() to advance remotePageClient.ts's
+   * page-fetch worker's own pinned snapshot (RemotePageBridge.
+   * updateSnapshot) -- without that, a live fetch for a page that only
+   * exists as of the new version (freshly written this session, evicted
+   * from the cache or never cached at all) would come back "not found"
+   * against the stale snapshot that worker started with. */
+  getCurrentVersion(): number;
 }
 
 interface OpenFile {
@@ -421,5 +430,12 @@ export function registerRemoteVfs(mod: WasmModule, opts: RemoteVfsOptions): Remo
     for (const [pageNo, bytes] of pages) cacheSet(pageNo, bytes);
   }
 
-  return { name, stats, isDirty: () => dirtyPages.size > 0, commit, primeCache };
+  return {
+    name,
+    stats,
+    isDirty: () => dirtyPages.size > 0,
+    commit,
+    primeCache,
+    getCurrentVersion: () => currentVersion,
+  };
 }

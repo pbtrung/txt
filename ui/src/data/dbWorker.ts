@@ -188,13 +188,19 @@ export async function close(): Promise<void> {
 
 /** Flushes dirty pages via one atomic COMMIT. Throws if another writer's
  * commit won the CAS race first -- see remoteVfs.ts's own doc comment on
- * RemoteVfsHandle.commit for why this isn't silently retried. */
+ * RemoteVfsHandle.commit for why this isn't silently retried. Advances
+ * pageWorker's pinned snapshot afterward (RemotePageBridge.updateSnapshot)
+ * -- without that, a later live fetch (a cache miss, or a page evicted
+ * from the LRU cache since) for a page only written by this or an earlier
+ * commit this session would come back "not found" against the stale
+ * snapshot pageWorker started with at open() time. */
 export async function commitOrThrow(): Promise<void> {
   const { vfs, rqliteClient } = requireOpen();
   const ok = await vfs.commit(rqliteClient);
   if (!ok) {
     throw new Error("Another session updated this vault. Please reload and try again.");
   }
+  pageWorker?.updateSnapshot(vfs.getCurrentVersion());
 }
 
 export function fetchTxtKey(txtId: number): Uint8Array {

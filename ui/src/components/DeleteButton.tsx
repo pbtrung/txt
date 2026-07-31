@@ -2,7 +2,10 @@
 // Bookmarks, Reader's Bookmarks dropdown) without triggering the row's own
 // click (which would otherwise navigate/jump somewhere) -- shared here since
 // all three call sites want the exact same button, just with their own
-// aria-label and delete callback.
+// aria-label and delete callback. Also reused by ErrorBoundary.tsx's "Close"
+// button -- stopPropagation() there is simply a no-op (no ancestor click
+// handler to stop bubbling to), and the same small icon-button look fits a
+// generic dismiss action too.
 
 interface DeleteButtonProps {
   onClick: () => void;

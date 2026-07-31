@@ -17,6 +17,13 @@ const FETCH_TIMEOUT_MS = 30_000;
 
 export interface RemotePageBridge {
   fetchPage: (pageNo: number) => Uint8Array;
+  /** Advances the snapshot version this worker's READ_PAGE fetches pin --
+   * must be called after every successful commit() (remoteVfs.ts), or a
+   * live fetch for a page that only exists as of the new version (freshly
+   * written this session, evicted from the cache or never cached at all)
+   * would come back "not found" against the stale snapshot this worker
+   * started with. */
+  updateSnapshot: (newSnapshot: number) => void;
   terminate: () => void;
 }
 
@@ -47,6 +54,7 @@ export async function startRemotePageWorker(
 
   return {
     fetchPage: (pageNo) => fetchPageSync(worker, control, dataBuf, pageNo),
+    updateSnapshot: (newSnapshot) => worker.postMessage({ type: "update-snapshot", newSnapshot }),
     terminate: () => worker.terminate(),
   };
 }

@@ -136,6 +136,8 @@ describe("registerRemoteVfs", () => {
         return true;
       });
 
+      expect(handle.getCurrentVersion()).toBe(5); // unchanged before commit
+
       const ok = await handle.commit(client);
       expect(ok).toBe(true);
       expect(handle.isDirty()).toBe(false);
@@ -144,6 +146,10 @@ describe("registerRemoteVfs", () => {
       expect(captured!.newVersion).toBe(6);
       expect(captured!.pages.length).toBeGreaterThan(0);
       expect(captured!.pageCount).toBeGreaterThanOrEqual(pageCount);
+      // dbWorker.ts reads this right after a successful commit to advance
+      // remotePageClient.ts's page-fetch worker's own pinned snapshot --
+      // it must reflect the just-committed version, not the one opened at.
+      expect(handle.getCurrentVersion()).toBe(6);
     } finally {
       db.close();
     }
@@ -336,6 +342,7 @@ describe("registerRemoteVfs", () => {
       const ok = await handle.commit(losingClient);
       expect(ok).toBe(false);
       expect(handle.isDirty()).toBe(true); // still there -- caller must reopen and retry
+      expect(handle.getCurrentVersion()).toBe(1); // unchanged -- the CAS never actually won
     } finally {
       db.close();
     }

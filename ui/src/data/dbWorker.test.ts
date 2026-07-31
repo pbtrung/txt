@@ -130,8 +130,9 @@ function mockBackend(
   } as unknown as typeof RqliteHttpClient);
   const terminate = vi.fn();
   const fetchPage = vi.fn((pageNo: number) => fixture.pages[pageNo - 1]!);
-  vi.mocked(startRemotePageWorker).mockResolvedValue({ fetchPage, terminate });
-  return { commit, terminate, query, fetchPage };
+  const updateSnapshot = vi.fn();
+  vi.mocked(startRemotePageWorker).mockResolvedValue({ fetchPage, updateSnapshot, terminate });
+  return { commit, terminate, query, fetchPage, updateSnapshot };
 }
 
 async function openWith(fixture: DbFixture, opts?: { commitOk?: boolean }) {
@@ -219,6 +220,20 @@ describe("dbWorker", () => {
     expect(backend.commit).toHaveBeenCalledOnce();
     const { accessMap } = await dbWorker.loadLibraryHandler();
     expect(accessMap.get(1)).toEqual({ lastPartNum: 3, lastAccessedMs: 5000 });
+  });
+
+  it("commitOrThrow advances pageWorker's pinned snapshot after a successful commit", async () => {
+    // Regression test: pageWorker's own READ_PAGE snapshot used to stay
+    // frozen at whatever open() saw, so a live fetch (a cache miss, or a
+    // page evicted from the LRU cache) for a page only written by this or
+    // an earlier commit this session would come back "not found" against
+    // that stale snapshot -- see remotePageClient.ts's updateSnapshot.
+    const fixture = await buildVaultDb();
+    const backend = await openWith(fixture); // mockBackend defaults currentVersion to 1
+
+    await dbWorker.recordReadPosition(1, { lastPartNum: 3, lastAccessedMs: 5000 });
+
+    expect(backend.updateSnapshot).toHaveBeenCalledWith(2); // old_version 1 -> new_version 2
   });
 
   it("removeAccessEntry clears the read position for real", async () => {
@@ -343,6 +358,7 @@ describe("dbWorker", () => {
     const secondTerminate = vi.fn();
     vi.mocked(startRemotePageWorker).mockResolvedValue({
       fetchPage: (pageNo: number) => fixture.pages[pageNo - 1]!,
+      updateSnapshot: vi.fn(),
       terminate: secondTerminate,
     });
 

@@ -27,6 +27,7 @@
 import { Component } from "react";
 import type { ErrorInfo, ReactNode } from "react";
 
+import { DeleteButton } from "./DeleteButton";
 import { verbose } from "../log";
 
 interface Props {
@@ -69,14 +70,7 @@ export class ErrorBoundary extends Component<Props, State> {
         >
           <div className="d-flex align-items-start justify-content-between gap-3">
             <div>{error.message || "Something went wrong."}</div>
-            <button
-              type="button"
-              className="btn btn-xs btn-outline-secondary border-0 flex-shrink-0"
-              aria-label="Close"
-              onClick={this.handleClose}
-            >
-              <i className="bi bi-x-lg" aria-hidden="true" />
-            </button>
+            <DeleteButton onClick={this.handleClose} ariaLabel="Close" />
           </div>
           <div className="small text-body-secondary">
             You'll need to unlock your library again to continue.

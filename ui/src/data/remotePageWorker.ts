@@ -32,6 +32,11 @@ interface FetchMessage {
   pageNo: number;
 }
 
+interface UpdateSnapshotMessage {
+  type: "update-snapshot";
+  newSnapshot: number;
+}
+
 const STATUS_OK = 1;
 const STATUS_ERROR = 2;
 
@@ -48,7 +53,7 @@ let targetDbId: string | undefined;
 // only seeing the phase's total elapsed time.
 let fetchCount = 0;
 
-self.onmessage = (ev: MessageEvent<StartMessage | FetchMessage>) => {
+self.onmessage = (ev: MessageEvent<StartMessage | FetchMessage | UpdateSnapshotMessage>) => {
   const msg = ev.data;
   if (msg.type === "start") {
     client = new RqliteHttpClient(msg.rqliteUrl, msg.apiKey);
@@ -57,6 +62,11 @@ self.onmessage = (ev: MessageEvent<StartMessage | FetchMessage>) => {
     snapshot = msg.snapshot;
     targetDbId = msg.targetDbId;
     self.postMessage({ type: "ready" });
+    return;
+  }
+  if (msg.type === "update-snapshot") {
+    verbose(`remotePageWorker: snapshot ${snapshot} -> ${msg.newSnapshot}`);
+    snapshot = msg.newSnapshot;
     return;
   }
   void handleFetch(msg.pageNo);
