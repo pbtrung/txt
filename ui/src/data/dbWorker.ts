@@ -345,8 +345,8 @@ export async function loadLibraryHandler() {
   const { db } = requireOpen();
   const result = await loadLibrary(db);
   verbose(
-    `dbWorker: loadLibrary -- ${result.metadataById.size} book(s), accessMap: ` +
-      `${JSON.stringify(Array.from(result.accessMap.entries()))}`,
+    `dbWorker: loadLibrary -- ${result.metadataById.size} book(s), ` +
+      `${result.accessMap.size} with access position`,
   );
   return result;
 }
