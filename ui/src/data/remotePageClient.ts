@@ -8,8 +8,10 @@
 // SharedArrayBuffer to be available at all -- see docker/README.md's
 // local_index.html hosting notes.
 
-const CONTROL_STATUS = 0;
-const CONTROL_LEN = 1;
+// Shared with remotePageWorker.ts's own respond() -- both ends of this
+// SharedArrayBuffer protocol must agree on the same indices.
+export const CONTROL_STATUS = 0;
+export const CONTROL_LEN = 1;
 const STATUS_ERROR = 2;
 const FETCH_TIMEOUT_MS = 30_000;
 

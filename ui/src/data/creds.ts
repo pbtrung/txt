@@ -11,6 +11,7 @@
 // there via dbWorker.ts's fetchR2Config, not bundled into this file.
 
 import { base64ToBytes } from "../crypto/bytes";
+import { requireObject, requireString } from "./jsonObject";
 
 export interface Creds {
   rqliteUrl: string;
@@ -20,27 +21,16 @@ export interface Creds {
 
 export class CredsError extends Error {}
 
-function requireString(data: Record<string, unknown>, field: string): string {
-  const value = data[field];
-  if (typeof value !== "string" || value.length === 0) {
-    throw new CredsError(`${field} is required`);
-  }
-  return value;
-}
-
 /** Parses the unlock file's JSON contents into validated Creds. */
 export function parseCreds(json: unknown): Creds {
-  if (typeof json !== "object" || json === null) {
-    throw new CredsError("creds file must be a JSON object");
-  }
-  const data = json as Record<string, unknown>;
+  const data = requireObject(json, "creds file must be a JSON object", CredsError);
 
-  const rqliteUrl = requireString(data, "rqlite_url");
-  const apiKey = requireString(data, "api_key");
+  const rqliteUrl = requireString(data, "rqlite_url", CredsError);
+  const apiKey = requireString(data, "api_key", CredsError);
 
   let userRootKey: Uint8Array;
   try {
-    userRootKey = base64ToBytes(requireString(data, "user_root_key"));
+    userRootKey = base64ToBytes(requireString(data, "user_root_key", CredsError));
   } catch {
     throw new CredsError("user_root_key must be valid base64");
   }

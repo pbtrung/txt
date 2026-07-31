@@ -243,6 +243,21 @@ describe("dbWorker", () => {
     expect(afterRemove.get(1) ?? []).toHaveLength(0);
   });
 
+  it("getVfsStats/fetchVfsStats reads the real remoteVfs.ts stats object", async () => {
+    const fixture = await buildVaultDb();
+    await openWith(fixture);
+
+    // The whole fixture gets covered by open()'s own batched prefetch (it's
+    // far smaller than MAX_CACHED_PAGES), which bypasses getPage()/stats
+    // tracking entirely via primeCache() -- so a fresh open() has nothing to
+    // report yet. This proves the RPC plumbing reaches the real vfs.stats
+    // object, not that it's ever nonzero (remoteVfs.test.ts already covers
+    // getPage()'s own stats bookkeeping directly).
+    const stats = dbWorker.fetchVfsStats();
+    expect(stats.roundtrips).toEqual([]);
+    expect(stats.bytesFetched).toBe(0);
+  });
+
   it("surfaces a lost commit CAS as a thrown error", async () => {
     const fixture = await buildVaultDb();
     await openWith(fixture, { commitOk: false });

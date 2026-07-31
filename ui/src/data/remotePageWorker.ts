@@ -15,6 +15,7 @@
 
 import { verbose } from "../log";
 import { RqliteHttpClient, resultRows, decodeBlobColumn } from "./rqliteHttpClient";
+import { CONTROL_STATUS, CONTROL_LEN } from "./remotePageClient";
 
 interface StartMessage {
   type: "start";
@@ -88,7 +89,7 @@ async function fetchPage(pageNo: number): Promise<Uint8Array> {
 function respond(status: number, bytes: Uint8Array): void {
   const n = Math.min(bytes.length, dataBuf.length);
   dataBuf.set(bytes.subarray(0, n), 0);
-  Atomics.store(control, 1, n);
-  Atomics.store(control, 0, status);
-  Atomics.notify(control, 0);
+  Atomics.store(control, CONTROL_LEN, n);
+  Atomics.store(control, CONTROL_STATUS, status);
+  Atomics.notify(control, CONTROL_STATUS);
 }

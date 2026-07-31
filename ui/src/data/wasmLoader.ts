@@ -30,6 +30,7 @@
 // the bundle's own locateFile() function).
 
 import { isWeb } from "../env";
+import { bytesToBase64 } from "../crypto/bytes";
 
 // Baked in by vite.config.ts's `define` (a SHA-512 of sqlcipher/sqlcipher.js
 // computed at build time) -- see loadBrowserFactory()'s use of it below.
@@ -123,12 +124,6 @@ export interface WasmModule {
 
 type Sqlite3Factory = (opts?: Record<string, unknown>) => Promise<WasmModule>;
 
-function bufferToBase64(buf: ArrayBuffer): string {
-  let binary = "";
-  for (const byte of new Uint8Array(buf)) binary += String.fromCharCode(byte);
-  return btoa(binary);
-}
-
 /** Fetches /sqlcipher.js, verifies its SHA-512 against the build-time-baked
  * __SQLCIPHER_JS_INTEGRITY__, then imports it as a real ES module from a
  * blob: URL -- see this file's header comment for why (works identically on
@@ -139,7 +134,7 @@ async function loadWebFactory(): Promise<Sqlite3Factory> {
   if (!res.ok) throw new Error(`failed to fetch /sqlcipher.js: HTTP ${res.status}`);
   const bytes = await res.arrayBuffer();
   const digest = await crypto.subtle.digest("SHA-512", bytes);
-  const actual = `sha512-${bufferToBase64(digest)}`;
+  const actual = `sha512-${bytesToBase64(new Uint8Array(digest))}`;
   if (actual !== __SQLCIPHER_JS_INTEGRITY__) {
     throw new Error("sqlcipher.js failed integrity check -- refusing to load it");
   }

@@ -26,6 +26,7 @@ interface FakeClient {
   loadBookmarksMap: ReturnType<typeof vi.fn>;
   getTxtKey: ReturnType<typeof vi.fn>;
   getR2Config: ReturnType<typeof vi.fn>;
+  getVfsStats: ReturnType<typeof vi.fn>;
   recordReadPosition: ReturnType<typeof vi.fn>;
   removeAccessEntry: ReturnType<typeof vi.fn>;
   addBookmarkEntry: ReturnType<typeof vi.fn>;
@@ -52,6 +53,7 @@ function fakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
       readOnlyAccessKeyId: "ro-id",
       readOnlySecretAccessKey: "ro-secret",
     }),
+    getVfsStats: vi.fn().mockResolvedValue({ roundtrips: [], bytesFetched: 0 }),
     recordReadPosition: vi.fn().mockResolvedValue(undefined),
     removeAccessEntry: vi.fn().mockResolvedValue(undefined),
     addBookmarkEntry: vi.fn().mockResolvedValue(new Map()),

@@ -149,6 +149,12 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       const r2Config = await client.getR2Config();
       verbose(`unlock: getR2Config() done in ${elapsed(r2ConfigStart)}`);
 
+      const vfsStats = await client.getVfsStats();
+      verbose(
+        `unlock: ${vfsStats.roundtrips.length} page fetch(es) beyond the prefetch, ` +
+          `${vfsStats.bytesFetched} byte(s)`,
+      );
+
       txtKeyCache.current = new Map();
       setAccessMap(initialAccessMap);
       setBookmarksMap(initialBookmarksMap);

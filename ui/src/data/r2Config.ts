@@ -9,6 +9,8 @@
 // for every regular user's own database, so they're optional here rather
 // than required.
 
+import { requireObject, requireString } from "./jsonObject";
+
 export interface R2Config {
   endpoint: string;
   region: string;
@@ -19,24 +21,13 @@ export interface R2Config {
   readWriteSecretAccessKey?: string;
 }
 
-function requireString(data: Record<string, unknown>, field: string): string {
-  const value = data[field];
-  if (typeof value !== "string" || value.length === 0) {
-    throw new Error(`r2_config.${field} is required`);
-  }
-  return value;
-}
-
 function optionalString(data: Record<string, unknown>, field: string): string | undefined {
   const value = data[field];
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 export function parseR2Config(json: unknown): R2Config {
-  if (typeof json !== "object" || json === null) {
-    throw new Error("r2_config must be a JSON object");
-  }
-  const data = json as Record<string, unknown>;
+  const data = requireObject(json, "r2_config must be a JSON object");
   return {
     endpoint: requireString(data, "endpoint"),
     region: requireString(data, "region"),

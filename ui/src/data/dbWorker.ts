@@ -34,7 +34,12 @@ import {
   resolveTargetDbId,
   resultRows,
 } from "./rqliteHttpClient";
-import { registerRemoteVfs, MAX_CACHED_PAGES, type RemoteVfsHandle } from "./remoteVfs";
+import {
+  registerRemoteVfs,
+  MAX_CACHED_PAGES,
+  type RemoteVfsHandle,
+  type RemoteVfsStats,
+} from "./remoteVfs";
 import { startRemotePageWorker, type RemotePageBridge } from "./remotePageClient";
 import { SqliteDb } from "./sqliteDb";
 import { loadWasm } from "./wasmLoader";
@@ -233,6 +238,19 @@ export function fetchR2Config(): R2Config {
   return parseR2Config(raw);
 }
 
+/** This session's remoteVfs.ts page-fetch stats (roundtrip count/timing,
+ * bytes fetched) -- mirrors txt/remoteVfs.ts's identical RemoteVfsStats,
+ * which txt.ts --test-perf reports on the CLI side; this is ui/'s own
+ * consumer of the same instrumentation (VaultContext.tsx logs a summary
+ * after unlock's loadLibrary/loadBookmarksMap). Only counts pages fetched
+ * individually via getPage() -- prefetchPages' batched reads bypass it
+ * entirely via vfs.primeCache(), so this reflects cache misses past the
+ * prefetch, not total pages read. */
+export function fetchVfsStats(): RemoteVfsStats {
+  const { vfs } = requireOpen();
+  return vfs.stats;
+}
+
 export async function loadLibraryHandler() {
   const { db } = requireOpen();
   return loadLibrary(db);
@@ -290,10 +308,10 @@ export function partRawPath(txtId: number, partNum: number): string | null {
 
 const handlers: Record<string, (...args: any[]) => unknown> = {
   open,
-  close,
   refresh,
   getTxtKey: fetchTxtKey,
   getR2Config: fetchR2Config,
+  getVfsStats: fetchVfsStats,
   loadLibrary: loadLibraryHandler,
   loadBookmarksMap: loadBookmarksMapHandler,
   recordReadPosition,

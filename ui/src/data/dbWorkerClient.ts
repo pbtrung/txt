@@ -58,6 +58,10 @@ export class DbWorkerClient {
     return this.call("getR2Config");
   }
 
+  getVfsStats(): Promise<import("./remoteVfs").RemoteVfsStats> {
+    return this.call("getVfsStats");
+  }
+
   loadLibrary(): Promise<import("./library").LibrarySnapshot> {
     return this.call("loadLibrary");
   }
