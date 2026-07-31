@@ -172,13 +172,29 @@ export function registerRemoteVfs(mod: WasmModule, opts: RemoteVfsOptions): Remo
     return n < iAmt ? SQLITE_IOERR_SHORT_READ : SQLITE_OK;
   }
 
-  function dirtyPage(pageNo: number): Uint8Array {
+  /** fullOverwrite: true when the caller is about to replace every byte of
+   * this page in the same xWrite call (offset 0, amount === pageSize) --
+   * SQLite does this for a page it doesn't care about the prior content of
+   * (a freshly allocated b-tree node, a page reused off the freelist), so
+   * there's no need to fetch that content first just to immediately
+   * discard all of it. This isn't just an optimization: a page reused from
+   * the freelist can be numbered within originalPageCount (the server's
+   * own reported page count) while genuinely having no fetchable content
+   * at the current snapshot -- fetching it here would throw even though
+   * the write about to happen never needed the old bytes at all. */
+  function dirtyPage(pageNo: number, fullOverwrite: boolean): Uint8Array {
     let page = dirtyPages.get(pageNo);
     if (page) return page;
     const isNewPage = pageNo > originalPageCount;
-    const existing = isNewPage ? new Uint8Array(opts.pageSize) : getPage(pageNo);
+    const existing = isNewPage || fullOverwrite ? new Uint8Array(opts.pageSize) : getPage(pageNo);
     verbose(
-      `remoteVfs: dirtying page ${pageNo} (${isNewPage ? "new, beyond original page count " + originalPageCount : "existing, fetched/cached first"})`,
+      `remoteVfs: dirtying page ${pageNo} (${
+        isNewPage
+          ? "new, beyond original page count " + originalPageCount
+          : fullOverwrite
+            ? "existing, but fully overwritten -- skipped fetching prior content"
+            : "existing, fetched/cached first"
+      })`,
     );
     page = existing.slice();
     dirtyPages.set(pageNo, page);
@@ -201,7 +217,8 @@ export function registerRemoteVfs(mod: WasmModule, opts: RemoteVfsOptions): Remo
       const pageStart = (pageNo - 1) * pageSize;
       const dstOff = pos - pageStart;
       const n = Math.min(pageSize - dstOff, end - pos);
-      const page = dirtyPage(pageNo);
+      const fullOverwrite = dstOff === 0 && n === pageSize;
+      const page = dirtyPage(pageNo, fullOverwrite);
       const srcStart = pBuf + (pos - iOfst);
       page.set(mod.HEAPU8.subarray(srcStart, srcStart + n), dstOff);
       pos += n;

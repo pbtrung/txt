@@ -216,6 +216,87 @@ describe("registerRemoteVfs", () => {
     }
   });
 
+  it("reuses a freed page via a full rewrite without needing to fetch its (unfetchable) prior content", async () => {
+    // Regression test for "page N not found at or before snapshot M" during
+    // an ordinary write, reproducing the real mechanism (confirmed against
+    // this exact backend): delete a big blob (its overflow pages go onto
+    // SQLite's own freelist, still counted in the file's page count but no
+    // longer referenced by any live row), then insert another big blob --
+    // SQLite reuses those freed page numbers, writing each one in full
+    // (one xWrite call of exactly pageSize bytes, offset 0). dirtyPage()
+    // used to unconditionally fetch a page's prior content before any
+    // write to it whenever that page number was within the page count
+    // reported at open time -- so a freed-and-reused page that happens to
+    // have no fetchable content at the current snapshot (here: a real
+    // server-side version-rewind left a gap; simulated below by making
+    // fetchPage throw for it) made this ordinary insert fail outright,
+    // even though the write about to happen never needed those old bytes.
+    const rootKey = randomBytes(256);
+    const path = `/remote-vfs-freelist-reuse-${buildCounter++}.db`;
+    const db0 = await SqliteDb.open(path, { rawKey: rootKey });
+    const pageSizeStmt = db0.prepare("PRAGMA page_size;");
+    pageSizeStmt.step();
+    const pageSize = Number(pageSizeStmt.columnInt64(0));
+    pageSizeStmt.finalize();
+
+    db0.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, blob TEXT);");
+    const bigText = "x".repeat(50_000); // forces several overflow pages
+    db0.run("INSERT INTO t (blob) VALUES (?);", (s) => s.bindText(1, bigText));
+    db0.run("INSERT INTO t (blob) VALUES (?);", (s) => s.bindText(1, "small"));
+    db0.run("DELETE FROM t WHERE length(blob) > 100;"); // frees the big blob's overflow pages
+    db0.close();
+
+    const mod = await loadWasm();
+    const bytes = mod.FS.readFile(path);
+    const pageCount = bytes.length / pageSize;
+    const pages: Uint8Array[] = [];
+    for (let i = 0; i < pageCount; i++) pages.push(bytes.slice(i * pageSize, (i + 1) * pageSize));
+
+    // Pages 1-3 are needed for legitimate reads (schema, the surviving
+    // row, and a freelist-trunk lookup while allocating -- confirmed
+    // empirically against this exact fixture). Pages 4+ are the freed
+    // overflow range the re-insert below reuses -- deliberately
+    // unfetchable, standing in for a page with no surviving version at
+    // all (the real bug: a server-side version-rewind left a gap there).
+    const UNFETCHABLE_FROM = 4;
+    const fetchCalls: number[] = [];
+    const backedPath = "/remote-vfs-freelist-reuse.db";
+    const handle = registerRemoteVfs(mod, {
+      pageSize,
+      pageCount,
+      currentVersion: 1,
+      backedPath,
+      fetchPage: (pageNo) => {
+        fetchCalls.push(pageNo);
+        if (pageNo >= UNFETCHABLE_FROM) {
+          throw new Error(`test fetchPage: page ${pageNo} deliberately unfetchable`);
+        }
+        return pages[pageNo - 1]!;
+      },
+    });
+
+    const db = await SqliteDb.open(backedPath, { vfsName: handle.name, rawKey: rootKey });
+    try {
+      // Reading the surviving row alone shouldn't touch the (unfetchable)
+      // freed pages -- sanity check that fetchPage's own bookkeeping below
+      // is measuring the *insert*, not residual fetches from this read.
+      const stmt = db.prepare("SELECT blob FROM t;");
+      while (stmt.step()) stmt.columnText(0);
+      stmt.finalize();
+      fetchCalls.length = 0;
+
+      // Without the fullOverwrite fix, this throws "page 4 deliberately
+      // unfetchable" (or similar) the moment dirtyPage() tries to fetch a
+      // reused freelist page's prior content before overwriting it.
+      db.run("INSERT INTO t (blob) VALUES (?);", (s) => s.bindText(1, "x".repeat(50_000)));
+
+      expect(handle.isDirty()).toBe(true);
+      expect(fetchCalls.filter((p) => p >= UNFETCHABLE_FROM)).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
   it("evicts least-recently-used pages once the cache exceeds its budget", async () => {
     // Builds a db with enough overflow-page-heavy rows to span well past
     // MAX_CACHED_PAGES physical pages, then reads every row's full content
