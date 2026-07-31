@@ -146,7 +146,7 @@ describe("verifyAssets", () => {
     );
 
     await expect(verifyAssets(ASSET_BASE_URL, publicKey, () => {})).rejects.toThrow(
-      /opened directly via file:\/\/.*local HTTP server/,
+      /opened via file:\/\/.*Access-Control-Allow-Origin: null/,
     );
   });
 

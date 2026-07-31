@@ -41,29 +41,29 @@ async function fetchBytes(url: string): Promise<Uint8Array<ArrayBuffer>> {
 }
 
 /** A bare network-level fetch failure (as opposed to an HTTP error status,
- * handled above) from a file:// document is almost always Chrome (and
- * likely other browsers) refusing the cross-origin request outright --
- * DevTools reports this as an "Issue": "'file:' URLs are treated as unique
- * security origins. Add an explicit CORS header...". That's misleading:
- * ui/scripts/build-integrity.mjs's _headers already sets
- * Access-Control-Allow-Origin: * on every dist/ path, but a wildcard
- * doesn't reliably help here since file:// requests don't carry a normal
- * Origin header for it to match against in the first place -- this isn't a
- * server misconfiguration fetchBytes' caller can fix by tweaking headers.
- * The actual fix is not using file:// at all: serving this same file over a
- * trivial local HTTP server (e.g. `python3 -m http.server` from the folder
- * it's in) gives it a normal http://localhost origin, where the existing
- * wildcard CORS header works exactly as intended. */
+ * handled above) from a file:// document almost always means the deployed
+ * asset_base_url isn't sending back a response the browser will let a
+ * file://-origin fetch read -- DevTools reports this as an "Issue": "'file:'
+ * URLs are treated as unique security origins. Add an explicit CORS
+ * header...". file:// requests send Origin: null, and the response needs
+ * Access-Control-Allow-Origin: null (the literal string) to match --
+ * ui/scripts/build-integrity.mjs's _headers sets exactly that, but a
+ * wildcard '*' does NOT reliably substitute for it in practice (this project
+ * regressed to '*' once already, silently breaking this exact case -- see
+ * git history). This is a real server-side misconfiguration to fix, not an
+ * inherent file:// limitation -- if this deployment's dist/_headers is
+ * already correct, double-check it actually reached the CDN (a stale
+ * deployment predating the fix, a proxy/CDN layer stripping headers, etc). */
 function fetchFailureError(url: string, cause: unknown): VerificationError {
   const message = cause instanceof Error ? cause.message : String(cause);
   const isFileOrigin = typeof location !== "undefined" && location.protocol === "file:";
   if (!isFileOrigin) return new VerificationError(`failed to fetch ${url}: ${message}`);
   return new VerificationError(
-    `failed to fetch ${url}: ${message} -- this page was opened directly via file://, which ` +
-      "browsers can block from fetching remote URLs even when the server allows it with a " +
-      "wildcard CORS header. Serve this file over a trivial local HTTP server instead (e.g. " +
-      "`python3 -m http.server` from the folder containing it, then open " +
-      "http://localhost:8000/local_index.html) and try again.",
+    `failed to fetch ${url}: ${message} -- this page was opened via file://, which sends ` +
+      "Origin: null on cross-origin fetches. The deployment at asset_base_url needs to respond " +
+      "with 'Access-Control-Allow-Origin: null' (the literal string, not a wildcard '*') for " +
+      "this to work -- check that dist/_headers was built with the fix for this and that the " +
+      "deployment actually serving asset_base_url has picked it up.",
   );
 }
 

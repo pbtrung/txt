@@ -15,10 +15,16 @@
 //      connect-src from index.html's own <meta> tag's deliberately-open '*'
 //      down to 'self' plus this deployment's own rqlite/OpenResty endpoint
 //      (--build-creds's rqlite_url) and R2's host pattern; sets
-//      Access-Control-Allow-Origin: * so local_index.html (served from this
-//      same Pages deployment, sending a real Origin, not opened bare via
-//      file://) can still read the response bodies of its cross-origin
-//      fetches to manifest.json/manifest.sig/every other dist/ asset; and
+//      Access-Control-Allow-Origin: null (the literal string, not a
+//      wildcard) so local_index.html -- opened via file://, which sends
+//      Origin: null on its cross-origin fetches -- can actually read the
+//      response bodies of its fetches to manifest.json/manifest.sig/every
+//      other dist/ asset; a wildcard '*' doesn't reliably do this in
+//      practice for a null-origin request the way it does for a real
+//      origin (confirmed the hard way -- see git history). Safe to allow
+//      broadly: these are public, non-secret build outputs whose integrity
+//      local_index.html itself checks via SLH-DSA/SHA-512, not via keeping
+//      them cross-origin-unreadable; and
 //      sets Cross-Origin-Opener-Policy/Cross-Origin-Embedder-Policy, which
 //      is what makes SharedArrayBuffer available at all for
 //      data/dbWorker.ts's Worker+Atomics bridge -- there's no separate
@@ -192,7 +198,7 @@ function writeHeadersFile(rqliteUrl) {
   const headers =
     `/*\n` +
     `  Content-Security-Policy: ${distCsp(rqliteUrl)}\n` +
-    `  Access-Control-Allow-Origin: *\n` +
+    `  Access-Control-Allow-Origin: null\n` +
     `  Cross-Origin-Opener-Policy: same-origin\n` +
     `  Cross-Origin-Embedder-Policy: credentialless\n`;
   writeFileSync(join(DIST_DIR, "_headers"), headers, "utf8");
