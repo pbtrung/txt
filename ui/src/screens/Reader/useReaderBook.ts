@@ -1,20 +1,22 @@
 // Data hook backing the Reader screen (docs/ui.md's Screen 3): resolves the
 // txt_key and part count once, then fetches/caches one part's raw path and
-// text at a time as the reader navigates (never every part's path up front --
-// see data/owner.ts's partRawPath), persisting read position and bookmarks
-// along the way.
+// text at a time as the reader navigates (never every part's path up front),
+// persisting read position and bookmarks along the way.
 //
-// Read position and bookmarks themselves are no longer fetched here -- both
-// already live in VaultContext (loaded once, in full, during unlock), so
-// this hook only reads/writes through the context's accessMap/bookmarksMap
-// and its recordReadPosition/addBookmarkEntry/removeBookmarkEntry actions.
+// partCount/partRawPath go through session.client (data/dbWorkerClient.ts)
+// now, not a direct data/owner.ts call against a SqliteDb -- the db itself
+// lives inside dbWorker.ts's Worker, not on the main thread (see that
+// file's header comment for why). Read position and bookmarks themselves
+// are no longer fetched here at all -- both already live in VaultContext
+// (loaded once, in full, during unlock), so this hook only reads/writes
+// through the context's accessMap/bookmarksMap and its recordReadPosition/
+// addBookmarkEntry/removeBookmarkEntry actions.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
 import type { Bookmark } from "../../data/bookmarks";
 import type { BookInfo } from "../../data/metadata";
-import { partCount as fetchPartCount, partRawPath } from "../../data/owner";
 import { fetchPart } from "../../data/parts";
 import { useVault } from "../../state/VaultContext";
 import { clampPartNum } from "./readerModel";
@@ -75,7 +77,7 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
 
   // Load the book's key and part count once per (session, txtId) -- part
   // paths are resolved lazily, one at a time, by the part-fetch effect below
-  // (see data/owner.ts's partRawPath); metadata itself needs no fetch here at
+  // (session.client.partRawPath); metadata itself needs no fetch here at
   // all, see `info` above. accessMap/searchParams are read here only to seed
   // the initial part -- deliberately not in the dep list below, since a
   // read-position write (which updates accessMap) shouldn't re-trigger a
@@ -95,8 +97,10 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
     rawPathCache.current = new Map();
 
     (async () => {
-      const txtKey = await getTxtKey(txtId);
-      const count = fetchPartCount(session.db, txtId);
+      const [txtKey, count] = await Promise.all([
+        getTxtKey(txtId),
+        session.client.partCount(txtId),
+      ]);
       if (cancelled) return;
 
       txtKeyRef.current = txtKey;
@@ -138,8 +142,8 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
 
   // Fetch (and cache) the current part's raw path, then its text; persist
   // the read position. The raw path itself is resolved lazily here (one
-  // row-read, cached in rawPathCache) rather than upfront for every part in
-  // the book -- see data/owner.ts's partRawPath.
+  // row-read via session.client.partRawPath, cached in rawPathCache) rather
+  // than upfront for every part in the book.
   useEffect(() => {
     if (!session || loading) return;
     const txtKey = txtKeyRef.current;
@@ -158,7 +162,7 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
     (async () => {
       let rawPath = rawPathCache.current.get(currentPartNum);
       if (rawPath === undefined) {
-        const fetched = partRawPath(session.db, txtId, currentPartNum);
+        const fetched = await session.client.partRawPath(txtId, currentPartNum);
         if (!fetched)
           throw new Error(`no txt_parts row for txt_id=${txtId}, part_num=${currentPartNum}`);
         rawPath = fetched;

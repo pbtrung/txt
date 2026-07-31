@@ -1,120 +1,75 @@
 // @vitest-environment jsdom
 //
-// Mocks only the two things that genuinely can't run under Vitest/jsdom --
-// real network (RqliteHttpClient) and a real browser Worker
-// (remotePageClient.ts's startRemotePageWorker) -- and lets everything else
-// (SqliteDb, registerRemoteVfs, loadWasm) run for real against a small,
-// genuine SQLCipher database built the same way remoteVfs.test.ts's own
-// fixture is, so this still exercises the real VFS/commit wiring, not just
-// mocked plumbing.
+// Mocks DbWorkerClient entirely -- the real SqliteDb/VFS/commit wiring it
+// wraps now lives inside dbWorker.ts's Worker (see that file's header
+// comment for why), and is verified for real there (dbWorker.test.ts) and,
+// end to end in a genuine browser, by smoke.e2e.test.ts. This file only
+// needs to prove VaultContext.tsx's own React state management -- status/
+// progress transitions, session shape, accessMap/bookmarksMap updates,
+// error handling -- which doesn't need a real Worker at all.
 
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { randomBytes } from "node:crypto";
 
 import { bytesToBase64 } from "../crypto/bytes";
-import { SqliteDb } from "../data/sqliteDb";
-import { loadWasm } from "../data/wasmLoader";
 
-// jsdom (needed below for renderHook) makes isBrowser() true, which would
-// otherwise send wasmLoader.ts down the real <script src="/sqlcipher.js">
-// path -- jsdom never actually executes that tag, so the load hangs forever.
-// Force the Node import() path instead, same as every other data-layer test
-// (those run under the default "node" environment, where isBrowser() is
-// naturally false already).
-vi.mock("../env", () => ({ isBrowser: () => false }));
+vi.mock("../data/dbWorkerClient", () => ({ DbWorkerClient: vi.fn() }));
 vi.mock("../data/r2", () => ({ createR2Client: vi.fn(() => ({})) }));
-vi.mock("../data/remotePageClient", () => ({ startRemotePageWorker: vi.fn() }));
-vi.mock("../data/rqliteHttpClient", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../data/rqliteHttpClient")>();
-  return { ...actual, RqliteHttpClient: vi.fn() };
-});
 
-import { RqliteHttpClient, type RqliteResult } from "../data/rqliteHttpClient";
-import { startRemotePageWorker } from "../data/remotePageClient";
+import { DbWorkerClient } from "../data/dbWorkerClient";
 import { useVault, VaultProvider } from "./VaultContext";
 
-interface DbFixture {
-  rootKey: Uint8Array;
-  pages: Uint8Array[];
-  pageSize: number;
-  pageCount: number;
+interface FakeClient {
+  open: ReturnType<typeof vi.fn>;
+  refresh: ReturnType<typeof vi.fn>;
+  loadLibrary: ReturnType<typeof vi.fn>;
+  loadBookmarksMap: ReturnType<typeof vi.fn>;
+  getTxtKey: ReturnType<typeof vi.fn>;
+  recordReadPosition: ReturnType<typeof vi.fn>;
+  removeAccessEntry: ReturnType<typeof vi.fn>;
+  addBookmarkEntry: ReturnType<typeof vi.fn>;
+  removeBookmarkEntry: ReturnType<typeof vi.fn>;
+  terminate: ReturnType<typeof vi.fn>;
 }
 
-let buildCounter = 0;
-
-async function buildVaultDb(): Promise<DbFixture> {
-  const rootKey = randomBytes(256);
-  const path = `/vaultcontext-test-build-${buildCounter++}.db`;
-  const db = await SqliteDb.open(path, { rawKey: rootKey });
-  const pageSizeStmt = db.prepare("PRAGMA page_size;");
-  pageSizeStmt.step();
-  const pageSize = Number(pageSizeStmt.columnInt64(0));
-  pageSizeStmt.finalize();
-
-  db.exec(`
-    CREATE TABLE txt (
-      id INTEGER PRIMARY KEY, txt_key BLOB NOT NULL, name TEXT NOT NULL,
-      metadata BLOB, last_part_num INTEGER, last_accessed INTEGER
-    );
-    CREATE TABLE txt_parts (
-      id INTEGER PRIMARY KEY, txt_id INTEGER NOT NULL, part_num INTEGER NOT NULL,
-      path TEXT NOT NULL UNIQUE
-    );
-    CREATE TABLE txt_bookmarks (
-      id INTEGER PRIMARY KEY, txt_id INTEGER NOT NULL, part_num INTEGER NOT NULL,
-      line INTEGER NOT NULL, preview TEXT NOT NULL, created_at INTEGER NOT NULL,
-      UNIQUE (txt_id, part_num, line)
-    );
-  `);
-  db.run("INSERT INTO txt (id, txt_key, name) VALUES (1, x'00', ?);", (s) =>
-    s.bindText(1, "doc-one.txt"),
-  );
-  db.close();
-
-  const mod = await loadWasm();
-  const bytes = mod.FS.readFile(path);
-  const pageCount = bytes.length / pageSize;
-  const pages: Uint8Array[] = [];
-  for (let i = 0; i < pageCount; i++) pages.push(bytes.slice(i * pageSize, (i + 1) * pageSize));
-  return { rootKey, pages, pageSize, pageCount };
+function fakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
+  return {
+    open: vi.fn().mockResolvedValue(undefined),
+    refresh: vi.fn().mockResolvedValue(undefined),
+    loadLibrary: vi.fn().mockResolvedValue({
+      metadataById: new Map([
+        [1, { txtId: 1, name: "doc-one.txt", title: "doc-one.txt", subjects: [], rawMetadata: [] }],
+      ]),
+      accessMap: new Map(),
+    }),
+    loadBookmarksMap: vi.fn().mockResolvedValue(new Map()),
+    getTxtKey: vi.fn().mockResolvedValue(new Uint8Array([0])),
+    recordReadPosition: vi.fn().mockResolvedValue(undefined),
+    removeAccessEntry: vi.fn().mockResolvedValue(undefined),
+    addBookmarkEntry: vi.fn().mockResolvedValue(new Map()),
+    removeBookmarkEntry: vi.fn().mockResolvedValue(new Map()),
+    terminate: vi.fn(),
+    ...overrides,
+  };
 }
 
-/** Wires the two mocked externals (RqliteHttpClient, startRemotePageWorker)
- * to serve `fixture`'s pages, so unlock()/refresh() can open a real db
- * through the real VFS without any actual network or Worker. */
-function mockBackend(
-  fixture: DbFixture,
-  opts: { currentVersion?: number; commitOk?: boolean } = {},
-) {
-  const currentVersion = opts.currentVersion ?? 1;
-  const commit = vi.fn().mockResolvedValue(opts.commitOk ?? true);
-  const query = vi.fn(async (statementId: string): Promise<RqliteResult[]> => {
-    if (statementId === "GET_META") {
-      return [{ values: [[currentVersion, fixture.pageCount, fixture.pageSize]] }];
-    }
-    throw new Error(`mockBackend: unexpected query ${statementId}`);
-  });
-  vi.mocked(RqliteHttpClient).mockImplementation(function (this: unknown) {
-    return { query, commit } as unknown as RqliteHttpClient;
-  } as unknown as typeof RqliteHttpClient);
-  const terminate = vi.fn();
-  vi.mocked(startRemotePageWorker).mockResolvedValue({
-    fetchPage: (pageNo: number) => fixture.pages[pageNo - 1]!,
-    terminate,
-  });
-  return { commit, terminate, query };
+function installFakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
+  const client = fakeClient(overrides);
+  vi.mocked(DbWorkerClient).mockImplementation(function (this: unknown) {
+    return client as unknown as DbWorkerClient;
+  } as unknown as typeof DbWorkerClient);
+  return client;
 }
 
 function fakeFile(contents: unknown): File {
   return new File([JSON.stringify(contents)], "creds.json", { type: "application/json" });
 }
 
-function fakeCredsJson(rootKey: Uint8Array): Record<string, unknown> {
+function fakeCredsJson(): Record<string, unknown> {
   return {
     rqlite_url: "https://rqlite.example.com",
     api_key: "test-api-key",
-    user_root_key: bytesToBase64(rootKey),
+    user_root_key: bytesToBase64(new Uint8Array(256)),
     r2_config: {
       endpoint: "https://example.r2.cloudflarestorage.com",
       region: "auto",
@@ -129,14 +84,14 @@ function renderVault() {
   return renderHook(() => useVault(), { wrapper: VaultProvider });
 }
 
-async function unlockWith(fixture: DbFixture, backendOpts?: { commitOk?: boolean }) {
-  const backend = mockBackend(fixture, backendOpts);
+async function unlockWith(overrides: Partial<FakeClient> = {}) {
+  const client = installFakeClient(overrides);
   const { result } = renderVault();
   await act(async () => {
-    await result.current.unlock(fakeFile(fakeCredsJson(fixture.rootKey)));
+    await result.current.unlock(fakeFile(fakeCredsJson()));
   });
   await waitFor(() => expect(result.current.status).toBe("unlocked"));
-  return { result, backend };
+  return { result, client };
 }
 
 describe("VaultProvider", () => {
@@ -144,38 +99,35 @@ describe("VaultProvider", () => {
     vi.restoreAllMocks();
   });
 
-  it("unlocks successfully and loads metadataById/accessMap/bookmarksMap from the real db", async () => {
-    const fixture = await buildVaultDb();
-    const { result } = await unlockWith(fixture);
+  it("unlocks successfully and loads metadataById/accessMap/bookmarksMap via the worker client", async () => {
+    const { result, client } = await unlockWith();
 
     expect(result.current.session?.creds.rqliteUrl).toBe("https://rqlite.example.com");
     expect(result.current.session?.metadataById.get(1)?.title).toBe("doc-one.txt");
-    expect(result.current.accessMap.size).toBe(0); // never opened yet
+    expect(result.current.accessMap.size).toBe(0);
     expect(result.current.bookmarksMap.size).toBe(0);
     expect(result.current.error).toBeNull();
+    expect(client.open).toHaveBeenCalledWith({
+      rqliteUrl: "https://rqlite.example.com",
+      apiKey: "test-api-key",
+      userRootKey: expect.any(Uint8Array),
+    });
   });
 
-  it("reports an error and stays locked when GET_META fails", async () => {
-    const fixture = await buildVaultDb();
-    vi.mocked(RqliteHttpClient).mockImplementation(function (this: unknown) {
-      return {
-        query: vi.fn().mockRejectedValue(new Error("network down")),
-        commit: vi.fn(),
-      } as unknown as RqliteHttpClient;
-    } as unknown as typeof RqliteHttpClient);
-    vi.mocked(startRemotePageWorker).mockResolvedValue({
-      fetchPage: (pageNo: number) => fixture.pages[pageNo - 1]!,
-      terminate: vi.fn(),
+  it("reports an error, terminates the client, and stays locked when open() fails", async () => {
+    const client = installFakeClient({
+      open: vi.fn().mockRejectedValue(new Error("network down")),
     });
 
     const { result } = renderVault();
     await act(async () => {
-      await result.current.unlock(fakeFile(fakeCredsJson(fixture.rootKey)));
+      await result.current.unlock(fakeFile(fakeCredsJson()));
     });
 
     expect(result.current.status).toBe("locked");
     expect(result.current.error).toContain("network down");
     expect(result.current.session).toBeNull();
+    expect(client.terminate).toHaveBeenCalledOnce();
   });
 
   it("reports a friendly error for a malformed creds file", async () => {
@@ -187,85 +139,89 @@ describe("VaultProvider", () => {
     expect(result.current.error).toBeTruthy();
   });
 
-  it("lock() terminates the page worker and clears session/maps", async () => {
-    const fixture = await buildVaultDb();
-    const { result, backend } = await unlockWith(fixture);
+  it("lock() terminates the client and clears session/maps", async () => {
+    const { result, client } = await unlockWith();
 
     act(() => result.current.lock());
 
     expect(result.current.status).toBe("locked");
     expect(result.current.session).toBeNull();
     expect(result.current.accessMap.size).toBe(0);
-    expect(backend.terminate).toHaveBeenCalledOnce();
+    expect(client.terminate).toHaveBeenCalledOnce();
   });
 
-  it("getTxtKey reads txt.txt_key from the open db and caches it thereafter", async () => {
-    const fixture = await buildVaultDb();
-    const { result } = await unlockWith(fixture);
+  it("getTxtKey delegates to the client and caches the result thereafter", async () => {
+    const { result, client } = await unlockWith();
 
     let key: Uint8Array | undefined;
     await act(async () => {
       key = await result.current.getTxtKey(1);
     });
     expect(key).toEqual(new Uint8Array([0]));
+    expect(client.getTxtKey).toHaveBeenCalledOnce();
 
     await act(async () => {
-      await result.current.getTxtKey(1); // second call: served from cache, no re-query needed
+      await result.current.getTxtKey(1); // second call: served from cache
     });
+    expect(client.getTxtKey).toHaveBeenCalledOnce(); // still once -- no re-call
   });
 
-  it("getTxtKey throws for a nonexistent txt_id", async () => {
-    const fixture = await buildVaultDb();
-    const { result } = await unlockWith(fixture);
-    await expect(result.current.getTxtKey(999)).rejects.toThrow("no txt row for txt_id=999");
-  });
-
-  it("recordReadPosition writes+commits, then reflects the new position in accessMap", async () => {
-    const fixture = await buildVaultDb();
-    const { result, backend } = await unlockWith(fixture);
+  it("recordReadPosition delegates to the client and updates accessMap", async () => {
+    const { result, client } = await unlockWith();
 
     await act(async () => {
       await result.current.recordReadPosition(1, { lastPartNum: 3, lastAccessedMs: 5000 });
     });
 
     expect(result.current.accessMap.get(1)).toEqual({ lastPartNum: 3, lastAccessedMs: 5000 });
-    expect(backend.commit).toHaveBeenCalledOnce();
+    expect(client.recordReadPosition).toHaveBeenCalledWith(1, {
+      lastPartNum: 3,
+      lastAccessedMs: 5000,
+    });
   });
 
-  it("removeAccessEntry clears the read position from accessMap", async () => {
-    const fixture = await buildVaultDb();
-    const { result } = await unlockWith(fixture);
+  it("removeAccessEntry delegates to the client and clears the read position from accessMap", async () => {
+    const { result, client } = await unlockWith();
 
     await act(async () => {
       await result.current.recordReadPosition(1, { lastPartNum: 3, lastAccessedMs: 5000 });
-    });
-    await act(async () => {
       await result.current.removeAccessEntry(1);
     });
 
     expect(result.current.accessMap.has(1)).toBe(false);
+    expect(client.removeAccessEntry).toHaveBeenCalledWith(1);
   });
 
-  it("addBookmarkEntry / removeBookmarkEntry write+commit and refresh bookmarksMap", async () => {
-    const fixture = await buildVaultDb();
-    const { result } = await unlockWith(fixture);
+  it("addBookmarkEntry / removeBookmarkEntry delegate to the client and adopt the returned bookmarksMap", async () => {
+    const bookmarksAfterAdd = new Map([
+      [1, [{ id: 5, txtId: 1, partNum: 0, line: 5, preview: "first line", createdAt: 1000 }]],
+    ]);
+    const { result, client } = await unlockWith({
+      addBookmarkEntry: vi.fn().mockResolvedValue(bookmarksAfterAdd),
+      removeBookmarkEntry: vi.fn().mockResolvedValue(new Map()),
+    });
 
     await act(async () => {
       await result.current.addBookmarkEntry(1, 0, 5, "first line");
     });
-    const added = result.current.bookmarksMap.get(1);
-    expect(added).toHaveLength(1);
-    expect(added![0]!.preview).toBe("first line");
+    expect(result.current.bookmarksMap).toBe(bookmarksAfterAdd);
+    expect(client.addBookmarkEntry).toHaveBeenCalledWith(1, 0, 5, "first line", expect.any(Number));
 
     await act(async () => {
-      await result.current.removeBookmarkEntry(added![0]!.id);
+      await result.current.removeBookmarkEntry(5);
     });
-    expect(result.current.bookmarksMap.get(1) ?? []).toHaveLength(0);
+    expect(result.current.bookmarksMap.size).toBe(0);
+    expect(client.removeBookmarkEntry).toHaveBeenCalledWith(5);
   });
 
-  it("surfaces a lost commit CAS as a thrown error, without losing the local write", async () => {
-    const fixture = await buildVaultDb();
-    const { result } = await unlockWith(fixture, { commitOk: false });
+  it("surfaces a rejection from the client's recordReadPosition as a thrown error", async () => {
+    const { result } = await unlockWith({
+      recordReadPosition: vi
+        .fn()
+        .mockRejectedValue(
+          new Error("Another session updated this vault. Please reload and try again."),
+        ),
+    });
 
     await expect(
       act(async () => {
@@ -274,22 +230,23 @@ describe("VaultProvider", () => {
     ).rejects.toThrow("Another session updated this vault");
   });
 
-  it("refresh() re-opens against a fresh worker and reloads the library", async () => {
-    const fixture = await buildVaultDb();
-    const { result, backend } = await unlockWith(fixture);
+  it("refresh() calls the client's refresh then reloads library/bookmarks", async () => {
+    const { result, client } = await unlockWith();
 
-    const secondTerminate = vi.fn();
-    vi.mocked(startRemotePageWorker).mockResolvedValue({
-      fetchPage: (pageNo: number) => fixture.pages[pageNo - 1]!,
-      terminate: secondTerminate,
+    client.loadLibrary.mockResolvedValue({
+      metadataById: new Map([
+        [1, { txtId: 1, name: "doc-one.txt", title: "doc-one.txt", subjects: [], rawMetadata: [] }],
+        [2, { txtId: 2, name: "doc-two.txt", title: "doc-two.txt", subjects: [], rawMetadata: [] }],
+      ]),
+      accessMap: new Map(),
     });
 
     await act(async () => {
       await result.current.refresh();
     });
 
-    expect(backend.terminate).toHaveBeenCalledOnce(); // old worker torn down
-    expect(result.current.session?.metadataById.get(1)?.title).toBe("doc-one.txt");
+    expect(client.refresh).toHaveBeenCalledOnce();
+    expect(result.current.session?.metadataById.size).toBe(2);
     expect(result.current.refreshing).toBe(false);
   });
 });

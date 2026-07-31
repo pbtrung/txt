@@ -41,10 +41,7 @@ const metadataById = new Map<number, BookInfo>([
 
 const session: VaultContextModule.VaultSession = {
   creds: {} as never,
-  db: {} as never,
-  vfs: {} as never,
-  rqliteClient: {} as never,
-  pageWorker: {} as never,
+  client: {} as never,
   r2Client: {} as never,
   metadataById,
 };

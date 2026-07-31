@@ -12,8 +12,9 @@
     "ui:typecheck": "tsc -b ui/tsconfig.json",
     "ui:build": "tsc -b ui/tsconfig.json && vite build --config ui/vite.config.ts && rm -f ui/dist/sqlcipher.d.ts ui/dist/package.json ui/dist/js-vfs.mjs ui/dist/js-vfs.d.mts ui/dist/sqlcipher.js.symbols ui/dist/test-js-vfs.mjs ui/dist/test-roundtrip.mjs && node ui/scripts/build-integrity.mjs",
     "ui:preview": "vite preview --config ui/vite.config.ts",
-    "ui:test": "vitest run --config ui/vite.config.ts",
-    "ui:test:watch": "vitest --config ui/vite.config.ts"
+    "ui:test": "vitest run --config ui/vite.config.ts --exclude \"**/smoke.e2e.test.ts\"",
+    "ui:test:watch": "vitest --config ui/vite.config.ts --exclude \"**/smoke.e2e.test.ts\"",
+    "ui:test:e2e": "vitest run --config ui/vite.config.ts ui/src/smoke.e2e.test.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1100.0",
@@ -38,6 +39,7 @@
     "@types/react-dom": "^19.2.4",
     "@vitejs/plugin-react": "^6.0.5",
     "jsdom": "^30.0.1",
+    "playwright-core": "^1.62.1",
     "prettier": "^3.9.6",
     "typescript": "^7.0.2",
     "vite": "^8.2.0",

@@ -8,12 +8,10 @@ import type { AccessMap } from "../../data/access";
 import type { BookmarksMap } from "../../data/bookmarks";
 import type { BookInfo } from "../../data/metadata";
 import type { R2Config } from "../../data/r2Config";
-import * as ownerModule from "../../data/owner";
 import * as partsModule from "../../data/parts";
 import * as VaultContextModule from "../../state/VaultContext";
 import { useReaderBook } from "./useReaderBook";
 
-vi.mock("../../data/owner");
 vi.mock("../../data/parts");
 vi.mock("../../state/VaultContext", async () => {
   const actual = await vi.importActual<typeof import("../../state/VaultContext")>(
@@ -25,13 +23,19 @@ vi.mock("../../state/VaultContext", async () => {
 const recordReadPosition = vi.fn().mockResolvedValue(undefined);
 const addBookmarkEntry = vi.fn().mockResolvedValue(undefined);
 const removeBookmarkEntry = vi.fn().mockResolvedValue(undefined);
+// session.client's two SQLite-backed methods this hook calls -- the real db
+// now lives inside dbWorker.ts's Worker (see that file's header comment),
+// so these stand in for DbWorkerClient.partCount/partRawPath rather than a
+// direct data/owner.ts call the way this test used to mock it.
+const partCount = vi.fn();
+const partRawPath = vi.fn();
 
-/** useReaderBook resolves one part's raw path at a time (see data/owner.ts's
+/** useReaderBook resolves one part's raw path at a time (session.client.
  * partRawPath) rather than every part up front -- this stands in for a
  * txt_parts table indexed 1-based by `paths`' own array position. */
 function mockPartRawPath(paths: string[]) {
-  vi.mocked(ownerModule.partRawPath).mockImplementation(
-    (_db, _txtId, partNum) => paths[partNum - 1] ?? null,
+  partRawPath.mockImplementation(
+    async (_txtId: number, partNum: number) => paths[partNum - 1] ?? null,
   );
 }
 
@@ -42,10 +46,7 @@ function mockVault(
 ) {
   const session = {
     creds: { r2Config: {} as R2Config } as VaultContextModule.VaultSession["creds"],
-    db: {} as never,
-    vfs: {} as never,
-    rqliteClient: {} as never,
-    pageWorker: {} as never,
+    client: { partCount, partRawPath } as unknown as VaultContextModule.VaultSession["client"],
     r2Client: {} as AwsClient,
     metadataById,
   };
@@ -86,7 +87,7 @@ describe("useReaderBook", () => {
         [7, { txtId: 7, name: "n", title: "The White Order", subjects: [], rawMetadata: [] }],
       ]),
     );
-    vi.mocked(ownerModule.partCount).mockReturnValue(41);
+    partCount.mockResolvedValue(41);
     mockPartRawPath(Array.from({ length: 41 }, (_, i) => `path-${i + 1}`));
     vi.mocked(partsModule.fetchPart).mockResolvedValue("Part fourteen's text.");
 
@@ -114,7 +115,7 @@ describe("useReaderBook", () => {
 
   it("defaults to part 1 when there's no saved read position", async () => {
     mockVault();
-    vi.mocked(ownerModule.partCount).mockReturnValue(5);
+    partCount.mockResolvedValue(5);
     mockPartRawPath(["p1", "p2", "p3", "p4", "p5"]);
     vi.mocked(partsModule.fetchPart).mockResolvedValue("part one");
 
@@ -125,7 +126,7 @@ describe("useReaderBook", () => {
 
   it("prefers a ?part= query param over the saved read position", async () => {
     mockVault(new Map([[3, { lastPartNum: 1, lastAccessedMs: 1 }]]));
-    vi.mocked(ownerModule.partCount).mockReturnValue(5);
+    partCount.mockResolvedValue(5);
     mockPartRawPath(["p1", "p2", "p3", "p4", "p5"]);
     vi.mocked(partsModule.fetchPart).mockImplementation(
       async (_c, _cfg, _key, path) => `text for ${path}`,
@@ -138,7 +139,7 @@ describe("useReaderBook", () => {
 
   it("prefers a ?part=&line= query param over the saved read position, and sets targetLine", async () => {
     mockVault(new Map([[3, { lastPartNum: 1, lastAccessedMs: 1 }]]));
-    vi.mocked(ownerModule.partCount).mockReturnValue(5);
+    partCount.mockResolvedValue(5);
     mockPartRawPath(["p1", "p2", "p3", "p4", "p5"]);
     vi.mocked(partsModule.fetchPart).mockImplementation(
       async (_c, _cfg, _key, path) => `text for ${path}`,
@@ -152,7 +153,7 @@ describe("useReaderBook", () => {
 
   it("goToBookmark() moves to the given part and sets targetLine", async () => {
     mockVault();
-    vi.mocked(ownerModule.partCount).mockReturnValue(5);
+    partCount.mockResolvedValue(5);
     mockPartRawPath(["p1", "p2", "p3", "p4", "p5"]);
     vi.mocked(partsModule.fetchPart).mockImplementation(
       async (_c, _cfg, _key, path) => `text for ${path}`,
@@ -172,7 +173,7 @@ describe("useReaderBook", () => {
 
   it("clears partText immediately when switching parts, before the new text arrives", async () => {
     mockVault();
-    vi.mocked(ownerModule.partCount).mockReturnValue(5);
+    partCount.mockResolvedValue(5);
     mockPartRawPath(["p1", "p2", "p3", "p4", "p5"]);
     let resolveFetch: (text: string) => void = () => {};
     vi.mocked(partsModule.fetchPart).mockImplementation(
@@ -196,7 +197,7 @@ describe("useReaderBook", () => {
 
   it("next()/previous() move within [1, partCount] and re-fetch the new part", async () => {
     mockVault(new Map([[9, { lastPartNum: 1, lastAccessedMs: 1 }]]));
-    vi.mocked(ownerModule.partCount).mockReturnValue(3);
+    partCount.mockResolvedValue(3);
     mockPartRawPath(["p1", "p2", "p3"]);
     vi.mocked(partsModule.fetchPart).mockImplementation(
       async (_c, _cfg, _key, path) => `text for ${path}`,
@@ -216,7 +217,7 @@ describe("useReaderBook", () => {
 
   it("bookmarkLine() calls addBookmarkEntry for the current part/line/preview", async () => {
     mockVault();
-    vi.mocked(ownerModule.partCount).mockReturnValue(3);
+    partCount.mockResolvedValue(3);
     mockPartRawPath(["p1", "p2", "p3"]);
     vi.mocked(partsModule.fetchPart).mockResolvedValue("text");
 
@@ -236,7 +237,7 @@ describe("useReaderBook", () => {
       ],
     ]);
     mockVault(new Map(), bookmarksMap);
-    vi.mocked(ownerModule.partCount).mockReturnValue(3);
+    partCount.mockResolvedValue(3);
     mockPartRawPath(["p1", "p2", "p3"]);
     vi.mocked(partsModule.fetchPart).mockResolvedValue("text");
 
@@ -258,7 +259,7 @@ describe("useReaderBook", () => {
       ],
     ]);
     mockVault(new Map(), bookmarksMap);
-    vi.mocked(ownerModule.partCount).mockReturnValue(3);
+    partCount.mockResolvedValue(3);
     mockPartRawPath(["p1", "p2", "p3"]);
     vi.mocked(partsModule.fetchPart).mockResolvedValue("text");
 
@@ -272,7 +273,7 @@ describe("useReaderBook", () => {
 
   it("removeBookmark() calls removeBookmarkEntry with the given bookmark id", async () => {
     mockVault();
-    vi.mocked(ownerModule.partCount).mockReturnValue(3);
+    partCount.mockResolvedValue(3);
     mockPartRawPath(["p1", "p2", "p3"]);
     vi.mocked(partsModule.fetchPart).mockResolvedValue("text");
 

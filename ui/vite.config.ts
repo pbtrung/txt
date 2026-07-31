@@ -21,14 +21,18 @@ const SQLCIPHER_DIR = join(UI_DIR, "..", "sqlcipher");
 // lazy remoteVfs.ts doesn't use, its symbols/test files) is removed from
 // dist/ by the build script's post-`vite build` cleanup step.
 
-// sqlcipher.js is loaded via a dynamically-created <script src="/sqlcipher.js">
-// (data/wasmLoader.ts), not a <script type=module>/<link> tag in index.html
-// -- so it never goes through build-integrity.mjs's addSri(), which only
-// tags those. Its SHA-512 is computed here at config-load time and baked
-// into the app bundle via `define`, the same technique build-integrity.mjs
-// uses to bake the SLH-DSA public key into the local_index.html verifier
-// bundle -- wasmLoader.ts sets it as that script element's `integrity`
-// before ever assigning `src`.
+// sqlcipher.js is loaded via data/wasmLoader.ts's own fetch()+verify+
+// blob-import (needed so the exact same loading code works identically on
+// the main thread and inside dbWorker.ts's Worker, which has no <script>/
+// <link> tags to hang SRI off of) -- not a <script type=module>/<link> tag
+// in index.html, so it never goes through build-integrity.mjs's addSri(),
+// which only tags those. Its SHA-512 is computed here at config-load time
+// and baked into the app bundle via `define` (applied to every build Vite
+// produces from this config, including Worker bundles, not just the main
+// entry) -- the same technique build-integrity.mjs uses to bake the SLH-DSA
+// public key into the local_index.html verifier bundle. wasmLoader.ts
+// compares a freshly computed digest of the fetched bytes against this
+// value before ever executing them.
 function sqlcipherJsIntegrity(): string {
   const bytes = readFileSync(join(SQLCIPHER_DIR, "sqlcipher.js"));
   return `sha512-${createHash("sha512").update(bytes).digest("base64")}`;

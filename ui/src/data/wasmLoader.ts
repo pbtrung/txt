@@ -3,23 +3,33 @@
 // lc_wasm_* HKDF/AEAD primitives crypto/blob.ts needs, in one module
 // instance, replacing the old separately-vendored leancrypto.js entirely.
 //
-// Two loading paths, same split as the old crypto/leancryptoLoader.ts (the
-// same module needs to load identically in a real browser and under
-// Node/Vitest):
-//   - Browser: inject a classic (non-`type="module"`) <script src="/sqlcipher.js">
-//     tag -- the bundle is a UMD build (`module.exports=Sqlite3Wasm` when
-//     `module`/`exports` exist, else left as the top-level `var Sqlite3Wasm`,
-//     confirmed by inspecting the bundle's own tail) so it can't be
-//     `import`-ed as a native ES module here -- then read the resulting
-//     global `window.Sqlite3Wasm` factory.
+// Two loading paths (same module needs to load identically under Node/
+// Vitest and in any web-like JS realm -- the main thread AND a Worker,
+// since dbWorker.ts loads this same module inside a Worker, where SQLite/
+// the lazy VFS actually have to live -- see dbWorker.ts's own header
+// comment for why):
+//   - Web (isWeb(), see ../env.ts): fetch() the real bytes, verify their
+//     SHA-512 against __SQLCIPHER_JS_INTEGRITY__ ourselves (the same
+//     guarantee a <script integrity=...> tag's native SRI would give on
+//     the main thread, done manually here because a Worker has no
+//     document/<script> tags at all to hang a tag-based SRI check off of),
+//     then append `export default Sqlite3Wasm;` to the verified UMD source
+//     (its own tail leaves `Sqlite3Wasm` as a plain top-level `var`, which
+//     is exactly what makes this append valid -- see the bundle's own tail)
+//     and import the result as a real ES module from a blob: URL. This
+//     works identically on the main thread and inside a module Worker;
+//     neither `<script>` tags nor `importScripts()` (classic-Worker-only,
+//     and unavailable in the module Workers this project uses) do.
 //   - Node/Vitest: a plain dynamic `import()` works, because Node's ESM
 //     loader interoperates with `module.exports`.
-// In both cases the module's own asset-locating logic (Node's `__dirname`,
-// the browser's `document.currentScript.src`) already resolves
-// sqlcipher.wasm correctly next to sqlcipher.js, so no `locateFile`
-// override is needed.
+// locateFile is passed explicitly to the web factory call (`{ locateFile:
+// path => "/" + path }`) rather than relying on the bundle's own
+// scriptDirectory detection (document.currentScript.src, import.meta.url,
+// ...), which the blob: URL import makes unreliable -- `Module.locateFile`
+// takes precedence over all of that when provided (confirmed by reading
+// the bundle's own locateFile() function).
 
-import { isBrowser } from "../env";
+import { isWeb } from "../env";
 
 // Baked in by vite.config.ts's `define` (a SHA-512 of sqlcipher/sqlcipher.js
 // computed at build time) -- see loadBrowserFactory()'s use of it below.
@@ -113,38 +123,52 @@ export interface WasmModule {
 
 type Sqlite3Factory = (opts?: Record<string, unknown>) => Promise<WasmModule>;
 
-function loadBrowserFactory(): Promise<Sqlite3Factory> {
-  return new Promise((resolve, reject) => {
-    const existing = (window as unknown as { Sqlite3Wasm?: Sqlite3Factory }).Sqlite3Wasm;
-    if (existing) {
-      resolve(existing);
-      return;
-    }
-    const script = document.createElement("script");
-    // Set before src -- SRI is only enforced on the fetch the browser
-    // triggers once this element is inserted into the document below;
-    // integrity/crossOrigin need to already be present at that point, not
-    // added afterward.
-    script.integrity = __SQLCIPHER_JS_INTEGRITY__;
-    script.crossOrigin = "anonymous";
-    script.src = "/sqlcipher.js";
-    script.onload = () => {
-      const factory = (window as unknown as { Sqlite3Wasm?: Sqlite3Factory }).Sqlite3Wasm;
-      if (!factory) {
-        reject(new Error("sqlcipher.js loaded but did not define window.Sqlite3Wasm"));
-        return;
-      }
-      resolve(factory);
-    };
-    script.onerror = () => reject(new Error("failed to load /sqlcipher.js"));
-    document.head.appendChild(script);
+function bufferToBase64(buf: ArrayBuffer): string {
+  let binary = "";
+  for (const byte of new Uint8Array(buf)) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+/** Fetches /sqlcipher.js, verifies its SHA-512 against the build-time-baked
+ * __SQLCIPHER_JS_INTEGRITY__, then imports it as a real ES module from a
+ * blob: URL -- see this file's header comment for why (works identically on
+ * the main thread and inside a module Worker, unlike a <script> tag or
+ * importScripts()). */
+async function loadWebFactory(): Promise<Sqlite3Factory> {
+  const res = await fetch("/sqlcipher.js");
+  if (!res.ok) throw new Error(`failed to fetch /sqlcipher.js: HTTP ${res.status}`);
+  const bytes = await res.arrayBuffer();
+  const digest = await crypto.subtle.digest("SHA-512", bytes);
+  const actual = `sha512-${bufferToBase64(digest)}`;
+  if (actual !== __SQLCIPHER_JS_INTEGRITY__) {
+    throw new Error("sqlcipher.js failed integrity check -- refusing to load it");
+  }
+
+  const source = new TextDecoder().decode(bytes);
+  // The bundle's own tail leaves `Sqlite3Wasm` as a plain top-level `var`
+  // (see this file's header comment) -- appending an `export` referencing
+  // it is what turns this into a real ES module the blob: URL below can be
+  // `import()`-ed as, without needing eval()/`new Function` (which CSP's
+  // script-src would otherwise have to allow via 'unsafe-eval').
+  const blob = new Blob([source, "\nexport default Sqlite3Wasm;\n"], {
+    type: "text/javascript",
   });
+  const blobUrl = URL.createObjectURL(blob);
+  try {
+    const mod = (await import(/* @vite-ignore */ blobUrl)) as { default?: Sqlite3Factory };
+    if (typeof mod.default !== "function") {
+      throw new Error("sqlcipher.js did not provide a callable default export");
+    }
+    return mod.default;
+  } finally {
+    URL.revokeObjectURL(blobUrl);
+  }
 }
 
 async function loadNodeFactory(): Promise<Sqlite3Factory> {
-  // @vite-ignore: this path only ever runs under Node/Vitest (see
-  // isBrowser(), used below) -- keep Vite's client bundler from resolving/
-  // inlining it into the browser build.
+  // @vite-ignore: this path only ever runs under Node/Vitest (see isWeb(),
+  // used below) -- keep Vite's client bundler from resolving/inlining it
+  // into the browser build.
   const imported: unknown = await import(/* @vite-ignore */ "../../../sqlcipher/sqlcipher.js");
   const mod = imported as { default?: Sqlite3Factory };
   const factory = mod.default ?? (imported as Sqlite3Factory);
@@ -156,13 +180,20 @@ async function loadNodeFactory(): Promise<Sqlite3Factory> {
 
 let modulePromise: Promise<WasmModule> | null = null;
 
-/** Resolves once the wasm module is instantiated -- memoized, so every
- * caller (sqliteDb.ts opening a db, crypto/blob.ts encrypting/decrypting)
- * shares the same one instance for the life of the page/test. */
+/** Resolves once the wasm module is instantiated -- memoized per realm (a
+ * Worker has its own separate module instance/memoization from the main
+ * thread, since each is its own JS realm), so every caller within one realm
+ * (sqliteDb.ts opening a db, crypto/blob.ts encrypting/decrypting) shares
+ * the same one instance for the life of that page/worker/test. */
 export function loadWasm(): Promise<WasmModule> {
   if (!modulePromise) {
-    modulePromise = (isBrowser() ? loadBrowserFactory() : loadNodeFactory()).then((factory) =>
-      factory(),
+    modulePromise = (isWeb() ? loadWebFactory() : loadNodeFactory()).then((factory) =>
+      // locateFile: only needed on the web path -- the blob: URL import
+      // that loadWebFactory() uses makes the bundle's own scriptDirectory
+      // detection unreliable (see this file's header comment); Node's own
+      // detection (__dirname-based) already works, so this only overrides
+      // it there.
+      isWeb() ? factory({ locateFile: (path: string) => `/${path}` }) : factory(),
     );
   }
   return modulePromise;
