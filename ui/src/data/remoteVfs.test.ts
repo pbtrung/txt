@@ -210,14 +210,14 @@ describe("registerRemoteVfs", () => {
     }
   });
 
-  it("evicts least-recently-used pages once the cache exceeds the 250-page budget", async () => {
+  it("evicts least-recently-used pages once the cache exceeds the 1000-page budget", async () => {
     // Builds a db with enough overflow-page-heavy rows to span well past
-    // 250 physical pages, then reads every row's full content twice.
+    // 1000 physical pages, then reads every row's full content twice.
     // PRAGMA cache_size=1 keeps SQLite's own pager from shielding the
     // second pass -- without that, repeat page requests could be served
     // straight out of SQLite's internal pcache and this test would prove
     // nothing about *our* cache. With the pager defeated, the first pass
-    // populates (and, past 250 pages, starts evicting from) our own
+    // populates (and, past 1000 pages, starts evicting from) our own
     // pageCache; the second pass must therefore re-fetch at least the
     // pages evicted during the first, but not literally every page (the
     // most-recently-touched ones are still resident).
@@ -229,9 +229,10 @@ describe("registerRemoteVfs", () => {
     const pageSize = Number(pageSizeStmt.columnInt64(0));
     pageSizeStmt.finalize();
 
+    const ROW_COUNT = 1200;
     db0.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, blob TEXT);");
     const padding = "x".repeat(pageSize * 2); // forces multiple overflow pages per row
-    for (let i = 0; i < 300; i++) {
+    for (let i = 0; i < ROW_COUNT; i++) {
       db0.run("INSERT INTO t (blob) VALUES (?);", (s) => s.bindText(1, padding));
     }
     db0.close();
@@ -241,7 +242,7 @@ describe("registerRemoteVfs", () => {
     const pageCount = bytes.length / pageSize;
     const pages: Uint8Array[] = [];
     for (let i = 0; i < pageCount; i++) pages.push(bytes.slice(i * pageSize, (i + 1) * pageSize));
-    expect(pageCount).toBeGreaterThan(250); // sanity: the db really spans past the budget
+    expect(pageCount).toBeGreaterThan(1000); // sanity: the db really spans past the budget
 
     const fetchLog: number[] = [];
     const backedPath = "/remote-vfs-lru.db";
@@ -272,16 +273,16 @@ describe("registerRemoteVfs", () => {
         return total;
       };
 
-      expect(scanAllBlobs()).toBe(300 * padding.length);
+      expect(scanAllBlobs()).toBe(ROW_COUNT * padding.length);
       const fetchesAfterFirstScan = fetchLog.length;
-      expect(fetchesAfterFirstScan).toBeGreaterThan(250);
+      expect(fetchesAfterFirstScan).toBeGreaterThan(1000);
 
-      // Don't re-run the full scan -- reading pages 1..640 in order again
-      // slides the same 250-wide window across the same sequence with no
+      // Don't re-run the full scan -- reading pages in order again slides
+      // the same 1000-wide window across the same sequence with no
       // overlap, so it would (correctly, but uninterestingly) miss on
       // every single page. Instead point at two specific rows: the last
       // one inserted (whose overflow pages were the *last* ones the first
-      // scan touched, so they're still within the 250-page window) versus
+      // scan touched, so they're still within the 1000-page window) versus
       // the first one inserted (whose overflow pages were the *first*
       // ones touched, long since evicted).
       const readBlob = (id: number) => {
@@ -294,7 +295,7 @@ describe("registerRemoteVfs", () => {
       };
 
       fetchLog.length = 0;
-      expect(readBlob(300).length).toBe(padding.length);
+      expect(readBlob(ROW_COUNT).length).toBe(padding.length);
       const fetchesForRecentRow = fetchLog.length;
 
       fetchLog.length = 0;
