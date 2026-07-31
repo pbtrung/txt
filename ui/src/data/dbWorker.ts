@@ -186,6 +186,17 @@ export async function open(creds: OpenCreds): Promise<void> {
   // key, which the server forces to its own db_id regardless.
   targetDbId = await resolveTargetDbId(rqliteClient, creds.apiKey);
   const meta = await fetchMeta(rqliteClient, targetDbId);
+
+  // Registered immediately after pinning meta.currentVersion, before any of
+  // the (potentially slow, for a large vault) prefetch/SqliteDb.open work
+  // below -- every moment between reading current_version and having a
+  // lease actually recorded for it is a window GC could still delete a
+  // page this snapshot needs, so it's minimized here rather than
+  // registered only once the rest of open() has already finished.
+  readerId = crypto.randomUUID();
+  await beginRead(rqliteClient, readerId, meta.currentVersion);
+  renewReaderTimer = setInterval(() => void renewReader(), READER_RENEW_INTERVAL_MS);
+
   pageWorker = await startRemotePageWorker(
     creds.rqliteUrl,
     creds.apiKey,
@@ -213,10 +224,6 @@ export async function open(creds: OpenCreds): Promise<void> {
   );
   vfs.primeCache(prefetched);
   db = await SqliteDb.open(backedPath, { vfsName: vfs.name, rawKey: creds.userRootKey });
-
-  readerId = crypto.randomUUID();
-  await beginRead(rqliteClient, readerId, meta.currentVersion);
-  renewReaderTimer = setInterval(() => void renewReader(), READER_RENEW_INTERVAL_MS);
 }
 
 /** Renews this session's own reader lease at its own latest known snapshot
