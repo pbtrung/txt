@@ -54,6 +54,7 @@ export interface WasmModule {
   _sqlite3_column_text(stmt: number, i: number): number;
   _sqlite3_column_int64(stmt: number, i: number): bigint;
   _sqlite3_last_insert_rowid(db: number): bigint;
+  _sqlite3_changes(db: number): number;
 
   _lc_wasm_hkdf_sha3_512(
     ikm: number,

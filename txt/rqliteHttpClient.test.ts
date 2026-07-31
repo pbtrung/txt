@@ -149,3 +149,35 @@ test("decodeBlobColumn: decodes base64, rejects non-string values", () => {
   assert.deepEqual(decodeBlobColumn(original.toString("base64")), original);
   assert.throws(() => decodeBlobColumn(42), /expected base64 blob string/);
 });
+
+test("RqliteHttpClient.commit(): posts ?transaction, the right body shape, and reports CAS win/loss", async () => {
+  const mock = await startMockServer((req) => ({
+    results: [
+      { rows_affected: req.body.commit.pages.length },
+      { rows_affected: req.body.commit.old_version === 5 ? 1 : 0 },
+    ],
+  }));
+  try {
+    const client = new RqliteHttpClient(`http://127.0.0.1:${mock.port}`, "key");
+    const page = { pageNo: 3, data: new Uint8Array([1, 2, 3]) };
+
+    const won = await client.commit([page], 5, 6, 10, "user-1");
+    assert.equal(won, true);
+    assert.equal(mock.requests[0]?.url, "/db/execute?transaction");
+    assert.deepEqual(mock.requests[0]?.body, {
+      statementId: "COMMIT",
+      commit: {
+        pages: [{ page_no: 3, data: [1, 2, 3] }],
+        old_version: 5,
+        new_version: 6,
+        page_count: 10,
+      },
+      target_db_id: "user-1",
+    });
+
+    const lost = await client.commit([page], 999, 1000, 10);
+    assert.equal(lost, false);
+  } finally {
+    await mock.close();
+  }
+});

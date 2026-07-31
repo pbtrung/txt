@@ -7,7 +7,7 @@ A private, end-to-end encrypted reading vault. Documents are chunked into parts,
 - **Client-side encryption throughout** — R2/S3 never sees plaintext content; rqlite never sees plaintext or an encryption key, only opaque SQLCipher page ciphertext.
 - **Per-user database, not shared rows** — one SQLCipher-encrypted SQLite database per user, persisted page-by-page in rqlite's own page-store schema.
 - **`ui/`** — the browser reading app end users actually use: a React/Vite frontend that opens a user's SQLCipher database lazily and read-write, page by page, directly against a live `docker/` deployment (no full-database download). See [ui/](ui/) and [docker/README.md](docker/README.md#serving-ui).
-- **`txt.ts`**, the admin CLI — brings an existing vault onto this schema (`--migrate`), then maintains it day to day (`--clean-bucket`, `--collect-garbage`, `--vacuum`) and measures the lazy-remote-read tradeoff (`--test-perf`). See [docs/cli.md](docs/cli.md) for the full command reference.
+- **`txt.ts`**, the admin CLI — brings an existing vault onto this schema (`--migrate`), then maintains it day to day (`--clean-bucket`, `--collect-garbage`, `--vacuum`) and measures/exercises the lazy-remote-read/write path (`--test-perf`, `--test-write`). See [docs/cli.md](docs/cli.md) for the full command reference.
 - **`docker/`** — an OpenResty + rqlite container image fronting the page store with per-tenant API-key auth, forced tenant isolation, and health checks. See [docker/README.md](docker/README.md).
 
 See [docs/data_model.md](docs/data_model.md) for both schemas (the page store and the per-user database) and the reasoning behind every design choice in them, and [docs/crypto.md](docs/crypto.md) for the blob format used wherever content needs its own encryption outside the SQLCipher file.
@@ -29,6 +29,7 @@ node txt.ts --collect-garbage --db <file> [--dry-run] [--verbose]
 node txt.ts --vacuum --creds <file> --db <file> [--verbose]
 node txt.ts --update-db --creds <file> --db <file> [--verbose]
 node txt.ts --test-perf --creds <file> [--verbose]
+node txt.ts --test-write --creds <file> [--log-file <file>] [--verbose]
 ```
 
 See [docs/cli.md](docs/cli.md) for every flag, each command's `creds.json` shape, and the `npm run typecheck`/`npm test`/`npm run format` development commands.

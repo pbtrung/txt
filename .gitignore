@@ -47,3 +47,4 @@ creds/
 !ui/src/**/*.json
 *.db
 txt_*/
+*.log

@@ -1,6 +1,6 @@
-// The five *Command classes behind txt.ts's five flags
-// (--clean-bucket/--collect-garbage/--vacuum/--migrate/--test-perf), plus
-// the two small single-consumer helpers only --migrate needs (randomPath,
+// The *Command classes behind txt.ts's flags
+// (--clean-bucket/--collect-garbage/--vacuum/--migrate/--test-perf/
+// --test-write), plus the two small single-consumer helpers only --migrate needs (randomPath,
 // mapLimit -- each used to be its own file; nothing else ever imported
 // them, so there was no reuse to lose by inlining them here). Kept in one
 // file rather than five: each command was already its own small class, and
@@ -10,8 +10,7 @@
 
 import { randomBytes } from "node:crypto";
 import { brotliCompressSync, brotliDecompressSync } from "node:zlib";
-import { statSync } from "node:fs";
-import { Worker } from "node:worker_threads";
+import { statSync, appendFileSync, writeFileSync } from "node:fs";
 import {
   loadInCreds,
   loadOutCreds,
@@ -31,11 +30,12 @@ import {
   type TxtMetadataMap,
 } from "./oldVault.ts";
 import { UserDb } from "./userDb.ts";
-import { RqliteDb, hashApiKey } from "./rqliteDb.ts";
+import { RqliteDb } from "./rqliteDb.ts";
 import { SqliteDb } from "./sqlite.ts";
-import { RqliteHttpClient, resultRows } from "./rqliteHttpClient.ts";
+import { RqliteHttpClient, resolveTargetDbId, fetchMeta, type Meta } from "./rqliteHttpClient.ts";
+import { startRemotePageWorker, type RemotePageBridge } from "./remotePageClient.ts";
 import { loadWasm } from "./wasm.ts";
-import { registerRemoteVfs, type RemoteVfsStats } from "./remoteVfs.ts";
+import { registerRemoteVfs, type RemoteVfsStats, type RemoteVfsHandle } from "./remoteVfs.ts";
 
 /**
  * Shared by every command below: owns `opts` and the verbose-gated `log()`
@@ -631,10 +631,6 @@ export class MigrateCommand extends Command<MigrateOptions> {
 // ===========================================================================
 
 const BACKED_PATH = "/remote-user.db";
-const CONTROL_STATUS = 0;
-const CONTROL_LEN = 1;
-const STATUS_ERROR = 2;
-const FETCH_TIMEOUT_MS = 30_000;
 
 const DEFAULT_QUERIES = [
   "SELECT COUNT(*) FROM txt;",
@@ -649,22 +645,11 @@ export interface TestPerfOptions {
   verbose: boolean;
 }
 
-interface Meta {
-  currentVersion: number;
-  pageCount: number;
-  pageSize: number;
-}
-
 export interface QueryReport {
   sql: string;
   rows: number;
   ms: number;
   roundtrips: number;
-}
-
-interface Bridge {
-  fetchPage: (pageNo: number) => Uint8Array;
-  terminate: () => Promise<void>;
 }
 
 export interface TestPerfResult {
@@ -675,11 +660,11 @@ export interface TestPerfResult {
 export class TestPerfCommand extends Command<TestPerfOptions> {
   async run(): Promise<TestPerfResult> {
     const creds = loadPerfCreds(this.opts.credsPath);
-    this.progress(`Loaded creds from ${this.opts.credsPath} (rqlite_url=${creds.rqlite_url})`);
+    this.progress(`Loaded creds from ${this.opts.credsPath}`);
     const client = new RqliteHttpClient(creds.rqlite_url, creds.api_key);
 
     this.progress("Resolving identity...");
-    const targetDbId = await this.resolveTargetDbId(client, creds.api_key);
+    const targetDbId = await resolveTargetDbId(client, creds.api_key);
     this.progress(
       targetDbId
         ? `Resolved admin's own account: target_db_id=${targetDbId}`
@@ -687,13 +672,19 @@ export class TestPerfCommand extends Command<TestPerfOptions> {
     );
 
     this.progress("Fetching db_meta...");
-    const meta = await this.fetchMeta(client, targetDbId);
+    const meta = await fetchMeta(client, targetDbId);
     this.progress(
       `db_meta: version=${meta.currentVersion} pages=${meta.pageCount} page_size=${meta.pageSize}`,
     );
 
     this.progress("Starting page-fetch worker...");
-    const bridge = await this.startWorker(creds, targetDbId, meta);
+    const bridge = await startRemotePageWorker(
+      creds.rqlite_url,
+      creds.api_key,
+      meta.pageSize,
+      meta.currentVersion,
+      targetDbId,
+    );
     this.progress("Worker ready");
     try {
       return await this.openAndReport(creds, meta, bridge);
@@ -702,44 +693,17 @@ export class TestPerfCommand extends Command<TestPerfOptions> {
     }
   }
 
-  /**
-   * GET_META/READ_PAGE are ordinary user-level statements, forced to the
-   * caller's own db_id -- unless the key resolves to role='admin', which has
-   * no implicit self and needs target_db_id named explicitly (see
-   * auth_perms.lua). Rather than requiring the caller to already know its
-   * own user_id, look it up the same way auth_perms.lua's own identity
-   * resolution does: api_keys.key_hash -> users.user_id. This only works
-   * for an admin key (RAW_QUERY is admin-only) -- for a genuine user-role
-   * key it fails with the same "unknown statementId" 400 any other bogus
-   * statementId gets, which is exactly how a plain user key is told apart
-   * from an admin one here.
-   */
-  private async resolveTargetDbId(
-    client: RqliteHttpClient,
-    apiKey: string,
-  ): Promise<string | undefined> {
-    const batch = [
-      { sql: "SELECT user_id FROM api_keys WHERE key_hash = ?", args: [hashApiKey(apiKey)] },
-    ];
-    try {
-      const row = resultRows(await client.query("RAW_QUERY", batch))[0];
-      return row ? String(row[0]) : undefined;
-    } catch {
-      return undefined; // not an admin key -- GET_META/READ_PAGE will force db_id server-side instead
-    }
-  }
-
   private async openAndReport(
     creds: PerfCreds,
     meta: Meta,
-    bridge: Bridge,
+    bridge: RemotePageBridge,
   ): Promise<TestPerfResult> {
     const mod = await loadWasm();
     const { name, stats } = registerRemoteVfs(mod, {
       pageSize: meta.pageSize,
       pageCount: meta.pageCount,
       backedPath: BACKED_PATH,
-      fetchPage: bridge.fetchPage,
+      fetchPage: (pageNo) => this.fetchPageAndLog(bridge, pageNo),
     });
     this.progress("Opening database (read-only)...");
     const db = await SqliteDb.open(BACKED_PATH, {
@@ -757,47 +721,9 @@ export class TestPerfCommand extends Command<TestPerfOptions> {
     }
   }
 
-  private async fetchMeta(client: RqliteHttpClient, targetDbId: string | undefined): Promise<Meta> {
-    const extra = targetDbId ? { target_db_id: targetDbId } : {};
-    const row = resultRows(await client.query("GET_META", [{}], extra))[0];
-    if (!row) throw new Error("GET_META returned no row -- has this account committed a db yet?");
-    return { currentVersion: Number(row[0]), pageCount: Number(row[1]), pageSize: Number(row[2]) };
-  }
-
-  private async startWorker(
-    creds: PerfCreds,
-    targetDbId: string | undefined,
-    meta: Meta,
-  ): Promise<Bridge> {
-    const controlSab = new SharedArrayBuffer(8);
-    const dataSab = new SharedArrayBuffer(Math.max(meta.pageSize, 4096) + 4096);
-    const control = new Int32Array(controlSab);
-    const dataBuf = new Uint8Array(dataSab);
-    const worker = new Worker(new URL("./remotePageWorker.ts", import.meta.url), {
-      workerData: {
-        rqliteUrl: creds.rqlite_url,
-        apiKey: creds.api_key,
-        targetDbId,
-        snapshot: meta.currentVersion,
-        controlSab,
-        dataSab,
-      },
-    });
-    await waitReady(worker);
-    return {
-      fetchPage: (pageNo) => this.fetchPageAndLog(worker, control, dataBuf, pageNo),
-      terminate: () => worker.terminate().then(() => undefined),
-    };
-  }
-
-  private fetchPageAndLog(
-    worker: Worker,
-    control: Int32Array,
-    dataBuf: Uint8Array,
-    pageNo: number,
-  ): Uint8Array {
+  private fetchPageAndLog(bridge: RemotePageBridge, pageNo: number): Uint8Array {
     const start = performance.now();
-    const bytes = fetchPageSync(worker, control, dataBuf, pageNo);
+    const bytes = bridge.fetchPage(pageNo);
     this.log(
       `  fetched page ${pageNo} (${bytes.length}b, ${(performance.now() - start).toFixed(1)}ms)`,
     );
@@ -834,33 +760,6 @@ function execSelect(db: SqliteDb, sql: string): number {
   return rows;
 }
 
-function waitReady(worker: Worker): Promise<void> {
-  return new Promise((resolve, reject) => {
-    worker.once("message", (msg: { type?: string }) => {
-      if (msg?.type === "ready") resolve();
-      else reject(new Error("unexpected first message from remote-page worker"));
-    });
-    worker.once("error", reject);
-  });
-}
-
-function fetchPageSync(
-  worker: Worker,
-  control: Int32Array,
-  dataBuf: Uint8Array,
-  pageNo: number,
-): Uint8Array {
-  Atomics.store(control, CONTROL_STATUS, 0);
-  worker.postMessage({ pageNo });
-  if (Atomics.wait(control, CONTROL_STATUS, 0, FETCH_TIMEOUT_MS) === "timed-out") {
-    throw new Error(`timed out fetching page ${pageNo}`);
-  }
-  const status = Atomics.load(control, CONTROL_STATUS);
-  const bytes = dataBuf.slice(0, Atomics.load(control, CONTROL_LEN));
-  if (status === STATUS_ERROR) throw new Error(Buffer.from(bytes).toString("utf8"));
-  return bytes;
-}
-
 function printSummary(reports: QueryReport[], stats: RemoteVfsStats): void {
   const totalMs = reports.reduce((a, r) => a + r.ms, 0);
   const rtMs = stats.roundtrips.map((r) => r.ms);
@@ -874,4 +773,228 @@ function printSummary(reports: QueryReport[], stats: RemoteVfsStats): void {
     `roundtrip time: total=${sum.toFixed(1)}ms avg=${avg.toFixed(1)}ms ` +
       `min=${Math.min(...rtMs).toFixed(1)}ms max=${Math.max(...rtMs).toFixed(1)}ms`,
   );
+}
+
+// ===========================================================================
+// --test-write: opens a real, remote user database read-write (the same
+// lazy VFS --test-perf uses read-only), records a read position and adds a
+// bookmark for one existing txt row, commits, then closes everything and
+// opens an entirely independent second session against the server -- a
+// fresh worker, VFS, and SqliteDb connection, not just a local re-read --
+// to check whether that write is actually visible there.
+//
+// Built to reproduce (and get detailed diagnostics on) "recent txt/
+// bookmarks not saved across sessions": every page read/write/commit logs
+// a content fingerprint (remoteVfs.ts's fingerprint()) to both stdout and
+// --log-file, so a page's content at write time can be compared byte-for-
+// byte against what the independent second session's read of that same
+// page number returns.
+// ===========================================================================
+
+const TEST_WRITE_BOOKMARK_LINE = 1;
+
+export interface TestWriteOptions {
+  credsPath: string;
+  logFilePath: string;
+  verbose: boolean;
+}
+
+interface Written {
+  txtId: number;
+  lastPartNum: number;
+  lastAccessed: number;
+}
+
+interface ReadBack {
+  lastPartNum: number | null;
+  lastAccessed: number | null;
+  bookmarkFound: boolean;
+}
+
+export interface TestWriteResult {
+  written: Written;
+  readBack: ReadBack;
+  positionMatches: boolean;
+  bookmarkMatches: boolean;
+}
+
+interface Session {
+  client: RqliteHttpClient;
+  targetDbId: string | undefined;
+  bridge: RemotePageBridge;
+  vfs: RemoteVfsHandle;
+  db: SqliteDb;
+}
+
+export class TestWriteCommand extends Command<TestWriteOptions> {
+  async run(): Promise<TestWriteResult> {
+    writeFileSync(this.opts.logFilePath, ""); // fresh log file per run
+    const creds = loadPerfCreds(this.opts.credsPath);
+    this.progress(`Loaded creds from ${this.opts.credsPath}`);
+    this.progress(`Full detail logged to ${this.opts.logFilePath} regardless of --verbose`);
+
+    const written = await this.writeSession(creds);
+    this.progress("Opening an independent second session to read back...");
+    const readBack = await this.readBackSession(creds, written.txtId);
+    return this.report(written, readBack);
+  }
+
+  private async writeSession(creds: PerfCreds): Promise<Written> {
+    const session = await this.openSession(creds, false);
+    try {
+      const picked = this.pickTargetRow(session.db);
+      const written = this.performWrites(session.db, picked);
+      this.progress(`Committing (write session)...`);
+      const ok = await session.vfs.commit(session.client);
+      if (!ok) throw new Error("commit lost the CAS race -- rerun --test-write");
+      this.progress(`Committed at version ${session.vfs.getCurrentVersion()}`);
+      return written;
+    } finally {
+      session.db.close();
+      await session.bridge.terminate();
+    }
+  }
+
+  private async readBackSession(creds: PerfCreds, txtId: number): Promise<ReadBack> {
+    const session = await this.openSession(creds, true);
+    try {
+      return this.readBack(session.db, txtId);
+    } finally {
+      session.db.close();
+      await session.bridge.terminate();
+    }
+  }
+
+  private async openSession(creds: PerfCreds, readOnly: boolean): Promise<Session> {
+    const client = new RqliteHttpClient(creds.rqlite_url, creds.api_key);
+    const targetDbId = await resolveTargetDbId(client, creds.api_key);
+    const meta = await fetchMeta(client, targetDbId);
+    this.log(
+      `open() targetDbId=${targetDbId ?? "(none -- user-role key)"} ` +
+        `currentVersion=${meta.currentVersion} pageCount=${meta.pageCount}`,
+    );
+    const bridge = await startRemotePageWorker(
+      creds.rqlite_url,
+      creds.api_key,
+      meta.pageSize,
+      meta.currentVersion,
+      targetDbId,
+    );
+    const mod = await loadWasm();
+    const vfs = registerRemoteVfs(mod, {
+      pageSize: meta.pageSize,
+      pageCount: meta.pageCount,
+      currentVersion: meta.currentVersion,
+      backedPath: BACKED_PATH,
+      fetchPage: bridge.fetchPage,
+      targetDbId,
+      log: (message) => this.log(message),
+    });
+    const db = await SqliteDb.open(BACKED_PATH, {
+      vfsName: vfs.name,
+      rawKey: rootKeyBytes(creds),
+      readOnly,
+    });
+    return { client, targetDbId, bridge, vfs, db };
+  }
+
+  private pickTargetRow(db: SqliteDb): { txtId: number; priorLastPartNum: number | null } {
+    const stmt = db.prepare("SELECT id, last_part_num FROM txt ORDER BY id LIMIT 1;");
+    if (!stmt.step()) {
+      stmt.finalize();
+      throw new Error("no rows in txt -- nothing to test against");
+    }
+    const txtId = Number(stmt.columnInt64(0));
+    const priorLastPartNum = stmt.columnIsNull(1) ? null : Number(stmt.columnInt64(1));
+    stmt.finalize();
+    this.progress(`Picked txt id=${txtId} (prior last_part_num=${priorLastPartNum ?? "NULL"})`);
+    return { txtId, priorLastPartNum };
+  }
+
+  private performWrites(
+    db: SqliteDb,
+    picked: { txtId: number; priorLastPartNum: number | null },
+  ): Written {
+    const lastPartNum = (picked.priorLastPartNum ?? 0) + 1;
+    const lastAccessed = Date.now();
+    db.run("UPDATE txt SET last_part_num = ?, last_accessed = ? WHERE id = ?;", (s) => {
+      s.bindInt64(1, lastPartNum);
+      s.bindInt64(2, lastAccessed);
+      s.bindInt64(3, picked.txtId);
+    });
+    const changed = db.changes();
+    this.log(`setReadPosition txtId=${picked.txtId} matched ${changed} row(s)`);
+    if (changed !== 1) throw new Error(`UPDATE txt matched ${changed} row(s), expected 1`);
+    this.addTestBookmark(db, picked.txtId, lastPartNum);
+    return { txtId: picked.txtId, lastPartNum, lastAccessed };
+  }
+
+  private addTestBookmark(db: SqliteDb, txtId: number, partNum: number): void {
+    const preview = `txt --test-write diagnostic @ ${new Date().toISOString()}`;
+    db.run(
+      "INSERT OR IGNORE INTO txt_bookmarks (txt_id, part_num, line, preview, created_at) " +
+        "VALUES (?, ?, ?, ?, ?);",
+      (s) => {
+        s.bindInt64(1, txtId);
+        s.bindInt64(2, partNum);
+        s.bindInt64(3, TEST_WRITE_BOOKMARK_LINE);
+        s.bindText(4, preview);
+        s.bindInt64(5, Date.now());
+      },
+    );
+    const changed = db.changes();
+    this.log(`addBookmark txtId=${txtId} partNum=${partNum} inserted ${changed} row(s)`);
+    if (changed !== 1)
+      throw new Error(`INSERT txt_bookmarks matched ${changed} row(s), expected 1`);
+  }
+
+  private readBack(db: SqliteDb, txtId: number): ReadBack {
+    const stmt = db.prepare("SELECT last_part_num, last_accessed FROM txt WHERE id = ?;");
+    stmt.bindInt64(1, txtId);
+    const found = stmt.step();
+    const lastPartNum = found && !stmt.columnIsNull(0) ? Number(stmt.columnInt64(0)) : null;
+    const lastAccessed = found && !stmt.columnIsNull(1) ? Number(stmt.columnInt64(1)) : null;
+    stmt.finalize();
+    this.log(
+      `loadLibrary txtId=${txtId} last_part_num=${lastPartNum} last_accessed=${lastAccessed}`,
+    );
+    return { lastPartNum, lastAccessed, bookmarkFound: this.readBackBookmark(db, txtId) };
+  }
+
+  private readBackBookmark(db: SqliteDb, txtId: number): boolean {
+    const stmt = db.prepare("SELECT COUNT(*) FROM txt_bookmarks WHERE txt_id = ? AND line = ?;");
+    stmt.bindInt64(1, txtId);
+    stmt.bindInt64(2, TEST_WRITE_BOOKMARK_LINE);
+    stmt.step();
+    const count = Number(stmt.columnInt64(0));
+    stmt.finalize();
+    this.log(`loadBookmarksMap txtId=${txtId} matching bookmark(s)=${count}`);
+    return count > 0;
+  }
+
+  private report(written: Written, readBack: ReadBack): TestWriteResult {
+    const positionMatches =
+      readBack.lastPartNum === written.lastPartNum &&
+      readBack.lastAccessed === written.lastAccessed;
+    const bookmarkMatches = readBack.bookmarkFound;
+    this.progress(
+      `\n--- --test-write report (txt id=${written.txtId}) ---\n` +
+        `written:   last_part_num=${written.lastPartNum} last_accessed=${written.lastAccessed}\n` +
+        `read back: last_part_num=${readBack.lastPartNum} last_accessed=${readBack.lastAccessed}\n` +
+        `access position: ${positionMatches ? "MATCH" : "MISMATCH"}\n` +
+        `bookmark:  ${bookmarkMatches ? "FOUND" : "MISSING"}\n` +
+        `RESULT: ${positionMatches && bookmarkMatches ? "PASS" : "FAIL"}`,
+    );
+    return { written, readBack, positionMatches, bookmarkMatches };
+  }
+
+  protected override log(message: string): void {
+    appendFileSync(this.opts.logFilePath, message + "\n");
+    super.log(message);
+  }
+
+  protected override progress(message: string): void {
+    appendFileSync(this.opts.logFilePath, message + "\n");
+    super.progress(message);
+  }
 }

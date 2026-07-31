@@ -12,11 +12,13 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import http from "node:http";
 import { randomBytes } from "node:crypto";
 import { UserDb } from "./userDb.ts";
 import { loadWasm } from "./wasm.ts";
 import { SqliteDb } from "./sqlite.ts";
 import { registerRemoteVfs } from "./remoteVfs.ts";
+import { RqliteHttpClient } from "./rqliteHttpClient.ts";
 
 function countRows(db: SqliteDb, sql: string): number {
   const stmt = db.prepare(sql);
@@ -85,5 +87,112 @@ test("registerRemoteVfs: opens and decrypts a real db from lazily-fetched pages,
     assert.equal(stats.bytesFetched, fetchLog.length * pageSize);
   } finally {
     db.close();
+  }
+});
+
+/** A tiny fake page store behind a real HTTP server -- COMMIT is the only
+ * statement actually exercised over the wire (fetchPage below reads
+ * straight out of the same in-memory map, exactly like prefetch bypasses a
+ * real network round trip in the real app); this is what TestWriteCommand's
+ * commit() call round-trips against. Keyed by `${pageNo}@${version}` so a
+ * later fetch can find the latest version at or before a given snapshot,
+ * mirroring auth_perms.lua's own READ_PAGE query. */
+function startFakePageStore(): Promise<{
+  port: number;
+  pages: Map<string, Buffer>;
+  currentVersion: () => number;
+  close: () => Promise<void>;
+}> {
+  const pages = new Map<string, Buffer>();
+  let version = 1;
+  const server = http.createServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (c: Buffer) => chunks.push(c));
+    req.on("end", () => {
+      const body = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
+      const won = body.commit.old_version === version;
+      if (won) {
+        for (const p of body.commit.pages)
+          pages.set(`${p.page_no}@${body.commit.new_version}`, Buffer.from(p.data));
+        version = body.commit.new_version;
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ results: [{ rows_affected: 1 }, { rows_affected: won ? 1 : 0 }] }));
+    });
+  });
+  return new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      const port = (server.address() as { port: number }).port;
+      resolve({
+        port,
+        pages,
+        currentVersion: () => version,
+        close: () => new Promise((r) => server.close(() => r())),
+      });
+    });
+  });
+}
+
+function latestPageAtOrBefore(
+  pages: Map<string, Buffer>,
+  pageNo: number,
+  snapshot: number,
+): Uint8Array {
+  for (let v = snapshot; v >= 1; v--) {
+    const page = pages.get(`${pageNo}@${v}`);
+    if (page) return page;
+  }
+  throw new Error(`test fetchPage: no version of page ${pageNo} at or before ${snapshot}`);
+}
+
+test("registerRemoteVfs: a write committed by one session is visible to an entirely separate second session", async () => {
+  const { rootKey, pages: initialPages, pageSize, pageCount } = await buildRealUserDb();
+  const store = await startFakePageStore();
+  for (let i = 0; i < pageCount; i++) store.pages.set(`${i + 1}@1`, Buffer.from(initialPages[i]!));
+
+  try {
+    const mod = await loadWasm();
+    const write = registerRemoteVfs(mod, {
+      pageSize,
+      pageCount,
+      currentVersion: 1,
+      backedPath: "/remote-write.db",
+      fetchPage: (pageNo) => latestPageAtOrBefore(store.pages, pageNo, 1),
+    });
+    const writeDb = await SqliteDb.open("/remote-write.db", {
+      vfsName: write.name,
+      rawKey: rootKey,
+    });
+    writeDb.run(
+      "INSERT INTO txt (txt_key, name, metadata, created_at) VALUES (?, ?, NULL, ?);",
+      (s) => {
+        s.bindBlob(1, randomBytes(128));
+        s.bindText(2, "doc-three.txt");
+        s.bindInt64(3, Date.now());
+      },
+    );
+    const client = new RqliteHttpClient(`http://127.0.0.1:${store.port}`, "key");
+    const committed = await write.commit(client);
+    writeDb.close();
+
+    assert.equal(committed, true);
+    assert.equal(store.currentVersion(), 2);
+
+    const read = registerRemoteVfs(mod, {
+      pageSize,
+      pageCount,
+      currentVersion: 2,
+      backedPath: "/remote-read.db",
+      fetchPage: (pageNo) => latestPageAtOrBefore(store.pages, pageNo, 2),
+    });
+    const readDb = await SqliteDb.open("/remote-read.db", {
+      vfsName: read.name,
+      rawKey: rootKey,
+      readOnly: true,
+    });
+    assert.equal(countRows(readDb, "SELECT * FROM txt WHERE name = 'doc-three.txt';"), 1);
+    readDb.close();
+  } finally {
+    await store.close();
   }
 });

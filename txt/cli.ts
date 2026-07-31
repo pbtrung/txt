@@ -6,6 +6,7 @@ import {
   VacuumCommand,
   UpdateDbCommand,
   TestPerfCommand,
+  TestWriteCommand,
 } from "./commands.ts";
 
 const USAGE = `usage:
@@ -14,7 +15,8 @@ const USAGE = `usage:
   txt.ts --collect-garbage --db <file> [--dry-run] [--verbose]
   txt.ts --vacuum --creds <file> --db <file> [--verbose]
   txt.ts --update-db --creds <file> --db <file> [--verbose]
-  txt.ts --test-perf --creds <file> [--verbose]`;
+  txt.ts --test-perf --creds <file> [--verbose]
+  txt.ts --test-write --creds <file> [--log-file <file>] [--verbose]`;
 
 const OPTIONS = {
   migrate: { type: "boolean" },
@@ -23,12 +25,14 @@ const OPTIONS = {
   vacuum: { type: "boolean" },
   "update-db": { type: "boolean" },
   "test-perf": { type: "boolean" },
+  "test-write": { type: "boolean" },
   "in-creds": { type: "string" },
   in: { type: "string" },
   "out-creds": { type: "string" },
   out: { type: "string" },
   creds: { type: "string" },
   db: { type: "string" },
+  "log-file": { type: "string" },
   "no-delete": { type: "boolean" },
   "dry-run": { type: "boolean" },
   verbose: { type: "boolean" },
@@ -44,6 +48,7 @@ export async function main(argv: string[]): Promise<void> {
   if (values.vacuum) return runVacuum(values);
   if (values["update-db"]) return runUpdateDb(values);
   if (values["test-perf"]) return runTestPerf(values);
+  if (values["test-write"]) return runTestWrite(values);
   throw new Error(USAGE);
 }
 
@@ -100,6 +105,14 @@ async function runUpdateDb(values: Values): Promise<void> {
 async function runTestPerf(values: Values): Promise<void> {
   await new TestPerfCommand({
     credsPath: requiredArg(values, "creds"),
+    verbose: !!values.verbose,
+  }).run();
+}
+
+async function runTestWrite(values: Values): Promise<void> {
+  await new TestWriteCommand({
+    credsPath: requiredArg(values, "creds"),
+    logFilePath: values["log-file"] ?? "test-write.log",
     verbose: !!values.verbose,
   }).run();
 }

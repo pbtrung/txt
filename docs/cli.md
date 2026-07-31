@@ -118,6 +118,20 @@ The synchronous-looking `xRead` a WASM VFS callback requires is bridged to a rea
 
 Unlike `ui/`'s own lazy-VFS session (`data/dbWorker.ts`), `--test-perf` never registers an `active_readers` lease (`BEGIN_READ`/`END_READ`, `docker/auth_perms.lua`) for its own pinned snapshot -- a real gap, not a deliberate one, just not yet ported here. Since it's a short, one-shot run rather than a long-lived session, the exposure window is small, but a `--collect-garbage` sweep landing mid-run could in principle still delete a page version this command still needs.
 
+## `--test-write`
+
+Opens a real, remote user database read-write against a live deployment (the same lazy VFS `--test-perf` uses read-only, extended here with real write support ported from `ui/`'s browser client -- `txt/remoteVfs.ts`'s `dirtyPage`/`xWriteBacked`/`commit`), records a read position and adds a bookmark for one existing `txt` row, commits, then closes everything and opens an entirely independent second session against the server to check whether that write is actually visible there. Built to reproduce and diagnose "a write that appears to succeed doesn't show up in a later session" -- a real bug this uncovered once already (a stale server-side page read, still being root-caused as of this writing).
+
+```
+node txt.ts --test-write --creds creds.json [--log-file test-write.log] [--verbose]
+```
+
+- `--creds` — same shape as `--test-perf`'s (above).
+- `--log-file` — where the full diagnostic trace goes, always, regardless of `--verbose`: every page read/write/commit, each tagged with a cheap content fingerprint (`remoteVfs.ts`'s `fingerprint()`) so a page's content at write time can be compared byte-for-byte against what the independent second session's read of that same page number returns. Defaults to `test-write.log` in the current directory. `--verbose` only controls how much of that same detail also prints to stdout -- the log file always gets everything.
+- Ends by printing a `RESULT: PASS`/`FAIL` summary comparing what was written against what the second session read back.
+
+Shares `--test-perf`'s two known gaps: no `active_readers` lease registered for either session's pinned snapshot, and the worker+`Atomics`+real-HTTP round trip isn't covered by a committed test (see `--test-perf`'s own notes above) -- though `txt/remoteVfs.test.ts` does cover the write+commit+independent-second-VFS round trip itself, against a real local HTTP server standing in for the page store.
+
 ## Development
 
 ```
