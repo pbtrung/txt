@@ -77,16 +77,26 @@ export class TestPerfCommand {
 
   async run(): Promise<TestPerfResult> {
     const creds = loadPerfCreds(this.opts.credsPath);
+    this.progress(`Loaded creds from ${this.opts.credsPath} (rqlite_url=${creds.rqlite_url})`);
     const client = new RqliteHttpClient(creds.rqlite_url, creds.api_key);
-    const targetDbId = await this.resolveTargetDbId(client, creds.api_key);
-    if (targetDbId) this.log(`resolved admin's own account: target_db_id=${targetDbId}`);
 
+    this.progress("Resolving identity...");
+    const targetDbId = await this.resolveTargetDbId(client, creds.api_key);
+    this.progress(
+      targetDbId
+        ? `Resolved admin's own account: target_db_id=${targetDbId}`
+        : "Resolved as a user-role key (db_id forced server-side)",
+    );
+
+    this.progress("Fetching db_meta...");
     const meta = await this.fetchMeta(client, targetDbId);
-    this.log(
+    this.progress(
       `db_meta: version=${meta.currentVersion} pages=${meta.pageCount} page_size=${meta.pageSize}`,
     );
 
+    this.progress("Starting page-fetch worker...");
     const bridge = await this.startWorker(creds, targetDbId, meta);
+    this.progress("Worker ready");
     try {
       return await this.openAndReport(creds, meta, bridge);
     } finally {
@@ -133,20 +143,28 @@ export class TestPerfCommand {
       backedPath: BACKED_PATH,
       fetchPage: bridge.fetchPage,
     });
+    this.progress("Opening database (read-only)...");
     const db = await SqliteDb.open(BACKED_PATH, {
       vfsName: name,
       rawKey: rootKeyBytes(creds),
       readOnly: true,
     });
+    this.progress("Database opened\n");
     try {
       const reports = this.runQueries(db, stats);
-      this.printReport(reports, stats);
+      printSummary(reports, stats);
       return { reports, stats };
     } finally {
       db.close();
     }
   }
 
+  /** Always printed -- coarse stage-by-stage progress for a command that talks to a real network. */
+  private progress(msg: string): void {
+    console.log(msg);
+  }
+
+  /** Verbose-only -- finer detail (one line per real page fetch), noisy for a large database. */
   private log(msg: string): void {
     if (this.opts.verbose) console.log(msg);
   }
@@ -179,31 +197,44 @@ export class TestPerfCommand {
     });
     await waitReady(worker);
     return {
-      fetchPage: (pageNo) => fetchPageSync(worker, control, dataBuf, pageNo),
+      fetchPage: (pageNo) => this.fetchPageAndLog(worker, control, dataBuf, pageNo),
       terminate: () => worker.terminate().then(() => undefined),
     };
   }
 
-  private runQueries(db: SqliteDb, stats: RemoteVfsStats): QueryReport[] {
-    return DEFAULT_QUERIES.map((sql) => this.runOneQuery(db, stats, sql));
+  private fetchPageAndLog(
+    worker: Worker,
+    control: Int32Array,
+    dataBuf: Uint8Array,
+    pageNo: number,
+  ): Uint8Array {
+    const start = performance.now();
+    const bytes = fetchPageSync(worker, control, dataBuf, pageNo);
+    this.log(
+      `  fetched page ${pageNo} (${bytes.length}b, ${(performance.now() - start).toFixed(1)}ms)`,
+    );
+    return bytes;
   }
 
-  private runOneQuery(db: SqliteDb, stats: RemoteVfsStats, sql: string): QueryReport {
+  private runQueries(db: SqliteDb, stats: RemoteVfsStats): QueryReport[] {
+    this.progress("\n--- --test-perf report ---");
+    return DEFAULT_QUERIES.map((sql, i) => this.runOneQuery(db, stats, sql, i));
+  }
+
+  private runOneQuery(
+    db: SqliteDb,
+    stats: RemoteVfsStats,
+    sql: string,
+    index: number,
+  ): QueryReport {
+    this.progress(`[${index + 1}/${DEFAULT_QUERIES.length}] ${sql}`);
     const before = stats.roundtrips.length;
     const start = performance.now();
     const rows = execSelect(db, sql);
     const ms = performance.now() - start;
-    return { sql, rows, ms, roundtrips: stats.roundtrips.length - before };
-  }
-
-  private printReport(reports: QueryReport[], stats: RemoteVfsStats): void {
-    console.log("\n--- --test-perf report ---");
-    for (const r of reports) {
-      console.log(
-        `${r.sql}\n  rows=${r.rows} roundtrips=${r.roundtrips} time=${r.ms.toFixed(1)}ms`,
-      );
-    }
-    printSummary(reports, stats);
+    const report = { sql, rows, ms, roundtrips: stats.roundtrips.length - before };
+    this.progress(`  rows=${report.rows} roundtrips=${report.roundtrips} time=${ms.toFixed(1)}ms`);
+    return report;
   }
 }
 
