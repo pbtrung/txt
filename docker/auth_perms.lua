@@ -9,19 +9,18 @@
 -- server-side so it is never trusted from the client.
 --
 -- Scope is deliberately narrow for ordinary users -- READ_PAGE, GET_META,
--- and COMMIT only, all three hard-forced to db_id = caller's own user_id, so
--- a user can never read or write another tenant's rows. Admins get that same
--- small set of statements against any tenant (via target_db_id) plus a few
--- cross-tenant-by-design ones (LIST_USERS, REVOKE_KEY, FORCE_GC,
--- INSPECT_META), plus RAW_QUERY: literal, unrestricted SQL text executed
--- as-is, no forced db_id, no template. RAW_QUERY's trust boundary is the
--- admin role itself, not this file -- it exists because "admin can do any
--- query" has no safe way to auto-scope arbitrary SQL text to one tenant, so
--- it isn't offered to ordinary users at all. It does not (yet) manage
--- active_readers snapshot leases, and there's no audit_log table in
--- docs/data_model.md, so admin actions (including RAW_QUERY) aren't logged
--- to the database here -- both would need a schema addition first, not a
--- silent invention in this file.
+-- BEGIN_READ, END_READ, and COMMIT only, all five hard-forced to
+-- db_id = caller's own user_id, so a user can never read or write another
+-- tenant's rows. Admins get that same small set of statements against any
+-- tenant (via target_db_id) plus a few cross-tenant-by-design ones
+-- (LIST_USERS, REVOKE_KEY, FORCE_GC, INSPECT_META), plus RAW_QUERY: literal,
+-- unrestricted SQL text executed as-is, no forced db_id, no template.
+-- RAW_QUERY's trust boundary is the admin role itself, not this file -- it
+-- exists because "admin can do any query" has no safe way to auto-scope
+-- arbitrary SQL text to one tenant, so it isn't offered to ordinary users at
+-- all. There's no audit_log table in docs/data_model.md, so admin actions
+-- (including RAW_QUERY) aren't logged to the database here -- that would
+-- need a schema addition first, not a silent invention in this file.
 
 local cjson = require "cjson"
 local digest = require "resty.openssl.digest"
@@ -53,6 +52,35 @@ local USER_STATEMENTS = {
     query = [[
       SELECT current_version, page_count, page_size FROM db_meta WHERE db_id=:db_id
     ]],
+  },
+  -- Registers (or renews, via upsert on the primary key) this reader's own
+  -- pinned snapshot -- docs/data_model.md's active_readers, "what a real
+  -- read transaction's BEGIN would do". Without this, GC's watermark
+  -- (gcWatermark() in txt/rqliteDb.ts) sees no active readers at all and
+  -- falls back to current_version, meaning it can delete every page
+  -- version below the *latest* one -- exactly the page-not-found bug this
+  -- statement exists to prevent for any client with a long-lived session
+  -- pinned to an older snapshot (ui/'s dbWorker.ts renews this
+  -- periodically and after every commit). reader_id/snapshot_version/
+  -- lease_expires_at all come from the client -- trusted the same way
+  -- READ_PAGE's page_no/snapshot and COMMIT's old_version/new_version/
+  -- page_count already are elsewhere in this file: db_id scoping means a
+  -- buggy or malicious value can only ever affect the caller's own
+  -- account, never another tenant's.
+  BEGIN_READ = {
+    query = [[
+      INSERT INTO active_readers (db_id, reader_id, snapshot_version, lease_expires_at)
+      VALUES (:db_id, :reader_id, :snapshot_version, :lease_expires_at)
+      ON CONFLICT (db_id, reader_id) DO UPDATE SET
+        snapshot_version=excluded.snapshot_version, lease_expires_at=excluded.lease_expires_at
+    ]],
+  },
+  -- Best-effort early release on a clean close()/lock() -- not required for
+  -- correctness (lease_expires_at already bounds how long a crashed/closed-
+  -- without-calling-this client can block GC), just lets GC reclaim sooner
+  -- than waiting out the lease.
+  END_READ = {
+    query = "DELETE FROM active_readers WHERE db_id=:db_id AND reader_id=:reader_id",
   },
 }
 

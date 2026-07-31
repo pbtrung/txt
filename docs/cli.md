@@ -116,6 +116,8 @@ node txt.ts --test-perf --creds creds.json [--verbose]
 
 The synchronous-looking `xRead` a WASM VFS callback requires is bridged to a real async HTTP fetch via a worker thread + `SharedArrayBuffer`/`Atomics.wait` (`txt/remotePageWorker.ts`, `txt/remoteVfs.ts`) -- the main thread blocks on `Atomics.wait` while the worker does the actual network round trip and wakes it back up, rather than requiring a rebuild of the vendored `sqlcipher.js`/`.wasm` bundle with Asyncify support.
 
+Unlike `ui/`'s own lazy-VFS session (`data/dbWorker.ts`), `--test-perf` never registers an `active_readers` lease (`BEGIN_READ`/`END_READ`, `docker/auth_perms.lua`) for its own pinned snapshot -- a real gap, not a deliberate one, just not yet ported here. Since it's a short, one-shot run rather than a long-lived session, the exposure window is small, but a `--collect-garbage` sweep landing mid-run could in principle still delete a page version this command still needs.
+
 ## Development
 
 ```

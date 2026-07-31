@@ -125,14 +125,20 @@ function mockBackend(
     }
     throw new Error(`mockBackend: unexpected query ${statementId}`);
   });
+  const execute = vi.fn(async (statementId: string) => {
+    if (statementId === "BEGIN_READ" || statementId === "END_READ") {
+      return [{ rows_affected: 1 }];
+    }
+    throw new Error(`mockBackend: unexpected execute ${statementId}`);
+  });
   vi.mocked(RqliteHttpClient).mockImplementation(function (this: unknown) {
-    return { query, commit } as unknown as RqliteHttpClient;
+    return { query, execute, commit } as unknown as RqliteHttpClient;
   } as unknown as typeof RqliteHttpClient);
   const terminate = vi.fn();
   const fetchPage = vi.fn((pageNo: number) => fixture.pages[pageNo - 1]!);
   const updateSnapshot = vi.fn();
   vi.mocked(startRemotePageWorker).mockResolvedValue({ fetchPage, updateSnapshot, terminate });
-  return { commit, terminate, query, fetchPage, updateSnapshot };
+  return { commit, terminate, query, execute, fetchPage, updateSnapshot };
 }
 
 async function openWith(fixture: DbFixture, opts?: { commitOk?: boolean }) {
@@ -169,6 +175,51 @@ describe("dbWorker", () => {
 
     const bookmarksMap = dbWorker.loadBookmarksMapHandler();
     expect(bookmarksMap.size).toBe(0);
+  });
+
+  it("open() registers an active_readers lease via BEGIN_READ, pinned to the opened snapshot", async () => {
+    const fixture = await buildVaultDb();
+    const backend = await openWith(fixture); // mockBackend defaults currentVersion to 1
+
+    expect(backend.execute).toHaveBeenCalledWith(
+      "BEGIN_READ",
+      [
+        expect.objectContaining({
+          reader_id: expect.any(String),
+          snapshot_version: 1,
+          lease_expires_at: expect.any(Number),
+        }),
+      ],
+      {},
+    );
+  });
+
+  it("commitOrThrow renews the reader lease to the just-committed version", async () => {
+    const fixture = await buildVaultDb();
+    const backend = await openWith(fixture);
+    backend.execute.mockClear(); // drop open()'s own initial BEGIN_READ call
+
+    await dbWorker.recordReadPosition(1, { lastPartNum: 3, lastAccessedMs: 5000 });
+
+    expect(backend.execute).toHaveBeenCalledWith(
+      "BEGIN_READ",
+      [expect.objectContaining({ snapshot_version: 2 })], // old_version 1 -> new_version 2
+      {},
+    );
+  });
+
+  it("close() releases the reader lease via END_READ", async () => {
+    const fixture = await buildVaultDb();
+    const backend = await openWith(fixture);
+    backend.execute.mockClear();
+
+    await dbWorker.close();
+
+    expect(backend.execute).toHaveBeenCalledWith(
+      "END_READ",
+      [{ reader_id: expect.any(String) }],
+      {},
+    );
   });
 
   it("methods throw 'vault is locked' before open()", async () => {

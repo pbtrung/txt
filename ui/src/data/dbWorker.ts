@@ -61,6 +61,49 @@ let vfs: RemoteVfsHandle | null = null;
 let rqliteClient: RqliteHttpClient | null = null;
 let pageWorker: RemotePageBridge | null = null;
 let storedCreds: OpenCreds | null = null;
+let targetDbId: string | undefined;
+let readerId: string | null = null;
+let renewReaderTimer: ReturnType<typeof setInterval> | null = null;
+
+// How long a registered reader lease (docs/data_model.md's active_readers)
+// stays valid without renewal, and how often it's renewed while a session
+// is open. Without this lease, GC's watermark computation (txt/rqliteDb.ts's
+// gcWatermark) sees no active readers at all for this account and falls
+// back to current_version -- meaning it can delete every page version
+// below the *latest* one, breaking a long-lived session still pinned to an
+// older snapshot ("page N not found at or before snapshot M"). Renewed at
+// half the lease duration so one missed renewal (a network hiccup) doesn't
+// let the lease lapse.
+const READER_LEASE_MS = 5 * 60 * 1000;
+const READER_RENEW_INTERVAL_MS = READER_LEASE_MS / 2;
+
+/** Registers or renews (upsert on the primary key, see auth_perms.lua's
+ * BEGIN_READ) this session's own active_readers row, pinned to
+ * snapshotVersion. Errors are swallowed -- a missed renewal just means the
+ * lease lapses a bit early next GC sweep, not a session-ending failure;
+ * the next successful renewal (or the next commit) re-establishes it. */
+async function beginRead(
+  client: RqliteHttpClient,
+  id: string,
+  snapshotVersion: number,
+): Promise<void> {
+  const extra = targetDbId !== undefined ? { target_db_id: targetDbId } : {};
+  try {
+    await client.execute(
+      "BEGIN_READ",
+      [
+        {
+          reader_id: id,
+          snapshot_version: snapshotVersion,
+          lease_expires_at: Date.now() + READER_LEASE_MS,
+        },
+      ],
+      extra,
+    );
+  } catch (err) {
+    verbose("dbWorker: BEGIN_READ failed (will retry on next renewal/commit)", err);
+  }
+}
 
 function requireOpen(): { db: SqliteDb; vfs: RemoteVfsHandle; rqliteClient: RqliteHttpClient } {
   if (!db || !vfs || !rqliteClient) throw new Error("vault is locked");
@@ -141,7 +184,7 @@ export async function open(creds: OpenCreds): Promise<void> {
   // "self" tenant and needs target_db_id named explicitly on every
   // statement (docker/auth_perms.lua). undefined for a genuine user-role
   // key, which the server forces to its own db_id regardless.
-  const targetDbId = await resolveTargetDbId(rqliteClient, creds.apiKey);
+  targetDbId = await resolveTargetDbId(rqliteClient, creds.apiKey);
   const meta = await fetchMeta(rqliteClient, targetDbId);
   pageWorker = await startRemotePageWorker(
     creds.rqliteUrl,
@@ -170,6 +213,19 @@ export async function open(creds: OpenCreds): Promise<void> {
   );
   vfs.primeCache(prefetched);
   db = await SqliteDb.open(backedPath, { vfsName: vfs.name, rawKey: creds.userRootKey });
+
+  readerId = crypto.randomUUID();
+  await beginRead(rqliteClient, readerId, meta.currentVersion);
+  renewReaderTimer = setInterval(() => void renewReader(), READER_RENEW_INTERVAL_MS);
+}
+
+/** Renews this session's own reader lease at its own latest known snapshot
+ * -- called periodically (renewReaderTimer) and right after every commit,
+ * so both the lease's expiry and its pinned snapshot_version stay current
+ * without waiting for the next periodic tick. */
+async function renewReader(): Promise<void> {
+  if (!rqliteClient || !vfs || !readerId) return;
+  await beginRead(rqliteClient, readerId, vfs.getCurrentVersion());
 }
 
 export async function refresh(): Promise<void> {
@@ -178,6 +234,17 @@ export async function refresh(): Promise<void> {
 }
 
 export async function close(): Promise<void> {
+  if (renewReaderTimer) clearInterval(renewReaderTimer);
+  renewReaderTimer = null;
+  if (rqliteClient && readerId) {
+    const extra = targetDbId !== undefined ? { target_db_id: targetDbId } : {};
+    try {
+      await rqliteClient.execute("END_READ", [{ reader_id: readerId }], extra);
+    } catch (err) {
+      verbose("dbWorker: END_READ failed (lease will just expire on its own)", err);
+    }
+  }
+  readerId = null;
   pageWorker?.terminate();
   db?.close();
   db = null;
@@ -189,11 +256,12 @@ export async function close(): Promise<void> {
 /** Flushes dirty pages via one atomic COMMIT. Throws if another writer's
  * commit won the CAS race first -- see remoteVfs.ts's own doc comment on
  * RemoteVfsHandle.commit for why this isn't silently retried. Advances
- * pageWorker's pinned snapshot afterward (RemotePageBridge.updateSnapshot)
- * -- without that, a later live fetch (a cache miss, or a page evicted
- * from the LRU cache since) for a page only written by this or an earlier
- * commit this session would come back "not found" against the stale
- * snapshot pageWorker started with at open() time. */
+ * both pageWorker's pinned snapshot (RemotePageBridge.updateSnapshot) and
+ * this session's own active_readers lease (renewReader) to the just-
+ * committed version afterward -- without that, a later live fetch (a cache
+ * miss, or a page evicted from the LRU cache since) for a page only
+ * written by this or an earlier commit this session would come back "not
+ * found" against the stale snapshot/lease pinned at open() time. */
 export async function commitOrThrow(): Promise<void> {
   const { vfs, rqliteClient } = requireOpen();
   const ok = await vfs.commit(rqliteClient);
@@ -201,6 +269,7 @@ export async function commitOrThrow(): Promise<void> {
     throw new Error("Another session updated this vault. Please reload and try again.");
   }
   pageWorker?.updateSnapshot(vfs.getCurrentVersion());
+  await renewReader();
 }
 
 export function fetchTxtKey(txtId: number): Uint8Array {
