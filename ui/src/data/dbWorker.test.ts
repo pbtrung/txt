@@ -9,6 +9,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { randomBytes } from "node:crypto";
 
+import { bytesToBase64 } from "../crypto/bytes";
 import { SqliteDb } from "./sqliteDb";
 import { loadWasm } from "./wasmLoader";
 
@@ -102,7 +103,7 @@ function mockBackend(
 ) {
   const currentVersion = opts.currentVersion ?? 1;
   const commit = vi.fn().mockResolvedValue(opts.commitOk ?? true);
-  const query = vi.fn(async (statementId: string) => {
+  const query = vi.fn(async (statementId: string, batch: { page_no: number }[]) => {
     if (statementId === "RAW_QUERY") {
       // Mirrors auth_perms.lua: RAW_QUERY is admin-only, so a non-admin key
       // fails here the same way any unrecognized statementId would --
@@ -113,17 +114,24 @@ function mockBackend(
     if (statementId === "GET_META") {
       return [{ values: [[currentVersion, fixture.pageCount, fixture.pageSize]] }];
     }
+    if (statementId === "READ_PAGE") {
+      // open()'s own batched prefetchPages() call, not startRemotePageWorker
+      // (mocked separately below) -- mirrors rqlite's real batch semantics,
+      // one result entry per batch item, in order.
+      return batch.map(({ page_no }) => {
+        const page = fixture.pages[page_no - 1];
+        return page ? { values: [[bytesToBase64(page)]] } : { values: [] };
+      });
+    }
     throw new Error(`mockBackend: unexpected query ${statementId}`);
   });
   vi.mocked(RqliteHttpClient).mockImplementation(function (this: unknown) {
     return { query, commit } as unknown as RqliteHttpClient;
   } as unknown as typeof RqliteHttpClient);
   const terminate = vi.fn();
-  vi.mocked(startRemotePageWorker).mockResolvedValue({
-    fetchPage: (pageNo: number) => fixture.pages[pageNo - 1]!,
-    terminate,
-  });
-  return { commit, terminate, query };
+  const fetchPage = vi.fn((pageNo: number) => fixture.pages[pageNo - 1]!);
+  vi.mocked(startRemotePageWorker).mockResolvedValue({ fetchPage, terminate });
+  return { commit, terminate, query, fetchPage };
 }
 
 async function openWith(fixture: DbFixture, opts?: { commitOk?: boolean }) {
@@ -164,6 +172,27 @@ describe("dbWorker", () => {
 
   it("methods throw 'vault is locked' before open()", async () => {
     expect(() => dbWorker.partCount(1)).toThrow("vault is locked");
+  });
+
+  it("open() prefetches every page via batched READ_PAGE, so loadLibrary()/getTxtKey() never hit the per-page fetch path", async () => {
+    const fixture = await buildVaultDb();
+    const backend = await openWith(fixture);
+
+    // The prefetch itself goes through the mocked RqliteHttpClient's query()
+    // (READ_PAGE, batched) -- not startRemotePageWorker's fetchPage, which
+    // stands in for the one-page-at-a-time round trip this whole feature
+    // exists to avoid.
+    expect(backend.query).toHaveBeenCalledWith(
+      "READ_PAGE",
+      expect.arrayContaining([expect.objectContaining({ page_no: 1 })]),
+      {},
+    );
+
+    await dbWorker.loadLibraryHandler();
+    dbWorker.loadBookmarksMapHandler();
+    dbWorker.fetchTxtKey(1);
+
+    expect(backend.fetchPage).not.toHaveBeenCalled();
   });
 
   it("getTxtKey/fetchTxtKey reads txt.txt_key from the real db", async () => {

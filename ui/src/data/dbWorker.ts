@@ -22,13 +22,19 @@
 // VaultContext.tsx's git history) -- queuing every call through one promise
 // chain keeps each write+commit atomic relative to the next.
 
+import { verbose } from "../log";
 import * as access from "./access";
 import * as bookmarks from "./bookmarks";
 import { loadLibrary } from "./library";
 import * as owner from "./owner";
 import { parseR2Config, type R2Config } from "./r2Config";
-import { RqliteHttpClient, resolveTargetDbId, resultRows } from "./rqliteHttpClient";
-import { registerRemoteVfs, type RemoteVfsHandle } from "./remoteVfs";
+import {
+  decodeBlobColumn,
+  RqliteHttpClient,
+  resolveTargetDbId,
+  resultRows,
+} from "./rqliteHttpClient";
+import { registerRemoteVfs, MAX_CACHED_PAGES, type RemoteVfsHandle } from "./remoteVfs";
 import { startRemotePageWorker, type RemotePageBridge } from "./remotePageClient";
 import { SqliteDb } from "./sqliteDb";
 import { loadWasm } from "./wasmLoader";
@@ -61,6 +67,55 @@ async function fetchMeta(client: RqliteHttpClient, targetDbId?: string): Promise
   const row = resultRows(await client.query("GET_META", [{}], extra))[0];
   if (!row) throw new Error("this account hasn't committed a database yet");
   return { currentVersion: Number(row[0]), pageCount: Number(row[1]), pageSize: Number(row[2]) };
+}
+
+// How many page_no's go into one HTTP round trip: rqlite's own statement
+// batching (docs/data_model.md's commit pattern already relies on the same
+// mechanism for COMMIT) lets one POST carry many independent SELECTs and
+// execute them together -- READ_PAGE just never used more than a single-
+// entry batch until now. 200 keeps each individual request's response body
+// modest (200 pages * ~4KB page = ~800KB) while still turning what would
+// otherwise be hundreds of one-page-at-a-time round trips (each paying a
+// full network RTT, see remotePageWorker.ts's per-page logging) into a
+// handful of batches.
+const PREFETCH_BATCH_SIZE = 200;
+
+/** Eagerly fetches this account's pages in a handful of batched round trips
+ * right after open() learns the page count, instead of leaving every one
+ * of them to be discovered and fetched individually later by SQLite's own
+ * page-at-a-time xRead callback -- that's what made the initial "Loading
+ * your books..." unlock phase slow (loadLibrary()/loadBookmarksMap()
+ * touch a lot of small, scattered pages on a first open, each one its own
+ * round trip through remotePageClient.ts's Atomics bridge). Capped at
+ * MAX_CACHED_PAGES: prefetching more than the cache can hold would just
+ * evict some of them before SQLite ever reads them. Returns pages keyed
+ * by page number, fed into vfs.primeCache() by the caller. */
+async function prefetchPages(
+  client: RqliteHttpClient,
+  pageCount: number,
+  snapshot: number,
+  targetDbId: string | undefined,
+): Promise<Map<number, Uint8Array>> {
+  const total = Math.min(pageCount, MAX_CACHED_PAGES);
+  const extra = targetDbId !== undefined ? { target_db_id: targetDbId } : {};
+  const pages = new Map<number, Uint8Array>();
+  const start = performance.now();
+  for (let from = 1; from <= total; from += PREFETCH_BATCH_SIZE) {
+    const to = Math.min(from + PREFETCH_BATCH_SIZE - 1, total);
+    const batch = [];
+    for (let pageNo = from; pageNo <= to; pageNo++) batch.push({ page_no: pageNo, snapshot });
+    const results = await client.query("READ_PAGE", batch, extra);
+    for (let i = 0; i < batch.length; i++) {
+      const row = resultRows(results, i)[0];
+      if (row) pages.set(from + i, decodeBlobColumn(row[0]));
+    }
+    verbose(`dbWorker: prefetched pages ${from}-${to} of ${total}`);
+  }
+  verbose(
+    `dbWorker: prefetch done -- ${pages.size} page(s) in ` +
+      `${Math.ceil(total / PREFETCH_BATCH_SIZE)} round trip(s), ${(performance.now() - start).toFixed(1)}ms`,
+  );
+  return pages;
 }
 
 /** Opens (or re-opens, for refresh) this account's SQLCipher db against a
@@ -98,6 +153,13 @@ export async function open(creds: OpenCreds): Promise<void> {
     fetchPage: pageWorker.fetchPage,
     targetDbId,
   });
+  const prefetched = await prefetchPages(
+    rqliteClient,
+    meta.pageCount,
+    meta.currentVersion,
+    targetDbId,
+  );
+  vfs.primeCache(prefetched);
   db = await SqliteDb.open(backedPath, { vfsName: vfs.name, rawKey: creds.userRootKey });
 }
 

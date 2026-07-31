@@ -93,6 +93,10 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+function elapsed(start: number): string {
+  return `${(performance.now() - start).toFixed(1)}ms`;
+}
+
 export function VaultProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<VaultStatus>("locked");
   const [session, setSession] = useState<VaultSession | null>(null);
@@ -120,17 +124,30 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       setProgress(phaseProgress(UNLOCK_PHASES, 1));
       verbose("unlock: opening vault against the lazy remote VFS (in a worker)");
       client = new DbWorkerClient();
+      const openStart = performance.now();
       await client.open({
         rqliteUrl: creds.rqliteUrl,
         apiKey: creds.apiKey,
         userRootKey: creds.userRootKey,
       });
+      verbose(`unlock: open() done in ${elapsed(openStart)}`);
 
+      // Each of these can trigger a burst of individual READ_PAGE round
+      // trips (remotePageWorker.ts logs each one) if their rows/indexes
+      // aren't already resident in remoteVfs.ts's page cache -- timing them
+      // separately here shows which one actually dominates a slow unlock,
+      // rather than only seeing this whole phase's total.
       setProgress(phaseProgress(UNLOCK_PHASES, 2));
       verbose("unlock: loading library");
+      const libraryStart = performance.now();
       const { metadataById, accessMap: initialAccessMap } = await client.loadLibrary();
+      verbose(`unlock: loadLibrary() done in ${elapsed(libraryStart)}`);
+      const bookmarksStart = performance.now();
       const initialBookmarksMap = await client.loadBookmarksMap();
+      verbose(`unlock: loadBookmarksMap() done in ${elapsed(bookmarksStart)}`);
+      const r2ConfigStart = performance.now();
       const r2Config = await client.getR2Config();
+      verbose(`unlock: getR2Config() done in ${elapsed(r2ConfigStart)}`);
 
       txtKeyCache.current = new Map();
       setAccessMap(initialAccessMap);

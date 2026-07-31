@@ -30,8 +30,12 @@ const SQLITE_ACCESS_EXISTS = 0;
 // page size) is a small vault-wide budget, not per-document; the cache is
 // naturally reset to empty on refresh() anyway (state/VaultContext.tsx's
 // refresh path re-opens against a brand new registerRemoteVfs() call, a
-// fresh closure with its own fresh cache, not this one reused).
-const MAX_CACHED_PAGES = 1000;
+// fresh closure with its own fresh cache, not this one reused). Exported
+// so dbWorker.ts's open() can cap its own batched prefetch (see
+// primeCache below) at the same size -- fetching more pages up front than
+// the cache can hold would just evict some of them before SQLite ever
+// gets to read them.
+export const MAX_CACHED_PAGES = 1000;
 
 export interface RemoteVfsOptions {
   name?: string;
@@ -65,6 +69,11 @@ export interface RemoteVfsHandle {
    * new server version and redo its writes, per the CAS retry rule in
    * docs/data_model.md. */
   commit(client: RqliteHttpClient): Promise<boolean>;
+  /** Seeds the page cache with pages already fetched via a batched request
+   * (dbWorker.ts's open()) -- so SQLite's own later page-at-a-time xRead
+   * calls find them already resident instead of each triggering its own
+   * individual network round trip. */
+  primeCache(pages: Map<number, Uint8Array>): void;
 }
 
 interface OpenFile {
@@ -408,5 +417,9 @@ export function registerRemoteVfs(mod: WasmModule, opts: RemoteVfsOptions): Remo
     return true;
   }
 
-  return { name, stats, isDirty: () => dirtyPages.size > 0, commit };
+  function primeCache(pages: Map<number, Uint8Array>): void {
+    for (const [pageNo, bytes] of pages) cacheSet(pageNo, bytes);
+  }
+
+  return { name, stats, isDirty: () => dirtyPages.size > 0, commit, primeCache };
 }
