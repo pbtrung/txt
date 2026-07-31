@@ -8,12 +8,18 @@
 -- batch} envelope into rqlite's own statement list, injecting db_id
 -- server-side so it is never trusted from the client.
 --
--- Scope is deliberately narrow, matching what's actually in the current
--- schema: READ_PAGE + COMMIT for ordinary users, plus a small set of
--- cross-tenant admin statements. It does not (yet) manage active_readers
--- snapshot leases, and there's no audit_log table in docs/data_model.md, so
--- admin actions aren't logged to the database here -- both would need a
--- schema addition first, not a silent invention in this file.
+-- Scope is deliberately narrow for ordinary users -- READ_PAGE + COMMIT
+-- only, both hard-forced to db_id = caller's own user_id, so a user can never
+-- read or write another tenant's rows. Admins get that same small set of
+-- cross-tenant statements (LIST_USERS, REVOKE_KEY, FORCE_GC, INSPECT_META)
+-- plus RAW_QUERY: literal, unrestricted SQL text executed as-is, no forced
+-- db_id, no template. RAW_QUERY's trust boundary is the admin role itself,
+-- not this file -- it exists because "admin can do any query" has no safe
+-- way to auto-scope arbitrary SQL text to one tenant, so it isn't offered to
+-- ordinary users at all. It does not (yet) manage active_readers snapshot
+-- leases, and there's no audit_log table in docs/data_model.md, so admin
+-- actions (including RAW_QUERY) aren't logged to the database here -- both
+-- would need a schema addition first, not a silent invention in this file.
 
 local cjson = require "cjson"
 local digest = require "resty.openssl.digest"
@@ -217,6 +223,31 @@ local function build_commit_statements(db_id, commit)
   }
 end
 
+-- Admin-only escape hatch: the SQL text comes from the client verbatim, with
+-- no forced db_id and no template, unlike every other statement in this
+-- file. Logged at WARN (not the INFO everything else uses) so it survives
+-- nginx.conf's default `error_log ... warn` level -- this is the one place
+-- worth an audit trail even without a dedicated audit_log table.
+local function build_raw_statements(body)
+  local statements = {}
+  for _, item in ipairs(require_batch(body)) do
+    if type(item.sql) ~= "string" or item.sql == "" then
+      fail(400, "RAW_QUERY batch items require a non-empty sql string")
+    end
+    log(ngx.WARN, "RAW_QUERY: ", item.sql)
+    if item.params ~= nil then
+      table.insert(statements, { item.sql, item.params }) -- rqlite named-params form
+    elseif item.args ~= nil then
+      local stmt = { item.sql } -- rqlite positional-params form: {sql, p1, p2, ...}
+      for _, a in ipairs(item.args) do table.insert(stmt, a) end
+      table.insert(statements, stmt)
+    else
+      table.insert(statements, item.sql) -- rqlite plain-string form: no params at all
+    end
+  end
+  return statements
+end
+
 local function build_user_statements(body, user_id)
   if body.statementId == "COMMIT" then
     return build_commit_statements(user_id, require_commit(body))
@@ -235,6 +266,9 @@ end
 
 -- Admin acting "as" a tenant must say which one explicitly -- no implicit self.
 local function build_admin_statements(body)
+  if body.statementId == "RAW_QUERY" then
+    return build_raw_statements(body)
+  end
   if body.statementId == "COMMIT" then
     if not body.target_db_id then fail(400, "COMMIT as admin requires target_db_id") end
     return build_commit_statements(body.target_db_id, require_commit(body))

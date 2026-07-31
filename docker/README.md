@@ -14,7 +14,7 @@ Container image for one rqlite node, fronted by OpenResty acting as the "OpenRes
 
 Runs as `access_by_lua_file` on the `location ~ ^/db/(query|execute)$` block only — see `nginx.conf` above — so it never has to handle anything other than the envelope it defines. It replaces rqlite's native request body with rqlite's own, and lets nginx's existing `proxy_pass` forward the rewritten body on unchanged; it doesn't touch the URI or the response.
 
-**Request envelope.** The client never sends raw SQL. It sends:
+**Request envelope.** An ordinary user never sends raw SQL. They send:
 
 ```json
 { "statementId": "READ_PAGE", "batch": [ { "page_no": 3, "snapshot": 42 } ] }
@@ -34,7 +34,7 @@ or, for a commit (its own shape, not a `batch`, since it's one guarded multi-row
 }
 ```
 
-Admins add one more field, `target_db_id`, to act on a tenant other than themselves — see the dispatch table below.
+Admins add one more field, `target_db_id`, to act on a tenant other than themselves — see the dispatch table below. Admins also have one statement that *is* raw SQL, `RAW_QUERY` — see below.
 
 **Auth.** `Authorization: Bearer <raw key>` is hashed the same way `api_keys.key_hash` is derived — `base64(SHA3-256(raw key))` via `resty.openssl.digest` (bundled by Alpine's `openresty` package; no separate `opm install` needed) — never the sha256/hex a stock `ngx_lua` helper would give you. The hash (never the raw key) is looked up against `api_keys JOIN users` through the internal `/internal/rqlite/db/query` location, filtered to `revoked_at IS NULL AND disabled = 0`, and the resulting `{user_id, role}` is cached in `ngx.shared.auth_cache` for 60 seconds — this is also why a revoked key can stay "valid" for up to a minute after revocation, per docs/data_model.md's own note about the auth-cache TTL.
 
@@ -49,14 +49,30 @@ Admins add one more field, `target_db_id`, to act on a tenant other than themsel
 | `REVOKE_KEY` | admin | `target_user_id` = `target_db_id`, `now` = `ngx.now()*1000` | `now` is server time, deliberately never client-supplied |
 | `FORCE_GC` | admin | `target_db_id` = `body.target_db_id` | sets `db_meta.needs_gc = 1` |
 | `INSPECT_META` | admin | `target_db_id` = `body.target_db_id` | reads one tenant's `db_meta` row |
+| `RAW_QUERY` | admin | *(none — no db_id, no template)* | literal SQL text per batch item; see below |
 
 Each admin statement's forced fields come from its own `forced_params` function rather than one field stamped onto every query — `LIST_USERS` isn't tenant-scoped at all, so it gets nothing forced.
+
+**`RAW_QUERY`** is deliberately unrestricted, unlike everything else in the dispatch table: it exists because "admin can run any query" has no safe way to auto-scope arbitrary SQL text to one tenant the way every other statement here forces `db_id`. Its trust boundary is the admin role itself, not this file — an admin key can read or write any table, any row. It's the one statement type ordinary users can never reach, at any status code other than the same `unknown statementId` `400` any other bogus `statementId` gets. Each `batch` item is `{ "sql": "<text>" }`, optionally with `"params": {...}` (named, `:name` placeholders) or `"args": [...]` (positional, `?` placeholders) — never both on the same item:
+
+```json
+{
+  "statementId": "RAW_QUERY",
+  "batch": [
+    { "sql": "SELECT user_id, role FROM users" },
+    { "sql": "SELECT * FROM db_meta WHERE db_id = :id", "params": { "id": "<user_id>" } },
+    { "sql": "UPDATE users SET disabled = ? WHERE user_id = ?", "args": [1, "<user_id>"] }
+  ]
+}
+```
+
+POST to `/db/query` for reads, `/db/execute` for writes — same as every other statement, `auth_perms.lua` doesn't care which endpoint URI it's proxied through beyond the location match. Every `RAW_QUERY` item's SQL text is logged at `WARN` (not the `INFO` everything else here uses), specifically so it survives `nginx.conf`'s default `error_log ... warn` level without any config change — the one place in this file worth an audit trail even without a dedicated `audit_log` table.
 
 **Validation.** `require_batch`/`require_commit` reject an empty/missing `batch` or `commit.pages`, and a `commit` missing `old_version`/`new_version`/`page_count`, with a clean `400` before any SQL is built — rather than letting rqlite receive `VALUES ()` or a Lua nil-index error surface as a bare `500`.
 
 **Logging.** Every rejection (`fail(status, reason)`) logs the reason via `ngx.log` — `WARN` for 4xx, `ERR` for 5xx — under the `auth_perms:` prefix, and the file also logs auth-cache hit/miss, the resolved `{role, user_id} -> statementId` for every accepted request, and each commit's `db_id`/page count/version transition at `INFO`. Never logs the raw key or, deliberately, the key hash either — only whatever it already resolved to.
 
-**Known gaps** (see the comment block at the top of the file): no `active_readers` snapshot-lease management yet (so GC's watermark calc has nothing to protect a long-running reader from), no audit logging of admin actions (there's no `audit_log` table in docs/data_model.md — adding one is a schema decision, not something to invent silently here), and `page.data`'s wire encoding (base64 or otherwise) isn't yet pinned down or decoded before being placed in the positional params array sent to rqlite.
+**Known gaps** (see the comment block at the top of the file): no `active_readers` snapshot-lease management yet (so GC's watermark calc has nothing to protect a long-running reader from), no audit logging of admin actions to the database itself (there's no `audit_log` table in docs/data_model.md — adding one is a schema decision, not something to invent silently here; `RAW_QUERY`'s `WARN`-level log line is a stopgap, not a replacement), and `page.data`'s wire encoding (base64 or otherwise) isn't yet pinned down or decoded before being placed in the positional params array sent to rqlite.
 
 ## Build & run
 
