@@ -99,7 +99,12 @@ async function buildVaultDb(
 
 function mockBackend(
   fixture: DbFixture,
-  opts: { currentVersion?: number; commitOk?: boolean; adminUserId?: string } = {},
+  opts: {
+    currentVersion?: number;
+    commitOk?: boolean;
+    adminUserId?: string;
+    reportedPageCount?: number;
+  } = {},
 ) {
   const currentVersion = opts.currentVersion ?? 1;
   const commit = vi.fn().mockResolvedValue(opts.commitOk ?? true);
@@ -112,7 +117,14 @@ function mockBackend(
       return [{ values: [[opts.adminUserId]] }];
     }
     if (statementId === "GET_META") {
-      return [{ values: [[currentVersion, fixture.pageCount, fixture.pageSize]] }];
+      // reportedPageCount lets a test simulate a much bigger vault than the
+      // real fixture.pages array without actually building one -- READ_PAGE
+      // below just returns no row for anything past the real fixture.
+      return [
+        {
+          values: [[currentVersion, opts.reportedPageCount ?? fixture.pageCount, fixture.pageSize]],
+        },
+      ];
     }
     if (statementId === "READ_PAGE") {
       // open()'s own batched prefetchPages() call, not startRemotePageWorker
@@ -141,7 +153,10 @@ function mockBackend(
   return { commit, terminate, query, execute, fetchPage, updateSnapshot };
 }
 
-async function openWith(fixture: DbFixture, opts?: { commitOk?: boolean }) {
+async function openWith(
+  fixture: DbFixture,
+  opts?: { commitOk?: boolean; reportedPageCount?: number },
+) {
   const backend = mockBackend(fixture, opts);
   await dbWorker.open({
     rqliteUrl: "https://rqlite.example.com",
@@ -245,6 +260,22 @@ describe("dbWorker", () => {
     dbWorker.fetchTxtKey(1);
 
     expect(backend.fetchPage).not.toHaveBeenCalled();
+  });
+
+  it("caps prefetch at PREFETCH_PAGE_LIMIT even for a much bigger vault, not the full page count", async () => {
+    const fixture = await buildVaultDb();
+    // Simulates a vault far larger than MAX_CACHED_PAGES's own budget --
+    // prefetch must still stop at its own (much smaller) limit rather than
+    // scaling up with page count, which is what made a real large vault's
+    // unlock take ~80s (bandwidth-bound: a few thousand pages of page data
+    // in one batched request).
+    const backend = await openWith(fixture, { reportedPageCount: 10_000 });
+
+    const requestedPageNos = backend.query.mock.calls
+      .filter(([statementId]) => statementId === "READ_PAGE")
+      .flatMap(([, batch]) => (batch as { page_no: number }[]).map((b) => b.page_no));
+    expect(requestedPageNos.length).toBeGreaterThan(0);
+    expect(Math.max(...requestedPageNos)).toBeLessThanOrEqual(500); // PREFETCH_PAGE_LIMIT
   });
 
   it("getTxtKey/fetchTxtKey reads txt.txt_key from the real db", async () => {

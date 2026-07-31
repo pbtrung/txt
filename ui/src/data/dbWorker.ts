@@ -118,16 +118,30 @@ async function fetchMeta(client: RqliteHttpClient, targetDbId?: string): Promise
 }
 
 // Target round trip count for prefetchPages below -- not a fixed page
-// count per request, so a bigger MAX_CACHED_PAGES cap doesn't silently
-// turn back into dozens of round trips. A large batch (~800 page_no's, one
-// request) previously got HTTP 400 from auth_perms.lua once MAX_CACHED_PAGES
-// grew to 4000, which briefly got worked around by capping the per-request
-// batch size -- but the real cause was docker/nginx.conf's
-// client_body_buffer_size never being set, spilling any body past its tiny
-// (8k/16k) default to a temp file that ngx.req.get_body_data() can't read
-// (see nginx.conf's own comment). Fixed there instead, so batch size is
-// unbounded again here.
+// count per request, so a bigger prefetch total doesn't silently turn back
+// into dozens of round trips. A large batch (~800 page_no's, one request)
+// previously got HTTP 400 from auth_perms.lua once the total grew large,
+// which briefly got worked around by capping the per-request batch size --
+// but the real cause was docker/nginx.conf's client_body_buffer_size never
+// being set, spilling any body past its tiny (8k/16k) default to a temp
+// file that ngx.req.get_body_data() can't read (see nginx.conf's own
+// comment). Fixed there instead, so batch size is unbounded again here.
 const PREFETCH_ROUND_TRIPS = 5;
+
+// Deliberately much smaller than MAX_CACHED_PAGES: prefetching is meant to
+// cover the *typical* metadata working set (txt/txt_parts/txt_bookmarks/
+// r2_config, plus whatever schema/index pages back them) in a handful of
+// fast round trips, not to front-load the entire cache budget -- a vault
+// with many thousands of pages (mostly other documents' own content, not
+// needed until that specific document is opened) turned "prefetch
+// everything up to the cache size" into a single ~80-second stall on every
+// unlock once MAX_CACHED_PAGES grew large, almost entirely bandwidth-bound
+// (a few thousand pages is several MB of page data). Pages beyond this
+// limit still fall back correctly to an individual live fetch the moment
+// SQLite's own xRead callback actually needs them (remotePageWorker.ts),
+// same as any page evicted from the LRU cache -- this only trades a little
+// of that later per-page latency for a fast, bounded unlock now.
+const PREFETCH_PAGE_LIMIT = 500;
 
 /** Eagerly fetches this account's pages in a handful of batched round trips
  * right after open() learns the page count, instead of leaving every one
@@ -136,16 +150,18 @@ const PREFETCH_ROUND_TRIPS = 5;
  * your books..." unlock phase slow (loadLibrary()/loadBookmarksMap()
  * touch a lot of small, scattered pages on a first open, each one its own
  * round trip through remotePageClient.ts's Atomics bridge). Capped at
- * MAX_CACHED_PAGES: prefetching more than the cache can hold would just
- * evict some of them before SQLite ever reads them. Returns pages keyed
- * by page number, fed into vfs.primeCache() by the caller. */
+ * PREFETCH_PAGE_LIMIT (see its own comment), not the (much larger)
+ * MAX_CACHED_PAGES -- prefetching more than that limit just isn't worth
+ * the added upfront latency for pages a given session may never touch.
+ * Returns pages keyed by page number, fed into vfs.primeCache() by the
+ * caller. */
 async function prefetchPages(
   client: RqliteHttpClient,
   pageCount: number,
   snapshot: number,
   targetDbId: string | undefined,
 ): Promise<Map<number, Uint8Array>> {
-  const total = Math.min(pageCount, MAX_CACHED_PAGES);
+  const total = Math.min(pageCount, PREFETCH_PAGE_LIMIT, MAX_CACHED_PAGES);
   const batchSize = Math.max(1, Math.ceil(total / PREFETCH_ROUND_TRIPS));
   const extra = targetDbId !== undefined ? { target_db_id: targetDbId } : {};
   const pages = new Map<number, Uint8Array>();
