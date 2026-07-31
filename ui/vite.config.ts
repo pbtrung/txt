@@ -8,29 +8,37 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
 const UI_DIR = dirname(fileURLToPath(import.meta.url));
+const SQLCIPHER_DIR = join(UI_DIR, "..", "sqlcipher");
 
-// ui/leancrypto/ already holds the prebuilt leancrypto.js/.wasm pair (see
-// docs/ui.md / CLAUDE.md) -- pointing publicDir at it directly serves both
-// files at /leancrypto.js and /leancrypto.wasm with no copying or build step.
+// The repo-root sqlcipher/ bundle (see CLAUDE.md) already covers everything
+// ui/leancrypto/ used to vendor separately -- the same lc_wasm_* HKDF/AEAD
+// primitives crypto/blob.ts needs, plus real SQLCipher access, in one
+// Emscripten build confirmed to support both Node and browser environments
+// (its own glue code branches on ENVIRONMENT_IS_WEB/ENVIRONMENT_IS_WORKER).
+// publicDir serves it verbatim at build time; only sqlcipher.js/.wasm are
+// actually needed in dist/ -- everything else in that directory (the Node
+// .d.ts, package.json, the js-vfs.mjs full-preload VFS this project's own
+// lazy remoteVfs.ts doesn't use, its symbols/test files) is removed from
+// dist/ by the build script's post-`vite build` cleanup step.
 
-// leancrypto.js is loaded via a dynamically-created <script src="/leancrypto.js">
-// (crypto/leancryptoLoader.ts), not a <script type=module>/<link> tag in
-// index.html -- so it never goes through build-integrity.mjs's addSri(),
-// which only tags those. Its SHA-512 is computed here at config-load time
-// and baked into the app bundle via `define`, the same technique
-// build-integrity.mjs uses to bake the SLH-DSA public key into the
-// local_index.html verifier bundle -- leancryptoLoader.ts sets it as that
-// script element's `integrity` before ever assigning `src`.
-function leancryptoJsIntegrity(): string {
-  const bytes = readFileSync(join(UI_DIR, "leancrypto", "leancrypto.js"));
+// sqlcipher.js is loaded via a dynamically-created <script src="/sqlcipher.js">
+// (data/wasmLoader.ts), not a <script type=module>/<link> tag in index.html
+// -- so it never goes through build-integrity.mjs's addSri(), which only
+// tags those. Its SHA-512 is computed here at config-load time and baked
+// into the app bundle via `define`, the same technique build-integrity.mjs
+// uses to bake the SLH-DSA public key into the local_index.html verifier
+// bundle -- wasmLoader.ts sets it as that script element's `integrity`
+// before ever assigning `src`.
+function sqlcipherJsIntegrity(): string {
+  const bytes = readFileSync(join(SQLCIPHER_DIR, "sqlcipher.js"));
   return `sha512-${createHash("sha512").update(bytes).digest("base64")}`;
 }
 
 export default defineConfig({
   plugins: [react()],
-  publicDir: "leancrypto",
+  publicDir: SQLCIPHER_DIR,
   define: {
-    __LEANCRYPTO_JS_INTEGRITY__: JSON.stringify(leancryptoJsIntegrity()),
+    __SQLCIPHER_JS_INTEGRITY__: JSON.stringify(sqlcipherJsIntegrity()),
   },
   build: {
     rollupOptions: {

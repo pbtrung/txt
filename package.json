@@ -3,14 +3,21 @@
   "version": "0.9999",
   "private": true,
   "type": "module",
+  "workspaces": [
+    "ui"
+  ],
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --test txt/*.test.ts",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "ui:dev": "npm run dev --workspace ui",
+    "ui:build": "npm run build --workspace ui",
+    "ui:test": "npm run test --workspace ui",
+    "ui:typecheck": "npm run typecheck --workspace ui"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1098.0"
+    "@aws-sdk/client-s3": "^3.1100.0"
   },
   "devDependencies": {
     "@types/node": "^26.1.2",
