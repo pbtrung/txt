@@ -69,19 +69,16 @@ async function fetchMeta(client: RqliteHttpClient, targetDbId?: string): Promise
   return { currentVersion: Number(row[0]), pageCount: Number(row[1]), pageSize: Number(row[2]) };
 }
 
-// Target round trip count for prefetchPages below, not a fixed page count
-// per request: rqlite's own statement batching (docs/data_model.md's
-// commit pattern already relies on the same mechanism for COMMIT) lets one
-// POST carry many independent SELECTs and execute them together --
-// READ_PAGE just never used more than a single-entry batch until now. A
-// fixed per-request page count would mean a bigger vault (a higher
-// MAX_CACHED_PAGES cap) silently turns back into dozens of round trips;
-// sizing the batch as total/PREFETCH_ROUND_TRIPS instead keeps this at
-// exactly that many round trips regardless of how big the prefetch total
-// is, at the cost of each individual request's response body growing with
-// it (5 round trips at today's 4000-page cap is ~800 pages per request,
-// ~3.2MB each).
+// Target round trip count for prefetchPages below -- not a fixed page
+// count per request, so a bigger MAX_CACHED_PAGES cap doesn't silently
+// turn back into dozens of round trips. But it's a target, not a
+// guarantee: PREFETCH_MAX_BATCH_SIZE below still wins when the two
+// conflict, since rqlite/auth_perms.lua rejected a real batch of ~800
+// page_no's in one request with HTTP 400 once MAX_CACHED_PAGES grew to
+// 4000 (400/PREFETCH_ROUND_TRIPS) -- 200 is the largest size confirmed
+// working in practice, not a value derived from any documented limit.
 const PREFETCH_ROUND_TRIPS = 5;
+const PREFETCH_MAX_BATCH_SIZE = 200;
 
 /** Eagerly fetches this account's pages in a handful of batched round trips
  * right after open() learns the page count, instead of leaving every one
@@ -100,7 +97,10 @@ async function prefetchPages(
   targetDbId: string | undefined,
 ): Promise<Map<number, Uint8Array>> {
   const total = Math.min(pageCount, MAX_CACHED_PAGES);
-  const batchSize = Math.max(1, Math.ceil(total / PREFETCH_ROUND_TRIPS));
+  const batchSize = Math.min(
+    Math.max(1, Math.ceil(total / PREFETCH_ROUND_TRIPS)),
+    PREFETCH_MAX_BATCH_SIZE,
+  );
   const extra = targetDbId !== undefined ? { target_db_id: targetDbId } : {};
   const pages = new Map<number, Uint8Array>();
   const start = performance.now();
