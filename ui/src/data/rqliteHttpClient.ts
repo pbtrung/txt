@@ -63,7 +63,16 @@ export class RqliteHttpClient {
       },
     };
     if (targetDbId !== undefined) body.target_db_id = targetDbId;
-    const res = await fetch(`${this.baseUrl}/db/execute`, {
+    // ?transaction: rqlite only wraps a multi-statement /db/execute request
+    // in one atomic transaction when explicitly asked -- without it, the
+    // guarded INSERT and the CAS UPDATE (auth_perms.lua's
+    // build_commit_statements) aren't guaranteed to execute as a single
+    // all-or-nothing unit, which docs/data_model.md's "commit pattern"
+    // section assumes they do. nginx.conf's `proxy_pass http://rqlite;`
+    // (no URI segment) forwards the request's query string through
+    // unchanged, so this reaches rqlite even though auth_perms.lua only
+    // rewrites the body, not the URI.
+    const res = await fetch(`${this.baseUrl}/db/execute?transaction`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${this.apiKey}` },
       body: JSON.stringify(body),
