@@ -31,7 +31,7 @@ export function UnlockScreen() {
 
   return (
     <div className="d-flex align-items-center justify-content-center vh-100">
-      <div className="text-center" style={{ maxWidth: "24rem" }}>
+      <div className="text-center position-relative" style={{ maxWidth: "24rem" }}>
         <div className="mb-4">
           <Wordmark size="lg" />
         </div>
@@ -77,8 +77,18 @@ export function UnlockScreen() {
           </div>
         </div>
 
+        {/* Absolutely positioned, not part of normal flow: the outer wrapper
+            centers this whole card with vh-100/align-items-center, so an
+            error box that instead grew the card's own height (mounting
+            in-flow) would shift the wordmark/button above it every time an
+            error appeared or was cleared. top: 100% anchors it flush under
+            the card regardless. */}
         {error && (
-          <div className="alert alert-danger mt-4" role="alert">
+          <div
+            className="alert alert-danger mt-3 position-absolute start-0 end-0"
+            style={{ top: "100%" }}
+            role="alert"
+          >
             {error}
           </div>
         )}
