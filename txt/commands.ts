@@ -305,13 +305,25 @@ export class VacuumCommand extends Command<VacuumOptions> {
 }
 
 // ===========================================================================
-// --remote-vacuum: --vacuum's remote counterpart -- same three steps (vacuum
-// the user SQLCipher database, collect the pages that superseded, vacuum
-// the page store's own backing SQLite database), but over the network
-// against a live deployment via --creds, with no local file access to
-// rqlite_txt.db at all. Requires an admin-role api_key: both the page-store
-// vacuum and every garbage-collection query go through RAW_QUERY
-// (docker/auth_perms.lua), which only admin can call.
+// --remote-vacuum: --vacuum's remote counterpart, over the network against a
+// live deployment via --creds, with no local file access to rqlite_txt.db
+// at all. Requires an admin-role api_key: both the page-store vacuum and
+// every garbage-collection query go through RAW_QUERY (docker/auth_perms.lua),
+// which only admin can call.
+//
+// Deliberately only two of --vacuum's three steps for now (collect garbage,
+// vacuum the page store's own backing SQLite database) -- NOT the user
+// SQLCipher database's own VACUUM. That step dirties essentially every page
+// in one commit, which (for a real vault) produced a body large enough to
+// fail outright ("fetch failed", not a clean HTTP error) against
+// docker/nginx.conf's client_max_body_size/client_body_buffer_size. Splitting
+// that single commit into multiple smaller round trips under the *same*
+// version turns out to need its own server-side protocol support (each
+// batch's guarded INSERT needs to check against old_version without a prior
+// batch's own CAS update having already moved current_version out from
+// under it, and the version can't actually activate -- i.e. become visible
+// to any reader -- until every batch has landed) -- not yet built. Re-add
+// the user-database vacuum step once that exists.
 // ===========================================================================
 
 export interface RemoteVacuumOptions {
@@ -328,22 +340,8 @@ export class RemoteVacuumCommand extends Command<RemoteVacuumOptions> {
     if (!targetDbId) {
       throw new Error("--remote-vacuum requires an admin-role api_key (RAW_QUERY is admin-only)");
     }
-    await this.vacuumUserDb(creds);
     await this.collectGarbage(client, targetDbId);
     await this.vacuumRqliteDb(client, targetDbId);
-  }
-
-  private async vacuumUserDb(creds: PerfCreds): Promise<void> {
-    const session = await openRemoteSession(creds, false, (m) => this.log(m), { prefetch: true });
-    try {
-      this.progress("Vacuuming the user database (remote)...");
-      session.db.exec("VACUUM;");
-      const ok = await session.vfs.commit(session.client);
-      if (!ok) throw new Error("commit lost the CAS race -- rerun --remote-vacuum");
-      this.progress(`Committed at version ${session.vfs.getCurrentVersion()}`);
-    } finally {
-      await closeRemoteSession(session);
-    }
   }
 
   private async collectGarbage(client: RqliteHttpClient, targetDbId: string): Promise<void> {
