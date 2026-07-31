@@ -27,7 +27,7 @@
 // by serving the production build and driving it with Playwright, since
 // `vite dev`'s import-rewriting middleware masks the bug entirely.
 
-import { isBrowser } from "../env";
+import { isWeb } from "../env";
 import { BROTLI_QUALITY } from "./constants";
 
 interface BrotliApi {
@@ -36,7 +36,14 @@ interface BrotliApi {
 }
 
 async function loadBrotli(): Promise<BrotliApi> {
-  if (isBrowser()) {
+  // isWeb(), not isBrowser(): this module is also reached from inside
+  // dbWorker.ts's Worker (library.ts -> metadata.ts -> here), where there's
+  // no `window`/`document` at all, so isBrowser() would wrongly report
+  // false and fall through to the Node-only createRequire()/require()
+  // branch below -- which doesn't exist in a real browser Worker either,
+  // surfacing as "createRequire is not a function" the moment unlock()
+  // first needs to decompress a metadata blob.
+  if (isWeb()) {
     // The browser build's default export is itself a Promise (see
     // node_modules/brotli-wasm/index.d.ts) -- await it, not just the
     // dynamic import().

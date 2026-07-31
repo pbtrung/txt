@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 // jsdom (not the default "node" environment blob.test.ts uses) specifically
-// to exercise loadBrotli()'s isBrowser() branch -- the real compression
+// to exercise loadBrotli()'s isWeb() browser branch -- the real compression
 // correctness is already covered there, against the Node/require branch and
 // real brotli-wasm output; this only verifies the *browser* wiring itself
 // (dynamic import, the `mod.default` unwrapping brotli-wasm's browser build
@@ -23,7 +23,7 @@ vi.mock("brotli-wasm", () => ({
 }));
 
 describe("brotli (browser dynamic-import wiring)", () => {
-  it('compress()/decompress() work through the isBrowser() import("brotli-wasm") branch', async () => {
+  it('compress()/decompress() work through the isWeb() import("brotli-wasm") branch', async () => {
     const { compress: compressFn, decompress: decompressFn } = await import("./brotli");
     const payload = new TextEncoder().encode("hello brotli");
 
