@@ -69,16 +69,19 @@ async function fetchMeta(client: RqliteHttpClient, targetDbId?: string): Promise
   return { currentVersion: Number(row[0]), pageCount: Number(row[1]), pageSize: Number(row[2]) };
 }
 
-// How many page_no's go into one HTTP round trip: rqlite's own statement
-// batching (docs/data_model.md's commit pattern already relies on the same
-// mechanism for COMMIT) lets one POST carry many independent SELECTs and
-// execute them together -- READ_PAGE just never used more than a single-
-// entry batch until now. 200 keeps each individual request's response body
-// modest (200 pages * ~4KB page = ~800KB) while still turning what would
-// otherwise be hundreds of one-page-at-a-time round trips (each paying a
-// full network RTT, see remotePageWorker.ts's per-page logging) into a
-// handful of batches.
-const PREFETCH_BATCH_SIZE = 200;
+// Target round trip count for prefetchPages below, not a fixed page count
+// per request: rqlite's own statement batching (docs/data_model.md's
+// commit pattern already relies on the same mechanism for COMMIT) lets one
+// POST carry many independent SELECTs and execute them together --
+// READ_PAGE just never used more than a single-entry batch until now. A
+// fixed per-request page count would mean a bigger vault (a higher
+// MAX_CACHED_PAGES cap) silently turns back into dozens of round trips;
+// sizing the batch as total/PREFETCH_ROUND_TRIPS instead keeps this at
+// exactly that many round trips regardless of how big the prefetch total
+// is, at the cost of each individual request's response body growing with
+// it (5 round trips at today's 4000-page cap is ~800 pages per request,
+// ~3.2MB each).
+const PREFETCH_ROUND_TRIPS = 5;
 
 /** Eagerly fetches this account's pages in a handful of batched round trips
  * right after open() learns the page count, instead of leaving every one
@@ -97,11 +100,13 @@ async function prefetchPages(
   targetDbId: string | undefined,
 ): Promise<Map<number, Uint8Array>> {
   const total = Math.min(pageCount, MAX_CACHED_PAGES);
+  const batchSize = Math.max(1, Math.ceil(total / PREFETCH_ROUND_TRIPS));
   const extra = targetDbId !== undefined ? { target_db_id: targetDbId } : {};
   const pages = new Map<number, Uint8Array>();
   const start = performance.now();
-  for (let from = 1; from <= total; from += PREFETCH_BATCH_SIZE) {
-    const to = Math.min(from + PREFETCH_BATCH_SIZE - 1, total);
+  let roundTrips = 0;
+  for (let from = 1; from <= total; from += batchSize) {
+    const to = Math.min(from + batchSize - 1, total);
     const batch = [];
     for (let pageNo = from; pageNo <= to; pageNo++) batch.push({ page_no: pageNo, snapshot });
     const results = await client.query("READ_PAGE", batch, extra);
@@ -109,11 +114,12 @@ async function prefetchPages(
       const row = resultRows(results, i)[0];
       if (row) pages.set(from + i, decodeBlobColumn(row[0]));
     }
+    roundTrips++;
     verbose(`dbWorker: prefetched pages ${from}-${to} of ${total}`);
   }
   verbose(
-    `dbWorker: prefetch done -- ${pages.size} page(s) in ` +
-      `${Math.ceil(total / PREFETCH_BATCH_SIZE)} round trip(s), ${(performance.now() - start).toFixed(1)}ms`,
+    `dbWorker: prefetch done -- ${pages.size} page(s) in ${roundTrips} round trip(s), ` +
+      `${(performance.now() - start).toFixed(1)}ms`,
   );
   return pages;
 }
