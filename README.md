@@ -27,6 +27,7 @@ node txt.ts --migrate --in-creds <file> --in <file> --out-creds <file> --out <fi
 node txt.ts --clean-bucket --creds <file> --db <file> [--dry-run] [--verbose]
 node txt.ts --collect-garbage --db <file> [--dry-run] [--verbose]
 node txt.ts --vacuum --creds <file> --db <file> [--verbose]
+node txt.ts --convert-auto-vacuum --creds <file> --in-db <file> --out-db <file> [--verbose]
 node txt.ts --remote-vacuum --creds <file> [--verbose]
 node txt.ts --update-db --creds <file> --db <file> [--verbose]
 node txt.ts --test-perf --creds <file> [--verbose]

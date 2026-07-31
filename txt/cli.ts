@@ -4,6 +4,7 @@ import {
   CleanBucketCommand,
   CollectGarbageCommand,
   VacuumCommand,
+  ConvertAutoVacuumCommand,
   RemoteVacuumCommand,
   UpdateDbCommand,
   TestPerfCommand,
@@ -15,6 +16,7 @@ const USAGE = `usage:
   txt.ts --clean-bucket --creds <file> --db <file> [--dry-run] [--verbose]
   txt.ts --collect-garbage --db <file> [--dry-run] [--verbose]
   txt.ts --vacuum --creds <file> --db <file> [--verbose]
+  txt.ts --convert-auto-vacuum --creds <file> --in-db <file> --out-db <file> [--verbose]
   txt.ts --remote-vacuum --creds <file> [--verbose]
   txt.ts --update-db --creds <file> --db <file> [--verbose]
   txt.ts --test-perf --creds <file> [--verbose]
@@ -25,6 +27,7 @@ const OPTIONS = {
   "clean-bucket": { type: "boolean" },
   "collect-garbage": { type: "boolean" },
   vacuum: { type: "boolean" },
+  "convert-auto-vacuum": { type: "boolean" },
   "remote-vacuum": { type: "boolean" },
   "update-db": { type: "boolean" },
   "test-perf": { type: "boolean" },
@@ -33,6 +36,8 @@ const OPTIONS = {
   in: { type: "string" },
   "out-creds": { type: "string" },
   out: { type: "string" },
+  "in-db": { type: "string" },
+  "out-db": { type: "string" },
   creds: { type: "string" },
   db: { type: "string" },
   "log-file": { type: "string" },
@@ -49,6 +54,7 @@ export async function main(argv: string[]): Promise<void> {
   if (values["clean-bucket"]) return runCleanBucket(values);
   if (values["collect-garbage"]) return runCollectGarbage(values);
   if (values.vacuum) return runVacuum(values);
+  if (values["convert-auto-vacuum"]) return runConvertAutoVacuum(values);
   if (values["remote-vacuum"]) return runRemoteVacuum(values);
   if (values["update-db"]) return runUpdateDb(values);
   if (values["test-perf"]) return runTestPerf(values);
@@ -94,6 +100,15 @@ async function runVacuum(values: Values): Promise<void> {
   await new VacuumCommand({
     credsPath: requiredArg(values, "creds"),
     dbPath: requiredArg(values, "db"),
+    verbose: !!values.verbose,
+  }).run();
+}
+
+async function runConvertAutoVacuum(values: Values): Promise<void> {
+  await new ConvertAutoVacuumCommand({
+    credsPath: requiredArg(values, "creds"),
+    inDbPath: requiredArg(values, "in-db"),
+    outDbPath: requiredArg(values, "out-db"),
     verbose: !!values.verbose,
   }).run();
 }

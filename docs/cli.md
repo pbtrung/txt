@@ -83,6 +83,20 @@ node txt.ts --vacuum --creds creds.json --db rqlite_txt.db [--verbose]
 - `--creds` — same shape as `--out-creds` above; only `user_root_key` is actually used, to open the user database, but `api_key` still has to be present since both commands share the same loader/validation.
 - `--verbose` — logs the user database's byte size before/after its own rebuild.
 
+## `--convert-auto-vacuum`
+
+A one-time migration: rebuilds the admin's user SQLCipher database with `auto_vacuum` switched to `INCREMENTAL`, writing the result to a fresh copy of `rqlite_txt.db` (`--out-db`) rather than modifying `--in-db` in place. A brand-new vault defaults to `auto_vacuum=NONE` (SQLite's own default, `userDb.ts` never sets it) — the right choice for ordinary writes in this design, since a plain `VACUUM`'s write amplification (dirtying essentially every page at once) is exactly what makes a full rebuild impractical over the network (see `--remote-vacuum`'s own note on why its user-database step isn't wired up yet); paying that same cost on every write via `FULL` auto_vacuum would make it worse, not better. `INCREMENTAL` mode is the actual fix: once converted, space can be reclaimed later via periodic, small, bounded `PRAGMA incremental_vacuum(N)` calls instead of one all-at-once `VACUUM` — but SQLite can only switch a database *into* that mode via one full `VACUUM` run immediately after setting the pragma (`PRAGMA auto_vacuum = INCREMENTAL; VACUUM;` in the same connection), so this one-time conversion pays that cost once, deliberately, rather than it happening as a surprise inside a later `--vacuum`/`--remote-vacuum` run.
+
+```
+node txt.ts --convert-auto-vacuum --creds creds.json --in-db rqlite_txt.db --out-db rqlite_txt_converted.db [--verbose]
+```
+
+- `--creds` — same shape as `--vacuum`'s.
+- `--in-db` — read-only; never modified. Refuses to run if `--out-db` already exists, rather than silently overwriting it.
+- `--out-db` — a fresh copy of `--in-db`, with the admin's user database converted, superseded pages collected, and its own file rebuilt via `--vacuum`'s same page-store `VACUUM` step.
+- `--verbose` — logs the user database's byte size before/after conversion, and each collected stale page version.
+- Doesn't yet wire `PRAGMA incremental_vacuum(N)` into any regular maintenance command -- this only performs the mode switch itself.
+
 ## `--remote-vacuum`
 
 `--vacuum`'s remote counterpart — over the network against a live deployment via `--creds`, with no local file access to `rqlite_txt.db` at all. Currently only two of `--vacuum`'s three steps: collects garbage, then runs a plain `VACUUM` against the page store's own database via the admin-only `RAW_QUERY` escape hatch (`docker/auth_perms.lua`) — per [rqlite's own performance guide](https://rqlite.io/docs/guides/performance/#vacuum), that's a plain SQL statement over the ordinary `/db/execute` API, no dedicated endpoint, but it may temporarily double disk usage and blocks writes while it runs.
@@ -154,6 +168,6 @@ npm test            # node --test txt/*.test.ts
 npm run format      # prettier --write .
 ```
 
-Every command has a committed end-to-end test that runs it against a real synthetic database (and, for `--migrate`/`--clean-bucket`, a local mock R2 server) — never against a real database or bucket. `txt/migrate.test.ts` also covers a simulated mid-run failure and the subsequent resume; `txt/vacuum.test.ts` confirms a single `--vacuum` run shrinks both databases and that content survives it.
+Every command has a committed end-to-end test that runs it against a real synthetic database (and, for `--migrate`/`--clean-bucket`, a local mock R2 server) — never against a real database or bucket. `txt/migrate.test.ts` also covers a simulated mid-run failure and the subsequent resume; `txt/vacuum.test.ts` confirms a single `--vacuum` run shrinks both databases and that content survives it; `txt/convertAutoVacuum.test.ts` confirms a real `PRAGMA auto_vacuum;` query against the reconstructed `--out-db` reports `2` (`INCREMENTAL`) afterward, `--in-db` is byte-for-byte untouched, content survives, and a second run against an existing `--out-db` is refused.
 
 `--test-perf` is the one exception to "every command has an end-to-end test": `txt/rqliteHttpClient.test.ts` covers the real HTTP request/response layer (a real local mock server, no worker thread involved) and `txt/remoteVfs.test.ts` covers the lazy VFS's paging/caching/decryption logic directly (a fake synchronous `fetchPage`, no network involved), but the actual worker+`Atomics`+real-HTTP round trip that connects the two in `--test-perf` itself isn't covered by a committed test -- real outbound network I/O from a worker thread while the main thread blocks in `Atomics.wait` was found to stall indefinitely in at least one sandboxed development environment (everything else about the mechanism, including the same blocking bridge with non-network worker responses, checks out). Verify that specific combination manually against a real deployment before relying on it in an environment you haven't already tried it in. `--test-write` shares this same gap for the same reason (opens a session the identical way). `--remote-vacuum` currently does not -- with its user-database `VACUUM` step not yet wired in (see its own section above), it never opens a worker+VFS session at all, only plain HTTP via `RAW_QUERY`, so `txt/remoteGc.test.ts` (a real local mock server whose handler executes each `RAW_QUERY`'s literal SQL against a real `SqliteDb`, the same scenario `collectGarbage.test.ts` uses for the local command) covers it end-to-end in full, not just the exception to the exception.

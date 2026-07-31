@@ -10,7 +10,7 @@
 
 import { randomBytes } from "node:crypto";
 import { brotliCompressSync, brotliDecompressSync } from "node:zlib";
-import { statSync, appendFileSync, writeFileSync } from "node:fs";
+import { statSync, appendFileSync, writeFileSync, existsSync, copyFileSync } from "node:fs";
 import {
   loadInCreds,
   loadOutCreds,
@@ -272,8 +272,8 @@ export class VacuumCommand extends Command<VacuumOptions> {
         return;
       }
       await this.vacuumUserDb(rqliteDb, userId, rootKeyBytes(creds));
-      this.collectGarbage(rqliteDb, userId);
-      this.vacuumRqliteDb(rqliteDb);
+      collectGarbageLocal(rqliteDb, userId, this.opts.verbose, (m) => this.log(m));
+      vacuumRqliteDbFile(rqliteDb, this.opts.dbPath);
     } finally {
       rqliteDb.close();
     }
@@ -289,18 +289,97 @@ export class VacuumCommand extends Command<VacuumOptions> {
     this.log(`user database: ${after.length} bytes after VACUUM`);
     rqliteDb.commit(userId, before.pageSize, after);
   }
+}
 
-  /** Rewriting the user db just superseded a lot of pages -- collect them before vacuuming rqlite_txt.db. */
-  private collectGarbage(rqliteDb: RqliteDb, userId: string): void {
-    const result = sweepGarbage(rqliteDb, userId, { dryRun: false, verbose: this.opts.verbose });
-    if (!result.skipped) this.log(`collected ${result.pagesRemoved} stale page version(s)`);
+/** Sweeps garbage on an already-open local RqliteDb, logging what was
+ * collected -- shared by --vacuum and --convert-auto-vacuum, which both
+ * rebuild the user database (creating a lot of newly-superseded pages)
+ * right before this runs. */
+function collectGarbageLocal(
+  rqliteDb: RqliteDb,
+  userId: string,
+  verbose: boolean,
+  log: (message: string) => void,
+): void {
+  const result = sweepGarbage(rqliteDb, userId, { dryRun: false, verbose });
+  if (!result.skipped) log(`collected ${result.pagesRemoved} stale page version(s)`);
+}
+
+/** VACUUMs rqlite_txt.db's own backing file at dbPath, reporting the
+ * before/after size -- shared by --vacuum and --convert-auto-vacuum. */
+function vacuumRqliteDbFile(rqliteDb: RqliteDb, dbPath: string): void {
+  const before = statSync(dbPath).size;
+  rqliteDb.vacuum();
+  const after = statSync(dbPath).size;
+  console.log(`\nrqlite_txt.db: ${before} -> ${after} bytes`);
+}
+
+// ===========================================================================
+// --convert-auto-vacuum: rebuilds the admin's user SQLCipher database with
+// auto_vacuum switched to INCREMENTAL, writing the result to a fresh copy of
+// rqlite_txt.db (--out-db) rather than modifying --in-db in place. Existing
+// vaults are created with auto_vacuum=NONE (SQLite's default -- see
+// userDb.ts), which is the right choice for ordinary writes in this design:
+// a plain VACUUM's write amplification (dirtying essentially every page at
+// once) is exactly what made --remote-vacuum's user-database step
+// impractical over the network (see its own comment), so paying that same
+// cost on every write via FULL auto_vacuum would be worse, not better.
+// INCREMENTAL mode is what actually helps here -- it lets space be reclaimed
+// later via periodic, small, bounded PRAGMA incremental_vacuum(N) calls
+// instead of one all-at-once VACUUM -- but SQLite can only switch a
+// database INTO that mode via one full VACUUM run immediately after setting
+// the pragma; there's no way to do it any more cheaply. This command is
+// that one-time migration step, done deliberately and explicitly rather
+// than folded into --vacuum/--remote-vacuum's own regular runs.
+// ===========================================================================
+
+export interface ConvertAutoVacuumOptions {
+  credsPath: string;
+  inDbPath: string;
+  outDbPath: string;
+  verbose: boolean;
+}
+
+export class ConvertAutoVacuumCommand extends Command<ConvertAutoVacuumOptions> {
+  async run(): Promise<void> {
+    const creds = loadOutCreds(this.opts.credsPath);
+    this.copyDb();
+    const rqliteDb = await RqliteDb.openExisting(this.opts.outDbPath);
+    try {
+      const userId = rqliteDb.findAdminUserId();
+      if (!userId) {
+        console.log("no admin account found; nothing to convert");
+        return;
+      }
+      await this.convertUserDb(rqliteDb, userId, rootKeyBytes(creds));
+      collectGarbageLocal(rqliteDb, userId, this.opts.verbose, (m) => this.log(m));
+      vacuumRqliteDbFile(rqliteDb, this.opts.outDbPath);
+    } finally {
+      rqliteDb.close();
+    }
   }
 
-  private vacuumRqliteDb(rqliteDb: RqliteDb): void {
-    const before = statSync(this.opts.dbPath).size;
-    rqliteDb.vacuum();
-    const after = statSync(this.opts.dbPath).size;
-    console.log(`\nrqlite_txt.db: ${before} -> ${after} bytes`);
+  private copyDb(): void {
+    if (existsSync(this.opts.outDbPath)) {
+      throw new Error(`--out-db ${this.opts.outDbPath} already exists -- refusing to overwrite it`);
+    }
+    copyFileSync(this.opts.inDbPath, this.opts.outDbPath);
+    this.log(`copied ${this.opts.inDbPath} -> ${this.opts.outDbPath}`);
+  }
+
+  private async convertUserDb(rqliteDb: RqliteDb, userId: string, rawKey: Buffer): Promise<void> {
+    const before = rqliteDb.latestPages(userId);
+    this.log(`user database: ${before.bytes.length} bytes before conversion`);
+    const userDb = await SqliteDb.open("/convert-auto-vacuum-user.db", {
+      preload: before.bytes,
+      rawKey,
+    });
+    userDb.exec("PRAGMA auto_vacuum = INCREMENTAL;");
+    userDb.exec("VACUUM;"); // only a VACUUM after setting the pragma actually applies it
+    const after = userDb.readBytes();
+    userDb.close();
+    this.log(`user database: ${after.length} bytes after conversion`);
+    rqliteDb.commit(userId, before.pageSize, after);
   }
 }
 
