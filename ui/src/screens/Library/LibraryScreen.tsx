@@ -18,6 +18,7 @@ import { BookmarkRow } from "../../components/BookmarkRow";
 import { BookRow, BOOK_ROW_HEIGHT } from "../../components/BookRow";
 import { DropdownToggleButton } from "../../components/DropdownToggleButton";
 import { NavItem } from "../../components/NavItem";
+import { ProgressStatus } from "../../components/ProgressStatus";
 import { VirtualizedListGroup } from "../../components/VirtualizedListGroup";
 import { Wordmark } from "../../components/Wordmark";
 import { useDropdown } from "../../hooks/useDropdown";
@@ -380,13 +381,7 @@ export function LibraryScreen() {
             className="flex-grow-1 d-flex flex-column align-items-center justify-content-center gap-1"
             role="status"
           >
-            <div className="spinner-border text-primary mb-1" aria-hidden="true" />
-            <div className="small text-body-secondary">
-              {progress ? `Step ${progress.step} of ${progress.total}` : " "}
-            </div>
-            <div className="small text-body-secondary">
-              {progress?.label ?? "Refreshing your library"}…
-            </div>
+            <ProgressStatus progress={progress} fallbackLabel="Refreshing your library" />
           </div>
         ) : (
           <>
