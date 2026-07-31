@@ -23,5 +23,16 @@ COPY nginx.conf /script/nginx.conf
 
 EXPOSE 4001 4002
 
+# Checks rqlited directly on its internal port (bypassing nginx/auth_basic
+# entirely, the same 127.0.0.1:14001 nginx.conf's own /internal/rqlite/
+# route talks to) -- /readyz covers node/leader/store health, so this catches
+# the same "not leader" failure mode a stuck Raft identity produces, not just
+# "is the process up." Assumes the default nginx-fronted deployment from
+# docker/README.md, where entrypoint.sh always binds rqlited to
+# 127.0.0.1:14001 internally; running with NGINX_CONF="" (nginx disabled) or
+# a custom -http-addr needs its own --health-cmd override instead.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD wget -q -O /dev/null http://127.0.0.1:14001/readyz || exit 1
+
 ENTRYPOINT ["/script/entrypoint.sh"]
 CMD ["run"]
