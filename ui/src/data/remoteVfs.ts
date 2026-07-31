@@ -25,20 +25,6 @@ const SQLITE_NOTFOUND = 12;
 const SQLITE_OPEN_DELETEONCLOSE = 0x00000008;
 const SQLITE_ACCESS_EXISTS = 0;
 
-/** Cheap FNV-1a checksum of a page's bytes, logged alongside every page
- * read/write below -- lets a page number's content be compared across two
- * unrelated log captures (a write session and a later fresh-session read)
- * without diffing raw page bytes by hand. Not cryptographic, just a fast
- * "same content or not" fingerprint for debugging. */
-function fingerprint(bytes: Uint8Array): string {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < bytes.length; i++) {
-    h ^= bytes[i];
-    h = Math.imul(h, 0x01000193);
-  }
-  return (h >>> 0).toString(16).padStart(8, "0");
-}
-
 // Bounds how much of a large document's pages stay resident across a long
 // reading session -- unbounded would otherwise grow forever, since nothing
 // ever evicted a page once fetched. 4000 pages (~16MB at this build's 4KB
@@ -143,18 +129,12 @@ export function registerRemoteVfs(mod: WasmModule, opts: RemoteVfsOptions): Remo
 
   function getPage(pageNo: number): Uint8Array {
     const cached = cacheGet(pageNo);
-    if (cached) {
-      verbose(`remoteVfs: getPage(${pageNo}) cache hit, fp=${fingerprint(cached)}`);
-      return cached;
-    }
+    if (cached) return cached;
     const start = performance.now();
     const bytes = opts.fetchPage(pageNo);
     stats.roundtrips.push({ pageNo, ms: performance.now() - start });
     stats.bytesFetched += bytes.length;
     cacheSet(pageNo, bytes);
-    verbose(
-      `remoteVfs: getPage(${pageNo}) fetched ${bytes.length} byte(s), fp=${fingerprint(bytes)}`,
-    );
     return bytes;
   }
 
@@ -469,8 +449,7 @@ export function registerRemoteVfs(mod: WasmModule, opts: RemoteVfsOptions): Remo
     const newVersion = currentVersion + 1;
     verbose(
       `remoteVfs: commit ${currentVersion} -> ${newVersion}, ${pages.length} dirty page(s): ` +
-        `[${pages.map((p) => `${p.pageNo}(fp=${fingerprint(p.data)})`).join(", ")}], ` +
-        `knownPageCount=${knownPageCount}`,
+        `[${pages.map((p) => p.pageNo).join(", ")}], knownPageCount=${knownPageCount}`,
     );
     const ok = await client.commit(
       pages,
