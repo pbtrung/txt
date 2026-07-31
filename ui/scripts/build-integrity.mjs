@@ -65,6 +65,10 @@ const LOCAL_INDEX_PATH = join(CREDS_DIR, "local_index.html");
 const VERIFIER_ENTRY = join(UI_DIR, "src", "localIndex", "main.ts");
 const DEFAULT_BUILD_CREDS_PATH = join(UI_DIR, "build-creds.json");
 
+// Accepts either --build-creds <path>/--build-creds=<path>, or a bare
+// positional path (e.g. `npm run ui:build -- path/to/creds.json`) -- the
+// first non-flag argument, so the common case doesn't need the flag name
+// spelled out. Falls back to ui/build-creds.json if neither is given.
 function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -72,7 +76,8 @@ function parseArgs(argv) {
     if (arg.startsWith("--build-creds="))
       return { buildCredsPath: arg.slice("--build-creds=".length) };
   }
-  return { buildCredsPath: DEFAULT_BUILD_CREDS_PATH };
+  const positional = argv.find((arg) => !arg.startsWith("--"));
+  return { buildCredsPath: positional ?? DEFAULT_BUILD_CREDS_PATH };
 }
 
 function loadBuildCreds(path) {
