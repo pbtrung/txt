@@ -36,7 +36,7 @@ See [docs/cli.md](docs/cli.md) for every flag, each command's `creds.json` shape
 
 ```
 npm run ui:dev      # Vite dev server
-npm run ui:build    # production build -> ui/dist/ + creds/local_index.html
+npm run ui:build    # production build -> dist/ + creds/local_index.html
 npm run ui:test     # unit/component tests (real SQLCipher db, mocked network/Worker)
 npm run ui:test:e2e # real headless Chromium against a real build (needs Chromium locally)
 ```

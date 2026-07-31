@@ -8,7 +8,7 @@
 // txt/commands.ts's own comment flags as unverified ("Atomics.wait was
 // found to stall indefinitely in at least one sandboxed dev environment").
 //
-// This spins up: a real built ui/dist/ (via the actual `npm run ui:build`
+// This spins up: a real built dist/ (via the actual `npm run ui:build`
 // pipeline) served with the same Cross-Origin-Opener-Policy/
 // Cross-Origin-Embedder-Policy headers docker/nginx.conf's port-4002 block
 // sets; a minimal fake rqlite backend that speaks auth_perms.lua's exact
@@ -36,7 +36,8 @@ import { bytesToBase64 } from "./crypto/bytes";
 
 const UI_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const REPO_ROOT = resolve(UI_DIR, "..");
-const DIST_DIR = join(UI_DIR, "dist");
+// vite.config.ts builds to <repo root>/dist, not ui/dist.
+const DIST_DIR = join(REPO_ROOT, "dist");
 const CHROMIUM_PATH = "/usr/bin/chromium";
 
 interface FakeDb {
@@ -180,7 +181,7 @@ function startFakeBackend(
   });
 }
 
-/** Serves ui/dist/ with the same COOP/COEP headers docker/nginx.conf's
+/** Serves dist/ with the same COOP/COEP headers docker/nginx.conf's
  * port-4002 block sets -- this is what makes SharedArrayBuffer available at
  * all, so the test would fail early (no SharedArrayBuffer) if this were
  * missing, the same way a misconfigured deployment would. */

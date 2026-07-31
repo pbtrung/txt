@@ -63,9 +63,12 @@ import { slh_dsa_sha2_256f } from "@noble/post-quantum/slh-dsa.js";
 import { build } from "vite";
 
 const UI_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const DIST_DIR = join(UI_DIR, "dist");
+const REPO_ROOT = resolve(UI_DIR, "..");
+// vite.config.ts builds to <repo root>/dist, not ui/dist -- see its own
+// comment on build.outDir for why.
+const DIST_DIR = join(REPO_ROOT, "dist");
 const INDEX_HTML_PATH = join(DIST_DIR, "index.html");
-const CREDS_DIR = resolve(UI_DIR, "..", "creds");
+const CREDS_DIR = join(REPO_ROOT, "creds");
 const LOCAL_INDEX_PATH = join(CREDS_DIR, "local_index.html");
 const VERIFIER_ENTRY = join(UI_DIR, "src", "localIndex", "main.ts");
 const DEFAULT_BUILD_CREDS_PATH = join(UI_DIR, "build-creds.json");
@@ -314,7 +317,7 @@ async function main() {
 
   const keyNote = generated ? ` (generated a new keypair, written back to ${buildCredsPath})` : "";
   console.log(`Signed ${Object.keys(manifest).length} asset(s) with SLH-DSA-SHA2-256f${keyNote}.`);
-  console.log(`Wrote ${relative(resolve(UI_DIR, ".."), LOCAL_INDEX_PATH)}`);
+  console.log(`Wrote ${relative(REPO_ROOT, LOCAL_INDEX_PATH)}`);
 }
 
 main().catch((err) => {

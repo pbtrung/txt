@@ -83,13 +83,13 @@ docker run -p 4001:4001 -p 4002:4002 \
   --hostname txt-rqlite \
   -e NGINX_USER=admin -e NGINX_PASSWORD=<shared secret> \
   -v rqlite-data:/rqlite/file/data \
-  -v $(pwd)/ui/dist:/var/www/ui:ro \
+  -v $(pwd)/dist:/var/www/ui:ro \
   txt-rqlite
 ```
 
-The `ui/dist:/var/www/ui` mount is optional -- omit it (or point it at an
+The `dist:/var/www/ui` mount is optional -- omit it (or point it at an
 empty directory) if this deployment doesn't serve the browser app at all.
-Build `ui/dist/` first with `npm run ui:build` (see [below](#serving-ui)) --
+Build `dist/` first with `npm run ui:build` (see [below](#serving-ui)) --
 it's a separate, ordinary static-asset build with no dependency on this
 image, not something baked into it, so this Dockerfile stays focused on
 rqlite+OpenResty and doesn't need its own Node build stage.
@@ -100,7 +100,7 @@ rqlite+OpenResty and doesn't need its own Node build stage.
 
 ## Serving `ui/`
 
-Port 4002 is a second, separate server block: plain static hosting for `ui/dist/` (the browser app -- `docker build`/`ui:build`/... at the [repo root](../package.json)), unauthenticated (there's nothing tenant-scoped in a static JS/CSS bundle) and cross-origin-isolated:
+Port 4002 is a second, separate server block: plain static hosting for `dist/` (the browser app -- `docker build`/`ui:build`/... at the [repo root](../package.json)), unauthenticated (there's nothing tenant-scoped in a static JS/CSS bundle) and cross-origin-isolated:
 
 ```
 Cross-Origin-Opener-Policy:   same-origin

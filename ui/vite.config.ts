@@ -8,7 +8,13 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
 const UI_DIR = dirname(fileURLToPath(import.meta.url));
-const SQLCIPHER_DIR = join(UI_DIR, "..", "sqlcipher");
+const REPO_ROOT = join(UI_DIR, "..");
+const SQLCIPHER_DIR = join(REPO_ROOT, "sqlcipher");
+// Built at the repo root (../dist from here), not ui/dist -- kept out of
+// ui/ itself so it never looks like a source directory. Absolute, not
+// relative to `root` (Vite's own default for build.outDir): Vite resolves
+// a relative outDir against `root`, which would put it back under ui/.
+const DIST_DIR = join(REPO_ROOT, "dist");
 
 // The repo-root sqlcipher/ bundle (see CLAUDE.md) already covers everything
 // ui/leancrypto/ used to vendor separately -- the same lc_wasm_* HKDF/AEAD
@@ -54,6 +60,11 @@ export default defineConfig({
     __SQLCIPHER_JS_INTEGRITY__: JSON.stringify(sqlcipherJsIntegrity()),
   },
   build: {
+    outDir: DIST_DIR,
+    // outDir resolves outside `root` (repo root vs. ui/) -- Vite's own
+    // safety check refuses to empty a directory it doesn't consider
+    // "inside" the project without this.
+    emptyOutDir: true,
     rollupOptions: {
       output: {
         // Without this, crypto/brotli.ts's `import("brotli-wasm")` (needed
