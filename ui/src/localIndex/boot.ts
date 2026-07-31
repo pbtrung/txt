@@ -38,6 +38,23 @@ export async function boot(assetBaseUrl: string, publicKeyB64: string): Promise<
   try {
     const publicKey = base64ToBytes(publicKeyB64);
     const verified = await verifyAssets(assetBaseUrl, publicKey, (step) => ui.advance(step));
+
+    // Verification itself only ever needs fetch()/Web Crypto, so it works
+    // the same everywhere -- but the real app's lazy VFS needs a Worker +
+    // SharedArrayBuffer bridge (dbWorker.ts's own header comment), which
+    // browsers only expose to a cross-origin-isolated page. A bare
+    // file://content:// document opening this file directly can never be
+    // cross-origin isolated, so rendering the app here would just fail
+    // later with a much more confusing error than stopping now and saying
+    // so plainly: verification already proved the CDN is trustworthy,
+    // that's exactly what this page exists to do without needing the app
+    // itself to run.
+    if (!crossOriginIsolated) {
+      verbose("localIndex: verified OK, but not cross-origin isolated -- can't boot the app here");
+      ui.showVerifiedFallback(assetBaseUrl);
+      return;
+    }
+
     ui.advance("loading-application");
     renderApp(assetBaseUrl, verified);
     await waitForRootMount();
