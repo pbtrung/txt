@@ -3,6 +3,7 @@
 // own trg_txt_bookmarks_cap trigger keeps at most BOOKMARK_LIMIT rows per
 // document, so a caller here never has to reason about the cap at all.
 
+import { verbose } from "../log";
 import type { SqliteDb } from "./sqliteDb";
 
 export interface Bookmark {
@@ -66,8 +67,15 @@ export function addBookmark(
       s.bindInt64(5, createdAt);
     },
   );
+  const changed = db.changes();
+  verbose(
+    `bookmarks: addBookmark txtId=${txtId} partNum=${partNum} line=${line} inserted ${changed} row(s)` +
+      (changed === 0 ? " (OR IGNORE no-op -- already bookmarked?)" : ""),
+  );
 }
 
 export function removeBookmark(db: SqliteDb, bookmarkId: number): void {
   db.run("DELETE FROM txt_bookmarks WHERE id = ?;", (s) => s.bindInt64(1, bookmarkId));
+  const changed = db.changes();
+  verbose(`bookmarks: removeBookmark id=${bookmarkId} deleted ${changed} row(s)`);
 }
