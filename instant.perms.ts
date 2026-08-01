@@ -33,13 +33,23 @@ const rules = {
     // admin-only, since setting/rotating umk/creds is a provisioning action
     // (AdminInitializer-equivalent), never a regular user self-service
     // write -- mirrors umk_store never being regular-user-writable in the
-    // pre-InstantDB Turso design. create is included defensively, though in
-    // practice InstantDB's own auth flow creates the bare row on first
-    // sign-in, before this app ever sets umk/creds on it.
+    // pre-InstantDB Turso design.
+    //
+    // create MUST be unconditional ("true"), confirmed against a real
+    // sign-in attempt: InstantDB enforces this rule for its own internal
+    // $users row creation during the oauth/id_token exchange (not
+    // exempted for platform-internal writes as assumed), and the row
+    // doesn't exist yet at that point -- so create: "isAdmin" made every
+    // first-time sign-in fail ("Permission denied"), including the very
+    // first admin's own, a bootstrap deadlock (no $users row -> no users
+    // row -> never isAdmin -> can never create the $users row). Firebase's
+    // own token verification is the real gate on who can trigger this in
+    // the first place; umk/creds themselves stay protected by update:
+    // isAdmin regardless of how permissive create is.
     bind: [...ADMIN_BIND, "isSelf", "auth.id == data.id"],
     allow: {
       view: "isAdmin || isSelf",
-      create: "isAdmin",
+      create: "true",
       update: "isAdmin",
       // $users doesn't support a delete permission at all -- InstantDB's own
       // push API rejects anything but the literal "false" here (confirmed:
