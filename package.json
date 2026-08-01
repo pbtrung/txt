@@ -1,8 +1,14 @@
 {
   "type": "module",
+  "scripts": {
+    "format": "prettier --write txt.ts txt/*.ts"
+  },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1101.0",
     "@instantdb/react": "^1.0.57",
     "instant-cli": "^1.0.57"
+  },
+  "devDependencies": {
+    "prettier": "^3.9.6"
   }
 }
