@@ -148,6 +148,9 @@ export class RemotePageStore {
     const pageTxs = [...uploaded].map(([pageNo, info]) =>
       this.pageTx(pageNo, info, newVersion),
     );
+    const fileOwnerTxs = [...uploaded.values()].map((info) =>
+      this.fileTx(info),
+    );
     const dbMetaTx = tx.dbMeta[dbMetaId]
       .update({
         currentVersion: newVersion,
@@ -156,12 +159,19 @@ export class RemotePageStore {
         needsGc: false,
       })
       .link({ owner: this.cfg.ownerId }); // idempotent if already linked
-    await this.cfg.db.transact([...pageTxs, dbMetaTx]);
+    await this.cfg.db.transact([...pageTxs, ...fileOwnerTxs, dbMetaTx]);
   }
 
   private pageTx(pageNo: number, info: UploadedPage, version: number) {
     return tx.pages[id()]
       .update({ pageKey: info.pageKey, pageNo, version })
       .link({ owner: this.cfg.ownerId, pointerFile: info.fileId });
+  }
+
+  // uploadFile() only creates the $files row -- it never links `owner`
+  // (there's nothing to link to yet at upload time), so that link has to be
+  // set explicitly here, same as pages.owner above.
+  private fileTx(info: UploadedPage) {
+    return tx.$files[info.fileId].link({ owner: this.cfg.ownerId });
   }
 }
