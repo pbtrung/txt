@@ -79,10 +79,17 @@ export class RemotePageStore {
     dbMetaId: string,
     currentVersion: number,
     pageCount: number,
+    pageSize: number,
   ): Promise<CommitResult> {
     const newVersion = currentVersion + 1;
     const fileIds = await this.uploadPages(dirtyPages);
-    await this.transactPages(fileIds, newVersion, dbMetaId, pageCount);
+    await this.transactPages(
+      fileIds,
+      newVersion,
+      dbMetaId,
+      pageCount,
+      pageSize,
+    );
     return { newVersion, pageCount };
   }
 
@@ -117,12 +124,18 @@ export class RemotePageStore {
     newVersion: number,
     dbMetaId: string,
     pageCount: number,
+    pageSize: number,
   ): Promise<void> {
     const pageTxs = [...fileIds].map(([pageNo, fileId]) =>
       this.pageTx(pageNo, fileId, newVersion),
     );
     const dbMetaTx = tx.dbMeta[dbMetaId]
-      .update({ currentVersion: newVersion, pageCount, needsGc: false })
+      .update({
+        currentVersion: newVersion,
+        pageCount,
+        pageSize,
+        needsGc: false,
+      })
       .link({ owner: this.cfg.ownerId }); // idempotent if already linked
     await this.cfg.db.transact([...pageTxs, dbMetaTx]);
   }

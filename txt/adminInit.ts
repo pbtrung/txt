@@ -198,6 +198,7 @@ export class AdminInitializer {
       dbMetaId,
       0,
       pageCount,
+      C.SQLCIPHER_PAGE_SIZE,
     );
     this.log.info(
       `Committed ${dirtyPages.size} page(s) as version=${newVersion}, dbMeta=${dbMetaId}`,
