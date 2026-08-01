@@ -22,14 +22,26 @@ export interface Creds {
   r2Config: R2ConfigResolved;
 }
 
-function requireField(value: unknown, field: string): string {
+// Exported for reuse by other creds.json loaders (e.g. initAdminCreds.ts) --
+// generic, not coupled to this file's own Creds shape.
+export function requireField(value: unknown, field: string): string {
   if (typeof value !== "string" || value.length === 0) {
     throw new Error(`creds.json missing/empty field: ${field}`);
   }
   return value;
 }
 
-function loadR2Config(raw: any): R2ConfigResolved {
+export function checkKeyLength(
+  buf: Buffer,
+  minLen: number,
+  field: string,
+): void {
+  if (buf.length < minLen) {
+    throw new Error(`${field} too short (${buf.length} < ${minLen} bytes)`);
+  }
+}
+
+export function loadR2Config(raw: any): R2ConfigResolved {
   const r2 = raw.r2_config ?? {};
   return {
     endpoint: requireField(r2.endpoint, "r2_config.endpoint"),
@@ -46,12 +58,6 @@ function loadR2Config(raw: any): R2ConfigResolved {
     readWriteAccessKeyId: r2.read_write_access_key_id || null,
     readWriteSecretAccessKey: r2.read_write_secret_access_key || null,
   };
-}
-
-function checkKeyLength(buf: Buffer, minLen: number, field: string): void {
-  if (buf.length < minLen) {
-    throw new Error(`${field} too short (${buf.length} < ${minLen} bytes)`);
-  }
 }
 
 // Deletion needs read-write R2 keys; --dry-run only lists, so read-only-only
