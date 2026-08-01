@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "@instantdb/react": "^1.0.57",
+    "instant-cli": "^1.0.57"
+  }
+}

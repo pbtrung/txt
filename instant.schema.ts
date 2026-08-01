@@ -8,9 +8,15 @@ import { i } from "@instantdb/core";
 
 const _schema = i.schema({
   entities: {
-    // Confirmed: url/the storage-upload API aren't used at all here -- path
-    // is a plain attribute holding the encrypted pointer blob directly, set
-    // and read like any other field via transact()/queries.
+    // $files rows can only ever be created via db.storage.uploadFile(path,
+    // file) -- never via transact() (instantdb.com/docs/storage#link-files).
+    // path is set to the same value as pages.pageKey below and is a plain
+    // routing key, not secret: the actual AEAD pointer blob (crypto.md's blob
+    // format) is the *uploaded file content*, not this attribute. Because no
+    // link to any other entity exists yet at upload time, instant.perms.ts
+    // can't gate `create`/`view` by ref traversal (the filesOwner-style
+    // direct-link trick doesn't apply here) -- it checks this path's prefix
+    // against auth.id instead.
     $files: i.entity({
       path: i.string().unique().indexed(),
     }),
@@ -53,11 +59,6 @@ const _schema = i.schema({
       forward: { on: "pages", has: "one", label: "pointerFile" },
       reverse: { on: "$files", has: "one", label: "page" },
     },
-    // Direct owner link, separate from the pages->$files link above: keeps
-    // $files' permission rules from depending on operation ordering within
-    // the single multi-op transact() that creates $files, pages, and bumps
-    // dbMeta together (docs/data_model.md's commit protocol) -- $files can
-    // prove ownership on its own, regardless of when the pages link lands.
     filesOwner: {
       forward: { on: "$files", has: "one", label: "owner" },
       reverse: { on: "users", has: "many", label: "files" },

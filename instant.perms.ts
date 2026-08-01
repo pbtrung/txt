@@ -60,15 +60,20 @@ const rules = {
     },
   },
   "$files": {
-    bind: [...ADMIN_BIND, "isOwner", "auth.id in data.ref('owner.authUser.id')"],
+    // $files rows are only ever created via db.storage.uploadFile(path, ...)
+    // (instantdb.com/docs/storage#link-files), which happens before any link
+    // to another entity exists -- so ownership can't be a ref traversal here
+    // the way it is for every other entity in this file. path is always
+    // "${auth.id}:${pageNo}:${version}" (docs/data_model.md's commit
+    // protocol, same value as pages.pageKey), so ownership is checked by
+    // string prefix instead. isOwnPath covers both create (governs the
+    // upload itself) and view (must hold both before and after the file
+    // gets linked to its pages row, so it can't switch to a ref-based check
+    // post-link).
+    bind: [...ADMIN_BIND, "isOwnPath", "data.path.startsWith(auth.id + ':')"],
     allow: {
-      // Direct owner link (schema's filesOwner), not reached via pages: both
-      // rows are created together in one transact() (docs/data_model.md's
-      // commit protocol), so this avoids depending on operation ordering
-      // within that transaction rather than on a separate upload call --
-      // $files.path is a plain attribute here, not db.storage.uploadFile().
-      view: "isAdmin || isOwner",
-      create: "isAdmin || isOwner",
+      view: "isAdmin || isOwnPath",
+      create: "isAdmin || isOwnPath",
       update: "isAdmin",
       delete: "isAdmin", // ordinary GC still goes through the Admin SDK, bypassing rules entirely
     },
