@@ -7,8 +7,7 @@ import { id, init, tx } from "@instantdb/admin";
 import * as C from "./constants.ts";
 import { CryptoEngine } from "./crypto.ts";
 import type { InitAdminCreds } from "./initAdminCreds.ts";
-import { signInWithPassword } from "./firebaseAuth.ts";
-import { signInWithFirebaseIdToken } from "./instantSignIn.ts";
+import { signInToInstant } from "./instantSignIn.ts";
 import type { Logger } from "./logger.ts";
 import { computeR2Prefix } from "./pagePointer.ts";
 import { R2Client } from "./r2.ts";
@@ -85,20 +84,7 @@ export class AdminInitializer {
   }
 
   private async signIn(): Promise<string> {
-    const idToken = await signInWithPassword(
-      this.creds.firebaseApiKey,
-      this.creds.firebaseEmail,
-      this.creds.firebasePassword,
-    );
-    const result = await signInWithFirebaseIdToken(
-      this.creds.instantAppId,
-      this.creds.instantClientName,
-      idToken,
-    );
-    this.log.info(
-      `Signed in: auth.id=${result.authId} (email=${result.email}, created=${result.created})`,
-    );
-    return result.authId;
+    return signInToInstant(this.creds, this.log);
   }
 
   private async failIfAlreadyInitialized(

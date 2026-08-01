@@ -17,7 +17,22 @@
 // this replicates just that call instead of pulling in a DOM/indexedDB
 // polyfill (fake-indexeddb, jsdom, ...) to satisfy the Reactor's browser
 // assumptions for one narrow operation.
+import { signInWithPassword } from "./firebaseAuth.ts";
+import type { Logger } from "./logger.ts";
+
 const INSTANT_API_URI = "https://api.instantdb.com";
+
+// The subset of InitAdminCreds (initAdminCreds.ts) signInToInstant needs --
+// structural rather than importing that type directly, so this module (and
+// --migrate, which signs into the same kind of account with its own
+// to_creds.json) don't have to share a name for the same shape.
+export interface InstantSignInCreds {
+  firebaseApiKey: string;
+  firebaseEmail: string;
+  firebasePassword: string;
+  instantAppId: string;
+  instantClientName: string;
+}
 
 export interface InstantSignInResult {
   authId: string; // $users id
@@ -55,4 +70,27 @@ function instantError(body: any, appId: string, clientName: string): Error {
   return new Error(
     `InstantDB signInWithIdToken failed (appId=${appId}, clientName=${JSON.stringify(clientName)}): ${message}`,
   );
+}
+
+// Composes firebaseAuth's password sign-in with signInWithFirebaseIdToken
+// above -- shared by --init-admin and --migrate, which both need to resolve
+// a creds.json's Firebase account down to its InstantDB auth.id the same way.
+export async function signInToInstant(
+  creds: InstantSignInCreds,
+  log: Logger,
+): Promise<string> {
+  const idToken = await signInWithPassword(
+    creds.firebaseApiKey,
+    creds.firebaseEmail,
+    creds.firebasePassword,
+  );
+  const result = await signInWithFirebaseIdToken(
+    creds.instantAppId,
+    creds.instantClientName,
+    idToken,
+  );
+  log.info(
+    `Signed in: auth.id=${result.authId} (email=${result.email}, created=${result.created})`,
+  );
+  return result.authId;
 }

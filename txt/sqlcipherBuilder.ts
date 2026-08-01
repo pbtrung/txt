@@ -8,8 +8,14 @@ import Sqlite3Wasm from "../sqlcipher/sqlcipher.js";
 import { SQLCIPHER_PAGE_SIZE } from "./constants.ts";
 
 const SQLITE_OK = 0;
+const SQLITE_DONE = 101;
 const SQLITE_OPEN_READWRITE = 0x00000002;
 const SQLITE_OPEN_CREATE = 0x00000004;
+
+// One bound parameter for insert() -- dispatched by typeof in bindOne().
+// number is always treated as an integer (bound via bind_int64), since
+// nothing in this codebase's SQLite schemas uses a REAL column.
+export type BindParam = Buffer | Uint8Array | string | bigint | number | null;
 
 // docs/data_model.md's "Per-user SQLCipher database schema" -- keep in sync.
 // cipher_default_page_size isn't part of this block: run() always sets it
@@ -95,6 +101,94 @@ export class SqlCipherBuilder {
       this.exec(db, sql);
     } finally {
       this.module._sqlite3_close(db);
+    }
+  }
+
+  // Opens+keys without immediately closing, for a caller that needs to run
+  // several statements against the same connection (e.g. --migrate's several
+  // INSERTs into one already-populated database) before closing it itself.
+  open(dbFileName: string, vfsName: string, dbKey: Buffer): number {
+    return this.openAndKey(dbFileName, vfsName, dbKey);
+  }
+
+  close(db: number): void {
+    this.module._sqlite3_close(db);
+  }
+
+  // Runs one parameterized INSERT (params bound 1-indexed, in order) and
+  // returns sqlite3_last_insert_rowid -- this build is compiled with
+  // WASM_BIGINT (confirmed empirically), so 64-bit values bind/return as
+  // real JS BigInt, not Number.
+  insert(db: number, sql: string, params: BindParam[]): bigint {
+    const { ptr: sqlPtr } = cString(this.module, sql);
+    const ppStmt = this.module._malloc(4);
+    try {
+      const rc = this.module._sqlite3_prepare_v2(db, sqlPtr, -1, ppStmt, 0);
+      if (rc !== SQLITE_OK)
+        throw new Error(`sqlite3_prepare_v2 failed: ${this.errmsg(db)}`);
+      const stmt = this.module.getValue(ppStmt, "i32");
+      return this.runInsert(db, stmt, params);
+    } finally {
+      this.module._free(sqlPtr);
+      this.module._free(ppStmt);
+    }
+  }
+
+  private runInsert(db: number, stmt: number, params: BindParam[]): bigint {
+    try {
+      params.forEach((p, i) => this.bindOne(stmt, i + 1, p));
+      const rc = this.module._sqlite3_step(stmt);
+      if (rc !== SQLITE_DONE)
+        throw new Error(`sqlite3_step failed on insert: ${this.errmsg(db)}`);
+      return this.module._sqlite3_last_insert_rowid(db);
+    } finally {
+      this.module._sqlite3_finalize(stmt);
+    }
+  }
+
+  private bindOne(stmt: number, index: number, value: BindParam): void {
+    if (value === null) {
+      this.module._sqlite3_bind_null(stmt, index);
+    } else if (typeof value === "bigint") {
+      this.module._sqlite3_bind_int64(stmt, index, value);
+    } else if (typeof value === "number") {
+      this.module._sqlite3_bind_int64(stmt, index, BigInt(value));
+    } else if (typeof value === "string") {
+      this.bindText(stmt, index, value);
+    } else {
+      this.bindBlob(stmt, index, value);
+    }
+  }
+
+  // -1 as the final (destructor) argument is SQLITE_TRANSIENT -- sqlite
+  // copies the bytes immediately, so freeing right after the bind call
+  // (rather than waiting until after step()) is safe.
+  private bindText(stmt: number, index: number, value: string): void {
+    const { ptr, len } = cString(this.module, value);
+    try {
+      const rc = this.module._sqlite3_bind_text(stmt, index, ptr, len, -1);
+      if (rc !== SQLITE_OK)
+        throw new Error(`sqlite3_bind_text failed, rc=${rc}`);
+    } finally {
+      this.module._free(ptr);
+    }
+  }
+
+  private bindBlob(stmt: number, index: number, value: Uint8Array): void {
+    const ptr = this.module._malloc(value.length || 1);
+    this.module.HEAPU8.set(value, ptr);
+    try {
+      const rc = this.module._sqlite3_bind_blob(
+        stmt,
+        index,
+        ptr,
+        value.length,
+        -1,
+      );
+      if (rc !== SQLITE_OK)
+        throw new Error(`sqlite3_bind_blob failed, rc=${rc}`);
+    } finally {
+      this.module._free(ptr);
     }
   }
 

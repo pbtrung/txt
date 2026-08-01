@@ -27,6 +27,10 @@ export const USER_ROOT_KEY_MIN_LEN = 256;
 // actual page size from otherwise, unlike an unencrypted database.
 export const SQLCIPHER_PAGE_SIZE = 32768;
 
+// --migrate's random sample size (see txt/migrate.ts) -- not user-configurable,
+// per the task this was built for.
+export const MIGRATE_SAMPLE_SIZE = 10;
+
 export const ORPHAN_PREVIEW_LIMIT = 50;
 export const S3_DELETE_BATCH_SIZE = 1000; // AWS DeleteObjects hard limit
 export const RETRY_DELAYS_MS = [2000, 4000, 8000]; // matches txt/r2.py's _RETRY_DELAYS
