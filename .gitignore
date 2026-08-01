@@ -1,0 +1,12 @@
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+*.log
+.env
+.env.*
+.DS_Store
+
+creds/
+txt_*/
+*.db
