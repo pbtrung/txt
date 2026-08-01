@@ -1,7 +1,8 @@
-// $files.path encoding (docs/data_model.md's $files entity + commit
-// protocol): every account's R2 objects live under a deterministic prefix,
-// and each page-version's real R2 key is encrypted before being embedded in
-// the InstantDB-visible path string.
+// $files for a page-version (docs/data_model.md's $files entity + commit
+// protocol): `path` is the same plaintext value as pages.pageKey (deterministic,
+// matches instant.perms.ts's string-prefix ownership check) -- the actual
+// secret, this page-version's real R2 object key, is the *uploaded file's
+// content* instead, wrapped via crypto.md's Blob format under path_key.
 import { createHash, randomBytes } from "node:crypto";
 import { crockfordBase32Lowercase } from "./base32.ts";
 import type { CryptoEngine } from "./crypto.ts";
@@ -20,31 +21,18 @@ export function generateRawPath(r2Prefix: string): string {
   return `${r2Prefix}/${crockfordBase32Lowercase(randomBytes(RAW_PATH_RANDOM_BYTES))}`;
 }
 
-// $files.path = "${authId}:" + path_key-encrypted rawPath, base64url-encoded.
-export function encodePagePath(
+export function encodePagePointerContent(
   cryptoEngine: CryptoEngine,
   pathKey: Buffer,
-  authId: string,
   rawPath: string,
-): string {
-  const blob = cryptoEngine.blobEncrypt(pathKey, Buffer.from(rawPath, "ascii"));
-  return `${authId}:${base64url(blob)}`;
+): Buffer {
+  return cryptoEngine.blobEncrypt(pathKey, Buffer.from(rawPath, "ascii"));
 }
 
-export function decodePagePath(
+export function decodePagePointerContent(
   cryptoEngine: CryptoEngine,
   pathKey: Buffer,
-  path: string,
+  content: Buffer,
 ): string {
-  const encoded = path.slice(path.indexOf(":") + 1);
-  const blob = base64urlDecode(encoded);
-  return cryptoEngine.blobDecrypt(pathKey, blob).toString("ascii");
-}
-
-function base64url(buf: Buffer): string {
-  return buf.toString("base64url");
-}
-
-function base64urlDecode(s: string): Buffer {
-  return Buffer.from(s, "base64url");
+  return cryptoEngine.blobDecrypt(pathKey, content).toString("ascii");
 }

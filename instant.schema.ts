@@ -10,18 +10,16 @@ const _schema = i.schema({
   entities: {
     // $files rows can only ever be created via db.storage.uploadFile(path,
     // file) -- never via transact() (instantdb.com/docs/storage#link-files).
-    // path = "${auth.id}:" + a path_key-encrypted raw_path (crockford base32
-    // of 32 random bytes, crypto.md's Blob format, base64url-encoded) --
-    // NOT the same value as pages.pageKey below (that one stays plaintext,
-    // for pages' own composite-uniqueness constraint; this one is random and
-    // encrypted, since it doubles as this page-version's real R2 object key
-    // in the user's own bucket). The auth.id prefix stays plaintext
-    // deliberately: instant.perms.ts checks it via string-prefix, since no
-    // link to any other entity exists yet at upload time to ref-traverse
-    // instead. Uploaded file *content* is a trivial placeholder -- the real
-    // page bytes (already SQLCipher/Ascon-Keccak-encrypted under db_key at
-    // the SQLite page level) live directly in R2, never in InstantDB;
-    // "InstantDB only ever holds client-encrypted paths" (data_model.md).
+    // path is the SAME value as pages.pageKey ("${auth.id}:${pageNo}:${version}",
+    // deterministic, plaintext) -- instant.perms.ts's string-prefix ownership
+    // check (data.path.startsWith(auth.id + ':')) still holds, since pageKey
+    // already starts with that same prefix. The real secret -- this
+    // page-version's actual R2 object key (crockford base32 of 32 random
+    // bytes, namespaced under this account's r2Prefix) -- is wrapped via
+    // crypto.md's Blob format (IKM = path_key) and uploaded as the *file's
+    // content*, not embedded in path. Reading it back means downloading
+    // $files.url (an extra hop versus embedding the pointer in path
+    // directly), then decrypting the response body.
     $files: i.entity({
       path: i.string().unique().indexed(),
     }),

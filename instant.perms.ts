@@ -111,14 +111,14 @@ const rules = {
     // $files rows are only ever created via db.storage.uploadFile(path, ...)
     // (instantdb.com/docs/storage#link-files), which happens before any link
     // to another entity exists -- so ownership can't be a ref traversal here
-    // the way it is for every other entity in this file. path is always
-    // "${auth.id}:" + a path_key-encrypted raw_path (docs/data_model.md's
-    // commit protocol) -- the auth.id prefix is deliberately left plaintext
-    // so ownership can still be checked by string prefix; only the raw_path
-    // portion after it is encrypted. isOwnPath covers both create (governs
-    // the upload itself) and view (must hold both before and after the file
-    // gets linked to its pages row, so it can't switch to a ref-based check
-    // post-link).
+    // the way it is for every other entity in this file. path is the same
+    // value as pages.pageKey ("${auth.id}:${pageNo}:${version}", plaintext,
+    // docs/data_model.md's commit protocol), which already starts with that
+    // same prefix -- the real secret (this page-version's R2 object key) is
+    // wrapped under path_key as the uploaded file's *content* instead, never
+    // in path. isOwnPath covers both create (governs the upload itself) and
+    // view (must hold both before and after the file gets linked to its
+    // pages row, so it can't switch to a ref-based check post-link).
     bind: [...ADMIN_BIND, "isOwnPath", "data.path.startsWith(auth.id + ':')"],
     allow: {
       view: "isAdmin || isOwnPath",

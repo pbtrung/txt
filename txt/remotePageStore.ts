@@ -10,13 +10,11 @@
 import { id, tx } from "@instantdb/admin";
 import type { CryptoEngine } from "./crypto.ts";
 import {
-  decodePagePath,
-  encodePagePath,
+  decodePagePointerContent,
+  encodePagePointerContent,
   generateRawPath,
 } from "./pagePointer.ts";
 import type { R2Client } from "./r2.ts";
-
-const UPLOAD_PLACEHOLDER = Buffer.from([0]);
 
 export interface RemotePageStoreConfig {
   db: any; // @instantdb/admin database instance
@@ -33,6 +31,11 @@ export interface CommitResult {
   pageCount: number;
 }
 
+interface UploadedPage {
+  fileId: string;
+  pageKey: string;
+}
+
 export class RemotePageStore {
   private cfg: RemotePageStoreConfig;
 
@@ -41,12 +44,17 @@ export class RemotePageStore {
   }
 
   async fetchPage(pageNo: number, targetVersion: number): Promise<Buffer> {
-    const path = await this.resolvePagePath(pageNo, targetVersion);
-    const rawPath = decodePagePath(this.cfg.crypto, this.cfg.pathKey, path);
+    const url = await this.resolvePagePointerUrl(pageNo, targetVersion);
+    const content = await this.downloadPointerContent(url);
+    const rawPath = decodePagePointerContent(
+      this.cfg.crypto,
+      this.cfg.pathKey,
+      content,
+    );
     return this.cfg.r2.getObject(rawPath);
   }
 
-  private async resolvePagePath(
+  private async resolvePagePointerUrl(
     pageNo: number,
     targetVersion: number,
   ): Promise<string> {
@@ -69,7 +77,16 @@ export class RemotePageStore {
       throw new Error(
         `no page row for pageNo=${pageNo} version<=${targetVersion}`,
       );
-    return row.pointerFile[0].path;
+    return row.pointerFile[0].url;
+  }
+
+  private async downloadPointerContent(url: string): Promise<Buffer> {
+    const resp = await fetch(url);
+    if (!resp.ok)
+      throw new Error(
+        `failed to download $files pointer content: HTTP ${resp.status}`,
+      );
+    return Buffer.from(await resp.arrayBuffer());
   }
 
   // Uploads every dirty page as a new version (all sharing one new version
@@ -82,9 +99,9 @@ export class RemotePageStore {
     pageSize: number,
   ): Promise<CommitResult> {
     const newVersion = currentVersion + 1;
-    const fileIds = await this.uploadPages(dirtyPages);
+    const uploaded = await this.uploadPages(dirtyPages, newVersion);
     await this.transactPages(
-      fileIds,
+      uploaded,
       newVersion,
       dbMetaId,
       pageCount,
@@ -95,39 +112,41 @@ export class RemotePageStore {
 
   private async uploadPages(
     dirtyPages: Map<number, Buffer>,
-  ): Promise<Map<number, string>> {
-    const fileIds = new Map<number, string>();
+    version: number,
+  ): Promise<Map<number, UploadedPage>> {
+    const uploaded = new Map<number, UploadedPage>();
     for (const [pageNo, body] of dirtyPages) {
-      fileIds.set(pageNo, await this.uploadOnePage(pageNo, body));
+      uploaded.set(pageNo, await this.uploadOnePage(pageNo, body, version));
     }
-    return fileIds;
+    return uploaded;
   }
 
-  private async uploadOnePage(pageNo: number, body: Buffer): Promise<string> {
+  private async uploadOnePage(
+    pageNo: number,
+    body: Buffer,
+    version: number,
+  ): Promise<UploadedPage> {
+    const pageKey = `${this.cfg.authId}:${pageNo}:${version}`;
     const rawPath = generateRawPath(this.cfg.r2Prefix);
     await this.cfg.r2.putObject(rawPath, body);
-    const path = encodePagePath(
+    const content = encodePagePointerContent(
       this.cfg.crypto,
       this.cfg.pathKey,
-      this.cfg.authId,
       rawPath,
     );
-    const { data } = await this.cfg.db.storage.uploadFile(
-      path,
-      UPLOAD_PLACEHOLDER,
-    );
-    return data.id;
+    const { data } = await this.cfg.db.storage.uploadFile(pageKey, content);
+    return { fileId: data.id, pageKey };
   }
 
   private async transactPages(
-    fileIds: Map<number, string>,
+    uploaded: Map<number, UploadedPage>,
     newVersion: number,
     dbMetaId: string,
     pageCount: number,
     pageSize: number,
   ): Promise<void> {
-    const pageTxs = [...fileIds].map(([pageNo, fileId]) =>
-      this.pageTx(pageNo, fileId, newVersion),
+    const pageTxs = [...uploaded].map(([pageNo, info]) =>
+      this.pageTx(pageNo, info, newVersion),
     );
     const dbMetaTx = tx.dbMeta[dbMetaId]
       .update({
@@ -140,10 +159,9 @@ export class RemotePageStore {
     await this.cfg.db.transact([...pageTxs, dbMetaTx]);
   }
 
-  private pageTx(pageNo: number, fileId: string, version: number) {
-    const pageKey = `${this.cfg.authId}:${pageNo}:${version}`;
+  private pageTx(pageNo: number, info: UploadedPage, version: number) {
     return tx.pages[id()]
-      .update({ pageKey, pageNo, version })
-      .link({ owner: this.cfg.ownerId, pointerFile: fileId });
+      .update({ pageKey: info.pageKey, pageNo, version })
+      .link({ owner: this.cfg.ownerId, pointerFile: info.fileId });
   }
 }
