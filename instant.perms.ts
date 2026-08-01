@@ -13,12 +13,32 @@
 // noted). isAdmin traverses auth -> $users.profile (the reverse of this
 // schema's usersAuth link) -> users.type.
 //
-// $users has no rules here -- it's InstantDB's own auth-managed entity, not
-// something this app writes to directly.
+// $users is InstantDB's own auth-managed entity, but it now carries custom
+// umk/creds attributes (docs/data_model.md's Key Hierarchy) alongside the
+// system-managed ones -- see its own rules below.
 
 const ADMIN_BIND = ["isAdmin", "'admin' in auth.ref('$user.profile.type')"];
 
 const rules = {
+  $users: {
+    // isSelf is a direct id comparison here, not a ref traversal like every
+    // other entity in this file -- $users *is* the auth identity, so
+    // auth.id already equals this row's own id. view lets a session read
+    // and locally decrypt its own umk/creds after unlock; update is
+    // admin-only, since setting/rotating umk/creds is a provisioning action
+    // (AdminInitializer-equivalent), never a regular user self-service
+    // write -- mirrors umk_store never being regular-user-writable in the
+    // pre-InstantDB Turso design. create is included defensively, though in
+    // practice InstantDB's own auth flow creates the bare row on first
+    // sign-in, before this app ever sets umk/creds on it.
+    bind: [...ADMIN_BIND, "isSelf", "auth.id == data.id"],
+    allow: {
+      view: "isAdmin || isSelf",
+      create: "isAdmin",
+      update: "isAdmin",
+      delete: "isAdmin",
+    },
+  },
   users: {
     bind: [...ADMIN_BIND, "isSelf", "auth.id in data.ref('authUser.id')"],
     allow: {
@@ -31,7 +51,11 @@ const rules = {
     },
   },
   dbMeta: {
-    bind: [...ADMIN_BIND, "isOwner", "auth.id in data.ref('owner.authUser.id')"],
+    bind: [
+      ...ADMIN_BIND,
+      "isOwner",
+      "auth.id in data.ref('owner.authUser.id')",
+    ],
     allow: {
       view: "isAdmin || isOwner",
       create: "isAdmin || isOwner",
@@ -48,7 +72,11 @@ const rules = {
     },
   },
   pages: {
-    bind: [...ADMIN_BIND, "isOwner", "auth.id in data.ref('owner.authUser.id')"],
+    bind: [
+      ...ADMIN_BIND,
+      "isOwner",
+      "auth.id in data.ref('owner.authUser.id')",
+    ],
     allow: {
       view: "isAdmin || isOwner",
       create: "isAdmin || isOwner",
@@ -59,15 +87,16 @@ const rules = {
       delete: "isAdmin",
     },
   },
-  "$files": {
+  $files: {
     // $files rows are only ever created via db.storage.uploadFile(path, ...)
     // (instantdb.com/docs/storage#link-files), which happens before any link
     // to another entity exists -- so ownership can't be a ref traversal here
     // the way it is for every other entity in this file. path is always
-    // "${auth.id}:${pageNo}:${version}" (docs/data_model.md's commit
-    // protocol, same value as pages.pageKey), so ownership is checked by
-    // string prefix instead. isOwnPath covers both create (governs the
-    // upload itself) and view (must hold both before and after the file
+    // "${auth.id}:" + a path_key-encrypted raw_path (docs/data_model.md's
+    // commit protocol) -- the auth.id prefix is deliberately left plaintext
+    // so ownership can still be checked by string prefix; only the raw_path
+    // portion after it is encrypted. isOwnPath covers both create (governs
+    // the upload itself) and view (must hold both before and after the file
     // gets linked to its pages row, so it can't switch to a ref-based check
     // post-link).
     bind: [...ADMIN_BIND, "isOwnPath", "data.path.startsWith(auth.id + ':')"],
@@ -79,7 +108,11 @@ const rules = {
     },
   },
   activeReaders: {
-    bind: [...ADMIN_BIND, "isOwner", "auth.id in data.ref('owner.authUser.id')"],
+    bind: [
+      ...ADMIN_BIND,
+      "isOwner",
+      "auth.id in data.ref('owner.authUser.id')",
+    ],
     allow: {
       view: "isAdmin || isOwner",
       create: "isAdmin || isOwner",
