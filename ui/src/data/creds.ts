@@ -17,6 +17,9 @@ export interface Creds {
   rqliteUrl: string;
   apiKey: string;
   userRootKey: Uint8Array;
+  /** Purely cosmetic -- shown in AccountFooter next to the person icon.
+   * Optional: absent from most creds files, no fallback needed. */
+  displayName?: string;
 }
 
 export class CredsError extends Error {}
@@ -38,7 +41,13 @@ export function parseCreds(json: unknown): Creds {
     throw new CredsError("user_root_key too short");
   }
 
-  return { rqliteUrl, apiKey, userRootKey };
+  const displayNameValue = data.display_name;
+  const displayName =
+    typeof displayNameValue === "string" && displayNameValue.length > 0
+      ? displayNameValue
+      : undefined;
+
+  return { rqliteUrl, apiKey, userRootKey, displayName };
 }
 
 export async function loadCredsFromFile(file: File): Promise<Creds> {

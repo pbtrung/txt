@@ -18,6 +18,17 @@ describe("parseCreds", () => {
     expect(creds.rqliteUrl).toBe("https://rqlite.example.com:4001");
     expect(creds.apiKey).toBe("some-api-key");
     expect(creds.userRootKey.length).toBe(256);
+    expect(creds.displayName).toBeUndefined();
+  });
+
+  it("parses an optional display_name when present", () => {
+    const creds = parseCreds(validCreds({ display_name: "Trung" }));
+    expect(creds.displayName).toBe("Trung");
+  });
+
+  it("treats a non-string or empty display_name as absent, not an error", () => {
+    expect(parseCreds(validCreds({ display_name: "" })).displayName).toBeUndefined();
+    expect(parseCreds(validCreds({ display_name: 42 })).displayName).toBeUndefined();
   });
 
   it("rejects a non-object", () => {

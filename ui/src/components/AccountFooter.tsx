@@ -9,16 +9,19 @@ export function AccountFooter({
   onLock,
   refreshing,
   refreshAriaLabel,
+  displayName,
 }: {
   onRefresh: () => void;
   onLock: () => void;
   refreshing: boolean;
   refreshAriaLabel: string;
+  displayName?: string;
 }) {
   return (
     <div className="border-top pt-2 mt-2 d-flex align-items-center justify-content-between gap-2">
       <span className="d-flex align-items-center gap-2 text-truncate">
         <i className="bi bi-person-circle text-body-secondary flex-shrink-0" aria-hidden="true" />
+        {displayName && <span className="text-truncate">{displayName}</span>}
       </span>
       <div className="btn-group flex-shrink-0" role="group" aria-label="Account actions">
         <button

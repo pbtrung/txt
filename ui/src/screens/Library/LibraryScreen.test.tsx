@@ -86,10 +86,11 @@ function setVaultMock(
   bookmarksMap: BookmarksMap,
   refreshing: boolean,
   progress: VaultContextModule.VaultProgress | null = null,
+  displayName?: string,
 ) {
   vi.mocked(VaultContextModule.useVault).mockReturnValue({
     status: "unlocked",
-    session: {} as VaultContextModule.VaultSession,
+    session: { creds: { displayName } } as VaultContextModule.VaultSession,
     error: null,
     accessMap: new Map(),
     bookmarksMap,
@@ -121,8 +122,9 @@ function renderLibrary(
   bookmarksMap: BookmarksMap = new Map(),
   refreshing = false,
   progress: VaultContextModule.VaultProgress | null = null,
+  displayName?: string,
 ) {
-  setVaultMock(bookmarksMap, refreshing, progress);
+  setVaultMock(bookmarksMap, refreshing, progress, displayName);
   vi.mocked(useLibraryBooksModule.useLibraryBooks).mockReturnValue({ books, loading: false });
   return render(libraryTree());
 }
@@ -345,6 +347,16 @@ describe("LibraryScreen", () => {
       expect(document.querySelector(".bi-person-circle")).not.toBeNull();
       const lockButton = screen.getByRole("button", { name: /^lock$/i });
       expect(lockButton).not.toHaveTextContent("Lock");
+    });
+
+    it("shows the creds file's display_name next to the person icon, when present", () => {
+      renderLibrary(new Map(), false, null, "Trung");
+      expect(screen.getAllByText("Trung").length).toBeGreaterThan(0);
+    });
+
+    it("shows nothing next to the person icon when display_name is absent", () => {
+      renderLibrary();
+      expect(screen.queryByText("Trung")).toBeNull();
     });
 
     it("calls lock() when clicked", async () => {

@@ -68,6 +68,7 @@ function LibraryNavContent({
   onLock,
   onRefresh,
   refreshing,
+  displayName,
 }: {
   view: View;
   selectView: (next: View) => void;
@@ -79,6 +80,7 @@ function LibraryNavContent({
   onLock: () => void;
   onRefresh: () => void;
   refreshing: boolean;
+  displayName?: string;
 }) {
   return (
     <>
@@ -130,6 +132,7 @@ function LibraryNavContent({
         onLock={onLock}
         refreshing={refreshing}
         refreshAriaLabel="Refresh library"
+        displayName={displayName}
       />
     </>
   );
@@ -137,6 +140,7 @@ function LibraryNavContent({
 
 export function LibraryScreen() {
   const {
+    session,
     lock,
     refresh,
     refreshing,
@@ -311,6 +315,7 @@ export function LibraryScreen() {
                 onLock={lock}
                 onRefresh={() => void handleRefresh()}
                 refreshing={refreshing}
+                displayName={session?.creds?.displayName}
               />
             </div>
           )}
@@ -397,6 +402,7 @@ export function LibraryScreen() {
                 onLock={lock}
                 onRefresh={() => void handleRefresh()}
                 refreshing={refreshing}
+                displayName={session?.creds?.displayName}
               />
             </div>
 
