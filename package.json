@@ -1,7 +1,8 @@
 {
   "type": "module",
   "scripts": {
-    "format": "prettier --write txt.ts txt/*.ts"
+    "format": "prettier --write txt.ts txt/*.ts",
+    "format:check": "prettier --check txt.ts txt/*.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1101.0",
