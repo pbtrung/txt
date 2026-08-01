@@ -22,13 +22,13 @@ Exact InstantDB API names below (`i.entity`, `unique()`, `.ref()`, permission ru
         "region": "",
         "bucket": ""
       },
-      "path_key": "(base64, 128 random bytes)",
-      "db_key": "(base64, 256 random bytes)"
+      "path_key": "<base64, 128 random bytes>",
+      "db_key": "<base64, 256 random bytes>"
     }
     ```
     `r2_config` is the same shape as the pre-InstantDB design's R2 connection info, needed to read/write this user's page objects directly in R2. `path_key` wraps each page-version's R2 object key before it's used as `$files.path` (see below). `db_key` is the raw SQLCipher key for this user's own database — **must be ≥256 raw bytes**: the leancrypto cipher provider (`sqlcipher/sqlcipher.js`, this repo's vendored WASM build) rejects anything shorter (`sqlcipher_cipher_ctx_key_derive: key must be supplied as a raw key blob x'...' of at least 256 bytes`, confirmed against the real WASM module) — unlike `umk`/`path_key`, which are just HKDF input keying material and have no such hard minimum. The shape of `creds` for non-admin roles isn't decided yet.
 - **`users`** — an app-level profile entity, one-to-one linked to `$users`, holding `type: 'admin' | 'user'`. Kept separate from `$users` because `$users` is managed by InstantDB's auth system and isn't meant to carry arbitrary app fields (aside from the key-hierarchy attributes above, which are a deliberate, narrow exception — see `instant.perms.ts`'s `$users` rules for why). `type` is the permission system's role switch: a `'user'` can only view/create/update their own `dbMeta`/`pages`/`$files`/`activeReaders` rows (every rule is `isAdmin || isOwner`), an `'admin'` can act on any user's data, full stop — including operations (updating/deleting `pages`/`$files` rows) an ordinary owner is never allowed, since those violate the page store's append-only MVCC invariant and are meant only as a deliberate support/repair escape hatch. A `'user'` can update their own profile row but never their own `type` field (blocked via `request.modifiedFields`), so self-promotion to admin isn't possible through the normal write path.
-- **`dbMeta`** — one row per user (one-to-one link to `users`): `currentVersion`, `pageCount`, `pageSize`, `needsGc` — the table of contents for that user's SQLCipher database's page store. `pageSize` matches that database's own page size (`PRAGMA cipher_page_size`).
+- **`dbMeta`** — one row per user (one-to-one link to `users`): `currentVersion`, `pageCount`, `pageSize`, `needsGc` — the table of contents for that user's SQLCipher database's page store. `pageSize` matches that database's own page size (`PRAGMA page_size`, set to `32768` — see the schema's `PRAGMA` block below); SQLCipher's own `cipher_page_size` follows the same value.
 - **`pages`** — one row per (owner, page_no, version) triple of the SQLCipher database above: `pageNo`, `version`, a synthetic `pageKey` (see below), linked to `users` (owner) and to `$files` (the page's pointer). A "page" here is a literal SQLite/SQLCipher page, not an arbitrary document chunk.
 - **`$files`** (InstantDB's built-in storage entity) — one row per page-version's pointer. InstantDB only allows creating a `$files` row via `db.storage.uploadFile(path, file)` — `transact()` can update an existing row's `path` or delete the row, but never create one ([instantdb.com/docs/storage#link-files](https://instantdb.com/docs/storage#link-files)). `path` is **not** the same value as `pages.pageKey`: it's `"${auth.id}:" + <path_key-encrypted raw_path>`, where `raw_path` is a fresh Crockford-base32-lowercase encoding of 32 random bytes (this page-version's real R2 object key in the user's own bucket), encrypted via `crypto.md`'s Blob format (IKM = `path_key`) and base64url-encoded. The `auth.id` prefix stays plaintext deliberately — `instant.perms.ts` checks it via string-prefix, since no link to any other entity exists yet at upload time to ref-traverse instead; only the `raw_path` portion is encrypted. Uploaded file *content* is a trivial placeholder — the real page bytes (already SQLCipher/Ascon-Keccak-encrypted under `db_key` at the SQLite page level) live directly in R2, never in InstantDB. InstantDB only ever holds client-encrypted paths.
 - **`activeReaders`** — one row per open read session: `snapshotVersion` (the version that session pinned at open) and `leaseExpiresAt`, linked to `users`. Lets garbage collection compute the oldest version still in use by any live reader.
@@ -79,6 +79,9 @@ Every unlock requires a live Firebase sign-in (`getIdToken()` → `db.auth.signI
 Entirely opaque to InstantDB — these tables live inside the per-user SQLCipher-encrypted SQLite file itself (paged into R2 via the page store above), never as InstantDB rows. Because SQLCipher already encrypts every page of this file under `db_key`, individual columns don't need their own app-level `Blob`-wrapping the way every sensitive column in the pre-InstantDB Turso design did — the whole file is ciphertext at rest, InstantDB and R2 both included.
 
 ```sql
+PRAGMA page_size = 32768;
+PRAGMA auto_vacuum = INCREMENTAL;
+
 CREATE TABLE txt (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     name          TEXT    NOT NULL,  -- original filename
@@ -128,6 +131,11 @@ BEGIN
     );
 END;
 ```
+
+### Pragmas
+
+- **`page_size = 32768`** — must be set before any table is created (SQLite only honors a `page_size` change on an empty database, or via a subsequent `VACUUM`); this is what `dbMeta.pageSize`/`pages`/`$files` above are keyed to. A larger-than-default page size means fewer, bigger R2 objects per database for a given document size — fewer round-trips to page a large document in, at the cost of moving more bytes than strictly needed when only a small part of a page actually changed.
+- **`auto_vacuum = INCREMENTAL`** — also only settable before any table exists. Lets freed pages (e.g. after deleting a document) be reclaimed via an explicit `PRAGMA incremental_vacuum` sweep without rewriting the whole file, unlike a full `VACUUM` — important here since every reclaimed page is also a page-store entry (`pages`/`$files`) and an R2 object to garbage-collect, not just local disk space.
 
 ### Tables
 
