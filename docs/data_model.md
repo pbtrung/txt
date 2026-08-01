@@ -82,14 +82,14 @@ Creating a `user` account is an admin-side action: the admin generates that user
 
 ### Temporary, prefix-scoped R2 credentials
 
-Every account's `raw_path` values live under `r2Prefix = base32_lowercase(sha3-256(auth.id))` (see `$files` above) — deterministic, computable by anyone who knows `auth.id`, and namespacing each account's objects into their own slice of the bucket regardless of which role holds them. For a `user` session, R2 access is restricted to exactly that slice:
+Every account's `raw_path` values live under `r2Prefix = base32_lowercase(sha3-256(auth.id))` (see `$files` above) — deterministic, computable by anyone who knows `auth.id`, and namespacing each account's objects into their own slice of the bucket regardless of which role holds them. For a `user` session, R2 access is restricted to exactly that slice, via a **Cloudflare Worker** as the trusted intermediary (colocated with R2, one platform instead of two for this specific hop):
 
-1. A small trusted intermediary (holding the admin's R2 credential server-side, never exposed to any client) verifies the caller's Firebase ID token.
-2. It computes `r2Prefix` from the token's identity and requests a temporary credential from R2 scoped to `permission: "object-read-write"`, `prefixes: ["${r2Prefix}/"]`, with a short TTL.
-3. It returns the resulting temporary access key/secret/session token to the client, which builds a normal S3 client from them.
+1. The client sends its Firebase ID token to the Worker. The Worker verifies it itself — RS256 signature against Google's public JWKS, cached — since `firebase-admin` isn't Workers-compatible; a lightweight JWT library (e.g. `jose`, which does run in Workers) handles this.
+2. The Worker computes `r2Prefix = base32_lowercase(sha3-256(auth.id))` from the token's verified subject and mints a temporary credential via R2's [Temporary Credentials](https://developers.cloudflare.com/r2/api/s3/temporary-credentials/) **local signing** path — no outbound call to Cloudflare's own API needed: sign a small JWT (HS256) with the admin's parent R2 token's secret access key (held only as a Worker secret, never exposed to any client), scoped to `permission: "object-read-write"`, `paths.prefixPaths: ["${r2Prefix}/"]`, with `ttlSeconds` set to the shortest value that comfortably covers one session (the parent access key ID is reused as-is; the temporary secret and session token are derived directly from the signed JWT — see the linked docs for the exact derivation).
+3. The Worker returns the resulting `{ accessKeyId, secretAccessKey, sessionToken }` to the client, which builds a normal S3 client from them (e.g. `aws4fetch`'s `AwsClient`, or `@aws-sdk/client-s3` with `sessionToken` set).
 4. The client re-requests a fresh temporary credential once the current one expires; no long-lived secret is ever cached client-side.
 
-This is the one place this design needs a server component — every other unlock/read/write path is a direct client-to-InstantDB or client-to-R2 call. The intermediary only ever brokers scoped, time-limited credentials; it never sees page content (already SQLCipher-encrypted before it would ever reach R2) or any account's `umk`/`path_key`/`db_key`.
+This is the one place this design needs a server component — every other unlock/read/write path is a direct client-to-InstantDB or client-to-R2 call. The Worker only ever verifies identity and brokers scoped, time-limited credentials; it never sees page content (already SQLCipher-encrypted before it would ever reach R2) or any account's `umk`/`path_key`/`db_key`.
 
 ## Garbage collection
 
