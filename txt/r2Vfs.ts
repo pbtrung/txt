@@ -8,6 +8,7 @@
 // no Asyncify support (confirmed: no true async-from-a-sync-C-callback path
 // exists), so genuine on-demand fetches mid-xRead aren't possible.
 import { registerJsVfs } from "../sqlcipher/js-vfs.mjs";
+import * as C from "./constants.ts";
 import type { RemotePageStore } from "./remotePageStore.ts";
 
 type FilesMap = Map<string, { bytes: Uint8Array }>;
@@ -77,14 +78,23 @@ export class R2Vfs {
     return new R2Vfs(name, files, pageSize, dbFileName, originalPages);
   }
 
+  // Same bounded-concurrency batching as RemotePageStore's upload side --
+  // one page at a time is slow for a database of any real size (each page
+  // is itself a query + a pointer download + an R2 GET), and an unbounded
+  // Promise.all over every page risks exhausting connections.
   private static async prefetchPages(
     store: RemotePageStore,
     pageCount: number,
     version: number,
   ): Promise<Map<number, Uint8Array>> {
+    const pageNos = Array.from({ length: pageCount }, (_, i) => i + 1);
     const pages = new Map<number, Uint8Array>();
-    for (let pageNo = 1; pageNo <= pageCount; pageNo++) {
-      pages.set(pageNo, await store.fetchPage(pageNo, version));
+    for (let i = 0; i < pageNos.length; i += C.R2_BATCH_CONCURRENCY) {
+      const batch = pageNos.slice(i, i + C.R2_BATCH_CONCURRENCY);
+      const results = await Promise.all(
+        batch.map((pageNo) => store.fetchPage(pageNo, version)),
+      );
+      batch.forEach((pageNo, idx) => pages.set(pageNo, results[idx]));
     }
     return pages;
   }

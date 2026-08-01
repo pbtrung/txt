@@ -34,3 +34,10 @@ export const MIGRATE_SAMPLE_SIZE = 10;
 export const ORPHAN_PREVIEW_LIMIT = 50;
 export const S3_DELETE_BATCH_SIZE = 1000; // AWS DeleteObjects hard limit
 export const RETRY_DELAYS_MS = [2000, 4000, 8000]; // matches txt/r2.py's _RETRY_DELAYS
+
+// Bounded concurrency for per-page R2/InstantDB round-trips (RemotePageStore's
+// upload, R2Vfs's prefetch) -- pages are prepared up front (pure, no I/O),
+// then issued this many at a time rather than one giant unbounded Promise.all
+// (risks exhausting connections/hitting rate limits) or a fully serial loop
+// (slow for anything beyond a handful of pages).
+export const R2_BATCH_CONCURRENCY = 8;
