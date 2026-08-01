@@ -217,12 +217,23 @@ export class Migrator {
     if (!authRow?.umk || !authRow?.creds) {
       throw new Error(`$users row for auth.id=${authId} is missing umk/creds`);
     }
+    // InstaQL returns a linked sub-entity as an array regardless of that
+    // link's own cardinality (confirmed already for pages.pointerFile in
+    // remotePageStore.ts -- users.dbMeta, also a "has: one" reverse link,
+    // behaves the same way: dbMeta itself, not [0], was silently undefined
+    // everywhere below, which produced a 0-byte "reopened" database that
+    // SQLite just treated as a brand-new empty one -- no error until the
+    // first real query against it, "no such table: txt").
+    const dbMetaRow = usersRow.dbMeta?.[0];
+    if (!dbMetaRow) {
+      throw new Error(`users row ${usersRow.id} has no linked dbMeta row`);
+    }
     return {
       usersRowId: usersRow.id,
-      dbMetaId: usersRow.dbMeta.id,
-      currentVersion: usersRow.dbMeta.currentVersion,
-      pageCount: usersRow.dbMeta.pageCount,
-      pageSize: usersRow.dbMeta.pageSize,
+      dbMetaId: dbMetaRow.id,
+      currentVersion: dbMetaRow.currentVersion,
+      pageCount: dbMetaRow.pageCount,
+      pageSize: dbMetaRow.pageSize,
       umkBlob: authRow.umk,
       credsBlob: authRow.creds,
     };
