@@ -4,7 +4,9 @@
 // reference's one-key-at-a-time delete -- see docs/cli.md notes).
 import {
   DeleteObjectsCommand,
+  GetObjectCommand,
   ListObjectsV2Command,
+  PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
 import * as C from "./constants.ts";
@@ -86,6 +88,24 @@ export class R2Client {
       objects,
       nextToken: resp.IsTruncated ? resp.NextContinuationToken : undefined,
     };
+  }
+
+  async putObject(key: string, body: Buffer): Promise<void> {
+    await this.withRetries(`put ${key}`, () =>
+      this.s3.send(
+        new PutObjectCommand({ Bucket: this.r2.bucket, Key: key, Body: body }),
+      ),
+    );
+    this.log.debug(`Put ${key} (${body.length} bytes)`);
+  }
+
+  async getObject(key: string): Promise<Buffer> {
+    const resp = await this.withRetries(`get ${key}`, () =>
+      this.s3.send(new GetObjectCommand({ Bucket: this.r2.bucket, Key: key })),
+    );
+    const bytes = await resp.Body!.transformToByteArray();
+    this.log.debug(`Got ${key} (${bytes.length} bytes)`);
+    return Buffer.from(bytes);
   }
 
   async deleteObjects(keys: string[]): Promise<DeleteResult> {

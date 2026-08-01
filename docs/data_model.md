@@ -114,6 +114,7 @@ Every unlock requires a live Firebase sign-in (`getIdToken()` → `db.auth.signI
 Entirely opaque to InstantDB — these tables live inside the per-user SQLCipher-encrypted SQLite file itself (paged into R2 via the page store above), never as InstantDB rows. Because SQLCipher already encrypts every page of this file under `db_key`, individual columns don't need their own app-level `Blob`-wrapping — the whole file is ciphertext at rest, InstantDB and R2 both included.
 
 ```sql
+PRAGMA cipher_default_page_size = 32768;
 PRAGMA page_size = 32768;
 PRAGMA auto_vacuum = INCREMENTAL;
 

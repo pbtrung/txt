@@ -21,6 +21,12 @@ export const TXT_METADATA_LEGACY_THRESHOLD = 200;
 export const USERNAME_LOOKUP_KEY_MIN_LEN = 32;
 export const USER_ROOT_KEY_MIN_LEN = 256;
 
+// docs/data_model.md's per-user SQLCipher database. Must be set via
+// `PRAGMA cipher_default_page_size` before keying on every open (create or
+// reopen) -- this codec has no plaintext header for SQLite to sniff the
+// actual page size from otherwise, unlike an unencrypted database.
+export const SQLCIPHER_PAGE_SIZE = 32768;
+
 export const ORPHAN_PREVIEW_LIMIT = 50;
 export const S3_DELETE_BATCH_SIZE = 1000; // AWS DeleteObjects hard limit
 export const RETRY_DELAYS_MS = [2000, 4000, 8000]; // matches txt/r2.py's _RETRY_DELAYS
