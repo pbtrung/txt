@@ -74,28 +74,63 @@ const _schema = i.schema({
     }),
   },
   links: {
+    // Cascade chain rooted at $users: deleting the auth identity deletes its
+    // users profile (below), which in turn deletes everything that profile
+    // owns (dbMetaOwner/pagesOwner/filesOwner/activeReadersOwner) -- one
+    // delete cleans up the whole account's InstantDB-side footprint. `on`,
+    // not `data`, is what's authoritative here: onDelete goes on whichever
+    // side of a link has `has: "one"` (the only cardinality it's valid on)
+    // and fires when the *other* side's entity is deleted.
     usersAuth: {
-      forward: { on: "users", has: "one", label: "authUser" },
+      forward: {
+        on: "users",
+        has: "one",
+        label: "authUser",
+        onDelete: "cascade",
+      },
       reverse: { on: "$users", has: "one", label: "profile" },
     },
     dbMetaOwner: {
-      forward: { on: "dbMeta", has: "one", label: "owner" },
+      forward: {
+        on: "dbMeta",
+        has: "one",
+        label: "owner",
+        onDelete: "cascade",
+      },
       reverse: { on: "users", has: "one", label: "dbMeta" },
     },
     pagesOwner: {
-      forward: { on: "pages", has: "one", label: "owner" },
+      forward: { on: "pages", has: "one", label: "owner", onDelete: "cascade" },
       reverse: { on: "users", has: "many", label: "pages" },
     },
+    // Deliberately NOT cascaded: garbage collection (data_model.md) deletes
+    // `pages` and `$files` as two explicit, separately-ordered steps
+    // (pages first, then $files + its R2 object), specifically so a crash
+    // mid-GC can never leave a pages row pointing at an already-deleted
+    // $files row. An automatic cascade here would collapse that ordering
+    // back into one implicit step and still wouldn't clean up the R2 object
+    // (cascade only ever touches InstantDB rows) -- GC needs to keep doing
+    // this explicitly either way.
     pagesPointer: {
       forward: { on: "pages", has: "one", label: "pointerFile" },
       reverse: { on: "$files", has: "one", label: "page" },
     },
     filesOwner: {
-      forward: { on: "$files", has: "one", label: "owner" },
+      forward: {
+        on: "$files",
+        has: "one",
+        label: "owner",
+        onDelete: "cascade",
+      },
       reverse: { on: "users", has: "many", label: "files" },
     },
     activeReadersOwner: {
-      forward: { on: "activeReaders", has: "one", label: "owner" },
+      forward: {
+        on: "activeReaders",
+        has: "one",
+        label: "owner",
+        onDelete: "cascade",
+      },
       reverse: { on: "users", has: "many", label: "activeReaders" },
     },
   },
