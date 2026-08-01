@@ -11,4 +11,4 @@ creds/
 txt_*/
 *.db
 *.db-*
-instant_admin.json
+*.json

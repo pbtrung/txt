@@ -6,6 +6,8 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1101.0",
+    "@instantdb/admin": "^1.0.57",
+    "@instantdb/core": "^1.0.57",
     "@instantdb/react": "^1.0.57",
     "instant-cli": "^1.0.57"
   },

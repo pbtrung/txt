@@ -2,7 +2,7 @@
 // prebuilt sqlcipher/sqlcipher.js WASM module -- never hand-rolled. Native
 // Node crypto covers HMAC-SHA3-256 (username_hash), a standard primitive
 // with no leancrypto-specific behavior to replicate.
-import { createHmac } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 // @ts-ignore -- no type declarations beyond `declare function Sqlite3Wasm(): Promise<any>`
 import Sqlite3Wasm from "../sqlcipher/sqlcipher.js";
 import * as C from "./constants.ts";
@@ -69,10 +69,34 @@ export class CryptoEngine {
 
   blobDecrypt(ikm: Uint8Array, blob: Uint8Array): Buffer {
     const { ad, salt, ciphertext, tag } = parseBlob(blob);
-    const okm = this.hkdfSha3512(ikm, salt, C.OKM_LEN);
-    const key = okm.subarray(0, C.KEY_LEN);
-    const iv = okm.subarray(C.KEY_LEN, C.OKM_LEN);
+    const { key, iv } = this.deriveKeyIv(ikm, salt);
     return this.aeadDecrypt(key, iv, ad, ciphertext, tag);
+  }
+
+  // crypto.md's Encrypt algorithm: fresh salt, HKDF-derive key+IV from it,
+  // AEAD-encrypt with AD = magic||version||salt, assemble the blob.
+  blobEncrypt(ikm: Uint8Array, plaintext: Uint8Array): Buffer {
+    const salt = randomBytes(C.SALT_LEN);
+    const ad = Buffer.from([
+      ...C.MAGIC,
+      C.VERSION_MAJOR,
+      C.VERSION_MINOR,
+      ...salt,
+    ]);
+    const { key, iv } = this.deriveKeyIv(ikm, salt);
+    const { ciphertext, tag } = this.aeadEncrypt(key, iv, ad, plaintext);
+    return Buffer.concat([ad, ciphertext, tag]);
+  }
+
+  private deriveKeyIv(
+    ikm: Uint8Array,
+    salt: Uint8Array,
+  ): { key: Buffer; iv: Buffer } {
+    const okm = this.hkdfSha3512(ikm, salt, C.OKM_LEN);
+    return {
+      key: okm.subarray(0, C.KEY_LEN),
+      iv: okm.subarray(C.KEY_LEN, C.OKM_LEN),
+    };
   }
 
   private hkdfSha3512(
@@ -143,5 +167,46 @@ export class CryptoEngine {
     );
     if (rc !== 0) throw new BlobDecryptError("AEAD tag verification failed");
     return this.mem.read(p.pt, ctLen);
+  }
+
+  private aeadEncrypt(
+    key: Uint8Array,
+    iv: Uint8Array,
+    aad: Uint8Array,
+    pt: Uint8Array,
+  ): { ciphertext: Buffer; tag: Buffer } {
+    return this.mem.withBuffers(
+      { key, iv, aad, pt },
+      { ct: pt.length, tag: C.TAG_LEN },
+      (p) =>
+        this.runAeadEncrypt(p, key.length, iv.length, aad.length, pt.length),
+    );
+  }
+
+  private runAeadEncrypt(
+    p: Record<string, number>,
+    keyLen: number,
+    ivLen: number,
+    aadLen: number,
+    ptLen: number,
+  ): { ciphertext: Buffer; tag: Buffer } {
+    const rc = this.module._lc_wasm_aead_encrypt(
+      p.key,
+      keyLen,
+      p.iv,
+      ivLen,
+      p.aad,
+      aadLen,
+      p.pt,
+      ptLen,
+      p.ct,
+      p.tag,
+      C.TAG_LEN,
+    );
+    if (rc !== 0) throw new Error(`lc_wasm_aead_encrypt failed, rc=${rc}`);
+    return {
+      ciphertext: this.mem.read(p.ct, ptLen),
+      tag: this.mem.read(p.tag, C.TAG_LEN),
+    };
   }
 }

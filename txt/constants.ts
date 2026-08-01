@@ -1,10 +1,12 @@
-// Byte lengths and blob-format fields. See docs/crypto.md and
-// docs/data_model.md (as of commit 1ed39d433365c39a6973303c171c7bb5510d7e3e
-// -- the actual running schema, not this branch's InstantDB design docs).
-// Mirrors the subset of txt/constants.py this tool needs (decrypt-only).
+// Byte lengths and blob-format fields. See docs/crypto.md (blob format,
+// shared by both --clean-bucket's schema and the InstantDB design in
+// docs/data_model.md) and, for --clean-bucket specifically, docs/data_model.md
+// as of commit 1ed39d433365c39a6973303c171c7bb5510d7e3e (the actual running
+// schema at that point, not this branch's InstantDB design docs).
 
 export const MAGIC = [0x54, 0x58];
 export const VERSION_MAJOR = 0x01;
+export const VERSION_MINOR = 0x00;
 
 export const SALT_LEN = 64;
 export const TAG_LEN = 64;
