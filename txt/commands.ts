@@ -456,12 +456,18 @@ export class RemoteVacuumCommand extends Command<RemoteVacuumOptions> {
   private async incrementalVacuumUserDb(creds: PerfCreds): Promise<void> {
     const session = await openRemoteSession(creds, false, (m) => this.log(m));
     try {
+      const mode = this.autoVacuumMode(session.db);
+      if (mode !== "incremental") {
+        this.progress(
+          `skipping incremental_vacuum: auto_vacuum is ${mode}, not INCREMENTAL -- ` +
+            "run --convert-auto-vacuum (and restore the result onto this deployment) first",
+        );
+        return;
+      }
       this.progress(`Running PRAGMA incremental_vacuum(${INCREMENTAL_VACUUM_PAGE_COUNT})...`);
       session.db.exec(`PRAGMA incremental_vacuum(${INCREMENTAL_VACUUM_PAGE_COUNT});`);
       if (!session.vfs.isDirty()) {
-        this.progress(
-          "nothing to reclaim (not yet converted to auto_vacuum=INCREMENTAL, or none free)",
-        );
+        this.progress("nothing to reclaim (auto_vacuum is INCREMENTAL, but no free pages)");
         return;
       }
       const ok = await session.vfs.commit(session.client);
@@ -470,6 +476,15 @@ export class RemoteVacuumCommand extends Command<RemoteVacuumOptions> {
     } finally {
       await closeRemoteSession(session);
     }
+  }
+
+  /** PRAGMA auto_vacuum reports 0=NONE, 1=FULL, 2=INCREMENTAL. */
+  private autoVacuumMode(db: SqliteDb): "none" | "full" | "incremental" {
+    const stmt = db.prepare("PRAGMA auto_vacuum;");
+    stmt.step();
+    const mode = Number(stmt.columnInt64(0));
+    stmt.finalize();
+    return mode === 2 ? "incremental" : mode === 1 ? "full" : "none";
   }
 
   private async collectGarbage(client: RqliteHttpClient, targetDbId: string): Promise<void> {
