@@ -10,3 +10,4 @@ build/
 creds/
 txt_*/
 *.db
+*.db-*
