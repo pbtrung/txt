@@ -46,17 +46,16 @@ export class TxtBucketCleaner {
     opts: CleanBucketOptions,
   ): Promise<CleanBucketResult> {
     const startedAt = Date.now();
-    const { known, txtCount } = this.resolveKnownPaths(creds);
+    const knownPaths = this.resolveKnownPaths(creds);
     const objects = await this.r2.listAllObjects();
-    const orphans = computeOrphans(objects, known);
+    const orphans = computeOrphans(objects, knownPaths.known);
     this.log.info(
       `Found ${orphans.length} orphaned object(s) not present in DB (${formatBytes(totalBytes(orphans))})`,
     );
     const deleteResult = await this.maybeDelete(creds, orphans, opts);
     const stats = this.buildStats(
       opts.dryRun,
-      txtCount,
-      known.size,
+      knownPaths,
       objects,
       orphans,
       deleteResult,
@@ -101,8 +100,7 @@ export class TxtBucketCleaner {
 
   private buildStats(
     dryRun: boolean,
-    txtCount: number,
-    totalKnownPaths: number,
+    knownPaths: KnownPaths,
     objects: ObjectInfo[],
     orphans: ObjectInfo[],
     deleteResult: DeleteResult,
@@ -111,8 +109,9 @@ export class TxtBucketCleaner {
     const deleted = orphans.filter((o) => deleteResult.deletedKeys.has(o.key));
     return {
       dryRun,
-      txtCount,
-      totalKnownPaths,
+      txtCount: knownPaths.txtCount,
+      totalKnownPaths: knownPaths.known.size,
+      metadataObjectFound: knownPaths.metadataRawPath !== null,
       totalObjects: objects.length,
       orphanCount: orphans.length,
       orphanBytes: totalBytes(orphans),

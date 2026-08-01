@@ -11,6 +11,10 @@ import type { Logger } from "./logger.ts";
 export interface KnownPaths {
   known: Set<string>;
   txtCount: number;
+  // The R2 raw_path txt_metadata.content points to, if any -- null if there's
+  // no txt_metadata row, content is still NULL, or content is still the
+  // legacy inline-JSON format (nothing to keep in either of those cases).
+  metadataRawPath: string | null;
 }
 
 export class TxtOwner {
@@ -54,9 +58,22 @@ export class TxtOwner {
     txtIds.forEach((txtId, i) =>
       this.addTxtPaths(txtId, umk, known, i, txtIds.length),
     );
-    const metadataPath = this.resolveTxtMetadataRawPath(userId, umk);
-    if (metadataPath !== null) known.add(metadataPath);
-    return { known, txtCount: txtIds.length };
+    const metadataRawPath = this.resolveTxtMetadataRawPath(userId, umk);
+    this.logMetadataResolution(metadataRawPath);
+    if (metadataRawPath !== null) known.add(metadataRawPath);
+    return { known, txtCount: txtIds.length, metadataRawPath };
+  }
+
+  private logMetadataResolution(metadataRawPath: string | null): void {
+    if (metadataRawPath !== null) {
+      this.log.info(
+        `txt_metadata.content: found, keeping its R2 object ${metadataRawPath}`,
+      );
+    } else {
+      this.log.info(
+        "txt_metadata.content: not present (no R2 object to keep for it)",
+      );
+    }
   }
 
   private addTxtPaths(
