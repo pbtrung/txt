@@ -16,6 +16,11 @@
 // $users is InstantDB's own auth-managed entity, but it now carries custom
 // umk/creds attributes (docs/data_model.md's Key Hierarchy) alongside the
 // system-managed ones -- see its own rules below.
+//
+// Also confirmed via push (2026-08-01): $users.allow.delete must be the
+// literal "false", not a CEL expression -- InstantDB's push API rejects
+// anything else with "The $users namespace doesn't support permissions for
+// delete."
 
 const ADMIN_BIND = ["isAdmin", "'admin' in auth.ref('$user.profile.type')"];
 
@@ -36,7 +41,12 @@ const rules = {
       view: "isAdmin || isSelf",
       create: "isAdmin",
       update: "isAdmin",
-      delete: "isAdmin",
+      // $users doesn't support a delete permission at all -- InstantDB's own
+      // push API rejects anything but the literal "false" here (confirmed:
+      // "The $users namespace doesn't support permissions for delete. Set
+      // `$users.allow.delete` to `false`."). Deleting the auth entity itself
+      // isn't something this app's rules can gate either way.
+      delete: "false",
     },
   },
   users: {

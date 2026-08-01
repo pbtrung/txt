@@ -36,14 +36,14 @@ const _schema = i.schema({
       // base64, 128 random bytes, generated once per account and wrapped
       // (crypto.md's Blob format) under user_root_key (an external secret
       // from creds.json, never stored in InstantDB).
-      umk: i.string(),
+      umk: i.string().optional(),
       // base64, itself a Blob-wrapped JSON payload under umk -- shape
       // differs by role (admin: r2_config + path_key + db_key; user: same
       // minus any R2 access key, since a user session gets R2 access only
       // via a short-lived prefix-scoped temporary credential, never a
       // stored one) -- see data_model.md's $users bullet and "Non-admin
       // (user-role) accounts" section.
-      creds: i.string(),
+      creds: i.string().optional(),
     }),
     users: i.entity({
       type: i.string(), // 'admin' | 'user'
