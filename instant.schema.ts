@@ -33,15 +33,16 @@ const _schema = i.schema({
     // without the external user_root_key (never stored here).
     $users: i.entity({
       email: i.string().unique().indexed(),
-      // base64, 128 random bytes wrapped (crypto.md's Blob format) under
-      // user_root_key (an external secret from creds.json, never stored in
-      // InstantDB) -- same role as the pre-InstantDB Turso design's
-      // umk_store.umk, just twice the byte length.
+      // base64, 128 random bytes, generated once per account and wrapped
+      // (crypto.md's Blob format) under user_root_key (an external secret
+      // from creds.json, never stored in InstantDB).
       umk: i.string(),
-      // base64, itself a Blob-wrapped JSON payload under umk. For the admin
-      // role: {r2_config, path_key, db_key} -- see data_model.md's $users
-      // bullet for what each field is for. Shape for non-admin roles isn't
-      // decided yet.
+      // base64, itself a Blob-wrapped JSON payload under umk -- shape
+      // differs by role (admin: r2_config + path_key + db_key; user: same
+      // minus any R2 access key, since a user session gets R2 access only
+      // via a short-lived prefix-scoped temporary credential, never a
+      // stored one) -- see data_model.md's $users bullet and "Non-admin
+      // (user-role) accounts" section.
       creds: i.string(),
     }),
     users: i.entity({
