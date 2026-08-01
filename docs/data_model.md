@@ -9,7 +9,7 @@ Exact InstantDB API names below (`i.entity`, `unique()`, `.ref()`, permission ru
 ## Entities
 
 - **`$users`** (InstantDB's built-in auth entity) — one row per Firebase-authenticated identity, keyed by email. Also carries this account's key hierarchy directly, as custom attributes:
-  - **`umk`** — base64, 128 random bytes, wrapped (`crypto.md`'s Blob format) under `user_root_key` — an external secret supplied by `creds.json`, never stored in InstantDB. Same role as the pre-InstantDB Turso design's `umk_store.umk`, just twice the byte length.
+  - **`umk`** — base64, 128 random bytes, generated once per account and wrapped (`crypto.md`'s Blob format) under `user_root_key` — an external secret supplied by `creds.json`, never stored in InstantDB.
   - **`creds`** — base64, itself a Blob-wrapped JSON payload under `umk`. For the admin role:
     ```json
     {
@@ -26,7 +26,7 @@ Exact InstantDB API names below (`i.entity`, `unique()`, `.ref()`, permission ru
       "db_key": "<base64, 256 random bytes>"
     }
     ```
-    `r2_config` is the same shape as the pre-InstantDB design's R2 connection info, needed to read/write this user's page objects directly in R2. `path_key` wraps each page-version's R2 object key before it's used as `$files.path` (see below). `db_key` is the raw SQLCipher key for this user's own database — **must be ≥256 raw bytes**: the leancrypto cipher provider (`sqlcipher/sqlcipher.js`, this repo's vendored WASM build) rejects anything shorter (`sqlcipher_cipher_ctx_key_derive: key must be supplied as a raw key blob x'...' of at least 256 bytes`, confirmed against the real WASM module) — unlike `umk`/`path_key`, which are just HKDF input keying material and have no such hard minimum. The shape of `creds` for non-admin roles isn't decided yet.
+    `r2_config` is this account's Cloudflare R2 connection info, needed to read/write this user's page objects directly in R2. `path_key` wraps each page-version's R2 object key before it's used as `$files.path` (see below). `db_key` is the raw SQLCipher key for this user's own database — **must be ≥256 raw bytes**: the leancrypto cipher provider (`sqlcipher/sqlcipher.js`, this repo's vendored WASM build) rejects anything shorter (`sqlcipher_cipher_ctx_key_derive: key must be supplied as a raw key blob x'...' of at least 256 bytes`, confirmed against the real WASM module) — unlike `umk`/`path_key`, which are just HKDF input keying material and have no such hard minimum. The shape of `creds` for non-admin roles isn't decided yet.
 - **`users`** — an app-level profile entity, one-to-one linked to `$users`, holding `type: 'admin' | 'user'`. Kept separate from `$users` because `$users` is managed by InstantDB's auth system and isn't meant to carry arbitrary app fields (aside from the key-hierarchy attributes above, which are a deliberate, narrow exception — see `instant.perms.ts`'s `$users` rules for why). `type` is the permission system's role switch: a `'user'` can only view/create/update their own `dbMeta`/`pages`/`$files`/`activeReaders` rows (every rule is `isAdmin || isOwner`), an `'admin'` can act on any user's data, full stop — including operations (updating/deleting `pages`/`$files` rows) an ordinary owner is never allowed, since those violate the page store's append-only MVCC invariant and are meant only as a deliberate support/repair escape hatch. A `'user'` can update their own profile row but never their own `type` field (blocked via `request.modifiedFields`), so self-promotion to admin isn't possible through the normal write path.
 - **`dbMeta`** — one row per user (one-to-one link to `users`): `currentVersion`, `pageCount`, `pageSize`, `needsGc` — the table of contents for that user's SQLCipher database's page store. `pageSize` matches that database's own page size (`PRAGMA page_size`, set to `32768` — see the schema's `PRAGMA` block below); SQLCipher's own `cipher_page_size` follows the same value.
 - **`pages`** — one row per (owner, page_no, version) triple of the SQLCipher database above: `pageNo`, `version`, a synthetic `pageKey` (see below), linked to `users` (owner) and to `$files` (the page's pointer). A "page" here is a literal SQLite/SQLCipher page, not an arbitrary document chunk.
@@ -35,7 +35,7 @@ Exact InstantDB API names below (`i.entity`, `unique()`, `.ref()`, permission ru
 
 ### Why route pointers through `$files` instead of a plain column on `pages`
 
-Two independent, separately-gated permission surfaces (`pages`' rules and `$files`' rules) rather than one — a bug in one rule set doesn't automatically expose the other. These are genuinely different mechanisms: `pages`' rules are ref-traversal (`auth.id in data.ref('owner.authUser.id')`), while `$files`' rules are a string-prefix check on `path` (ref traversal isn't available there at creation time). Now that `$files`' uploaded content is a trivial placeholder rather than meaningful payload, the reason to still use `$files` (instead of just adding an encrypted-pointer string attribute directly to `pages`) isn't a storage-content benefit — it's that `db.storage.uploadFile` is the only InstantDB mechanism that lets a client-supplied string be committed with its own independently-gated permission check, separate from `pages`' own.
+Two independent, separately-gated permission surfaces (`pages`' rules and `$files`' rules) rather than one — a bug in one rule set doesn't automatically expose the other. These are genuinely different mechanisms: `pages`' rules are ref-traversal (`auth.id in data.ref('owner.authUser.id')`), while `$files`' rules are a string-prefix check on `path` (ref traversal isn't available there at creation time). `$files`' uploaded content is a trivial placeholder, not meaningful payload — the reason to use `$files` at all (instead of an encrypted-pointer string attribute directly on `pages`) isn't a storage-content benefit. It's that `db.storage.uploadFile` is the only InstantDB mechanism that lets a client-supplied string be committed with its own independently-gated permission check, separate from `pages`' own.
 
 ## The composite-uniqueness problem (guarded insert)
 
@@ -60,7 +60,7 @@ Query `pages` for `owner = self, pageNo = N, version <= target`, ordered by vers
 
 ## Garbage collection
 
-Three sweeps now, since content and its pointer both live outside the metadata store, in two different places:
+Three sweeps, since content and its pointer live outside the metadata store, in two different places:
 
 1. Once no `activeReaders` row still needs a superseded page version, delete the `pages` row.
 2. Only then delete the `$files` row and the R2 object its decrypted `path` resolves to — in that order, so a crash mid-GC never leaves a `pages` row pointing at something already deleted.
@@ -76,7 +76,7 @@ Every unlock requires a live Firebase sign-in (`getIdToken()` → `db.auth.signI
 
 ## Per-user SQLCipher database schema
 
-Entirely opaque to InstantDB — these tables live inside the per-user SQLCipher-encrypted SQLite file itself (paged into R2 via the page store above), never as InstantDB rows. Because SQLCipher already encrypts every page of this file under `db_key`, individual columns don't need their own app-level `Blob`-wrapping the way every sensitive column in the pre-InstantDB Turso design did — the whole file is ciphertext at rest, InstantDB and R2 both included.
+Entirely opaque to InstantDB — these tables live inside the per-user SQLCipher-encrypted SQLite file itself (paged into R2 via the page store above), never as InstantDB rows. Because SQLCipher already encrypts every page of this file under `db_key`, individual columns don't need their own app-level `Blob`-wrapping — the whole file is ciphertext at rest, InstantDB and R2 both included.
 
 ```sql
 PRAGMA page_size = 32768;
@@ -139,10 +139,10 @@ END;
 
 ### Tables
 
-- **`txt`** — one row per document, replacing both the old `txt`/`txt_metadata` split: `name` and `metadata` (an OPF sidecar's parsed fields, when present, same shape as the old `txt_metadata.content` JSON entries) live directly on the document's own row now, rather than in one JSON blob per account. `last_part_num`/`last_accessed` are this document's own read position — since each user has their own database, there's no need for the old cross-account `txt_access` table (keyed by `txt_id`, capped, client-evicted) at all; a document's read position is just two columns on its own row.
-- **`txt_parts`** — a document's content, chunked into ordered parts, same as before — except `content` (brotli-compressed raw text) is stored *directly* in this table now, not as a pointer to a separate R2 object. SQLCipher's own page-level encryption protects it; there's no per-part AEAD wrap or R2 round-trip anymore, since reading a part is just a local (decrypted-on-the-fly-by-SQLCipher) row read once the relevant pages are paged in. `UNIQUE(txt_id, part_num)` supports fetching a specific part or range in order; the `UNIQUE` constraint on `content` itself is a dedup safety net.
-- **`txt_bookmarks`** — per-document bookmarks, replacing the old cross-account `bookmarks` JSON blob (keyed by `txt_id`, capped at `constants.BOOKMARK_LIMIT`, client-evicted with no DB-level enforcement). `trg_txt_bookmarks_cap` enforces the same cap (20) directly in the database after every insert — a real improvement over the old design, where nothing stopped a buggy or malicious caller from exceeding the cap; SQLite itself now guarantees it.
-- The composite `FOREIGN KEY (id, last_part_num) REFERENCES txt_parts(txt_id, part_num)` on `txt` enforces, at the SQLite level, that a document's read position always points at a part that actually exists — impossible to express when read position lived in a separate cross-account JSON blob with no relational integrity at all.
+- **`txt`** — one row per document: `name` and `metadata` (an OPF sidecar's parsed fields, when present) live directly on the document's own row. `last_part_num`/`last_accessed` are this document's own read position — since each user has their own database, a document's read position is just two columns on its own row, no separate cross-document table needed.
+- **`txt_parts`** — a document's content, chunked into ordered parts: `content` (brotli-compressed raw text) is stored directly in this table, protected by SQLCipher's own page-level encryption — reading a part is a local (decrypted-on-the-fly-by-SQLCipher) row read once the relevant pages are paged in, no per-part AEAD wrap or R2 round-trip. `UNIQUE(txt_id, part_num)` supports fetching a specific part or range in order; the `UNIQUE` constraint on `content` itself is a dedup safety net.
+- **`txt_bookmarks`** — per-document bookmarks. `trg_txt_bookmarks_cap` enforces a cap of 20 directly in the database after every insert — SQLite itself guarantees the cap, not application code, so nothing (a buggy or malicious caller included) can exceed it.
+- The composite `FOREIGN KEY (id, last_part_num) REFERENCES txt_parts(txt_id, part_num)` on `txt` enforces, at the SQLite level, that a document's read position always points at a part that actually exists.
 
 ## Design Notes
 
