@@ -121,10 +121,9 @@ export class RemotePageStore {
     const pageTxs = [...fileIds].map(([pageNo, fileId]) =>
       this.pageTx(pageNo, fileId, newVersion),
     );
-    const dbMetaTx = tx.dbMeta[dbMetaId].update({
-      currentVersion: newVersion,
-      pageCount,
-    });
+    const dbMetaTx = tx.dbMeta[dbMetaId]
+      .update({ currentVersion: newVersion, pageCount, needsGc: false })
+      .link({ owner: this.cfg.ownerId }); // idempotent if already linked
     await this.cfg.db.transact([...pageTxs, dbMetaTx]);
   }
 
