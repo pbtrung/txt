@@ -5,20 +5,20 @@
 // admin's own static R2 credential, held only as a Worker secret -- never
 // sent to any client).
 //
-// Request body: { idToken, prefix, bucket }. This Worker's only job is
-// verifying that idToken is a genuine, non-expired Firebase ID token for
-// this app's own Firebase project (RS256 signature against Google's public
-// JWKS via jose -- no outbound call to InstantDB at all, unlike an earlier
-// draft of this file) and, if so, minting a credential scoped to exactly
-// the requested prefix. It does NOT cross-check that the token's own
-// subject actually owns that prefix -- prefix is trusted as given once the
-// token itself is proven real, same as the client already trusts its own
-// computeR2Prefix(authId) call. That means any Firebase-authenticated user
-// of this app (i.e. anyone the admin has created an account for) could in
-// principle request creds for a prefix that isn't their own; accepted here
-// as a deliberate simplification for a small, admin-curated user base, not
-// an oversight.
-import { createRemoteJWKSet, jwtVerify } from "jose";
+// Request body: { idToken, prefix, bucket, endpoint }. This Worker's only
+// job is verifying that idToken is a genuine, non-expired Firebase ID token
+// for this app's own Firebase project (RS256 signature against Google's
+// public JWKS via jose -- no outbound call to InstantDB at all, unlike an
+// earlier draft of this file) and, if so, minting a credential scoped to
+// exactly the requested prefix. It does NOT cross-check that the token's
+// own subject actually owns that prefix -- prefix is trusted as given once
+// the token itself is proven real, same as the client already trusts its
+// own computeR2Prefix(authId) call. That means any Firebase-authenticated
+// user of this app (i.e. anyone the admin has created an account for) could
+// in principle request creds for a prefix that isn't their own; accepted
+// here as a deliberate simplification for a small, admin-curated user
+// base, not an oversight.
+import { createRemoteJWKSet, jwtVerify, SignJWT } from "jose";
 
 // The fixed endpoint Firebase ID tokens are verified against -- distinct
 // from Google's general OAuth JWKS, specific to securetoken's signing keys.
@@ -42,6 +42,7 @@ interface R2CredsRequestBody {
   idToken: string;
   prefix: string;
   bucket: string;
+  endpoint: string; // this account's R2 endpoint, e.g. https://<accountId>.r2.cloudflarestorage.com
 }
 
 interface TemporaryCredential {
@@ -66,7 +67,12 @@ export async function handleR2Creds(
     return jsonError("idToken is not a valid Firebase ID token", 401);
   }
 
-  const cred = await mintTemporaryCredential(env, body.bucket, body.prefix);
+  const cred = await mintTemporaryCredential(
+    env,
+    body.bucket,
+    body.prefix,
+    body.endpoint,
+  );
   return new Response(JSON.stringify(cred), {
     status: 200,
     headers: { "content-type": "application/json" },
@@ -82,15 +88,16 @@ async function parseBody(request: Request): Promise<R2CredsRequestBody | null> {
   }
   if (typeof data !== "object" || data === null) return null;
   const d = data as Record<string, unknown>;
-  const { idToken, prefix, bucket } = d;
+  const { idToken, prefix, bucket, endpoint } = d;
   if (
     typeof idToken !== "string" ||
     typeof prefix !== "string" ||
-    typeof bucket !== "string"
+    typeof bucket !== "string" ||
+    typeof endpoint !== "string"
   ) {
     return null;
   }
-  return { idToken, prefix, bucket };
+  return { idToken, prefix, bucket, endpoint };
 }
 
 // RS256 signature check against Firebase's own public JWKS, plus the
@@ -116,77 +123,52 @@ async function verifyFirebaseIdToken(
 }
 
 // R2's "local signing" path for Temporary Credentials
-// (https://developers.cloudflare.com/r2/api/s3/temporary-credentials/):
-// no outbound call to Cloudflare's own API, just an HS256 JWT signed with
-// the admin's parent R2 secret access key (held only as a Worker secret).
-// The parent access key ID is reused as-is for the temporary credential;
-// the temporary secretAccessKey is the SHA-256 hex digest of the signed
-// JWT, and the sessionToken is base64url("jwt/" + <signed JWT>) -- R2
-// derives the same values server-side from the accessKeyId (which tells it
-// which parent secret to re-verify the signature against) on every request
-// that carries them. Must be base64URL, not plain base64: standard btoa()
-// output (with +//'s and '=' padding) got rejected outright with R2's own
-// `<Error><Code>InvalidArgument</Code><Message>X-Amz-Security-Token
-// </Message></Error>` (confirmed live, not documented anywhere -- the
-// upstream docs just say "base64", which in JWT-adjacent contexts commonly
-// means base64url).
+// (https://developers.cloudflare.com/r2/examples/authenticate-r2-temp-credentials/,
+// which has actual runnable code, unlike
+// developers.cloudflare.com/r2/api/s3/temporary-credentials/'s prose-only
+// description -- an earlier version of this function was reverse-engineered
+// from the latter and got several things wrong, confirmed live against a
+// real R2 bucket: the claim is "scope", not "permission" ("permission" is
+// the separate Temporary Credentials *API*'s own parameter name, not this
+// JWT's field); there's no "ttlSeconds" claim at all -- expiry is the JWT's
+// own standard "exp", set via setExpirationTime; and the JWT needs
+// "sub"/"iss"/"aud" claims this Worker wasn't setting (subject = the R2
+// account ID, issuer = the parent access key ID, audience = the R2
+// endpoint's own host) -- R2 uses "iss" (not the request's own accessKeyId)
+// to look up which parent secret to re-verify the HS256 signature against.
+// No outbound call to Cloudflare's own API either way: this is pure local
+// signing with the admin's parent R2 secret access key (held only as a
+// Worker secret). The parent access key ID is reused as-is for the
+// temporary credential; the temporary secretAccessKey is the SHA-256 hex
+// digest of the signed JWT; the sessionToken is plain base64("jwt/" +
+// <signed JWT>) (confirmed against the runnable example -- not base64url,
+// despite an earlier guess to the contrary).
 async function mintTemporaryCredential(
   env: Env,
   bucket: string,
   prefix: string,
+  endpoint: string,
 ): Promise<TemporaryCredential> {
-  const iat = Math.floor(Date.now() / 1000);
-  const payload = {
+  const accountId = new URL(endpoint).hostname.split(".")[0];
+  const jwt = await new SignJWT({
     bucket,
-    // "scope" here, not "permission" -- "permission" is the equivalent
-    // parameter name for Cloudflare's separate Temporary Credentials *API*
-    // (the outbound-call alternative this Worker deliberately doesn't use),
-    // not the local-signing JWT payload's own field name.
     scope: "object-read-write",
     paths: { prefixPaths: [`${prefix}/`] },
-    ttlSeconds: TTL_SECONDS,
-    iat,
-  };
-  const jwt = await signHs256Jwt(payload, env.READ_WRITE_SECRET_ACCESS_KEY);
+  })
+    .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+    .setSubject(accountId)
+    .setIssuer(env.READ_WRITE_ACCESS_KEY_ID)
+    .setAudience(new URL(endpoint).host)
+    .setIssuedAt()
+    .setExpirationTime(`${TTL_SECONDS}s`)
+    .sign(new TextEncoder().encode(env.READ_WRITE_SECRET_ACCESS_KEY));
+
   return {
     accessKeyId: env.READ_WRITE_ACCESS_KEY_ID,
     secretAccessKey: await sha256Hex(jwt),
-    sessionToken: base64Url(new TextEncoder().encode(`jwt/${jwt}`)),
-    expiresAtMs: (iat + TTL_SECONDS) * 1000,
+    sessionToken: btoa(`jwt/${jwt}`),
+    expiresAtMs: Date.now() + TTL_SECONDS * 1000,
   };
-}
-
-async function signHs256Jwt(
-  payload: Record<string, unknown>,
-  secret: string,
-): Promise<string> {
-  const encoder = new TextEncoder();
-  const header = { alg: "HS256", typ: "JWT" };
-  const signingInput =
-    `${base64Url(encoder.encode(JSON.stringify(header)))}.` +
-    base64Url(encoder.encode(JSON.stringify(payload)));
-  const key = await crypto.subtle.importKey(
-    "raw",
-    encoder.encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const signature = await crypto.subtle.sign(
-    "HMAC",
-    key,
-    encoder.encode(signingInput),
-  );
-  return `${signingInput}.${base64Url(new Uint8Array(signature))}`;
-}
-
-function base64Url(bytes: Uint8Array): string {
-  let binary = "";
-  for (const b of bytes) binary += String.fromCharCode(b);
-  return btoa(binary)
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
 }
 
 async function sha256Hex(s: string): Promise<string> {

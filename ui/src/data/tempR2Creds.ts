@@ -37,6 +37,7 @@ export async function fetchTempR2Credential(
       idToken,
       prefix: computeR2Prefix(authId),
       bucket: r2Config.bucket,
+      endpoint: r2Config.endpoint,
     }),
   });
   if (!resp.ok) {
