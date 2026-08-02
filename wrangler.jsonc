@@ -1,0 +1,28 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Must match the name of the existing Cloudflare Worker this site is
+  // already deployed as (the one whose dashboard says "Variables cannot be
+  // added to a Worker that only has static assets") -- rename this to that
+  // Worker's actual name before deploying, so `wrangler deploy` updates it
+  // in place instead of creating a second Worker.
+  "name": "txt",
+  "compatibility_date": "2026-08-02",
+  "compatibility_flags": ["nodejs_compat"],
+  // worker/index.ts is the real script this project was missing -- once
+  // deployed, the dashboard's "Variables and secrets" page stops refusing
+  // (that error only fires for a Worker that has assets but no script).
+  "main": "worker/index.ts",
+  "assets": {
+    // ui:build's Vite step writes the deployed static site here (see
+    // ui/vite.config.ts's build.outDir) -- unrelated to this file's own
+    // bundling, which wrangler does separately via `main` above.
+    "directory": "./dist",
+    "binding": "ASSETS",
+  },
+  // No [vars] block here on purpose -- worker/r2Creds.ts needs three
+  // runtime values (READ_WRITE_ACCESS_KEY_ID, READ_WRITE_SECRET_ACCESS_KEY,
+  // FIREBASE_PROJECT_ID; see worker/env.d.ts), all configured as Cloudflare
+  // dashboard Variables and Secrets instead of committed here -- two of the
+  // three are the admin's real R2 credential and shouldn't be in git even
+  // though the third (a Firebase project ID) isn't itself sensitive.
+}

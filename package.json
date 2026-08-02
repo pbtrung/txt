@@ -13,7 +13,10 @@
     "ui:preview": "vite preview --config ui/vite.config.ts",
     "ui:test": "vitest run --config ui/vite.config.ts --exclude \"**/smoke.e2e.test.ts\"",
     "ui:test:watch": "vitest --config ui/vite.config.ts --exclude \"**/smoke.e2e.test.ts\"",
-    "ui:test:e2e": "vitest run --config ui/vite.config.ts ui/src/smoke.e2e.test.ts"
+    "ui:test:e2e": "vitest run --config ui/vite.config.ts ui/src/smoke.e2e.test.ts",
+    "worker:typecheck": "wrangler types worker/worker-configuration.d.ts && tsc -b worker/tsconfig.json",
+    "worker:dev": "wrangler dev",
+    "deploy": "npm run ui:build && wrangler deploy"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1101.0",
@@ -30,6 +33,7 @@
     "dompurify": "^3.4.12",
     "firebase": "^12.17.0",
     "instant-cli": "^1.0.57",
+    "jose": "^6.2.7",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-router-dom": "^7.18.2"
@@ -47,6 +51,7 @@
     "prettier": "^3.9.6",
     "typescript": "^7.0.2",
     "vite": "^8.2.0",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "wrangler": "^4.118.0"
   }
 }
