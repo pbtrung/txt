@@ -46,9 +46,13 @@ node txt.ts --migrate --from <in.db> --from-creds <from_creds.json> --to-creds <
   "firebase_api_key": "",
   "display_name": "",
   "r2_config": {
-    "endpoint": "", "region": "", "bucket": "",
-    "read_only_access_key_id": "", "read_only_secret_access_key": "",
-    "read_write_access_key_id": "", "read_write_secret_access_key": ""
+    "endpoint": "",
+    "region": "",
+    "bucket": "",
+    "read_only_access_key_id": "",
+    "read_only_secret_access_key": "",
+    "read_write_access_key_id": "",
+    "read_write_secret_access_key": ""
   },
   "user_root_key": ""
 }

@@ -10,7 +10,7 @@ description: Commit staged/modified changes with a detailed message and push, no
 2. If nothing is staged, stage all relevant modified/new files with `git add`.
 3. Write a **detailed** commit message:
    - Subject line: concise summary of the change (imperative mood, e.g. "Add", "Fix", "Refactor").
-   - Body: explain *what* changed and *why*, as bullet points if there are multiple distinct changes.
+   - Body: explain _what_ changed and _why_, as bullet points if there are multiple distinct changes.
    - Base the message only on the actual diff — do not include conversational back-and-forth, dead ends, or trial-and-error from the session.
 4. Create the commit using a HEREDOC so formatting is preserved, e.g.:
    ```bash

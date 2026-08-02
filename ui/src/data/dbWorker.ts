@@ -1,0 +1,511 @@
+// Runs as a real Worker -- this is where SqliteDb/registerRemoteVfs actually
+// live now, not the main thread. A real browser forbids Atomics.wait()
+// outside a Worker (confirmed against genuine Chromium: it throws
+// "Atomics.wait cannot be called in this context" when called from the
+// main/document thread), but remoteVfs.ts's xRead needs exactly that to
+// bridge SQLite's synchronous WASM callback to remotePageClient.ts's async
+// READ_PAGE fetch -- so the whole SQLite/VFS/commit layer has to live in a
+// Worker, with the main thread (state/VaultContext.tsx, screens/Reader/
+// useReaderBook.ts) talking to it via the small RPC protocol below instead
+// of holding a SqliteDb directly. remotePageWorker.ts (the actual page-fetch
+// worker) is then a *nested* Worker spawned from here, same
+// startRemotePageWorker() call remotePageClient.ts already provides --
+// nesting workers is a normal, supported browser capability, so nothing
+// there needed to change.
+//
+// Every write (recordReadPosition/removeAccessEntry/addBookmarkEntry/
+// removeBookmarkEntry) is serialized through requestQueue below: each
+// handler's own `await commitOrThrow(...)` yields back to this worker's
+// event loop, so two RPC calls in flight at once could otherwise interleave
+// against the shared vfs dirty-page/commit state the same way two
+// unserialized main-thread calls used to (see the state this replaced in
+// VaultContext.tsx's git history) -- queuing every call through one promise
+// chain keeps each write+commit atomic relative to the next.
+
+import { verbose } from "../log";
+import * as access from "./access";
+import * as bookmarks from "./bookmarks";
+import { loadLibrary } from "./library";
+import * as owner from "./owner";
+import { parseR2Config, type R2Config } from "./r2Config";
+import {
+  decodeBlobColumn,
+  RqliteHttpClient,
+  resolveTargetDbId,
+  resultRows,
+} from "./rqliteHttpClient";
+import {
+  registerRemoteVfs,
+  MAX_CACHED_PAGES,
+  type RemoteVfsHandle,
+  type RemoteVfsStats,
+} from "./remoteVfs";
+import {
+  startRemotePageWorker,
+  type RemotePageBridge,
+} from "./remotePageClient";
+import { SqliteDb } from "./sqliteDb";
+import { loadWasm } from "./wasmLoader";
+
+export interface OpenCreds {
+  rqliteUrl: string;
+  apiKey: string;
+  userRootKey: Uint8Array;
+}
+
+interface Meta {
+  currentVersion: number;
+  pageCount: number;
+  pageSize: number;
+}
+
+let db: SqliteDb | null = null;
+let vfs: RemoteVfsHandle | null = null;
+let rqliteClient: RqliteHttpClient | null = null;
+let pageWorker: RemotePageBridge | null = null;
+let storedCreds: OpenCreds | null = null;
+let targetDbId: string | undefined;
+let readerId: string | null = null;
+let renewReaderTimer: ReturnType<typeof setInterval> | null = null;
+
+// How long a registered reader lease (docs/data_model.md's active_readers)
+// stays valid without renewal, and how often it's renewed while a session
+// is open. Without this lease, GC's watermark computation (txt/rqliteDb.ts's
+// gcWatermark) sees no active readers at all for this account and falls
+// back to current_version -- meaning it can delete every page version
+// below the *latest* one, breaking a long-lived session still pinned to an
+// older snapshot ("page N not found at or before snapshot M"). Renewed at
+// half the lease duration so one missed renewal (a network hiccup) doesn't
+// let the lease lapse.
+const READER_LEASE_MS = 5 * 60 * 1000;
+const READER_RENEW_INTERVAL_MS = READER_LEASE_MS / 2;
+
+/** Registers or renews (upsert on the primary key, see auth_perms.lua's
+ * BEGIN_READ) this session's own active_readers row, pinned to
+ * snapshotVersion. Errors are swallowed -- a missed renewal just means the
+ * lease lapses a bit early next GC sweep, not a session-ending failure;
+ * the next successful renewal (or the next commit) re-establishes it. */
+async function beginRead(
+  client: RqliteHttpClient,
+  id: string,
+  snapshotVersion: number,
+): Promise<void> {
+  const extra = targetDbId !== undefined ? { target_db_id: targetDbId } : {};
+  try {
+    await client.execute(
+      "BEGIN_READ",
+      [
+        {
+          reader_id: id,
+          snapshot_version: snapshotVersion,
+          lease_expires_at: Date.now() + READER_LEASE_MS,
+        },
+      ],
+      extra,
+    );
+  } catch (err) {
+    verbose(
+      "dbWorker: BEGIN_READ failed (will retry on next renewal/commit)",
+      err,
+    );
+  }
+}
+
+function requireOpen(): {
+  db: SqliteDb;
+  vfs: RemoteVfsHandle;
+  rqliteClient: RqliteHttpClient;
+} {
+  if (!db || !vfs || !rqliteClient) throw new Error("vault is locked");
+  return { db, vfs, rqliteClient };
+}
+
+async function fetchMeta(
+  client: RqliteHttpClient,
+  targetDbId?: string,
+): Promise<Meta> {
+  const extra = targetDbId !== undefined ? { target_db_id: targetDbId } : {};
+  const row = resultRows(await client.query("GET_META", [{}], extra))[0];
+  if (!row) throw new Error("this account hasn't committed a database yet");
+  return {
+    currentVersion: Number(row[0]),
+    pageCount: Number(row[1]),
+    pageSize: Number(row[2]),
+  };
+}
+
+// Target round trip count for prefetchPages below -- not a fixed page
+// count per request, so a bigger prefetch total doesn't silently turn back
+// into dozens of round trips. A large batch (~800 page_no's, one request)
+// previously got HTTP 400 from auth_perms.lua once the total grew large,
+// which briefly got worked around by capping the per-request batch size --
+// but the real cause was docker/nginx.conf's client_body_buffer_size never
+// being set, spilling any body past its tiny (8k/16k) default to a temp
+// file that ngx.req.get_body_data() can't read (see nginx.conf's own
+// comment). Fixed there instead, so batch size is unbounded again here.
+const PREFETCH_ROUND_TRIPS = 5;
+
+// Independent of MAX_CACHED_PAGES in principle (see prefetchPages' own doc
+// comment -- prefetching everything up to the cache size can mean several
+// MB, several dozen seconds, on a large vault, almost entirely bandwidth-
+// bound), but currently set equal to it: prefetch the whole cache budget
+// upfront rather than leaving anything to a later live fetch.
+const PREFETCH_PAGE_LIMIT = 4000;
+
+/** Eagerly fetches this account's pages in a handful of batched round trips
+ * right after open() learns the page count, instead of leaving every one
+ * of them to be discovered and fetched individually later by SQLite's own
+ * page-at-a-time xRead callback -- that's what made the initial "Loading
+ * your books..." unlock phase slow (loadLibrary()/loadBookmarksMap()
+ * touch a lot of small, scattered pages on a first open, each one its own
+ * round trip through remotePageClient.ts's Atomics bridge). Capped at
+ * PREFETCH_PAGE_LIMIT (see its own comment), not the (much larger)
+ * MAX_CACHED_PAGES -- prefetching more than that limit just isn't worth
+ * the added upfront latency for pages a given session may never touch.
+ * Returns pages keyed by page number, fed into vfs.primeCache() by the
+ * caller. */
+async function prefetchPages(
+  client: RqliteHttpClient,
+  pageCount: number,
+  snapshot: number,
+  targetDbId: string | undefined,
+): Promise<Map<number, Uint8Array>> {
+  const total = Math.min(pageCount, PREFETCH_PAGE_LIMIT, MAX_CACHED_PAGES);
+  const batchSize = Math.max(1, Math.ceil(total / PREFETCH_ROUND_TRIPS));
+  const extra = targetDbId !== undefined ? { target_db_id: targetDbId } : {};
+  const pages = new Map<number, Uint8Array>();
+  const start = performance.now();
+  let roundTrips = 0;
+  for (let from = 1; from <= total; from += batchSize) {
+    const to = Math.min(from + batchSize - 1, total);
+    const batch = [];
+    for (let pageNo = from; pageNo <= to; pageNo++)
+      batch.push({ page_no: pageNo, snapshot });
+    const results = await client.query("READ_PAGE", batch, extra);
+    for (let i = 0; i < batch.length; i++) {
+      const row = resultRows(results, i)[0];
+      if (row) pages.set(from + i, decodeBlobColumn(row[0]));
+    }
+    roundTrips++;
+    verbose(`dbWorker: prefetched pages ${from}-${to} of ${total}`);
+  }
+  verbose(
+    `dbWorker: prefetch done -- ${pages.size} page(s) in ${roundTrips} round trip(s), ` +
+      `${(performance.now() - start).toFixed(1)}ms`,
+  );
+  return pages;
+}
+
+/** Opens (or re-opens, for refresh) this account's SQLCipher db against a
+ * fresh lazy VFS -- always a brand new nested worker/VFS registration/
+ * backed-path, never reused, since sqlite3_vfs_register has no "replace"
+ * semantics (see state/VaultContext.tsx's git history for the original
+ * version of this same reasoning, from when it lived there instead). */
+export async function open(creds: OpenCreds): Promise<void> {
+  await close();
+  storedCreds = creds;
+  rqliteClient = new RqliteHttpClient(creds.rqliteUrl, creds.apiKey);
+  // This app's own account is itself role='admin' (the sole account
+  // --migrate creates -- see docs/data_model.md), which has no implicit
+  // "self" tenant and needs target_db_id named explicitly on every
+  // statement (docker/auth_perms.lua). undefined for a genuine user-role
+  // key, which the server forces to its own db_id regardless.
+  targetDbId = await resolveTargetDbId(rqliteClient, creds.apiKey);
+  const meta = await fetchMeta(rqliteClient, targetDbId);
+
+  // Registered immediately after pinning meta.currentVersion, before any of
+  // the (potentially slow, for a large vault) prefetch/SqliteDb.open work
+  // below -- every moment between reading current_version and having a
+  // lease actually recorded for it is a window GC could still delete a
+  // page this snapshot needs, so it's minimized here rather than
+  // registered only once the rest of open() has already finished.
+  readerId = crypto.randomUUID();
+  await beginRead(rqliteClient, readerId, meta.currentVersion);
+  renewReaderTimer = setInterval(
+    () => void renewReader(),
+    READER_RENEW_INTERVAL_MS,
+  );
+
+  pageWorker = await startRemotePageWorker(
+    creds.rqliteUrl,
+    creds.apiKey,
+    meta.pageSize,
+    meta.currentVersion,
+    targetDbId,
+  );
+  const sessionId = crypto.randomUUID();
+  const backedPath = `/vault-${sessionId}.db`;
+  const mod = await loadWasm();
+  vfs = registerRemoteVfs(mod, {
+    name: `remotevfs-${sessionId}`,
+    pageSize: meta.pageSize,
+    pageCount: meta.pageCount,
+    currentVersion: meta.currentVersion,
+    backedPath,
+    fetchPage: pageWorker.fetchPage,
+    targetDbId,
+  });
+  const prefetched = await prefetchPages(
+    rqliteClient,
+    meta.pageCount,
+    meta.currentVersion,
+    targetDbId,
+  );
+  vfs.primeCache(prefetched);
+  db = await SqliteDb.open(backedPath, {
+    vfsName: vfs.name,
+    rawKey: creds.userRootKey,
+  });
+}
+
+/** Renews this session's own reader lease at its own latest known snapshot
+ * -- called periodically (renewReaderTimer) and right after every commit,
+ * so both the lease's expiry and its pinned snapshot_version stay current
+ * without waiting for the next periodic tick. */
+async function renewReader(): Promise<void> {
+  if (!rqliteClient || !vfs || !readerId) return;
+  await beginRead(rqliteClient, readerId, vfs.getCurrentVersion());
+}
+
+export async function refresh(): Promise<void> {
+  if (!storedCreds) throw new Error("vault is locked");
+  await open(storedCreds);
+}
+
+export async function close(): Promise<void> {
+  if (renewReaderTimer) clearInterval(renewReaderTimer);
+  renewReaderTimer = null;
+  if (rqliteClient && readerId) {
+    const extra = targetDbId !== undefined ? { target_db_id: targetDbId } : {};
+    try {
+      await rqliteClient.execute("END_READ", [{ reader_id: readerId }], extra);
+    } catch (err) {
+      verbose(
+        "dbWorker: END_READ failed (lease will just expire on its own)",
+        err,
+      );
+    }
+  }
+  readerId = null;
+  pageWorker?.terminate();
+  db?.close();
+  db = null;
+  vfs = null;
+  rqliteClient = null;
+  pageWorker = null;
+}
+
+/** Flushes dirty pages via one atomic COMMIT. Throws if another writer's
+ * commit won the CAS race first -- see remoteVfs.ts's own doc comment on
+ * RemoteVfsHandle.commit for why this isn't silently retried. Advances
+ * both pageWorker's pinned snapshot (RemotePageBridge.updateSnapshot) and
+ * this session's own active_readers lease (renewReader) to the just-
+ * committed version afterward -- without that, a later live fetch (a cache
+ * miss, or a page evicted from the LRU cache since) for a page only
+ * written by this or an earlier commit this session would come back "not
+ * found" against the stale snapshot/lease pinned at open() time. */
+export async function commitOrThrow(): Promise<void> {
+  const { vfs, rqliteClient } = requireOpen();
+  const ok = await vfs.commit(rqliteClient);
+  if (!ok) {
+    throw new Error(
+      "Another session updated this vault. Please reload and try again.",
+    );
+  }
+  pageWorker?.updateSnapshot(vfs.getCurrentVersion());
+  await renewReader();
+}
+
+export function fetchTxtKey(txtId: number): Uint8Array {
+  const { db } = requireOpen();
+  const stmt = db.prepare("SELECT txt_key FROM txt WHERE id = ?;");
+  stmt.bindInt64(1, txtId);
+  const found = stmt.step();
+  const key = found ? stmt.columnBlob(0) : null;
+  stmt.finalize();
+  if (!key) throw new Error(`no txt row for txt_id=${txtId}`);
+  return key;
+}
+
+/** Reads r2_config's single row (docs/data_model.md) straight off this
+ * account's own SQLCipher db -- not from the unlock creds file, see
+ * creds.ts's own comment. read_write_access_key_id/secret are NULL for
+ * every db except the admin's own, hence columnIsNull rather than
+ * columnText for those two. */
+export function fetchR2Config(): R2Config {
+  const { db } = requireOpen();
+  const stmt = db.prepare(
+    `SELECT endpoint, region, bucket, read_only_access_key_id, read_only_secret_access_key,
+            read_write_access_key_id, read_write_secret_access_key
+     FROM r2_config WHERE id = 1;`,
+  );
+  const found = stmt.step();
+  if (!found) {
+    stmt.finalize();
+    throw new Error("no r2_config row for this account");
+  }
+  const raw = {
+    endpoint: stmt.columnText(0),
+    region: stmt.columnText(1),
+    bucket: stmt.columnText(2),
+    read_only_access_key_id: stmt.columnText(3),
+    read_only_secret_access_key: stmt.columnText(4),
+    read_write_access_key_id: stmt.columnIsNull(5)
+      ? undefined
+      : stmt.columnText(5),
+    read_write_secret_access_key: stmt.columnIsNull(6)
+      ? undefined
+      : stmt.columnText(6),
+  };
+  stmt.finalize();
+  return parseR2Config(raw);
+}
+
+/** This session's remoteVfs.ts page-fetch stats (roundtrip count/timing,
+ * bytes fetched) -- mirrors txt/remoteVfs.ts's identical RemoteVfsStats,
+ * which txt.ts --test-perf reports on the CLI side; this is ui/'s own
+ * consumer of the same instrumentation (VaultContext.tsx logs a summary
+ * after unlock's loadLibrary/loadBookmarksMap). Only counts pages fetched
+ * individually via getPage() -- prefetchPages' batched reads bypass it
+ * entirely via vfs.primeCache(), so this reflects cache misses past the
+ * prefetch, not total pages read. */
+export function fetchVfsStats(): RemoteVfsStats {
+  const { vfs } = requireOpen();
+  return vfs.stats;
+}
+
+export async function loadLibraryHandler() {
+  const { db } = requireOpen();
+  const result = await loadLibrary(db);
+  verbose(
+    `dbWorker: loadLibrary -- ${result.metadataById.size} book(s), ` +
+      `${result.accessMap.size} with access position`,
+  );
+  return result;
+}
+
+export function loadBookmarksMapHandler() {
+  const { db } = requireOpen();
+  const map = bookmarks.loadBookmarksMap(db);
+  verbose(`dbWorker: loadBookmarksMap -- ${map.size} txt_id(s) with bookmarks`);
+  return map;
+}
+
+export async function recordReadPosition(
+  txtId: number,
+  position: access.ReadPosition,
+): Promise<void> {
+  const { db } = requireOpen();
+  verbose(
+    `dbWorker: recordReadPosition txtId=${txtId} ${JSON.stringify(position)}`,
+  );
+  access.setReadPosition(
+    db,
+    txtId,
+    position.lastPartNum,
+    position.lastAccessedMs,
+  );
+  await commitOrThrow();
+}
+
+export async function removeAccessEntry(txtId: number): Promise<void> {
+  const { db } = requireOpen();
+  access.clearReadPosition(db, txtId);
+  await commitOrThrow();
+}
+
+export async function addBookmarkEntry(
+  txtId: number,
+  partNum: number,
+  line: number,
+  preview: string,
+  createdAt: number,
+) {
+  const { db } = requireOpen();
+  verbose(
+    `dbWorker: addBookmarkEntry txtId=${txtId} partNum=${partNum} line=${line}`,
+  );
+  bookmarks.addBookmark(db, txtId, partNum, line, preview, createdAt);
+  await commitOrThrow();
+  const map = bookmarks.loadBookmarksMap(db);
+  verbose(
+    `dbWorker: addBookmarkEntry -- now ${map.get(txtId)?.length ?? 0} bookmark(s) for txtId=${txtId}`,
+  );
+  return map;
+}
+
+export async function removeBookmarkEntry(bookmarkId: number) {
+  const { db } = requireOpen();
+  bookmarks.removeBookmark(db, bookmarkId);
+  await commitOrThrow();
+  return bookmarks.loadBookmarksMap(db);
+}
+
+export function partCount(txtId: number): number {
+  const { db } = requireOpen();
+  return owner.partCount(db, txtId);
+}
+
+export function partRawPath(txtId: number, partNum: number): string | null {
+  const { db } = requireOpen();
+  return owner.partRawPath(db, txtId, partNum);
+}
+
+const handlers: Record<string, (...args: any[]) => unknown> = {
+  open,
+  refresh,
+  getTxtKey: fetchTxtKey,
+  getR2Config: fetchR2Config,
+  getVfsStats: fetchVfsStats,
+  loadLibrary: loadLibraryHandler,
+  loadBookmarksMap: loadBookmarksMapHandler,
+  recordReadPosition,
+  removeAccessEntry,
+  addBookmarkEntry,
+  removeBookmarkEntry,
+  partCount,
+  partRawPath,
+};
+
+interface RpcRequest {
+  type: "call";
+  id: number;
+  method: string;
+  args: unknown[];
+}
+
+// Serializes every RPC call through one promise chain -- see this file's
+// header comment for why (write handlers' own internal awaits would
+// otherwise let a second queued call start before the first's commit
+// settles).
+let queue: Promise<unknown> = Promise.resolve();
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+// Guarded: this module is also imported directly by dbWorker.test.ts (to
+// exercise open/recordReadPosition/etc. against a real SqliteDb without a
+// real Worker environment, which Node/jsdom don't provide) -- `self` only
+// exists in an actual Worker, so wiring this unconditionally would throw
+// the moment a test imports the module at all.
+if (typeof self !== "undefined") {
+  self.onmessage = (ev: MessageEvent<RpcRequest>) => {
+    const { id, method, args } = ev.data;
+    const handler = handlers[method];
+    const run = async () => {
+      if (!handler) throw new Error(`dbWorker: unknown method ${method}`);
+      return handler(...args);
+    };
+    queue = queue.then(run, run).then(
+      (result) => self.postMessage({ type: "result", id, ok: true, result }),
+      (err: unknown) =>
+        self.postMessage({
+          type: "result",
+          id,
+          ok: false,
+          error: errorMessage(err),
+        }),
+    );
+  };
+}

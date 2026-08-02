@@ -4,7 +4,7 @@ Guidance for Claude Code (or any agent) working in this repository.
 
 ## What this is
 
-A personal document-storage system. The design (`docs/data_model.md`) stores everything in one InstantDB app plus Cloudflare R2: InstantDB holds only `$users` (Firebase-verified identity + a wrapped key hierarchy) and a page-store (`dbMeta`/`pages`/`$files`/`activeReaders`) for **one SQLCipher-encrypted SQLite database per user**, paged remotely into R2 a page at a time. The actual application schema (documents/parts/bookmarks — see `txt/sqlcipherBuilder.ts`'s `SCHEMA_SQL`) lives entirely *inside* that per-user SQLCipher file; InstantDB never sees plaintext rows for it, only opaque client-encrypted page pointers.
+A personal document-storage system. The design (`docs/data_model.md`) stores everything in one InstantDB app plus Cloudflare R2: InstantDB holds only `$users` (Firebase-verified identity + a wrapped key hierarchy) and a page-store (`dbMeta`/`pages`/`$files`/`activeReaders`) for **one SQLCipher-encrypted SQLite database per user**, paged remotely into R2 a page at a time. The actual application schema (documents/parts/bookmarks — see `txt/sqlcipherBuilder.ts`'s `SCHEMA_SQL`) lives entirely _inside_ that per-user SQLCipher file; InstantDB never sees plaintext rows for it, only opaque client-encrypted page pointers.
 
 This repo is the **TypeScript CLI** (`txt.ts`) for administering that system — not the end-user app itself (no UI here). `--migrate` imports documents from an external SQLite snapshot with its own schema (see `txt/owner.ts`) into an already-`--init-admin`-provisioned InstantDB account, through the same page-by-page R2 transport `--init-admin` itself uses.
 
@@ -27,7 +27,7 @@ Entry point is `txt.ts` → `txt/cli.ts`'s `run()` → one of `AdminInitializer`
 - `txt/sqlcipherBuilder.ts` — raw SQLite C API wrapper (`open`/`insert`/`close`, plus the one-shot `run` for initial schema creation) against whichever VFS the caller registers.
 - `txt/r2Vfs.ts` — `R2Vfs`: adapts the vendored in-memory `sqlcipher/js-vfs.mjs` into a page-by-page-over-R2 VFS by prefetching all current pages up front, letting `xRead`/`xWrite` run synchronously against that in-memory buffer, then diffing against the original snapshot to find dirty pages for an explicit async flush.
 - `txt/remotePageStore.ts` — `RemotePageStore`: the read (`fetchPage`) and write (`commitPages`) primitives that talk to InstantDB (admin SDK) + R2 for the page store.
-- `txt/pagePointer.ts` — `$files` path/content encoding: `path` is plaintext (`pages.pageKey`), the real R2 object address (`raw_path`) is encrypted and uploaded as the file's *content*.
+- `txt/pagePointer.ts` — `$files` path/content encoding: `path` is plaintext (`pages.pageKey`), the real R2 object address (`raw_path`) is encrypted and uploaded as the file's _content_.
 - `txt/owner.ts` — `TxtOwner`: reads the source SQLite schema `--clean-bucket` and the "from" side of `--migrate` operate against — user/key resolution, known R2 paths, part/metadata decoding.
 - `txt/instantSignIn.ts` / `txt/firebaseAuth.ts` — Firebase password sign-in → InstantDB `auth.id` exchange (`signInToInstant`, shared by `--init-admin` and `--migrate`).
 - `txt/creds.ts` / `txt/initAdminCreds.ts` — creds.json loaders. `Creds` (creds.ts) is the source-account shape (`--clean-bucket`, `--migrate --from-creds`); `InitAdminCreds` (initAdminCreds.ts) is the InstantDB-account shape (`--init-admin`, `--migrate --to-creds`).
