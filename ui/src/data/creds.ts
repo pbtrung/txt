@@ -2,25 +2,27 @@
 // creds.json shape the CLI's --init-admin/--migrate --to-creds already take
 // (txt/initAdminCreds.ts) -- the admin's one credentials file now works for
 // both, rather than needing a separate browser-specific bundle. This parser
-// only requires the fields the browser actually needs (Firebase sign-in +
-// InstantDB app id + user_root_key, plus firebase_auth_domain/
-// firebase_project_id, which the CLI's own copy of this shape doesn't need
-// since it hits Identity Toolkit's REST API directly instead of going
-// through the firebase/auth client SDK's initializeApp) -- instant_admin_token
+// only requires firebase_email/firebase_password/firebase_api_key (the
+// fields plain email/password sign-in actually needs), plus instant_app_id/
+// instant_client_name/user_root_key -- firebase_auth_domain/
+// firebase_project_id are accepted but optional: every field on Firebase's
+// own FirebaseOptions type is optional, and authDomain/projectId are only
+// load-bearing for things this app doesn't do (OAuth redirect flows, other
+// Firebase products) -- see firebaseAuth.ts's FirebaseWebConfig. instant_admin_token
 // and r2_config, present in the CLI's version of this same file, are simply
 // ignored here: a browser session never holds an admin token, and this
 // account's R2 config comes from its own (already-InstantDB-stored)
 // $users.creds instead (session.ts's resolveSession).
 
 import { base64ToBytes } from "../crypto/bytes";
-import { requireObject, requireString } from "./jsonObject";
+import { optionalString, requireObject, requireString } from "./jsonObject";
 
 export interface Creds {
   firebaseEmail: string;
   firebasePassword: string;
   firebaseApiKey: string;
-  firebaseAuthDomain: string;
-  firebaseProjectId: string;
+  firebaseAuthDomain?: string;
+  firebaseProjectId?: string;
   instantAppId: string;
   instantClientName: string;
   userRootKey: Uint8Array;
@@ -43,16 +45,6 @@ export function parseCreds(json: unknown): Creds {
   const firebaseEmail = requireString(data, "firebase_email", CredsError);
   const firebasePassword = requireString(data, "firebase_password", CredsError);
   const firebaseApiKey = requireString(data, "firebase_api_key", CredsError);
-  const firebaseAuthDomain = requireString(
-    data,
-    "firebase_auth_domain",
-    CredsError,
-  );
-  const firebaseProjectId = requireString(
-    data,
-    "firebase_project_id",
-    CredsError,
-  );
   const instantAppId = requireString(data, "instant_app_id", CredsError);
   const instantClientName = requireString(
     data,
@@ -72,22 +64,16 @@ export function parseCreds(json: unknown): Creds {
     throw new CredsError("user_root_key too short");
   }
 
-  const displayNameValue = data.display_name;
-  const displayName =
-    typeof displayNameValue === "string" && displayNameValue.length > 0
-      ? displayNameValue
-      : undefined;
-
   return {
     firebaseEmail,
     firebasePassword,
     firebaseApiKey,
-    firebaseAuthDomain,
-    firebaseProjectId,
+    firebaseAuthDomain: optionalString(data, "firebase_auth_domain"),
+    firebaseProjectId: optionalString(data, "firebase_project_id"),
     instantAppId,
     instantClientName,
     userRootKey,
-    displayName,
+    displayName: optionalString(data, "display_name"),
   };
 }
 

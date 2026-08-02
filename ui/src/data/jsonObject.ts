@@ -26,3 +26,11 @@ export function requireString(
   }
   return value;
 }
+
+export function optionalString(
+  data: Record<string, unknown>,
+  field: string,
+): string | undefined {
+  const value = data[field];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}

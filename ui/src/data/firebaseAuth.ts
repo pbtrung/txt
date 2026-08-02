@@ -10,10 +10,15 @@
 import { initializeApp, type FirebaseApp } from "firebase/app";
 import { getAuth, signInWithEmailAndPassword, type Auth } from "firebase/auth";
 
+// Every field on Firebase's own FirebaseOptions type is optional (confirmed
+// in @firebase/app's own type declarations) -- authDomain/projectId are
+// only load-bearing for things this app doesn't do (OAuth redirect sign-in,
+// other Firebase products), so plain email/password sign-in genuinely only
+// needs apiKey. Kept optional here rather than required, matching that.
 export interface FirebaseWebConfig {
   apiKey: string;
-  authDomain: string;
-  projectId: string;
+  authDomain?: string;
+  projectId?: string;
 }
 
 export interface FirebaseSession {

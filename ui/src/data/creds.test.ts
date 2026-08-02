@@ -47,6 +47,16 @@ describe("parseCreds", () => {
     ).toBeUndefined();
   });
 
+  it("firebase_auth_domain/firebase_project_id are optional -- plain email/password sign-in doesn't need them", () => {
+    const creds = validCreds();
+    delete creds.firebase_auth_domain;
+    delete creds.firebase_project_id;
+    const parsed = parseCreds(creds);
+    expect(parsed.firebaseAuthDomain).toBeUndefined();
+    expect(parsed.firebaseProjectId).toBeUndefined();
+    expect(parsed.firebaseApiKey).toBe("fake-api-key");
+  });
+
   it("ignores CLI-only fields (instant_admin_token, r2_config) rather than erroring", () => {
     const creds = parseCreds(
       validCreds({

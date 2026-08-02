@@ -11,7 +11,7 @@
 // regardless, since a user-role account's own r2_config would carry only
 // the read-only pair once that support exists.
 
-import { requireObject, requireString } from "./jsonObject";
+import { optionalString, requireObject, requireString } from "./jsonObject";
 
 export interface R2Config {
   endpoint: string;
@@ -21,14 +21,6 @@ export interface R2Config {
   readOnlySecretAccessKey: string;
   readWriteAccessKeyId?: string;
   readWriteSecretAccessKey?: string;
-}
-
-function optionalString(
-  data: Record<string, unknown>,
-  field: string,
-): string | undefined {
-  const value = data[field];
-  return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 export function parseR2Config(json: unknown): R2Config {
