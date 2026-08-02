@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { computeR2Prefix, generateRawPath } from "./pagePointer";
+import { computeR2Prefix, generateRawKey } from "./pagePointer";
 
 const CROCKFORD_BASE32_RE = /^[0-9abcdefghjkmnpqrstvwxyz]+$/;
 
@@ -18,21 +18,18 @@ describe("computeR2Prefix", () => {
   });
 });
 
-describe("generateRawPath", () => {
-  it("prefixes the raw path with computeR2Prefix(authId)", () => {
-    const prefix = computeR2Prefix("auth-123");
-    expect(generateRawPath("auth-123")).toMatch(new RegExp(`^${prefix}/`));
-  });
-
-  it("generates a fresh random suffix on every call", () => {
-    const a = generateRawPath("auth-123");
-    const b = generateRawPath("auth-123");
+describe("generateRawKey", () => {
+  // No auth.id/prefix involved -- generateRawKey only ever produces the
+  // random suffix that gets encrypted into $files' uploaded content; the
+  // real R2 object address (`${computeR2Prefix(authId)}/${rawKey}`) is
+  // assembled separately at the point of the actual GET/PUT.
+  it("generates a fresh random key on every call", () => {
+    const a = generateRawKey();
+    const b = generateRawKey();
     expect(a).not.toBe(b);
   });
 
-  it("the suffix is lowercase Crockford base32", () => {
-    const prefix = computeR2Prefix("auth-123");
-    const suffix = generateRawPath("auth-123").slice(prefix.length + 1);
-    expect(suffix).toMatch(CROCKFORD_BASE32_RE);
+  it("is lowercase Crockford base32", () => {
+    expect(generateRawKey()).toMatch(CROCKFORD_BASE32_RE);
   });
 });

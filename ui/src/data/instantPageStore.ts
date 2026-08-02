@@ -12,7 +12,7 @@
 import { id, tx } from "@instantdb/react";
 import type { AwsClient } from "aws4fetch";
 import * as blob from "../crypto/blob";
-import { generateRawPath } from "./pagePointer";
+import { computeR2Prefix, generateRawKey } from "./pagePointer";
 import { getObject, putObject } from "./r2";
 import type { R2Config } from "./r2Config";
 
@@ -27,7 +27,7 @@ export interface InstantPageStoreConfig {
   r2Client: AwsClient;
   r2Config: R2Config;
   pathKey: Uint8Array;
-  authId: string; // $users id -- pageKey identity and (via generateRawPath) R2 prefix
+  authId: string; // $users id -- pageKey identity and (via computeR2Prefix) R2 prefix
   ownerId: string; // `users` profile row id -- pages/dbMeta/$files owner link target
 }
 
@@ -41,6 +41,10 @@ interface UploadedPage {
   pageKey: string;
 }
 
+// content only ever wraps rawKey (the random suffix) -- rawPath (the full
+// R2 object address, prefix included) is what the actual PUT needs, but the
+// prefix itself is never part of what gets encrypted, since it's already
+// derivable from authId at read time.
 interface PreparedUpload {
   pageNo: number;
   pageKey: string;
@@ -59,7 +63,8 @@ export async function fetchPage(
 ): Promise<Uint8Array> {
   const url = await resolvePagePointerUrl(cfg, pageNo, targetVersion);
   const content = await downloadPointerContent(url);
-  const rawPath = utf8Decoder.decode(await blob.decrypt(cfg.pathKey, content));
+  const rawKey = utf8Decoder.decode(await blob.decrypt(cfg.pathKey, content));
+  const rawPath = `${computeR2Prefix(cfg.authId)}/${rawKey}`;
   return getObject(cfg.r2Client, cfg.r2Config, rawPath);
 }
 
@@ -173,12 +178,13 @@ async function prepareUpload(
   version: number,
 ): Promise<PreparedUpload> {
   const pageKey = `${cfg.authId}:${pageNo}:${version}`;
-  const rawPath = generateRawPath(cfg.authId);
-  // Never brotli-compress rawPath before encrypting it -- it's a short
+  const rawKey = generateRawKey();
+  const rawPath = `${computeR2Prefix(cfg.authId)}/${rawKey}`;
+  // Never brotli-compress rawKey before encrypting it -- it's a short
   // random string, not a structured/JSON payload (crypto/blob.ts's
   // `compressed` option is left at its default false, same as the CLI's
   // pagePointer.ts).
-  const content = await blob.encrypt(cfg.pathKey, utf8.encode(rawPath));
+  const content = await blob.encrypt(cfg.pathKey, utf8.encode(rawKey));
   return { pageNo, pageKey, rawPath, body, content };
 }
 

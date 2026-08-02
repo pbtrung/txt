@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { randomBytes } from "node:crypto";
 
 import * as blob from "../crypto/blob";
+import { computeR2Prefix } from "./pagePointer";
 import { SqliteDb } from "./sqliteDb";
 import { loadWasm } from "./wasmLoader";
 
@@ -101,7 +102,9 @@ const dbMetaId = "dbmeta-1";
 // -- same shape/reducer as instantPageStore.test.ts's fakeInstantDb, plus
 // activeReaders support for the reader-lease tests here. r2 GET/PUT are
 // backed by a plain in-memory Map (r2.ts is mocked wholesale in this file),
-// keyed by rawPath.
+// keyed by rawPath ("${computeR2Prefix(authId)}/${rawKey}") -- only rawKey
+// is ever what gets encrypted into $files' content, same as the real
+// instantPageStore.ts.
 function mockBackend(
   fixture: DbFixture,
   opts: { currentVersion?: number; commitShouldFail?: boolean } = {},
@@ -130,11 +133,12 @@ function mockBackend(
   // would.
   let fileCounter = 0;
   for (let pageNo = 1; pageNo <= fixture.pageCount; pageNo++) {
-    const rawPath = `prefix/page-${pageNo}`;
+    const rawKey = `page-${pageNo}`;
+    const rawPath = `${computeR2Prefix(authId)}/${rawKey}`;
     r2Store.set(rawPath, fixture.pages[pageNo - 1]!);
     fileCounter++;
     const fileId = `file-${fileCounter}`;
-    store.$files.set(fileId, { id: fileId, owner: ownerId, rawPath });
+    store.$files.set(fileId, { id: fileId, owner: ownerId, rawKey });
     store.pages.set(`page-${pageNo}`, {
       id: `page-${pageNo}`,
       owner: ownerId,
@@ -177,12 +181,13 @@ function mockBackend(
       uploadFile: vi.fn(async (path: string, content: Blob) => {
         fileCounter++;
         const id = `file-${fileCounter}`;
-        const rawPathBlob = new Uint8Array(await content.arrayBuffer());
-        const rawPath = new TextDecoder().decode(
-          await blob.decrypt(pathKey, rawPathBlob, false),
+        const rawKeyBlob = new Uint8Array(await content.arrayBuffer());
+        const rawKey = new TextDecoder().decode(
+          await blob.decrypt(pathKey, rawKeyBlob, false),
         );
+        const rawPath = `${computeR2Prefix(authId)}/${rawKey}`;
         r2Store.set(rawPath, new Uint8Array(0)); // placeholder; putObject fills real bytes
-        store.$files.set(id, { id, path, owner: undefined, rawPath });
+        store.$files.set(id, { id, path, owner: undefined, rawKey });
         return { data: { id } };
       }),
     },
@@ -211,7 +216,7 @@ function mockBackend(
                   ? [
                       {
                         url: `instant-file://${file.id}`,
-                        rawPath: file.rawPath,
+                        rawKey: file.rawKey,
                       },
                     ]
                   : [],
@@ -230,7 +235,8 @@ function mockBackend(
 
   // fetch() is used by instantPageStore.ts's downloadPointerContent to fetch
   // $files.url -- stub it to resolve straight from the fake $files store by
-  // its rawPath (encrypted the same way a real upload would have).
+  // its rawKey (encrypted the same way a real upload would have -- never the
+  // full rawPath, since r2Prefix is re-derived from authId at read time).
   const realFetch = globalThis.fetch;
   vi.stubGlobal("fetch", async (url: string) => {
     const fileId = url.replace("instant-file://", "");
@@ -238,7 +244,7 @@ function mockBackend(
     if (!file) return new Response(null, { status: 404 });
     const content = await blob.encrypt(
       pathKey,
-      new TextEncoder().encode(file.rawPath),
+      new TextEncoder().encode(file.rawKey),
     );
     return new Response(content as BodyInit, { status: 200 });
   });

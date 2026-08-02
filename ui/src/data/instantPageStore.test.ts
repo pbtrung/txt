@@ -6,6 +6,8 @@ import { commitPages, fetchPage } from "./instantPageStore";
 import { computeR2Prefix } from "./pagePointer";
 import type { R2Config } from "./r2Config";
 
+const CROCKFORD_BASE32_RE = /^[0-9abcdefghjkmnpqrstvwxyz]+$/;
+
 const r2Config: R2Config = {
   endpoint: "https://acct.r2.cloudflarestorage.com",
   region: "auto",
@@ -221,8 +223,8 @@ describe("commitPages / fetchPage", () => {
     expect(transactCalls).toBe(4); // 1 initial attempt + 3 retries
   });
 
-  it("never brotli-compresses the pointer content before encrypting it", async () => {
-    const { client } = fakeR2();
+  it("never brotli-compresses the pointer content before encrypting it, and never bakes r2Prefix into it", async () => {
+    const { client, store: r2Store } = fakeR2();
     const db = fakeInstantDb();
     db.store.dbMeta.set(dbMetaId, { id: dbMetaId, currentVersion: 0 });
     const cfg = {
@@ -244,9 +246,14 @@ describe("commitPages / fetchPage", () => {
     );
 
     const [fileRow] = [...db.store.$files.values()];
-    const rawPath = new TextDecoder().decode(
+    const rawKey = new TextDecoder().decode(
       await blob.decrypt(pathKey, fileRow.bytes, false),
     );
-    expect(rawPath).toMatch(new RegExp(`^${r2Prefix}/`));
+    // The encrypted content is just the random key -- r2Prefix (a pure,
+    // deterministic function of authId) is never baked into it, since it's
+    // cheaply re-derivable at read/write time instead of stored redundantly.
+    expect(rawKey).not.toContain("/");
+    expect(rawKey).toMatch(CROCKFORD_BASE32_RE);
+    expect(r2Store.has(`${r2Prefix}/${rawKey}`)).toBe(true);
   });
 });

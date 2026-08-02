@@ -11,9 +11,10 @@ import { id, tx } from "@instantdb/admin";
 import * as C from "./constants.ts";
 import type { CryptoEngine } from "./crypto.ts";
 import {
+  computeR2Prefix,
   decodePagePointerContent,
   encodePagePointerContent,
-  generateRawPath,
+  generateRawKey,
 } from "./pagePointer.ts";
 import type { R2Client } from "./r2.ts";
 
@@ -22,7 +23,7 @@ export interface RemotePageStoreConfig {
   r2: R2Client;
   crypto: CryptoEngine;
   pathKey: Buffer;
-  authId: string; // $users id -- pageKey identity and (via generateRawPath) R2 prefix
+  authId: string; // $users id -- pageKey identity and (via computeR2Prefix) R2 prefix
   ownerId: string; // `users` profile row id -- pages/dbMeta owner link target
 }
 
@@ -39,6 +40,10 @@ interface UploadedPage {
 // The pure (no I/O) half of uploading a page -- rawPath/pageKey/the encrypted
 // pointer content are all derivable from the page bytes and this store's own
 // config, so every page can be prepared up front before any network call.
+// content only ever wraps rawKey (the random suffix) -- rawPath (the full
+// R2 object address, prefix included) is what the actual PUT needs, but the
+// prefix itself is never part of what gets encrypted, since it's already
+// derivable from authId at read time.
 interface PreparedUpload {
   pageNo: number;
   pageKey: string;
@@ -57,11 +62,12 @@ export class RemotePageStore {
   async fetchPage(pageNo: number, targetVersion: number): Promise<Buffer> {
     const url = await this.resolvePagePointerUrl(pageNo, targetVersion);
     const content = await this.downloadPointerContent(url);
-    const rawPath = decodePagePointerContent(
+    const rawKey = decodePagePointerContent(
       this.cfg.crypto,
       this.cfg.pathKey,
       content,
     );
+    const rawPath = `${computeR2Prefix(this.cfg.authId)}/${rawKey}`;
     return this.cfg.r2.getObject(rawPath);
   }
 
@@ -147,11 +153,12 @@ export class RemotePageStore {
   ): PreparedUpload[] {
     return [...dirtyPages].map(([pageNo, body]) => {
       const pageKey = `${this.cfg.authId}:${pageNo}:${version}`;
-      const rawPath = generateRawPath(this.cfg.authId);
+      const rawKey = generateRawKey();
+      const rawPath = `${computeR2Prefix(this.cfg.authId)}/${rawKey}`;
       const content = encodePagePointerContent(
         this.cfg.crypto,
         this.cfg.pathKey,
-        rawPath,
+        rawKey,
       );
       return { pageNo, pageKey, rawPath, body, content };
     });
