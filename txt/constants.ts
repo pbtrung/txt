@@ -36,4 +36,4 @@ export const RETRY_DELAYS_MS = [2000, 4000, 8000]; // matches txt/r2.py's _RETRY
 // then issued this many at a time rather than one giant unbounded Promise.all
 // (risks exhausting connections/hitting rate limits) or a fully serial loop
 // (slow for anything beyond a handful of pages).
-export const R2_BATCH_CONCURRENCY = 8;
+export const R2_BATCH_CONCURRENCY = 15;
