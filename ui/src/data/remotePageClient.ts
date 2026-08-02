@@ -37,7 +37,6 @@ export interface RemotePageWorkerAuth {
   r2Config: R2Config;
   pathKey: Uint8Array;
   authId: string;
-  r2Prefix: string;
   ownerId: string;
 }
 

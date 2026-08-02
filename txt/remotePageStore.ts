@@ -22,8 +22,7 @@ export interface RemotePageStoreConfig {
   r2: R2Client;
   crypto: CryptoEngine;
   pathKey: Buffer;
-  authId: string; // $users id -- path prefix / pageKey identity
-  r2Prefix: string;
+  authId: string; // $users id -- pageKey identity and (via generateRawPath) R2 prefix
   ownerId: string; // `users` profile row id -- pages/dbMeta owner link target
 }
 
@@ -148,7 +147,7 @@ export class RemotePageStore {
   ): PreparedUpload[] {
     return [...dirtyPages].map(([pageNo, body]) => {
       const pageKey = `${this.cfg.authId}:${pageNo}:${version}`;
-      const rawPath = generateRawPath(this.cfg.r2Prefix);
+      const rawPath = generateRawPath(this.cfg.authId);
       const content = encodePagePointerContent(
         this.cfg.crypto,
         this.cfg.pathKey,

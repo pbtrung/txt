@@ -132,7 +132,6 @@ describe("commitPages / fetchPage", () => {
       r2Config,
       pathKey,
       authId,
-      r2Prefix,
       ownerId,
     };
 
@@ -170,7 +169,6 @@ describe("commitPages / fetchPage", () => {
       r2Config,
       pathKey,
       authId,
-      r2Prefix,
       ownerId,
     };
 
@@ -207,7 +205,6 @@ describe("commitPages / fetchPage", () => {
       r2Config,
       pathKey,
       authId,
-      r2Prefix,
       ownerId,
     };
 
@@ -234,7 +231,6 @@ describe("commitPages / fetchPage", () => {
       r2Config,
       pathKey,
       authId,
-      r2Prefix,
       ownerId,
     };
 

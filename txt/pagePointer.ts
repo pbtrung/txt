@@ -17,7 +17,8 @@ export function computeR2Prefix(authId: string): string {
   );
 }
 
-export function generateRawPath(r2Prefix: string): string {
+export function generateRawPath(authId: string): string {
+  const r2Prefix = computeR2Prefix(authId);
   return `${r2Prefix}/${crockfordBase32Lowercase(randomBytes(RAW_PATH_RANDOM_BYTES))}`;
 }
 

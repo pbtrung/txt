@@ -16,6 +16,7 @@ export function computeR2Prefix(authId: string): string {
   return base32.encode(sha3_256(new TextEncoder().encode(authId)));
 }
 
-export function generateRawPath(r2Prefix: string): string {
+export function generateRawPath(authId: string): string {
+  const r2Prefix = computeR2Prefix(authId);
   return `${r2Prefix}/${base32.encode(randomBytes(RAW_PATH_RANDOM_BYTES))}`;
 }

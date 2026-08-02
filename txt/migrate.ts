@@ -14,7 +14,6 @@ import type { InitAdminCreds } from "./initAdminCreds.ts";
 import { signInToInstant } from "./instantSignIn.ts";
 import type { Logger } from "./logger.ts";
 import { TxtOwner, type TxtMetadataEntry } from "./owner.ts";
-import { computeR2Prefix } from "./pagePointer.ts";
 import { R2Client } from "./r2.ts";
 import { R2Vfs } from "./r2Vfs.ts";
 import { RemotePageStore } from "./remotePageStore.ts";
@@ -272,7 +271,6 @@ export class Migrator {
       crypto,
       pathKey,
       authId,
-      r2Prefix: computeR2Prefix(authId),
       ownerId: target.usersRowId,
     });
   }

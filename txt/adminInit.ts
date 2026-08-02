@@ -9,7 +9,6 @@ import { CryptoEngine } from "./crypto.ts";
 import type { InitAdminCreds } from "./initAdminCreds.ts";
 import { signInToInstant } from "./instantSignIn.ts";
 import type { Logger } from "./logger.ts";
-import { computeR2Prefix } from "./pagePointer.ts";
 import { R2Client } from "./r2.ts";
 import { R2Vfs } from "./r2Vfs.ts";
 import { RemotePageStore } from "./remotePageStore.ts";
@@ -168,14 +167,12 @@ export class AdminInitializer {
     pageCount: number,
   ): Promise<{ dbMetaId: string; newVersion: number }> {
     const r2 = new R2Client(this.creds.r2Config, false, this.log);
-    const r2Prefix = computeR2Prefix(authId);
     const store = new RemotePageStore({
       db,
       r2,
       crypto: cryptoEngine,
       pathKey: keys.pathKey,
       authId,
-      r2Prefix,
       ownerId: usersRowId,
     });
     const dbMetaId = id();

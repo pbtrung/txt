@@ -19,21 +19,20 @@ describe("computeR2Prefix", () => {
 });
 
 describe("generateRawPath", () => {
-  it("prefixes the raw path with r2Prefix", () => {
+  it("prefixes the raw path with computeR2Prefix(authId)", () => {
     const prefix = computeR2Prefix("auth-123");
-    expect(generateRawPath(prefix)).toMatch(new RegExp(`^${prefix}/`));
+    expect(generateRawPath("auth-123")).toMatch(new RegExp(`^${prefix}/`));
   });
 
   it("generates a fresh random suffix on every call", () => {
-    const prefix = computeR2Prefix("auth-123");
-    const a = generateRawPath(prefix);
-    const b = generateRawPath(prefix);
+    const a = generateRawPath("auth-123");
+    const b = generateRawPath("auth-123");
     expect(a).not.toBe(b);
   });
 
   it("the suffix is lowercase Crockford base32", () => {
     const prefix = computeR2Prefix("auth-123");
-    const suffix = generateRawPath(prefix).slice(prefix.length + 1);
+    const suffix = generateRawPath("auth-123").slice(prefix.length + 1);
     expect(suffix).toMatch(CROCKFORD_BASE32_RE);
   });
 });

@@ -38,7 +38,6 @@ import * as instantPageStore from "./instantPageStore";
 import type { InstantPageStoreConfig } from "./instantPageStore";
 import { loadLibrary } from "./library";
 import * as owner from "./owner";
-import { computeR2Prefix } from "./pagePointer";
 import { createR2Client } from "./r2";
 import type { R2Config } from "./r2Config";
 import {
@@ -192,14 +191,12 @@ export async function open(params: OpenParams): Promise<void> {
   });
   verbose("dbWorker: open() -- signed in");
 
-  const r2Prefix = computeR2Prefix(params.authId);
   pageStoreCfg = {
     db: instantDb,
     r2Client: createR2Client(params.r2Config),
     r2Config: params.r2Config,
     pathKey: params.pathKey,
     authId: params.authId,
-    r2Prefix,
     ownerId: params.ownerId,
   };
   dbMetaId = params.dbMetaId;
@@ -226,7 +223,6 @@ export async function open(params: OpenParams): Promise<void> {
       r2Config: params.r2Config,
       pathKey: params.pathKey,
       authId: params.authId,
-      r2Prefix,
       ownerId: params.ownerId,
     },
     params.pageSize,

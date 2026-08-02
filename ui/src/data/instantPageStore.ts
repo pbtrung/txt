@@ -27,8 +27,7 @@ export interface InstantPageStoreConfig {
   r2Client: AwsClient;
   r2Config: R2Config;
   pathKey: Uint8Array;
-  authId: string; // $users id -- pageKey identity
-  r2Prefix: string;
+  authId: string; // $users id -- pageKey identity and (via generateRawPath) R2 prefix
   ownerId: string; // `users` profile row id -- pages/dbMeta/$files owner link target
 }
 
@@ -174,7 +173,7 @@ async function prepareUpload(
   version: number,
 ): Promise<PreparedUpload> {
   const pageKey = `${cfg.authId}:${pageNo}:${version}`;
-  const rawPath = generateRawPath(cfg.r2Prefix);
+  const rawPath = generateRawPath(cfg.authId);
   // Never brotli-compress rawPath before encrypting it -- it's a short
   // random string, not a structured/JSON payload (crypto/blob.ts's
   // `compressed` option is left at its default false, same as the CLI's
