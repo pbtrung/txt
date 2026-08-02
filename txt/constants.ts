@@ -37,3 +37,9 @@ export const RETRY_DELAYS_MS = [2000, 4000, 8000]; // matches txt/r2.py's _RETRY
 // (risks exhausting connections/hitting rate limits) or a fully serial loop
 // (slow for anything beyond a handful of pages).
 export const R2_BATCH_CONCURRENCY = 15;
+
+// migrate.ts's collectKnownRawPaths pages through an account's own `pages`
+// rows (tens of thousands for a large vault) rather than one unpaginated
+// query -- InstantDB enforces its own query timeout, and a single query
+// over that many rows risks exceeding it.
+export const PAGES_QUERY_PAGE_SIZE = 500;

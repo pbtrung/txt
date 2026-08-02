@@ -394,6 +394,12 @@ export class Migrator {
   // to recover raw_path from InstantDB metadata alone -- it's only ever
   // visible as $files' encrypted content (docs/data_model.md's $files
   // design) -- so this means downloading and decrypting every pointerFile.
+  // Pages through `pages` (tens of thousands of rows for a large, long-lived
+  // vault) PAGES_QUERY_PAGE_SIZE at a time via InstantDB's own cursor
+  // pagination (order by pageKey -- unique+indexed, so a stable sort with no
+  // ties -- and `after: pageInfo.pages.endCursor` each round) rather than one
+  // unpaginated query, which risks exceeding InstantDB's own query timeout
+  // at that scale.
   private async collectKnownRawPaths(
     db: any,
     crypto: CryptoEngine,
@@ -401,18 +407,38 @@ export class Migrator {
     r2Prefix: string,
     usersRowId: string,
   ): Promise<Set<string>> {
-    const result = await db.query({
-      pages: { $: { where: { "owner.id": usersRowId } }, pointerFile: {} },
-    });
-    const rows = (result.pages ?? []) as { pointerFile?: { url: string }[] }[];
-    const urls = rows.flatMap((r) => r.pointerFile?.[0]?.url ?? []);
     const known = new Set<string>();
-    for (let i = 0; i < urls.length; i += C.R2_BATCH_CONCURRENCY) {
-      const batch = urls.slice(i, i + C.R2_BATCH_CONCURRENCY);
-      const rawKeys = await Promise.all(
-        batch.map((url) => this.fetchAndDecodeRawKey(crypto, pathKey, url)),
+    let after: unknown;
+    for (;;) {
+      const result = await db.query({
+        pages: {
+          $: {
+            where: { "owner.id": usersRowId },
+            order: { pageKey: "asc" },
+            limit: C.PAGES_QUERY_PAGE_SIZE,
+            ...(after ? { after } : {}),
+          },
+          pointerFile: {},
+        },
+      });
+      const rows = (result.pages ?? []) as {
+        pointerFile?: { url: string }[];
+      }[];
+      const urls = rows.flatMap((r) => r.pointerFile?.[0]?.url ?? []);
+      for (let i = 0; i < urls.length; i += C.R2_BATCH_CONCURRENCY) {
+        const batch = urls.slice(i, i + C.R2_BATCH_CONCURRENCY);
+        const rawKeys = await Promise.all(
+          batch.map((url) => this.fetchAndDecodeRawKey(crypto, pathKey, url)),
+        );
+        rawKeys.forEach((rawKey) => known.add(`${r2Prefix}/${rawKey}`));
+      }
+      const pageInfo = result.pageInfo?.pages;
+      this.log.debug(
+        `collectKnownRawPaths: fetched ${rows.length} page row(s)` +
+          (pageInfo?.hasNextPage ? ", continuing..." : ""),
       );
-      rawKeys.forEach((rawKey) => known.add(`${r2Prefix}/${rawKey}`));
+      if (!pageInfo?.hasNextPage) break;
+      after = pageInfo.endCursor;
     }
     return known;
   }
