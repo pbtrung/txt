@@ -77,7 +77,7 @@ let pageWorker: RemotePageBridge | null = null;
 let storedOpenParams: OpenParams | null = null;
 let readerId: string | null = null;
 let renewReaderTimer: ReturnType<typeof setInterval> | null = null;
-let r2CredRefreshTimer: ReturnType<typeof setInterval> | null = null;
+let r2CredRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 
 // How long a registered reader lease (docs/data_model.md's activeReaders)
 // stays valid without renewal, and how often it's renewed while a session
@@ -90,10 +90,15 @@ let r2CredRefreshTimer: ReturnType<typeof setInterval> | null = null;
 const READER_LEASE_MS = 5 * 60 * 1000;
 const READER_RENEW_INTERVAL_MS = READER_LEASE_MS / 2;
 
-// worker/r2Creds.ts's own TTL_SECONDS is 900s (15 minutes) -- refreshed at
-// a comfortable margin before that so a slow refresh request never risks
-// the old credential expiring mid-flight.
-const R2_CRED_REFRESH_INTERVAL_MS = 10 * 60 * 1000;
+// How long before a temporary R2 credential's own real expiresAtMs (from
+// worker/r2Creds.ts's response, not a hardcoded assumption about its TTL)
+// to refresh it -- comfortable enough that a slow refresh request never
+// risks the old credential expiring mid-flight.
+const R2_CRED_REFRESH_MARGIN_MS = 5 * 60 * 1000;
+// Retry delay if a refresh attempt itself fails (network blip, stale
+// idToken) -- short, so a transient failure doesn't leave the credential
+// silently expiring in the background for minutes before trying again.
+const R2_CRED_RETRY_DELAY_MS = 30 * 1000;
 
 // Bounded concurrency for the initial page prefetch (same value as
 // txt/constants.ts's R2_BATCH_CONCURRENCY / instantPageStore.ts's own
@@ -213,10 +218,7 @@ export async function open(params: OpenParams): Promise<void> {
     ownerId: params.ownerId,
   };
   dbMetaId = params.dbMetaId;
-  r2CredRefreshTimer = setInterval(
-    () => void refreshR2Credential(),
-    R2_CRED_REFRESH_INTERVAL_MS,
-  );
+  scheduleR2CredRefresh(r2Cred.expiresAtMs);
 
   // Registered immediately, before any of the (potentially slow, for a
   // large vault) prefetch/SqliteDb.open work below -- every moment between
@@ -284,20 +286,48 @@ async function renewReader(): Promise<void> {
   await beginRead(readerId, vfs.getCurrentVersion());
 }
 
-/** Re-mints this session's own R2 credential before its 15-minute TTL
- * (worker/r2Creds.ts's TTL_SECONDS) runs out -- called periodically
- * (r2CredRefreshTimer). Swaps pageStoreCfg.r2Client in place; every caller
+/** Schedules the next refreshR2Credential() call R2_CRED_REFRESH_MARGIN_MS
+ * before expiresAtMs (the server's own real expiry, not a hardcoded
+ * assumption about worker/r2Creds.ts's TTL) -- a negative/zero delay (the
+ * margin already eaten into, e.g. after a slow initial mint) just means
+ * "refresh immediately". */
+function scheduleR2CredRefresh(expiresAtMs: number): void {
+  if (r2CredRefreshTimer) clearTimeout(r2CredRefreshTimer);
+  const delay = Math.max(
+    0,
+    expiresAtMs - Date.now() - R2_CRED_REFRESH_MARGIN_MS,
+  );
+  r2CredRefreshTimer = setTimeout(() => void refreshR2Credential(), delay);
+}
+
+/** Re-mints this session's own R2 credential and reschedules itself off the
+ * fresh expiresAtMs. Swaps pageStoreCfg.r2Client in place; every caller
  * (instantPageStore.ts's fetchPage/commitPages) reads it fresh off that
- * shared config object rather than holding its own reference. */
+ * shared config object rather than holding its own reference. On failure
+ * (network blip, a since-expired idToken), retries after
+ * R2_CRED_RETRY_DELAY_MS instead of leaving the old, expiring credential in
+ * place with no further attempt to replace it. */
 async function refreshR2Credential(): Promise<void> {
   if (!pageStoreCfg || !storedOpenParams) return;
-  const r2Cred = await fetchTempR2Credential(
-    storedOpenParams.idToken,
-    storedOpenParams.authId,
-    storedOpenParams.r2Config,
-  );
-  pageStoreCfg.r2Client = r2Cred.client;
-  verbose("dbWorker: refreshed temporary R2 credential");
+  try {
+    const r2Cred = await fetchTempR2Credential(
+      storedOpenParams.idToken,
+      storedOpenParams.authId,
+      storedOpenParams.r2Config,
+    );
+    pageStoreCfg.r2Client = r2Cred.client;
+    verbose("dbWorker: refreshed temporary R2 credential");
+    scheduleR2CredRefresh(r2Cred.expiresAtMs);
+  } catch (err) {
+    verbose(
+      `dbWorker: R2 credential refresh failed, retrying in ${R2_CRED_RETRY_DELAY_MS}ms`,
+      err,
+    );
+    r2CredRefreshTimer = setTimeout(
+      () => void refreshR2Credential(),
+      R2_CRED_RETRY_DELAY_MS,
+    );
+  }
 }
 
 export async function refresh(): Promise<void> {
@@ -308,7 +338,7 @@ export async function refresh(): Promise<void> {
 export async function close(): Promise<void> {
   if (renewReaderTimer) clearInterval(renewReaderTimer);
   renewReaderTimer = null;
-  if (r2CredRefreshTimer) clearInterval(r2CredRefreshTimer);
+  if (r2CredRefreshTimer) clearTimeout(r2CredRefreshTimer);
   r2CredRefreshTimer = null;
   if (instantDb && readerId) {
     try {

@@ -23,10 +23,11 @@ import type { R2Config } from "./r2Config";
 import { fetchTempR2Credential } from "./tempR2Creds";
 import { verbose } from "../log";
 
-// worker/r2Creds.ts's own TTL_SECONDS is 900s (15 minutes) -- refreshed at
-// a comfortable margin before that, same reasoning as dbWorker.ts's own
-// R2_CRED_REFRESH_INTERVAL_MS.
-const R2_CRED_REFRESH_INTERVAL_MS = 10 * 60 * 1000;
+// Same reasoning as dbWorker.ts's own constants of the same name: refresh
+// off the server's real expiresAtMs, not a hardcoded TTL assumption, and
+// retry quickly rather than silently on a failed refresh.
+const R2_CRED_REFRESH_MARGIN_MS = 5 * 60 * 1000;
+const R2_CRED_RETRY_DELAY_MS = 30 * 1000;
 
 interface StartMessage {
   type: "start";
@@ -112,17 +113,38 @@ async function start(msg: StartMessage): Promise<void> {
   control = new Int32Array(msg.controlSab);
   dataBuf = new Uint8Array(msg.dataSab);
   snapshot = msg.snapshot;
-  setInterval(() => void refreshR2Credential(), R2_CRED_REFRESH_INTERVAL_MS);
+  scheduleR2CredRefresh(r2Cred.expiresAtMs);
+}
+
+/** See dbWorker.ts's function of the same name -- same reasoning. No timer
+ * to clear on termination: this whole nested Worker gets torn down
+ * (pageWorker.terminate() in dbWorker.ts's close()) along with any pending
+ * timeout, not just this module's own state. */
+function scheduleR2CredRefresh(expiresAtMs: number): void {
+  const delay = Math.max(
+    0,
+    expiresAtMs - Date.now() - R2_CRED_REFRESH_MARGIN_MS,
+  );
+  setTimeout(() => void refreshR2Credential(), delay);
 }
 
 async function refreshR2Credential(): Promise<void> {
-  const r2Cred = await fetchTempR2Credential(
-    storedIdToken,
-    storedAuthId,
-    cfg.r2Config,
-  );
-  cfg.r2Client = r2Cred.client;
-  verbose("remotePageWorker: refreshed temporary R2 credential");
+  try {
+    const r2Cred = await fetchTempR2Credential(
+      storedIdToken,
+      storedAuthId,
+      cfg.r2Config,
+    );
+    cfg.r2Client = r2Cred.client;
+    verbose("remotePageWorker: refreshed temporary R2 credential");
+    scheduleR2CredRefresh(r2Cred.expiresAtMs);
+  } catch (err) {
+    verbose(
+      `remotePageWorker: R2 credential refresh failed, retrying in ${R2_CRED_RETRY_DELAY_MS}ms`,
+      err,
+    );
+    setTimeout(() => void refreshR2Credential(), R2_CRED_RETRY_DELAY_MS);
+  }
 }
 
 async function handleFetch(pageNo: number): Promise<void> {
