@@ -72,7 +72,7 @@ export function UnlockScreen() {
             // (width: 90vw bounds it there) or being force-stretched to
             // exactly the wrapper's width the way start-0/end-0 would.
             <div
-              className="alert alert-danger mt-2 position-absolute start-50"
+              className="alert alert-danger mt-3 position-absolute start-50"
               style={{
                 top: "100%",
                 transform: "translateX(-50%)",
