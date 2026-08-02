@@ -121,10 +121,15 @@ async function verifyFirebaseIdToken(
 // the admin's parent R2 secret access key (held only as a Worker secret).
 // The parent access key ID is reused as-is for the temporary credential;
 // the temporary secretAccessKey is the SHA-256 hex digest of the signed
-// JWT, and the sessionToken is base64("jwt/" + <signed JWT>) -- R2 derives
-// the same values server-side from the accessKeyId (which tells it which
-// parent secret to re-verify the signature against) on every request that
-// carries them.
+// JWT, and the sessionToken is base64url("jwt/" + <signed JWT>) -- R2
+// derives the same values server-side from the accessKeyId (which tells it
+// which parent secret to re-verify the signature against) on every request
+// that carries them. Must be base64URL, not plain base64: standard btoa()
+// output (with +//'s and '=' padding) got rejected outright with R2's own
+// `<Error><Code>InvalidArgument</Code><Message>X-Amz-Security-Token
+// </Message></Error>` (confirmed live, not documented anywhere -- the
+// upstream docs just say "base64", which in JWT-adjacent contexts commonly
+// means base64url).
 async function mintTemporaryCredential(
   env: Env,
   bucket: string,
@@ -142,7 +147,7 @@ async function mintTemporaryCredential(
   return {
     accessKeyId: env.READ_WRITE_ACCESS_KEY_ID,
     secretAccessKey: await sha256Hex(jwt),
-    sessionToken: btoa(`jwt/${jwt}`),
+    sessionToken: base64Url(new TextEncoder().encode(`jwt/${jwt}`)),
     expiresAtMs: (iat + TTL_SECONDS) * 1000,
   };
 }
