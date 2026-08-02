@@ -29,6 +29,20 @@ describe("getObject", () => {
     expect(Array.from(result)).toEqual([1, 2, 3, 4]);
   });
 
+  it("keeps a real page-key's own '/' as a literal path separator, not %2F", async () => {
+    // Every page-object key is "${r2Prefix}/${rawKey}" (pagePointer.ts) --
+    // encoding the whole key as one unit would turn that into %2F, which R2
+    // (like S3) treats as part of a single path segment, not the key's own
+    // real separator.
+    const client = fakeAwsClient(async (url) => {
+      expect(url).toBe(
+        "https://acct.r2.cloudflarestorage.com/my-bucket/abc123/xyz456",
+      );
+      return new Response(new Uint8Array([1]));
+    });
+    await getObject(client, config, "abc123/xyz456");
+  });
+
   it("retries on failure and succeeds once the object is reachable", async () => {
     vi.useFakeTimers();
     let attempts = 0;

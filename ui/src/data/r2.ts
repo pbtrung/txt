@@ -20,8 +20,18 @@ import type { R2Config } from "./r2Config";
 const RETRY_DELAYS_MS = [2000, 4000, 8000];
 const MAX_ATTEMPTS = 1 + RETRY_DELAYS_MS.length;
 
+// Every page-object key is "${r2Prefix}/${rawKey}" (pagePointer.ts) --
+// encodeURIComponent on the whole string would turn that internal "/" into
+// "%2F", which R2 (like S3) treats as part of a single path segment rather
+// than the key's own real path separator, producing a 400 for what looks
+// like a well-formed request otherwise. Each segment gets encoded on its
+// own instead, joined back with literal "/"s.
+function encodeObjectKey(key: string): string {
+  return key.split("/").map(encodeURIComponent).join("/");
+}
+
 function objectUrl(config: R2Config, key: string): string {
-  return `${config.endpoint.replace(/\/+$/, "")}/${config.bucket}/${encodeURIComponent(key)}`;
+  return `${config.endpoint.replace(/\/+$/, "")}/${config.bucket}/${encodeObjectKey(key)}`;
 }
 
 function sleep(ms: number): Promise<void> {
