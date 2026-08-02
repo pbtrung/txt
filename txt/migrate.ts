@@ -1,5 +1,5 @@
-// Orchestrates --migrate: pulls a random sample of a legacy Turso/rqlite
-// account's documents (docs/data_model.md as of commit
+// Orchestrates --migrate: imports every document from a legacy Turso/rqlite
+// account (docs/data_model.md as of commit
 // 1ed39d433365c39a6973303c171c7bb5510d7e3e -- the schema txt/owner.ts reads)
 // across into an already-`--init-admin`-provisioned InstantDB account's own
 // per-user SQLCipher database, going through the exact same page-by-page R2
@@ -22,7 +22,6 @@ import { SqlCipherBuilder } from "./sqlcipherBuilder.ts";
 const DB_FILE_NAME = "/migrate-target.db";
 
 export interface MigrateOptions {
-  sampleSize: number;
   dryRun: boolean;
   // Returns true to proceed with the write. Called only in live mode, once
   // the real document list/sizes are known.
@@ -61,15 +60,6 @@ interface TargetAccount {
   credsBlob: string;
 }
 
-function pickRandom<T>(items: T[], n: number): T[] {
-  const pool = [...items];
-  for (let i = pool.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [pool[i], pool[j]] = [pool[j], pool[i]];
-  }
-  return pool.slice(0, Math.min(n, pool.length));
-}
-
 export class Migrator {
   private fromDb: DatabaseSync;
   private fromCreds: Creds;
@@ -90,7 +80,7 @@ export class Migrator {
 
   async run(opts: MigrateOptions): Promise<MigrateResult> {
     const crypto = await CryptoEngine.create();
-    const docs = await this.prepareDocs(crypto, opts.sampleSize);
+    const docs = await this.prepareDocs(crypto);
     const summaries = docs.map(toSummary);
     if (docs.length === 0 || opts.dryRun) {
       return emptyResult(summaries);
@@ -99,18 +89,14 @@ export class Migrator {
     return this.writeToTarget(crypto, docs, summaries);
   }
 
-  private async prepareDocs(
-    crypto: CryptoEngine,
-    sampleSize: number,
-  ): Promise<PreparedDoc[]> {
+  private async prepareDocs(crypto: CryptoEngine): Promise<PreparedDoc[]> {
     const owner = new TxtOwner(this.fromDb, crypto, this.log);
     const userId = owner.resolveUserId(this.fromCreds);
     const umk = owner.resolveUmk(this.fromCreds, userId);
     const fromR2 = new R2Client(this.fromCreds.r2Config, true, this.log);
     const allTxtIds = owner.listTxtIds(userId);
-    const selected = pickRandom(allTxtIds, sampleSize);
     this.log.info(
-      `Selected ${selected.length}/${allTxtIds.length} txt_id(s) to migrate: ${selected.join(", ")}`,
+      `Migrating ${allTxtIds.length} txt_id(s): ${allTxtIds.join(", ")}`,
     );
     const metadataDoc = await owner.resolveTxtMetadataDocument(
       userId,
@@ -118,7 +104,7 @@ export class Migrator {
       fromR2,
     );
     const prepared: PreparedDoc[] = [];
-    for (const txtId of selected) {
+    for (const txtId of allTxtIds) {
       prepared.push(
         await this.prepareOneDoc(owner, umk, fromR2, metadataDoc, txtId),
       );

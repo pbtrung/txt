@@ -3,7 +3,6 @@ import { DatabaseSync } from "node:sqlite";
 import { parseArgs } from "node:util";
 import { AdminInitializer } from "./adminInit.ts";
 import { TxtBucketCleaner } from "./bucket.ts";
-import * as C from "./constants.ts";
 import { type Creds, loadCreds } from "./creds.ts";
 import { CryptoEngine } from "./crypto.ts";
 import { loadInitAdminCreds } from "./initAdminCreds.ts";
@@ -167,7 +166,6 @@ async function migrate(
   try {
     const migrator = new Migrator(fromDb, fromCreds, toCreds, log);
     const result = await migrator.run({
-      sampleSize: C.MIGRATE_SAMPLE_SIZE,
       dryRun: args.dryRun,
       confirm: (message) => confirm(message, args.yes),
     });

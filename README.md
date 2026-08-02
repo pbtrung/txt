@@ -8,7 +8,7 @@ See [`docs/data_model.md`](docs/data_model.md) for the full design (entities, ke
 
 - **`--init-admin`** — provisions the admin account end to end: signs into Firebase, resolves an InstantDB identity for it, generates its key hierarchy, builds its initial encrypted per-user SQLite database, and uploads it page-by-page to R2.
 - **`--clean-bucket`** — sweeps an R2 bucket for objects no longer referenced by a (legacy, pre-InstantDB) account snapshot, with a dry-run mode and a confirmation prompt before deleting anything.
-- **`--migrate`** — samples documents from a legacy account's database and imports them into an already-provisioned InstantDB account's own SQLCipher database, through the same page-by-page R2 transport `--init-admin` uses.
+- **`--migrate`** — imports every document from a legacy account's database into an already-provisioned InstantDB account's own SQLCipher database, through the same page-by-page R2 transport `--init-admin` uses.
 - **`ui/`** — the React viewer: unlock a vault with a creds.json file, browse/read documents, bookmark, and write back read-position/bookmark updates, all client-side against InstantDB + R2 directly.
 - **`worker/`** — the one server component the design needs: verifies a Firebase ID token and mints a short-lived, prefix-scoped R2 credential for it, so `ui/` never needs a static R2 key.
 - **End-to-end encryption throughout**: page content is SQLCipher-encrypted; R2 object addresses and the pointers to them are separately wrapped (Ascon-Keccak AEAD + HKDF-SHA3-512) so neither InstantDB nor R2 ever see plaintext content, real object addresses, or unwrapped keys.
