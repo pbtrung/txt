@@ -1,6 +1,10 @@
 // Screen 1 -- Unlock: the only job here is loading the
 // credential file. No headline, no explanatory copy, no dropzone preview --
 // a wordmark and a single button carrying both the action and its effect.
+// The file is the same creds.json shape the CLI's --init-admin already
+// takes (see data/creds.ts's own comment) -- everything unlock() needs
+// (Firebase sign-in, InstantDB app id, user_root_key) in one bundle, no
+// separate form fields.
 
 import { useEffect, useRef, type ChangeEvent } from "react";
 import { useNavigate } from "react-router-dom";

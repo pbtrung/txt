@@ -1,24 +1,32 @@
-// Replaces the old username/password/Turso unlock flow entirely. The
-// unlock file (see screens/Unlock/UnlockScreen.tsx) is now a small JSON
-// bundle of everything needed to open this account's SQLCipher db directly
-// -- no server round trip to resolve a password first. Field names mirror
-// txt/creds.ts's snake_case (this project's one convention for ops-authored
-// credential JSON, e.g. out_creds.json) -- parseCreds is the
-// snake_case-JSON -> camelCase-object boundary. No r2_config here (unlike
-// txt/creds.ts's InCreds, which is a CLI operator's own file, not an end
-// user's unlock file): this account's R2 credentials live in its own
-// SQLCipher db (the r2_config table, docs/data_model.md) and are read from
-// there via dbWorker.ts's fetchR2Config, not bundled into this file.
+// The unlock file (see screens/Unlock/UnlockScreen.tsx) is the same
+// creds.json shape the CLI's --init-admin/--migrate --to-creds already take
+// (txt/initAdminCreds.ts) -- the admin's one credentials file now works for
+// both, rather than needing a separate browser-specific bundle. This parser
+// only requires the fields the browser actually needs (Firebase sign-in +
+// InstantDB app id + user_root_key, plus firebase_auth_domain/
+// firebase_project_id, which the CLI's own copy of this shape doesn't need
+// since it hits Identity Toolkit's REST API directly instead of going
+// through the firebase/auth client SDK's initializeApp) -- instant_admin_token
+// and r2_config, present in the CLI's version of this same file, are simply
+// ignored here: a browser session never holds an admin token, and this
+// account's R2 config comes from its own (already-InstantDB-stored)
+// $users.creds instead (session.ts's resolveSession).
 
 import { base64ToBytes } from "../crypto/bytes";
 import { requireObject, requireString } from "./jsonObject";
 
 export interface Creds {
-  rqliteUrl: string;
-  apiKey: string;
+  firebaseEmail: string;
+  firebasePassword: string;
+  firebaseApiKey: string;
+  firebaseAuthDomain: string;
+  firebaseProjectId: string;
+  instantAppId: string;
+  instantClientName: string;
   userRootKey: Uint8Array;
   /** Purely cosmetic -- shown in AccountFooter next to the person icon.
-   * Optional: absent from most creds files, no fallback needed. */
+   * Optional: falls back to the signed-in Firebase account's own email if
+   * absent (see VaultContext.tsx's unlock()). */
   displayName?: string;
 }
 
@@ -32,8 +40,25 @@ export function parseCreds(json: unknown): Creds {
     CredsError,
   );
 
-  const rqliteUrl = requireString(data, "rqlite_url", CredsError);
-  const apiKey = requireString(data, "api_key", CredsError);
+  const firebaseEmail = requireString(data, "firebase_email", CredsError);
+  const firebasePassword = requireString(data, "firebase_password", CredsError);
+  const firebaseApiKey = requireString(data, "firebase_api_key", CredsError);
+  const firebaseAuthDomain = requireString(
+    data,
+    "firebase_auth_domain",
+    CredsError,
+  );
+  const firebaseProjectId = requireString(
+    data,
+    "firebase_project_id",
+    CredsError,
+  );
+  const instantAppId = requireString(data, "instant_app_id", CredsError);
+  const instantClientName = requireString(
+    data,
+    "instant_client_name",
+    CredsError,
+  );
 
   let userRootKey: Uint8Array;
   try {
@@ -53,7 +78,17 @@ export function parseCreds(json: unknown): Creds {
       ? displayNameValue
       : undefined;
 
-  return { rqliteUrl, apiKey, userRootKey, displayName };
+  return {
+    firebaseEmail,
+    firebasePassword,
+    firebaseApiKey,
+    firebaseAuthDomain,
+    firebaseProjectId,
+    instantAppId,
+    instantClientName,
+    userRootKey,
+    displayName,
+  };
 }
 
 export async function loadCredsFromFile(file: File): Promise<Creds> {

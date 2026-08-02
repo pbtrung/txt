@@ -5,15 +5,19 @@
 // decrypt a real db while only ever being handed pages it actually asks
 // for; writes stay in memory until an explicit commit(); commit() sends
 // exactly the dirty pages plus the correct old/new version and page count;
-// a lost CAS (commit's fake client returns false) leaves dirty pages intact
-// so the caller can retry.
+// a committer that rejects (instantPageStore.ts's commitPages, once its own
+// internal CAS retries are exhausted) leaves dirty pages intact so the
+// caller can retry.
 
 import { describe, expect, it } from "vitest";
 import { randomBytes } from "node:crypto";
 import { loadWasm } from "./wasmLoader";
 import { SqliteDb } from "./sqliteDb";
-import { MAX_CACHED_PAGES, registerRemoteVfs } from "./remoteVfs";
-import type { CommitPage, RqliteHttpClient } from "./rqliteHttpClient";
+import {
+  MAX_CACHED_PAGES,
+  registerRemoteVfs,
+  type Committer,
+} from "./remoteVfs";
 
 interface RealDb {
   rootKey: Uint8Array;
@@ -58,8 +62,15 @@ function readNames(db: SqliteDb): string[] {
   return names;
 }
 
-function fakeClient(commit: RqliteHttpClient["commit"]): RqliteHttpClient {
-  return { commit } as unknown as RqliteHttpClient;
+function fakeCommitter(
+  impl: (
+    dirtyPages: Map<number, Uint8Array>,
+    currentVersion: number,
+    pageCount: number,
+    pageSize: number,
+  ) => Promise<{ newVersion: number }>,
+): Committer {
+  return impl;
 }
 
 describe("registerRemoteVfs", () => {
@@ -132,25 +143,26 @@ describe("registerRemoteVfs", () => {
       expect(handle.isDirty()).toBe(true);
 
       let captured: {
-        pages: CommitPage[];
+        dirtyPageCount: number;
         oldVersion: number;
-        newVersion: number;
         pageCount: number;
       } | null = null;
-      const client = fakeClient(async (pgs, oldVersion, newVersion, count) => {
-        captured = { pages: pgs, oldVersion, newVersion, pageCount: count };
-        return true;
+      const committer = fakeCommitter(async (dirtyPages, oldVersion, count) => {
+        captured = {
+          dirtyPageCount: dirtyPages.size,
+          oldVersion,
+          pageCount: count,
+        };
+        return { newVersion: oldVersion + 1 };
       });
 
       expect(handle.getCurrentVersion()).toBe(5); // unchanged before commit
 
-      const ok = await handle.commit(client);
-      expect(ok).toBe(true);
+      await handle.commit(committer);
       expect(handle.isDirty()).toBe(false);
       expect(captured).not.toBeNull();
       expect(captured!.oldVersion).toBe(5);
-      expect(captured!.newVersion).toBe(6);
-      expect(captured!.pages.length).toBeGreaterThan(0);
+      expect(captured!.dirtyPageCount).toBeGreaterThan(0);
       expect(captured!.pageCount).toBeGreaterThanOrEqual(pageCount);
       // dbWorker.ts reads this right after a successful commit to advance
       // remotePageClient.ts's page-fetch worker's own pinned snapshot --
@@ -213,11 +225,11 @@ describe("registerRemoteVfs", () => {
       db.run("UPDATE t SET name = 'renamed' WHERE name = 'small-row';");
 
       let dirtyCount = 0;
-      const client = fakeClient(async (pgs) => {
-        dirtyCount = pgs.length;
-        return true;
+      const committer = fakeCommitter(async (dirtyPages, oldVersion) => {
+        dirtyCount = dirtyPages.size;
+        return { newVersion: oldVersion + 1 };
       });
-      await handle.commit(client);
+      await handle.commit(committer);
 
       expect(dirtyCount).toBeGreaterThan(0);
       expect(dirtyCount).toBeLessThan(pageCount / 4); // a small fraction, not the whole db
@@ -423,7 +435,7 @@ describe("registerRemoteVfs", () => {
     }
   });
 
-  it("leaves dirty pages intact when commit's CAS is lost, so the caller can retry", async () => {
+  it("leaves dirty pages intact when the committer rejects (CAS retries exhausted), so the caller can retry", async () => {
     const { rootKey, pages, pageSize, pageCount } = await buildRealDb();
     const mod = await loadWasm();
     const backedPath = "/remote-vfs-cas-lost.db";
@@ -443,17 +455,20 @@ describe("registerRemoteVfs", () => {
       db.run("INSERT INTO t (name) VALUES (?);", (s) => s.bindText(1, "x"));
       expect(handle.isDirty()).toBe(true);
 
-      const losingClient = fakeClient(async () => false);
-      const ok = await handle.commit(losingClient);
-      expect(ok).toBe(false);
-      expect(handle.isDirty()).toBe(true); // still there -- caller must reopen and retry
-      expect(handle.getCurrentVersion()).toBe(1); // unchanged -- the CAS never actually won
+      const losingCommitter = fakeCommitter(async () => {
+        throw new Error("Permission denied: dbMeta CAS check failed");
+      });
+      await expect(handle.commit(losingCommitter)).rejects.toThrow(
+        "CAS check failed",
+      );
+      expect(handle.isDirty()).toBe(true); // still there -- caller must retry
+      expect(handle.getCurrentVersion()).toBe(1); // unchanged -- the commit never actually won
     } finally {
       db.close();
     }
   });
 
-  it("commit() with no dirty pages is a no-op that never calls the client", async () => {
+  it("commit() with no dirty pages is a no-op that never calls the committer", async () => {
     const { pages, pageSize, pageCount } = await buildRealDb();
     const mod = await loadWasm();
     const backedPath = "/remote-vfs-noop-commit.db";
@@ -466,12 +481,11 @@ describe("registerRemoteVfs", () => {
     });
 
     let called = false;
-    const client = fakeClient(async () => {
+    const committer = fakeCommitter(async (_dirtyPages, oldVersion) => {
       called = true;
-      return true;
+      return { newVersion: oldVersion + 1 };
     });
-    const ok = await handle.commit(client);
-    expect(ok).toBe(true);
+    await handle.commit(committer);
     expect(called).toBe(false);
   });
 });

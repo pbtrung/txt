@@ -1,23 +1,25 @@
-// Data hook backing the Reader screen: resolves the txt_key and part count
-// once, then fetches/caches one part's raw path and text at a time as the
-// reader navigates (never every part's path up front), persisting read
-// position and bookmarks along the way.
+// Data hook backing the Reader screen: resolves the part count once, then
+// fetches/caches one part's content and decoded text at a time as the
+// reader navigates (never every part up front), persisting read position
+// and bookmarks along the way.
 //
-// partCount/partRawPath go through session.client (data/dbWorkerClient.ts)
+// partCount/partContent go through session.client (data/dbWorkerClient.ts)
 // now, not a direct data/owner.ts call against a SqliteDb -- the db itself
 // lives inside dbWorker.ts's Worker, not on the main thread (see that
-// file's header comment for why). Read position and bookmarks themselves
-// are no longer fetched here at all -- both already live in VaultContext
-// (loaded once, in full, during unlock), so this hook only reads/writes
-// through the context's accessMap/bookmarksMap and its recordReadPosition/
-// addBookmarkEntry/removeBookmarkEntry actions.
+// file's header comment for why). No txt_key to resolve first anymore
+// either -- a part's content is a plain BLOB, protected only by SQLCipher's
+// own page-level encryption (see owner.ts/parts.ts). Read position and
+// bookmarks themselves are no longer fetched here at all -- both already
+// live in VaultContext (loaded once, in full, during unlock), so this hook
+// only reads/writes through the context's accessMap/bookmarksMap and its
+// recordReadPosition/addBookmarkEntry/removeBookmarkEntry actions.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
 import type { Bookmark } from "../../data/bookmarks";
 import type { BookInfo } from "../../data/metadata";
-import { fetchPart } from "../../data/parts";
+import { decodePart } from "../../data/parts";
 import { useVault } from "../../state/VaultContext";
 import { clampPartNum } from "./readerModel";
 
@@ -47,7 +49,6 @@ export interface UseReaderBookResult {
 export function useReaderBook(txtId: number): UseReaderBookResult {
   const {
     session,
-    getTxtKey,
     accessMap,
     bookmarksMap,
     recordReadPosition,
@@ -65,19 +66,17 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
   const [partTextLoading, setPartTextLoading] = useState(false);
   const [targetLine, setTargetLine] = useState<number | null>(null);
 
-  const txtKeyRef = useRef<Uint8Array | null>(null);
-  const rawPathCache = useRef(new Map<number, string>());
   const partTextCache = useRef(new Map<number, string>());
 
   const bookmarks = bookmarksMap.get(txtId) ?? [];
   // Metadata for every book is already loaded in full during unlock (see
-  // VaultContext) -- available instantly, unlike part count/paths/content,
-  // which are only ever fetched for whichever book is actually open.
+  // VaultContext) -- available instantly, unlike part count/content, which
+  // are only ever fetched for whichever book is actually open.
   const info: BookInfo | null = session?.metadataById.get(txtId) ?? null;
 
-  // Load the book's key and part count once per (session, txtId) -- part
-  // paths are resolved lazily, one at a time, by the part-fetch effect below
-  // (session.client.partRawPath); metadata itself needs no fetch here at
+  // Load the part count once per (session, txtId) -- part content is
+  // resolved lazily, one at a time, by the part-fetch effect below
+  // (session.client.partContent); metadata itself needs no fetch here at
   // all, see `info` above. accessMap/searchParams are read here only to seed
   // the initial part -- deliberately not in the dep list below, since a
   // read-position write (which updates accessMap) shouldn't re-trigger a
@@ -94,16 +93,11 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
     // targetLine scroll/highlight fire against stale content (see below).
     setPartText(null);
     partTextCache.current = new Map();
-    rawPathCache.current = new Map();
 
     (async () => {
-      const [txtKey, count] = await Promise.all([
-        getTxtKey(txtId),
-        session.client.partCount(txtId),
-      ]);
+      const count = await session.client.partCount(txtId);
       if (cancelled) return;
 
-      txtKeyRef.current = txtKey;
       setPartCount(count);
 
       // A Library "Recent Bookmarks" click carries ?part=N&line=M -- prefer
@@ -138,16 +132,12 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
     };
     // accessMap/searchParams intentionally excluded -- see comment above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session, txtId, getTxtKey]);
+  }, [session, txtId]);
 
-  // Fetch (and cache) the current part's raw path, then its text; persist
-  // the read position. The raw path itself is resolved lazily here (one
-  // row-read via session.client.partRawPath, cached in rawPathCache) rather
-  // than upfront for every part in the book.
+  // Fetch (and cache) the current part's content, then decode it; persist
+  // the read position.
   useEffect(() => {
     if (!session || loading) return;
-    const txtKey = txtKeyRef.current;
-    if (!txtKey) return;
 
     void recordReadPosition(txtId, {
       lastPartNum: currentPartNum,
@@ -163,17 +153,12 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
     let cancelled = false;
     setPartTextLoading(true);
     (async () => {
-      let rawPath = rawPathCache.current.get(currentPartNum);
-      if (rawPath === undefined) {
-        const fetched = await session.client.partRawPath(txtId, currentPartNum);
-        if (!fetched)
-          throw new Error(
-            `no txt_parts row for txt_id=${txtId}, part_num=${currentPartNum}`,
-          );
-        rawPath = fetched;
-        rawPathCache.current.set(currentPartNum, rawPath);
-      }
-      return fetchPart(session.r2Client, session.r2Config, txtKey, rawPath);
+      const content = await session.client.partContent(txtId, currentPartNum);
+      if (!content)
+        throw new Error(
+          `no txt_parts row for txt_id=${txtId}, part_num=${currentPartNum}`,
+        );
+      return decodePart(content);
     })()
       .then((text) => {
         if (cancelled) return;

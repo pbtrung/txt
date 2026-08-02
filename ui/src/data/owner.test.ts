@@ -11,42 +11,46 @@ import * as owner from "./owner";
 
 let db: SqliteDb;
 
+function content(text: string): Uint8Array {
+  return new TextEncoder().encode(text);
+}
+
 beforeAll(async () => {
   const rootKey = new Uint8Array(256).fill(9);
   db = await SqliteDb.open("/owner-test.db", { rawKey: rootKey });
   db.exec(`
-    CREATE TABLE txt (id INTEGER PRIMARY KEY, txt_key BLOB NOT NULL, name TEXT NOT NULL);
+    CREATE TABLE txt (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
     CREATE TABLE txt_parts (
       id INTEGER PRIMARY KEY,
       txt_id INTEGER NOT NULL,
       part_num INTEGER NOT NULL,
-      path TEXT NOT NULL UNIQUE
+      content BLOB NOT NULL UNIQUE
     );
   `);
-  db.run("INSERT INTO txt (id, txt_key, name) VALUES (1, x'00', ?);", (s) =>
+  db.run("INSERT INTO txt (id, name) VALUES (1, ?);", (s) =>
     s.bindText(1, "doc-one.txt"),
   );
   db.run(
-    "INSERT INTO txt_parts (txt_id, part_num, path) VALUES (1, 0, ?);",
-    (s) => s.bindText(1, "path-0"),
+    "INSERT INTO txt_parts (txt_id, part_num, content) VALUES (1, 0, ?);",
+    (s) => s.bindBlob(1, content("part-0")),
   );
   db.run(
-    "INSERT INTO txt_parts (txt_id, part_num, path) VALUES (1, 1, ?);",
-    (s) => s.bindText(1, "path-1"),
+    "INSERT INTO txt_parts (txt_id, part_num, content) VALUES (1, 1, ?);",
+    (s) => s.bindBlob(1, content("part-1")),
   );
   db.run(
-    "INSERT INTO txt_parts (txt_id, part_num, path) VALUES (1, 2, ?);",
-    (s) => s.bindText(1, "path-2"),
+    "INSERT INTO txt_parts (txt_id, part_num, content) VALUES (1, 2, ?);",
+    (s) => s.bindBlob(1, content("part-2")),
   );
 });
 
-describe("partRawPath", () => {
-  it("returns one part's path by part_num", () => {
-    expect(owner.partRawPath(db, 1, 1)).toBe("path-1");
+describe("partContent", () => {
+  it("returns one part's content by part_num", () => {
+    expect(owner.partContent(db, 1, 1)).toEqual(content("part-1"));
   });
 
   it("returns null when that part doesn't exist", () => {
-    expect(owner.partRawPath(db, 1, 99)).toBeNull();
+    expect(owner.partContent(db, 1, 99)).toBeNull();
   });
 });
 

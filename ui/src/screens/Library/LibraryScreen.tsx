@@ -332,7 +332,7 @@ export function LibraryScreen() {
                 onLock={lock}
                 onRefresh={() => void handleRefresh()}
                 refreshing={refreshing}
-                displayName={session?.creds?.displayName}
+                displayName={session?.displayName ?? undefined}
               />
             </div>
           )}
@@ -425,7 +425,7 @@ export function LibraryScreen() {
                 onLock={lock}
                 onRefresh={() => void handleRefresh()}
                 refreshing={refreshing}
-                displayName={session?.creds?.displayName}
+                displayName={session?.displayName ?? undefined}
               />
             </div>
 

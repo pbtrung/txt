@@ -29,7 +29,6 @@ function mockVault(
     unlock: vi.fn(),
     lock: vi.fn(),
     refresh: vi.fn(),
-    getTxtKey: vi.fn(),
     recordReadPosition: vi.fn(),
     removeAccessEntry: vi.fn(),
     addBookmarkEntry: vi.fn(),
@@ -49,10 +48,8 @@ const metadataById = new Map<number, BookInfo>([
 ]);
 
 const session: VaultContextModule.VaultSession = {
-  creds: {} as never,
+  displayName: undefined,
   client: {} as never,
-  r2Client: {} as never,
-  r2Config: {} as never,
   metadataById,
 };
 

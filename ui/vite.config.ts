@@ -61,11 +61,11 @@ export default defineConfig({
   },
   // remotePageClient.ts's Worker+Atomics bridge needs SharedArrayBuffer,
   // which browsers only expose to a cross-origin-isolated page (COOP/COEP
-  // response headers -- see docker/README.md's local_index.html hosting
-  // notes). build-integrity.mjs bakes the same pair into dist/_headers for
-  // the real Cloudflare Pages deployment; without this, `vite dev`/`vite
-  // preview` never send them at all and unlock() fails with "SharedArrayBuffer
-  // is not defined" the moment dbWorker.ts's open() spawns the page worker.
+  // response headers). build-integrity.mjs bakes the same pair into
+  // dist/_headers for the real Cloudflare Pages deployment; without this,
+  // `vite dev`/`vite preview` never send them at all and unlock() fails
+  // with "SharedArrayBuffer is not defined" the moment dbWorker.ts's open()
+  // spawns the page worker.
   server: {
     headers: {
       "Cross-Origin-Opener-Policy": "same-origin",
@@ -84,6 +84,17 @@ export default defineConfig({
     // safety check refuses to empty a directory it doesn't consider
     // "inside" the project without this.
     emptyOutDir: true,
+    // codeSplitting: false below (this project's spelling of
+    // inlineDynamicImports) deliberately merges everything into one entry
+    // chunk -- the default 500kB warning threshold doesn't apply here, since
+    // splitting it back apart to quiet the warning would reintroduce the
+    // exact "removeChild" crash that option exists to prevent (see its own
+    // comment). Firebase's client SDK plus @instantdb/react push the real
+    // entry past 500kB on their own; raised generously above current sizes
+    // rather than tuned tightly to them, so routine dependency bumps don't
+    // make this warning (harmless, since splitting was never an option
+    // anyway) reappear.
+    chunkSizeWarningLimit: 1000,
     rollupOptions: {
       output: {
         // Without this, crypto/brotli.ts's `import("brotli-wasm")` (needed

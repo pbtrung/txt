@@ -1,13 +1,15 @@
 // R2 (S3-compatible) object storage client, mirrors txt/r2.ts's R2Client --
 // signed with aws4fetch (built for exactly this Workers/browser + R2 use
-// case, no Node polyfills needed) instead of the AWS SDK. Every regular-user
-// session is read-only in practice (their r2_config row only ever holds the
-// read-only pair, see docs/data_model.md); createR2Client itself isn't
-// hardcoded that way, though -- an admin session whose r2_config carries
-// read-write keys (via txt.ts --update-db) gets a write-capable client
-// back. Nothing in ui/ actually writes to R2 yet (there's no admin
-// management screen -- deliberately out of scope for now, see CLAUDE.md),
-// so only getObject exists here; add put/delete when a write flow does.
+// case, no Node polyfills needed) instead of the AWS SDK. This port targets
+// the admin account's own session only (docs/data_model.md's "Non-admin
+// (user-role) accounts" temporary-credential Worker is a separate, later
+// effort), so its r2_config always carries the read-write pair --
+// createR2Client itself isn't hardcoded that way, though: a regular user's
+// read-only-only config still gets a (read-only-capable) client back.
+// putObject exists now because page content itself lives in R2 in this
+// design (instantPageStore.ts's commitPages) -- unlike the old rqlite-
+// backed version, where committing a page was a database write, not an R2
+// write, so a write path never needed one here before.
 
 import { AwsClient } from "aws4fetch";
 
@@ -94,4 +96,22 @@ export async function getObject(
     client.fetch(objectUrl(config, key)),
   );
   return new Uint8Array(await response.arrayBuffer());
+}
+
+/** Uploads one R2 object, retrying with backoff before giving up. Requires
+ * a read-write-capable client (createR2Client's canWrite branch) -- a
+ * read-only client's signed PUT is simply rejected by R2 itself, surfaced
+ * here as an ordinary HTTP-status failure like any other. */
+export async function putObject(
+  client: AwsClient,
+  config: R2Config,
+  key: string,
+  body: Uint8Array,
+): Promise<void> {
+  await withRetries(`R2 PUT ${key}`, () =>
+    client.fetch(objectUrl(config, key), {
+      method: "PUT",
+      body: body as BodyInit,
+    }),
+  );
 }

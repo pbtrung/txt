@@ -5,8 +5,11 @@
 // exists at all (a real network fetch has no synchronous form).
 //
 // Requires cross-origin isolation (COOP/COEP response headers) for
-// SharedArrayBuffer to be available at all -- see docker/README.md's
-// local_index.html hosting notes.
+// SharedArrayBuffer to be available at all -- see ui/vite.config.ts's dev/
+// preview header config and build-integrity.mjs's dist/_headers for the
+// real deployment.
+
+import type { R2Config } from "./r2Config";
 
 // Shared with remotePageWorker.ts's own respond() -- both ends of this
 // SharedArrayBuffer protocol must agree on the same indices.
@@ -27,12 +30,21 @@ export interface RemotePageBridge {
   terminate: () => void;
 }
 
+export interface RemotePageWorkerAuth {
+  instantAppId: string;
+  instantClientName: string;
+  idToken: string;
+  r2Config: R2Config;
+  pathKey: Uint8Array;
+  authId: string;
+  r2Prefix: string;
+  ownerId: string;
+}
+
 export async function startRemotePageWorker(
-  rqliteUrl: string,
-  apiKey: string,
+  auth: RemotePageWorkerAuth,
   pageSize: number,
   snapshot: number,
-  targetDbId?: string,
 ): Promise<RemotePageBridge> {
   const controlSab = new SharedArrayBuffer(8);
   const dataSab = new SharedArrayBuffer(Math.max(pageSize, 4096) + 4096);
@@ -45,10 +57,8 @@ export async function startRemotePageWorker(
   const ready = waitReady(worker);
   worker.postMessage({
     type: "start",
-    rqliteUrl,
-    apiKey,
+    ...auth,
     snapshot,
-    targetDbId,
     controlSab,
     dataSab,
   });

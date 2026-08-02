@@ -1,32 +1,39 @@
-// Browser port of txt/remotePageWorker.ts -- runs as a real Worker (not
-// node:worker_threads). Bridges remoteVfs.ts's synchronous xRead callback to
-// a real async fetch: the main thread blocks in Atomics.wait() on
-// controlSab while this worker does the actual READ_PAGE HTTP round trip
-// and wakes it back up. See remotePageClient.ts for the main-thread side of
-// this protocol.
+// Runs as a real Worker (not node:worker_threads). Bridges remoteVfs.ts's
+// synchronous xRead callback to a real async fetch: the main thread blocks
+// in Atomics.wait() on controlSab while this worker does the actual
+// InstantDB query + R2 GET and wakes it back up. See remotePageClient.ts
+// for the main-thread side of this protocol.
 //
-// target_db_id is threaded through from dbWorker.ts's resolveTargetDbId
-// (rqliteHttpClient.ts), same as txt/remotePageWorker.ts's admin-acting-as-
-// a-tenant support -- this app's own account is itself role='admin' (the
-// sole account --migrate creates), so READ_PAGE needs it named explicitly
-// just like GET_META/COMMIT do (see docker/auth_perms.lua). It's still
-// undefined for a genuine user-role key, which the server forces to its
-// own db_id regardless.
+// This worker needs its own InstantDB session -- a Worker can't share a
+// live JS object (an InstantDB client instance, an AwsClient) with the main
+// thread across postMessage, only structured-cloneable data, so it
+// re-establishes its own session from the same Firebase idToken the main
+// thread already used (db.auth.signInWithIdToken() a second time, against a
+// fresh init() instance). That idToken is a validated, still-fresh Firebase
+// credential at the point unlock() hands it over; InstantDB's own session
+// then manages its own refresh from there, same as the main thread's.
 
-import { verbose } from "../log";
+import { createInstantClient } from "./instantClient";
 import {
-  RqliteHttpClient,
-  resultRows,
-  decodeBlobColumn,
-} from "./rqliteHttpClient";
+  fetchPage as fetchPageFromStore,
+  type InstantPageStoreConfig,
+} from "./instantPageStore";
 import { CONTROL_STATUS, CONTROL_LEN } from "./remotePageClient";
+import { createR2Client } from "./r2";
+import type { R2Config } from "./r2Config";
+import { verbose } from "../log";
 
 interface StartMessage {
   type: "start";
-  rqliteUrl: string;
-  apiKey: string;
+  instantAppId: string;
+  instantClientName: string;
+  idToken: string;
+  r2Config: R2Config;
+  pathKey: Uint8Array;
+  authId: string;
+  r2Prefix: string;
+  ownerId: string;
   snapshot: number;
-  targetDbId?: string;
   controlSab: SharedArrayBuffer;
   dataSab: SharedArrayBuffer;
 }
@@ -44,29 +51,24 @@ interface UpdateSnapshotMessage {
 const STATUS_OK = 1;
 const STATUS_ERROR = 2;
 
-let client: RqliteHttpClient;
+let cfg: InstantPageStoreConfig;
 let control: Int32Array;
 let dataBuf: Uint8Array;
 let snapshot: number;
-let targetDbId: string | undefined;
-// Diagnostic only -- every READ_PAGE round trip is a real, uncached network
-// request (remoteVfs.ts's own pageCache lives on the main-thread side of
-// this bridge, not here), so a slow "Loading your books..." unlock phase
-// often means many of these firing one at a time rather than one slow
-// request -- logging each one's timing/count makes that visible instead of
-// only seeing the phase's total elapsed time.
+// Diagnostic only -- every fetch here is a real, uncached query+R2 GET
+// (remoteVfs.ts's own pageCache lives on the main-thread side of this
+// bridge, not here), so a slow "Loading your books..." unlock phase often
+// means many of these firing one at a time rather than one slow request --
+// logging each one's timing/count makes that visible instead of only
+// seeing the phase's total elapsed time.
 let fetchCount = 0;
 
-self.onmessage = (
+self.onmessage = async (
   ev: MessageEvent<StartMessage | FetchMessage | UpdateSnapshotMessage>,
 ) => {
   const msg = ev.data;
   if (msg.type === "start") {
-    client = new RqliteHttpClient(msg.rqliteUrl, msg.apiKey);
-    control = new Int32Array(msg.controlSab);
-    dataBuf = new Uint8Array(msg.dataSab);
-    snapshot = msg.snapshot;
-    targetDbId = msg.targetDbId;
+    await start(msg);
     self.postMessage({ type: "ready" });
     return;
   }
@@ -77,6 +79,26 @@ self.onmessage = (
   }
   void handleFetch(msg.pageNo);
 };
+
+async function start(msg: StartMessage): Promise<void> {
+  const db = createInstantClient(msg.instantAppId);
+  await db.auth.signInWithIdToken({
+    clientName: msg.instantClientName,
+    idToken: msg.idToken,
+  });
+  cfg = {
+    db,
+    r2Client: createR2Client(msg.r2Config),
+    r2Config: msg.r2Config,
+    pathKey: msg.pathKey,
+    authId: msg.authId,
+    r2Prefix: msg.r2Prefix,
+    ownerId: msg.ownerId,
+  };
+  control = new Int32Array(msg.controlSab);
+  dataBuf = new Uint8Array(msg.dataSab);
+  snapshot = msg.snapshot;
+}
 
 async function handleFetch(pageNo: number): Promise<void> {
   try {
@@ -89,14 +111,7 @@ async function handleFetch(pageNo: number): Promise<void> {
 
 async function fetchPage(pageNo: number): Promise<Uint8Array> {
   const start = performance.now();
-  const batch = [{ page_no: pageNo, snapshot }];
-  const extra = targetDbId !== undefined ? { target_db_id: targetDbId } : {};
-  const row = resultRows(await client.query("READ_PAGE", batch, extra))[0];
-  if (!row)
-    throw new Error(
-      `page ${pageNo} not found at or before snapshot ${snapshot}`,
-    );
-  const bytes = decodeBlobColumn(row[0]);
+  const bytes = await fetchPageFromStore(cfg, pageNo, snapshot);
   fetchCount++;
   verbose(
     `remotePageWorker: fetched page ${pageNo} (#${fetchCount}, ${bytes.length}B) in ` +

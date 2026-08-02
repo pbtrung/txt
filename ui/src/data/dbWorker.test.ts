@@ -1,31 +1,38 @@
 // Exercises dbWorker.ts's real logic directly (bypassing the self.onmessage/
 // postMessage wiring entirely, which needs an actual Worker environment
 // Node/jsdom don't provide) against a real SQLCipher db built the same way
-// remoteVfs.test.ts's own fixture is. Mocks only the two things that
-// genuinely can't run here -- real network (RqliteHttpClient) and a real
-// browser Worker (remotePageClient.ts's startRemotePageWorker) -- so this
-// still proves the real VFS/commit wiring works, not just mocked plumbing.
+// remoteVfs.test.ts's own fixture is. Mocks the things that genuinely can't
+// run here -- a real InstantDB session (init()), real R2 (aws4fetch), and a
+// real browser Worker (remotePageClient.ts's startRemotePageWorker) -- so
+// this still proves the real VFS/commit/prefetch/lease wiring works, not
+// just mocked plumbing.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { randomBytes } from "node:crypto";
 
-import { bytesToBase64 } from "../crypto/bytes";
-import { MAX_CACHED_PAGES } from "./remoteVfs";
+import * as blob from "../crypto/blob";
 import { SqliteDb } from "./sqliteDb";
 import { loadWasm } from "./wasmLoader";
 
 vi.mock("./remotePageClient", () => ({ startRemotePageWorker: vi.fn() }));
-vi.mock("./rqliteHttpClient", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./rqliteHttpClient")>();
-  return { ...actual, RqliteHttpClient: vi.fn() };
+vi.mock("@instantdb/react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@instantdb/react")>();
+  return { ...actual, init: vi.fn() };
 });
+vi.mock("./r2", () => ({
+  createR2Client: vi.fn(() => ({})),
+  getObject: vi.fn(),
+  putObject: vi.fn(),
+}));
 
-import { RqliteHttpClient } from "./rqliteHttpClient";
+import { init } from "@instantdb/react";
 import { startRemotePageWorker } from "./remotePageClient";
+import { getObject, putObject } from "./r2";
 import * as dbWorker from "./dbWorker";
+import type { OpenParams } from "./dbWorker";
 
 interface DbFixture {
-  rootKey: Uint8Array;
+  dbKey: Uint8Array;
   pages: Uint8Array[];
   pageSize: number;
   pageCount: number;
@@ -33,17 +40,10 @@ interface DbFixture {
 
 let buildCounter = 0;
 
-async function buildVaultDb(
-  opts: {
-    r2Config?: {
-      readWriteAccessKeyId: string | null;
-      readWriteSecretAccessKey: string | null;
-    };
-  } = {},
-): Promise<DbFixture> {
-  const rootKey = randomBytes(256);
+async function buildVaultDb(): Promise<DbFixture> {
+  const dbKey = randomBytes(256);
   const path = `/dbworker-test-build-${buildCounter++}.db`;
-  const db = await SqliteDb.open(path, { rawKey: rootKey });
+  const db = await SqliteDb.open(path, { rawKey: dbKey });
   const pageSizeStmt = db.prepare("PRAGMA page_size;");
   pageSizeStmt.step();
   const pageSize = Number(pageSizeStmt.columnInt64(0));
@@ -51,45 +51,26 @@ async function buildVaultDb(
 
   db.exec(`
     CREATE TABLE txt (
-      id INTEGER PRIMARY KEY, txt_key BLOB NOT NULL, name TEXT NOT NULL,
+      id INTEGER PRIMARY KEY, name TEXT NOT NULL,
       metadata BLOB, last_part_num INTEGER, last_accessed INTEGER
     );
     CREATE TABLE txt_parts (
       id INTEGER PRIMARY KEY, txt_id INTEGER NOT NULL, part_num INTEGER NOT NULL,
-      path TEXT NOT NULL UNIQUE
+      content BLOB NOT NULL UNIQUE
     );
     CREATE TABLE txt_bookmarks (
       id INTEGER PRIMARY KEY, txt_id INTEGER NOT NULL, part_num INTEGER NOT NULL,
       line INTEGER NOT NULL, preview TEXT NOT NULL, created_at INTEGER NOT NULL,
       UNIQUE (txt_id, part_num, line)
     );
-    CREATE TABLE r2_config (
-      id INTEGER NOT NULL PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-      endpoint TEXT NOT NULL, region TEXT NOT NULL, bucket TEXT NOT NULL,
-      read_only_access_key_id TEXT NOT NULL, read_only_secret_access_key TEXT NOT NULL,
-      read_write_access_key_id TEXT, read_write_secret_access_key TEXT
-    );
   `);
-  db.run("INSERT INTO txt (id, txt_key, name) VALUES (1, x'00', ?);", (s) =>
+  db.run("INSERT INTO txt (id, name) VALUES (1, ?);", (s) =>
     s.bindText(1, "doc-one.txt"),
   );
   db.run(
-    "INSERT INTO txt_parts (txt_id, part_num, path) VALUES (1, 0, 'path-0');",
+    "INSERT INTO txt_parts (txt_id, part_num, content) VALUES (1, 0, ?);",
+    (s) => s.bindBlob(1, new TextEncoder().encode("part-0")),
   );
-  if (opts.r2Config) {
-    db.run(
-      `INSERT INTO r2_config (
-         id, endpoint, region, bucket, read_only_access_key_id, read_only_secret_access_key,
-         read_write_access_key_id, read_write_secret_access_key
-       ) VALUES (1, 'https://r2.example.com', 'auto', 'txt-bucket', 'ro-id', 'ro-secret', ?, ?);`,
-      (s) => {
-        if (opts.r2Config!.readWriteAccessKeyId === null) s.bindNull(1);
-        else s.bindText(1, opts.r2Config!.readWriteAccessKeyId);
-        if (opts.r2Config!.readWriteSecretAccessKey === null) s.bindNull(2);
-        else s.bindText(2, opts.r2Config!.readWriteSecretAccessKey);
-      },
-    );
-  }
   db.close();
 
   const mod = await loadWasm();
@@ -98,67 +79,171 @@ async function buildVaultDb(
   const pages: Uint8Array[] = [];
   for (let i = 0; i < pageCount; i++)
     pages.push(bytes.slice(i * pageSize, (i + 1) * pageSize));
-  return { rootKey, pages, pageSize, pageCount };
+  return { dbKey, pages, pageSize, pageCount };
 }
 
+const r2Config = {
+  endpoint: "https://acct.r2.cloudflarestorage.com",
+  region: "auto",
+  bucket: "my-bucket",
+  readOnlyAccessKeyId: "ro-id",
+  readOnlySecretAccessKey: "ro-secret",
+  readWriteAccessKeyId: "rw-id",
+  readWriteSecretAccessKey: "rw-secret",
+};
+
+const pathKey = new Uint8Array(128).fill(4);
+const authId = "auth-1";
+const ownerId = "users-row-1";
+const dbMetaId = "dbmeta-1";
+
+// A stateful fake InstantDB client (queryOnce/transact/storage.uploadFile)
+// -- same shape/reducer as instantPageStore.test.ts's fakeInstantDb, plus
+// activeReaders support for the reader-lease tests here. r2 GET/PUT are
+// backed by a plain in-memory Map (r2.ts is mocked wholesale in this file),
+// keyed by rawPath.
 function mockBackend(
   fixture: DbFixture,
-  opts: {
-    currentVersion?: number;
-    commitOk?: boolean;
-    adminUserId?: string;
-    reportedPageCount?: number;
-  } = {},
+  opts: { currentVersion?: number; commitShouldFail?: boolean } = {},
 ) {
   const currentVersion = opts.currentVersion ?? 1;
-  const commit = vi.fn().mockResolvedValue(opts.commitOk ?? true);
-  const query = vi.fn(
-    async (statementId: string, batch: { page_no: number }[]) => {
-      if (statementId === "RAW_QUERY") {
-        // Mirrors auth_perms.lua: RAW_QUERY is admin-only, so a non-admin key
-        // fails here the same way any unrecognized statementId would --
-        // resolveTargetDbId's own try/catch turns that into "undefined".
-        if (!opts.adminUserId)
-          throw new Error("mockBackend: RAW_QUERY requires admin role");
-        return [{ values: [[opts.adminUserId]] }];
-      }
-      if (statementId === "GET_META") {
-        // reportedPageCount lets a test simulate a much bigger vault than the
-        // real fixture.pages array without actually building one -- READ_PAGE
-        // below just returns no row for anything past the real fixture.
-        return [
-          {
-            values: [
-              [
-                currentVersion,
-                opts.reportedPageCount ?? fixture.pageCount,
-                fixture.pageSize,
-              ],
-            ],
-          },
-        ];
-      }
-      if (statementId === "READ_PAGE") {
-        // open()'s own batched prefetchPages() call, not startRemotePageWorker
-        // (mocked separately below) -- mirrors rqlite's real batch semantics,
-        // one result entry per batch item, in order.
-        return batch.map(({ page_no }) => {
-          const page = fixture.pages[page_no - 1];
-          return page ? { values: [[bytesToBase64(page)]] } : { values: [] };
-        });
-      }
-      throw new Error(`mockBackend: unexpected query ${statementId}`);
+  const r2Store = new Map<string, Uint8Array>();
+  const store = {
+    pages: new Map<string, any>(),
+    $files: new Map<string, any>(),
+    dbMeta: new Map<string, any>([
+      [
+        dbMetaId,
+        {
+          id: dbMetaId,
+          currentVersion,
+          pageCount: fixture.pageCount,
+          pageSize: fixture.pageSize,
+        },
+      ],
+    ]),
+    activeReaders: new Map<string, any>(),
+  };
+  // Seed every fixture page as an already-committed $files/pages pair at
+  // currentVersion, so open()'s own prefetch (instantPageStore.fetchPage)
+  // can resolve them for real, exercising the same code path a live vault
+  // would.
+  let fileCounter = 0;
+  for (let pageNo = 1; pageNo <= fixture.pageCount; pageNo++) {
+    const rawPath = `prefix/page-${pageNo}`;
+    r2Store.set(rawPath, fixture.pages[pageNo - 1]!);
+    fileCounter++;
+    const fileId = `file-${fileCounter}`;
+    store.$files.set(fileId, { id: fileId, owner: ownerId, rawPath });
+    store.pages.set(`page-${pageNo}`, {
+      id: `page-${pageNo}`,
+      owner: ownerId,
+      pageNo,
+      version: currentVersion,
+      pointerFile: fileId,
+    });
+  }
+
+  vi.mocked(getObject).mockImplementation(
+    async (_client, _config, key) => r2Store.get(key) ?? new Uint8Array(0),
+  );
+  vi.mocked(putObject).mockImplementation(
+    async (_client, _config, key, body) => {
+      r2Store.set(key, body);
     },
   );
-  const execute = vi.fn(async (statementId: string) => {
-    if (statementId === "BEGIN_READ" || statementId === "END_READ") {
-      return [{ rows_affected: 1 }];
-    }
-    throw new Error(`mockBackend: unexpected execute ${statementId}`);
+
+  const fakeDb = {
+    auth: { signInWithIdToken: vi.fn().mockResolvedValue({}) },
+    transact: vi.fn(async (txs: any[]) => {
+      if (opts.commitShouldFail) {
+        throw new Error("Permission denied: dbMeta CAS check failed");
+      }
+      for (const t of txs) {
+        const coll = (store as any)[t.__etype];
+        for (const [op, , id, data] of t.__ops) {
+          if (op === "delete") {
+            coll.delete(id);
+            continue;
+          }
+          const row = coll.get(id) ?? { id };
+          Object.assign(row, data);
+          coll.set(id, row);
+        }
+      }
+      return { "tx-id": "fake-tx" };
+    }),
+    storage: {
+      uploadFile: vi.fn(async (path: string, content: Blob) => {
+        fileCounter++;
+        const id = `file-${fileCounter}`;
+        const rawPathBlob = new Uint8Array(await content.arrayBuffer());
+        const rawPath = new TextDecoder().decode(
+          await blob.decrypt(pathKey, rawPathBlob, false),
+        );
+        r2Store.set(rawPath, new Uint8Array(0)); // placeholder; putObject fills real bytes
+        store.$files.set(id, { id, path, owner: undefined, rawPath });
+        return { data: { id } };
+      }),
+    },
+    queryOnce: vi.fn(async (q: any) => {
+      if (q.pages) {
+        const { where, order, limit } = q.pages.$;
+        let rows = [...store.pages.values()].filter(
+          (r) =>
+            r.owner === where["owner.id"] &&
+            r.pageNo === where.pageNo &&
+            r.version <= where.version.$lte,
+        );
+        rows.sort((a, b) =>
+          order.version === "desc"
+            ? b.version - a.version
+            : a.version - b.version,
+        );
+        rows = rows.slice(0, limit);
+        return {
+          data: {
+            pages: rows.map((r) => {
+              const file = store.$files.get(r.pointerFile);
+              return {
+                ...r,
+                pointerFile: file
+                  ? [
+                      {
+                        url: `instant-file://${file.id}`,
+                        rawPath: file.rawPath,
+                      },
+                    ]
+                  : [],
+              };
+            }),
+          },
+        };
+      }
+      if (q.dbMeta) {
+        const row = store.dbMeta.get(q.dbMeta.$.where.id);
+        return { data: { dbMeta: row ? [row] : [] } };
+      }
+      throw new Error(`mockBackend: unhandled query ${JSON.stringify(q)}`);
+    }),
+  };
+
+  // fetch() is used by instantPageStore.ts's downloadPointerContent to fetch
+  // $files.url -- stub it to resolve straight from the fake $files store by
+  // its rawPath (encrypted the same way a real upload would have).
+  const realFetch = globalThis.fetch;
+  vi.stubGlobal("fetch", async (url: string) => {
+    const fileId = url.replace("instant-file://", "");
+    const file = [...store.$files.values()].find((f) => f.id === fileId);
+    if (!file) return new Response(null, { status: 404 });
+    const content = await blob.encrypt(
+      pathKey,
+      new TextEncoder().encode(file.rawPath),
+    );
+    return new Response(content as BodyInit, { status: 200 });
   });
-  vi.mocked(RqliteHttpClient).mockImplementation(function (this: unknown) {
-    return { query, execute, commit } as unknown as RqliteHttpClient;
-  } as unknown as typeof RqliteHttpClient);
+
+  vi.mocked(init).mockReturnValue(fakeDb as never);
   const terminate = vi.fn();
   const fetchPage = vi.fn((pageNo: number) => fixture.pages[pageNo - 1]!);
   const updateSnapshot = vi.fn();
@@ -167,30 +252,52 @@ function mockBackend(
     updateSnapshot,
     terminate,
   });
-  return { commit, terminate, query, execute, fetchPage, updateSnapshot };
+
+  return {
+    fakeDb,
+    store,
+    terminate,
+    fetchPage,
+    updateSnapshot,
+    restoreFetch: () => vi.stubGlobal("fetch", realFetch),
+  };
+}
+
+function openParamsFor(fixture: DbFixture, currentVersion = 1): OpenParams {
+  return {
+    instantAppId: "app-1",
+    instantClientName: "firebase",
+    idToken: "fake-id-token",
+    authId,
+    ownerId,
+    dbMetaId,
+    currentVersion,
+    pageCount: fixture.pageCount,
+    pageSize: fixture.pageSize,
+    r2Config,
+    pathKey,
+    dbKey: fixture.dbKey,
+  };
 }
 
 async function openWith(
   fixture: DbFixture,
-  opts?: { commitOk?: boolean; reportedPageCount?: number },
+  opts?: { currentVersion?: number; commitShouldFail?: boolean },
 ) {
   const backend = mockBackend(fixture, opts);
-  await dbWorker.open({
-    rqliteUrl: "https://rqlite.example.com",
-    apiKey: "test-key",
-    userRootKey: fixture.rootKey,
-  });
+  await dbWorker.open(openParamsFor(fixture, opts?.currentVersion));
   return backend;
 }
 
 describe("dbWorker", () => {
   afterEach(async () => {
     await dbWorker.close();
+    vi.unstubAllGlobals();
   });
 
-  // Must run before any other test calls open(): storedCreds (unlike
-  // db/vfs/rqliteClient/pageWorker) deliberately survives close() so a real
-  // refresh() after a close+reopen cycle still has creds to reuse -- which
+  // Must run before any other test calls open(): storedOpenParams (unlike
+  // db/vfs/pageStoreCfg/pageWorker) deliberately survives close() so a real
+  // refresh() after a close+reopen cycle still has params to reuse -- which
   // means it also survives across tests in this same module instance unless
   // this specific "never opened at all" case runs first.
   it("refresh() before any open() throws 'vault is locked'", async () => {
@@ -209,136 +316,73 @@ describe("dbWorker", () => {
     expect(bookmarksMap.size).toBe(0);
   });
 
-  it("open() registers an active_readers lease via BEGIN_READ, pinned to the opened snapshot", async () => {
+  it("open() registers an activeReaders lease, pinned to the opened snapshot", async () => {
     const fixture = await buildVaultDb();
-    const backend = await openWith(fixture); // mockBackend defaults currentVersion to 1
+    const backend = await openWith(fixture);
 
-    expect(backend.execute).toHaveBeenCalledWith(
-      "BEGIN_READ",
-      [
-        expect.objectContaining({
-          reader_id: expect.any(String),
-          snapshot_version: 1,
-          lease_expires_at: expect.any(Number),
-        }),
-      ],
-      {},
-    );
+    const readers = [...backend.store.activeReaders.values()];
+    expect(readers).toHaveLength(1);
+    expect(readers[0].snapshotVersion).toBe(1);
+    expect(readers[0].owner).toBe(ownerId);
   });
 
   it("commitOrThrow renews the reader lease to the just-committed version", async () => {
     const fixture = await buildVaultDb();
     const backend = await openWith(fixture);
-    backend.execute.mockClear(); // drop open()'s own initial BEGIN_READ call
 
     await dbWorker.recordReadPosition(1, {
       lastPartNum: 3,
       lastAccessedMs: 5000,
     });
 
-    expect(backend.execute).toHaveBeenCalledWith(
-      "BEGIN_READ",
-      [expect.objectContaining({ snapshot_version: 2 })], // old_version 1 -> new_version 2
-      {},
-    );
+    const readers = [...backend.store.activeReaders.values()];
+    expect(readers[0].snapshotVersion).toBe(2); // old_version 1 -> new_version 2
   });
 
-  it("close() releases the reader lease via END_READ", async () => {
+  it("close() releases the reader lease", async () => {
     const fixture = await buildVaultDb();
     const backend = await openWith(fixture);
-    backend.execute.mockClear();
 
     await dbWorker.close();
 
-    expect(backend.execute).toHaveBeenCalledWith(
-      "END_READ",
-      [{ reader_id: expect.any(String) }],
-      {},
-    );
+    expect(backend.store.activeReaders.size).toBe(0);
   });
 
   it("methods throw 'vault is locked' before open()", async () => {
     expect(() => dbWorker.partCount(1)).toThrow("vault is locked");
   });
 
-  it("open() prefetches every page via batched READ_PAGE, so loadLibrary()/getTxtKey() never hit the per-page fetch path", async () => {
-    const fixture = await buildVaultDb();
-    const backend = await openWith(fixture);
-
-    // The prefetch itself goes through the mocked RqliteHttpClient's query()
-    // (READ_PAGE, batched) -- not startRemotePageWorker's fetchPage, which
-    // stands in for the one-page-at-a-time round trip this whole feature
-    // exists to avoid.
-    expect(backend.query).toHaveBeenCalledWith(
-      "READ_PAGE",
-      expect.arrayContaining([expect.objectContaining({ page_no: 1 })]),
-      {},
-    );
-
-    await dbWorker.loadLibraryHandler();
-    dbWorker.loadBookmarksMapHandler();
-    dbWorker.fetchTxtKey(1);
-
-    expect(backend.fetchPage).not.toHaveBeenCalled();
-  });
-
-  it("caps prefetch at PREFETCH_PAGE_LIMIT even for a much bigger vault, not the full page count", async () => {
-    const fixture = await buildVaultDb();
-    // Simulates a vault far larger than PREFETCH_PAGE_LIMIT/MAX_CACHED_PAGES
-    // -- prefetch must still stop at its own limit rather than scaling up
-    // with page count without bound.
-    const backend = await openWith(fixture, {
-      reportedPageCount: MAX_CACHED_PAGES * 3,
-    });
-
-    const requestedPageNos = backend.query.mock.calls
-      .filter(([statementId]) => statementId === "READ_PAGE")
-      .flatMap(([, batch]) =>
-        (batch as { page_no: number }[]).map((b) => b.page_no),
-      );
-    expect(requestedPageNos.length).toBeGreaterThan(0);
-    expect(Math.max(...requestedPageNos)).toBeLessThanOrEqual(MAX_CACHED_PAGES); // PREFETCH_PAGE_LIMIT currently equals this
-  });
-
-  it("getTxtKey/fetchTxtKey reads txt.txt_key from the real db", async () => {
-    const fixture = await buildVaultDb();
-    await openWith(fixture);
-    expect(dbWorker.fetchTxtKey(1)).toEqual(new Uint8Array([0]));
-    expect(() => dbWorker.fetchTxtKey(999)).toThrow(
-      "no txt row for txt_id=999",
-    );
-  });
-
-  it("partCount/partRawPath read real txt_parts rows", async () => {
+  it("partCount/partContent read real txt_parts rows", async () => {
     const fixture = await buildVaultDb();
     await openWith(fixture);
     expect(dbWorker.partCount(1)).toBe(1);
-    expect(dbWorker.partRawPath(1, 0)).toBe("path-0");
-    expect(dbWorker.partRawPath(1, 99)).toBeNull();
+    expect(dbWorker.partContent(1, 0)).toEqual(
+      new TextEncoder().encode("part-0"),
+    );
+    expect(dbWorker.partContent(1, 99)).toBeNull();
   });
 
   it("recordReadPosition writes+commits for real, reflected in a fresh loadLibrary()", async () => {
     const fixture = await buildVaultDb();
-    const backend = await openWith(fixture);
+    await openWith(fixture);
 
     await dbWorker.recordReadPosition(1, {
       lastPartNum: 3,
       lastAccessedMs: 5000,
     });
 
-    expect(backend.commit).toHaveBeenCalledOnce();
     const { accessMap } = await dbWorker.loadLibraryHandler();
     expect(accessMap.get(1)).toEqual({ lastPartNum: 3, lastAccessedMs: 5000 });
   });
 
   it("commitOrThrow advances pageWorker's pinned snapshot after a successful commit", async () => {
-    // Regression test: pageWorker's own READ_PAGE snapshot used to stay
-    // frozen at whatever open() saw, so a live fetch (a cache miss, or a
-    // page evicted from the LRU cache) for a page only written by this or
-    // an earlier commit this session would come back "not found" against
-    // that stale snapshot -- see remotePageClient.ts's updateSnapshot.
+    // Regression test: pageWorker's own fetch snapshot used to stay frozen
+    // at whatever open() saw, so a live fetch (a cache miss, or a page
+    // evicted from the LRU cache) for a page only written by this or an
+    // earlier commit this session would come back "not found" against that
+    // stale snapshot -- see remotePageClient.ts's updateSnapshot.
     const fixture = await buildVaultDb();
-    const backend = await openWith(fixture); // mockBackend defaults currentVersion to 1
+    const backend = await openWith(fixture);
 
     await dbWorker.recordReadPosition(1, {
       lastPartNum: 3,
@@ -383,8 +427,8 @@ describe("dbWorker", () => {
     const fixture = await buildVaultDb();
     await openWith(fixture);
 
-    // The whole fixture gets covered by open()'s own batched prefetch (it's
-    // far smaller than MAX_CACHED_PAGES), which bypasses getPage()/stats
+    // The whole fixture gets covered by open()'s own prefetch (it's far
+    // smaller than PREFETCH_PAGE_LIMIT), which bypasses getPage()/stats
     // tracking entirely via primeCache() -- so a fresh open() has nothing to
     // report yet. This proves the RPC plumbing reaches the real vfs.stats
     // object, not that it's ever nonzero (remoteVfs.test.ts already covers
@@ -394,90 +438,15 @@ describe("dbWorker", () => {
     expect(stats.bytesFetched).toBe(0);
   });
 
-  it("surfaces a lost commit CAS as a thrown error", async () => {
+  it("surfaces exhausted CAS retries as a thrown error", async () => {
     const fixture = await buildVaultDb();
-    await openWith(fixture, { commitOk: false });
+    await openWith(fixture, { commitShouldFail: true });
     await expect(
       dbWorker.recordReadPosition(1, { lastPartNum: 1, lastAccessedMs: 1 }),
-    ).rejects.toThrow("Another session updated this vault");
+    ).rejects.toThrow("CAS check failed");
   });
 
-  it("resolves target_db_id for an admin-role key and threads it through GET_META/READ_PAGE/COMMIT", async () => {
-    const fixture = await buildVaultDb();
-    const backend = mockBackend(fixture, { adminUserId: "admin-user-id" });
-    await dbWorker.open({
-      rqliteUrl: "https://rqlite.example.com",
-      apiKey: "test-key",
-      userRootKey: fixture.rootKey,
-    });
-
-    expect(backend.query).toHaveBeenCalledWith("GET_META", [{}], {
-      target_db_id: "admin-user-id",
-    });
-    expect(startRemotePageWorker).toHaveBeenCalledWith(
-      "https://rqlite.example.com",
-      "test-key",
-      fixture.pageSize,
-      1,
-      "admin-user-id",
-    );
-
-    await dbWorker.recordReadPosition(1, { lastPartNum: 1, lastAccessedMs: 1 });
-    expect(backend.commit).toHaveBeenCalledWith(
-      expect.any(Array),
-      expect.any(Number),
-      expect.any(Number),
-      expect.any(Number),
-      "admin-user-id",
-    );
-  });
-
-  it("getR2Config/fetchR2Config reads r2_config's row, mapping NULL read_write_* to undefined", async () => {
-    const fixture = await buildVaultDb({
-      r2Config: { readWriteAccessKeyId: null, readWriteSecretAccessKey: null },
-    });
-    await openWith(fixture);
-
-    expect(dbWorker.fetchR2Config()).toEqual({
-      endpoint: "https://r2.example.com",
-      region: "auto",
-      bucket: "txt-bucket",
-      readOnlyAccessKeyId: "ro-id",
-      readOnlySecretAccessKey: "ro-secret",
-      readWriteAccessKeyId: undefined,
-      readWriteSecretAccessKey: undefined,
-    });
-  });
-
-  it("fetchR2Config reads the admin's populated read_write_* pair when present", async () => {
-    const fixture = await buildVaultDb({
-      r2Config: {
-        readWriteAccessKeyId: "rw-id",
-        readWriteSecretAccessKey: "rw-secret",
-      },
-    });
-    await openWith(fixture);
-
-    expect(dbWorker.fetchR2Config()).toEqual({
-      endpoint: "https://r2.example.com",
-      region: "auto",
-      bucket: "txt-bucket",
-      readOnlyAccessKeyId: "ro-id",
-      readOnlySecretAccessKey: "ro-secret",
-      readWriteAccessKeyId: "rw-id",
-      readWriteSecretAccessKey: "rw-secret",
-    });
-  });
-
-  it("fetchR2Config throws when no r2_config row exists yet", async () => {
-    const fixture = await buildVaultDb(); // no r2Config seeded
-    await openWith(fixture);
-    expect(() => dbWorker.fetchR2Config()).toThrow(
-      "no r2_config row for this account",
-    );
-  });
-
-  it("refresh() re-opens against a fresh worker using the creds from open()", async () => {
+  it("refresh() re-opens against a fresh worker using the params from open()", async () => {
     const fixture = await buildVaultDb();
     const backend = await openWith(fixture);
 

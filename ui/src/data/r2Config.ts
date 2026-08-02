@@ -1,13 +1,15 @@
-// R2 connection info, mirrors txt/creds.ts's R2Config interface -- except
-// here it's parsed from this account's own r2_config table row (one row
-// per SQLCipher db, docs/data_model.md), fetched via dbWorker.ts's
-// fetchR2Config, not from a local credential file.
+// R2 connection info, mirrors txt/creds.ts's R2Config interface -- parsed
+// from this account's own unwrapped $users.creds payload (session.ts's
+// resolveSession), not a local credential file or an in-db table: this
+// account's R2 config is part of the same InstantDB-stored, umk-wrapped
+// bundle as path_key/db_key (docs/data_model.md's Key Hierarchy).
 //
-// Every account's row holds a full read-only pair. read_write_access_key_id/
-// read_write_secret_access_key are only populated for the admin account --
-// the one whose row txt.ts --update-db writes with both pairs -- and NULL
-// for every regular user's own database, so they're optional here rather
-// than required.
+// This port targets the admin account's own session only (no temporary,
+// prefix-scoped credentials for a regular user-role account yet -- see
+// CLAUDE.md), so read_write_access_key_id/read_write_secret_access_key are
+// always expected to be populated in practice; they stay optional here
+// regardless, since a user-role account's own r2_config would carry only
+// the read-only pair once that support exists.
 
 import { requireObject, requireString } from "./jsonObject";
 

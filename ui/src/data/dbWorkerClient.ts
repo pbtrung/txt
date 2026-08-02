@@ -44,24 +44,12 @@ export class DbWorkerClient {
     });
   }
 
-  open(creds: {
-    rqliteUrl: string;
-    apiKey: string;
-    userRootKey: Uint8Array;
-  }): Promise<void> {
-    return this.call("open", creds);
+  open(params: import("./dbWorker").OpenParams): Promise<void> {
+    return this.call("open", params);
   }
 
   refresh(): Promise<void> {
     return this.call("refresh");
-  }
-
-  getTxtKey(txtId: number): Promise<Uint8Array> {
-    return this.call("getTxtKey", txtId);
-  }
-
-  getR2Config(): Promise<import("./r2Config").R2Config> {
-    return this.call("getR2Config");
   }
 
   getVfsStats(): Promise<import("./remoteVfs").RemoteVfsStats> {
@@ -114,8 +102,8 @@ export class DbWorkerClient {
     return this.call("partCount", txtId);
   }
 
-  partRawPath(txtId: number, partNum: number): Promise<string | null> {
-    return this.call("partRawPath", txtId, partNum);
+  partContent(txtId: number, partNum: number): Promise<Uint8Array | null> {
+    return this.call("partContent", txtId, partNum);
   }
 
   /** Terminates the worker (and, inside it, the nested page-fetch worker +

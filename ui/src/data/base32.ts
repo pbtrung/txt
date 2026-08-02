@@ -1,7 +1,7 @@
 // Crockford's human-readable Base32 (excludes i, l, o, u -- visually
-// ambiguous with 1/1/0/v; no padding). Mirrors txt/base32.py's encode()
-// exactly, used the same way: a fresh R2 object key for a txt_metadata
-// write that has to establish a brand-new path (see metadata.ts).
+// ambiguous with 1/1/0/v; no padding). Mirrors txt/base32.ts's
+// crockfordBase32Lowercase exactly, used the same way: pagePointer.ts's
+// r2Prefix/raw_path generation for this account's page objects in R2.
 
 const ALPHABET = "0123456789abcdefghjkmnpqrstvwxyz";
 

@@ -38,7 +38,6 @@ function baseVaultValue(): VaultContextModule.VaultContextValue {
     unlock: vi.fn(),
     lock: vi.fn(),
     refresh: vi.fn(),
-    getTxtKey: vi.fn(),
     recordReadPosition: vi.fn(),
     removeAccessEntry: vi.fn(),
     addBookmarkEntry: vi.fn(),

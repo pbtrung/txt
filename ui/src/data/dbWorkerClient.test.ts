@@ -70,7 +70,7 @@ describe("DbWorkerClient", () => {
   it("rejects a call when the worker reports an error", async () => {
     installFakeWorker();
     const client = new DbWorkerClient();
-    const pending = client.getTxtKey(1);
+    const pending = client.partContent(1, 0);
 
     lastWorker.respond(0, false, "no txt row for txt_id=1");
 

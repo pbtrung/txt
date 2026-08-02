@@ -9,14 +9,15 @@
 // that here: nothing has to observe the write until the app explicitly asks
 // to persist it. That's commit() below -- an async method the caller
 // invokes from ordinary JS (e.g. after closing a write transaction), which
-// POSTs the accumulated dirty pages as one atomic COMMIT (see
-// docs/data_model.md's "commit pattern" and docker/auth_perms.lua). No
-// worker/Atomics involvement for writes at all, only for the lazy reads
-// (see remotePageWorker.ts).
+// hands the accumulated dirty pages to a caller-supplied `committer` (in
+// practice, dbWorker.ts wrapping instantPageStore.ts's commitPages) --
+// deliberately backend-agnostic here, this module has no idea a commit
+// means an R2 PUT + InstantDB transact, only that dirty pages go in and a
+// new version number comes back. No worker/Atomics involvement for writes
+// at all, only for the lazy reads (see remotePageWorker.ts).
 
 import { verbose } from "../log";
 import type { WasmModule } from "./wasmLoader";
-import type { RqliteHttpClient } from "./rqliteHttpClient";
 
 const SQLITE_OK = 0;
 const SQLITE_IOERR_SHORT_READ = 522; // 10 | (2 << 8)
@@ -45,11 +46,19 @@ export interface RemoteVfsOptions {
   currentVersion: number;
   backedPath: string;
   fetchPage: (pageNo: number) => Uint8Array;
-  /** Required on COMMIT when the caller's api key is role='admin' -- see
-   * rqliteHttpClient.ts's resolveTargetDbId. undefined for a genuine
-   * user-role key, which the server forces to its own db_id already. */
-  targetDbId?: string;
 }
+
+/** Persists a batch of dirty pages as a new version and returns it --
+ * dbWorker.ts's wrapper around instantPageStore.ts's commitPages, which
+ * already retries internally on a lost CAS race (docs/data_model.md's
+ * dbMeta.currentVersion check), so a rejected promise here means retries
+ * were exhausted, not "try again yourself". */
+export type Committer = (
+  dirtyPages: Map<number, Uint8Array>,
+  currentVersion: number,
+  pageCount: number,
+  pageSize: number,
+) => Promise<{ newVersion: number }>;
 
 export interface RoundtripStat {
   pageNo: number;
@@ -65,11 +74,13 @@ export interface RemoteVfsHandle {
   name: string;
   stats: RemoteVfsStats;
   isDirty(): boolean;
-  /** Flushes dirty pages via one atomic COMMIT. Returns false (no throw) if
-   * another writer's commit won the race -- caller must reopen against the
-   * new server version and redo its writes, per the CAS retry rule in
-   * docs/data_model.md. */
-  commit(client: RqliteHttpClient): Promise<boolean>;
+  /** Flushes dirty pages via `committer` (see Committer's own doc comment).
+   * A no-op if there's nothing dirty. Rejects (leaving dirty pages intact,
+   * currentVersion unchanged) if `committer` does -- there's no partial
+   * "CAS lost, try again yourself" outcome anymore now that the retry
+   * itself lives inside instantPageStore.ts's commitPages; a rejection
+   * here means retries were already exhausted. */
+  commit(committer: Committer): Promise<void>;
   /** Seeds the page cache with pages already fetched via a batched request
    * (dbWorker.ts's open()) -- so SQLite's own later page-at-a-time xRead
    * calls find them already resident instead of each triggering its own
@@ -488,34 +499,21 @@ export function registerRemoteVfs(
 
   ioMethodsPtr = mod._sqlite3_js_vfs_io_methods();
 
-  async function commit(client: RqliteHttpClient): Promise<boolean> {
-    if (dirtyPages.size === 0) return true;
-    const pages = Array.from(dirtyPages.entries()).map(([pageNo, data]) => ({
-      pageNo,
-      data,
-    }));
-    const newVersion = currentVersion + 1;
+  async function commit(committer: Committer): Promise<void> {
+    if (dirtyPages.size === 0) return;
     verbose(
-      `remoteVfs: commit ${currentVersion} -> ${newVersion}, ${pages.length} dirty page(s): ` +
-        `[${pages.map((p) => p.pageNo).join(", ")}], knownPageCount=${knownPageCount}`,
+      `remoteVfs: commit ${currentVersion} -> ${currentVersion + 1}, ${dirtyPages.size} dirty page(s): ` +
+        `[${[...dirtyPages.keys()].join(", ")}], knownPageCount=${knownPageCount}`,
     );
-    const ok = await client.commit(
-      pages,
+    const { newVersion } = await committer(
+      dirtyPages,
       currentVersion,
-      newVersion,
       knownPageCount,
-      opts.targetDbId,
+      opts.pageSize,
     );
-    if (!ok) {
-      verbose(
-        `remoteVfs: commit ${currentVersion} -> ${newVersion} lost the CAS race`,
-      );
-      return false;
-    }
     currentVersion = newVersion;
     for (const [pageNo, data] of dirtyPages) cacheSet(pageNo, data);
     dirtyPages.clear();
-    return true;
   }
 
   function primeCache(pages: Map<number, Uint8Array>): void {

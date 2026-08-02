@@ -98,7 +98,7 @@ function setVaultMock(
 ) {
   vi.mocked(VaultContextModule.useVault).mockReturnValue({
     status: "unlocked",
-    session: { creds: { displayName } } as VaultContextModule.VaultSession,
+    session: { displayName } as VaultContextModule.VaultSession,
     error: null,
     accessMap: new Map(),
     bookmarksMap,
@@ -107,7 +107,6 @@ function setVaultMock(
     unlock: vi.fn(),
     lock,
     refresh,
-    getTxtKey: vi.fn(),
     recordReadPosition: vi.fn(),
     removeAccessEntry,
     addBookmarkEntry: vi.fn(),

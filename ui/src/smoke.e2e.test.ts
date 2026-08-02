@@ -1,12 +1,28 @@
+// STALE -- written against the pre-InstantDB rqlite backend, not yet
+// reworked for the current design. The fake backend below speaks
+// auth_perms.lua's rqlite wire protocol (GET_META/READ_PAGE/COMMIT) and the
+// creds.json it writes still has the old rqlite_url/api_key shape (see
+// data/creds.ts's current, InstantDB-shaped Creds for what unlock()
+// actually expects now) -- this test would fail outright as-is. Rewriting
+// it for real needs a fake Firebase Identity Toolkit endpoint, a fake
+// InstantDB endpoint for the Firebase-idToken exchange (both interceptable
+// via Playwright route()), *and* a working fake for InstantDB's own client
+// query/transact/storage wire protocol, which is undocumented here and not
+// yet reverse-engineered the way the id_token exchange was (instantSignIn.ts) --
+// attempting that blind, with no real InstantDB backend in this environment
+// to verify against, risks a rewrite that looks plausible but is subtly
+// wrong in ways nothing here would catch. Flagging this gap explicitly
+// rather than shipping an unverifiable rewrite.
+//
 // Real end-to-end smoke test -- not part of the regular fast unit suite
 // (run explicitly: `npx vitest run --config ui/vite.config.ts src/smoke.e2e.test.ts`).
 // Everything else in this port of the data layer has been verified with a
 // real SQLCipher db (remoteVfs.test.ts, owner.test.ts, ...), but always with
-// startRemotePageWorker/RqliteHttpClient mocked out -- nothing has yet
-// proven that a real browser Worker + SharedArrayBuffer + Atomics.wait
-// bridge actually works end to end, which is exactly the combination
-// txt/commands.ts's own comment flags as unverified ("Atomics.wait was
-// found to stall indefinitely in at least one sandboxed dev environment").
+// startRemotePageWorker mocked out -- nothing has yet proven that a real
+// browser Worker + SharedArrayBuffer + Atomics.wait bridge actually works
+// end to end, which is exactly the combination txt/commands.ts's own
+// comment flags as unverified ("Atomics.wait was found to stall
+// indefinitely in at least one sandboxed dev environment").
 //
 // This spins up: a real built dist/ (via the actual `npm run ui:build`
 // pipeline) served with the real headers build-integrity.mjs generated
