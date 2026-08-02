@@ -23,6 +23,20 @@ export default {
     if (request.method === "POST" && url.pathname === "/api/r2-creds") {
       return handleR2Creds(request, env);
     }
+    // env.ASSETS is only ever missing if this Worker was deployed some way
+    // other than `wrangler deploy` reading wrangler.jsonc's own `assets`
+    // block (e.g. code pasted into the Cloudflare dashboard's Quick Edit
+    // editor, which doesn't wire up bindings at all) -- surfaced here as a
+    // clear error instead of a bare "Cannot read properties of undefined
+    // (reading 'fetch')".
+    if (!env.ASSETS) {
+      return new Response(
+        "This Worker's assets binding is missing -- deploy it with " +
+          "`npm run deploy` (wrangler.jsonc's own config), not by pasting " +
+          "code into the dashboard's Quick Edit editor.",
+        { status: 500 },
+      );
+    }
     return env.ASSETS.fetch(request);
   },
 } satisfies ExportedHandler<Env>;
