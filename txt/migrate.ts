@@ -21,6 +21,7 @@ import { init } from "@instantdb/admin";
 import * as C from "./constants.ts";
 import type { Creds } from "./creds.ts";
 import { CryptoEngine } from "./crypto.ts";
+import { collectAllPages } from "./instaqlPagination.ts";
 import type { InitAdminCreds } from "./initAdminCreds.ts";
 import { signInToInstant } from "./instantSignIn.ts";
 import type { Logger } from "./logger.ts";
@@ -407,38 +408,39 @@ export class Migrator {
     r2Prefix: string,
     usersRowId: string,
   ): Promise<Set<string>> {
-    const known = new Set<string>();
-    let after: unknown;
-    for (;;) {
-      const result = await db.query({
-        pages: {
-          $: {
-            where: { "owner.id": usersRowId },
-            order: { pageKey: "asc" },
-            limit: C.PAGES_QUERY_PAGE_SIZE,
-            ...(after ? { after } : {}),
+    const rows = await collectAllPages<{ pointerFile?: { url: string }[] }>(
+      async (after) => {
+        const result = await db.query({
+          pages: {
+            $: {
+              where: { "owner.id": usersRowId },
+              order: { pageKey: "asc" },
+              limit: C.PAGES_QUERY_PAGE_SIZE,
+              ...(after ? { after } : {}),
+            },
+            pointerFile: {},
           },
-          pointerFile: {},
-        },
-      });
-      const rows = (result.pages ?? []) as {
-        pointerFile?: { url: string }[];
-      }[];
-      const urls = rows.flatMap((r) => r.pointerFile?.[0]?.url ?? []);
-      for (let i = 0; i < urls.length; i += C.R2_BATCH_CONCURRENCY) {
-        const batch = urls.slice(i, i + C.R2_BATCH_CONCURRENCY);
-        const rawKeys = await Promise.all(
-          batch.map((url) => this.fetchAndDecodeRawKey(crypto, pathKey, url)),
+        });
+        const pageInfo = result.pageInfo?.pages;
+        this.log.debug(
+          `collectKnownRawPaths: fetched ${result.pages?.length ?? 0} page row(s)` +
+            (pageInfo?.hasNextPage ? ", continuing..." : ""),
         );
-        rawKeys.forEach((rawKey) => known.add(`${r2Prefix}/${rawKey}`));
-      }
-      const pageInfo = result.pageInfo?.pages;
-      this.log.debug(
-        `collectKnownRawPaths: fetched ${rows.length} page row(s)` +
-          (pageInfo?.hasNextPage ? ", continuing..." : ""),
+        return {
+          rows: result.pages ?? [],
+          hasNextPage: !!pageInfo?.hasNextPage,
+          endCursor: pageInfo?.endCursor,
+        };
+      },
+    );
+    const urls = rows.flatMap((r) => r.pointerFile?.[0]?.url ?? []);
+    const known = new Set<string>();
+    for (let i = 0; i < urls.length; i += C.R2_BATCH_CONCURRENCY) {
+      const batch = urls.slice(i, i + C.R2_BATCH_CONCURRENCY);
+      const rawKeys = await Promise.all(
+        batch.map((url) => this.fetchAndDecodeRawKey(crypto, pathKey, url)),
       );
-      if (!pageInfo?.hasNextPage) break;
-      after = pageInfo.endCursor;
+      rawKeys.forEach((rawKey) => known.add(`${r2Prefix}/${rawKey}`));
     }
     return known;
   }
