@@ -138,7 +138,11 @@ async function mintTemporaryCredential(
   const iat = Math.floor(Date.now() / 1000);
   const payload = {
     bucket,
-    permission: "object-read-write",
+    // "scope" here, not "permission" -- "permission" is the equivalent
+    // parameter name for Cloudflare's separate Temporary Credentials *API*
+    // (the outbound-call alternative this Worker deliberately doesn't use),
+    // not the local-signing JWT payload's own field name.
+    scope: "object-read-write",
     paths: { prefixPaths: [`${prefix}/`] },
     ttlSeconds: TTL_SECONDS,
     iat,
