@@ -21,7 +21,6 @@ vi.mock("@instantdb/react", async (importOriginal) => {
   return { ...actual, init: vi.fn() };
 });
 vi.mock("./r2", () => ({
-  createR2Client: vi.fn(() => ({})),
   getObject: vi.fn(),
   putObject: vi.fn(),
 }));
@@ -87,10 +86,6 @@ const r2Config = {
   endpoint: "https://acct.r2.cloudflarestorage.com",
   region: "auto",
   bucket: "my-bucket",
-  readOnlyAccessKeyId: "ro-id",
-  readOnlySecretAccessKey: "ro-secret",
-  readWriteAccessKeyId: "rw-id",
-  readWriteSecretAccessKey: "rw-secret",
 };
 
 const pathKey = new Uint8Array(128).fill(4);

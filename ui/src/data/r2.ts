@@ -89,9 +89,10 @@ export async function getObject(
 }
 
 /** Uploads one R2 object, retrying with backoff before giving up. Requires
- * a read-write-capable client (createR2Client's canWrite branch) -- a
- * read-only client's signed PUT is simply rejected by R2 itself, surfaced
- * here as an ordinary HTTP-status failure like any other. */
+ * a write-capable temporary credential (tempR2Creds.ts always requests
+ * object-read-write scope) -- a read-only client's signed PUT is simply
+ * rejected by R2 itself, surfaced here as an ordinary HTTP-status failure
+ * like any other. */
 export async function putObject(
   client: AwsClient,
   config: R2Config,
