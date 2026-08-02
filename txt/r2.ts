@@ -57,26 +57,30 @@ export class R2Client {
     });
   }
 
-  async listAllObjects(): Promise<ObjectInfo[]> {
+  async listAllObjects(prefix?: string): Promise<ObjectInfo[]> {
     const objects: ObjectInfo[] = [];
     let token: string | undefined;
     do {
-      const page = await this.fetchPage(token);
+      const page = await this.fetchPage(token, prefix);
       objects.push(...page.objects);
       token = page.nextToken;
     } while (token);
-    this.log.info(`Found ${objects.length} object(s) in the R2 bucket`);
+    this.log.info(
+      `Found ${objects.length} object(s)${prefix ? ` under prefix=${prefix}` : ""} in the R2 bucket`,
+    );
     return objects;
   }
 
   private async fetchPage(
     token: string | undefined,
+    prefix?: string,
   ): Promise<{ objects: ObjectInfo[]; nextToken?: string }> {
     const resp = await this.withRetries("list bucket page", () =>
       this.s3.send(
         new ListObjectsV2Command({
           Bucket: this.r2.bucket,
           ContinuationToken: token,
+          Prefix: prefix,
         }),
       ),
     );

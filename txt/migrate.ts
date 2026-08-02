@@ -5,15 +5,27 @@
 // per-user SQLCipher database, going through the exact same page-by-page R2
 // transport (R2Vfs/RemotePageStore) --init-admin itself uses -- there's no
 // separate "migration" write path, just more rows in the same database.
+//
+// Resumable: each migrated document keeps its *source* txt_id as its target
+// txt_id (insertOneDoc), rather than letting the target db assign a fresh
+// one -- a re-run only ever needs "SELECT id FROM txt" against the target to
+// know which source txt_ids are already there, no separate tracking table.
+// Before doing any new work, also sweeps the account's own R2 prefix for
+// objects left behind by a previous run that crashed between
+// RemotePageStore.commitPages' own R2-upload step and its final InstantDB
+// transact (docs/data_model.md's "Untracked R2 objects" GC sweep, scoped to
+// this one account rather than a whole-bucket sweep).
 import type { DatabaseSync } from "node:sqlite";
 import { brotliCompressSync } from "node:zlib";
 import { init } from "@instantdb/admin";
+import * as C from "./constants.ts";
 import type { Creds } from "./creds.ts";
 import { CryptoEngine } from "./crypto.ts";
 import type { InitAdminCreds } from "./initAdminCreds.ts";
 import { signInToInstant } from "./instantSignIn.ts";
 import type { Logger } from "./logger.ts";
 import { TxtOwner, type TxtMetadataEntry } from "./owner.ts";
+import { computeR2Prefix, decodePagePointerContent } from "./pagePointer.ts";
 import { R2Client } from "./r2.ts";
 import { R2Vfs } from "./r2Vfs.ts";
 import { RemotePageStore } from "./remotePageStore.ts";
@@ -37,8 +49,9 @@ export interface MigratedDoc {
 export interface MigrateResult {
   committed: boolean;
   authId: string | null;
-  newTxtIds: bigint[];
   migrated: MigratedDoc[];
+  alreadyMigratedCount: number;
+  staleObjectsDeleted: number;
   newVersion: number | null;
   pageCount: number | null;
 }
@@ -80,23 +93,83 @@ export class Migrator {
 
   async run(opts: MigrateOptions): Promise<MigrateResult> {
     const crypto = await CryptoEngine.create();
-    const docs = await this.prepareDocs(crypto);
-    const summaries = docs.map(toSummary);
-    if (docs.length === 0 || opts.dryRun) {
-      return emptyResult(summaries);
+    const authId = await signInToInstant(this.toCreds, this.log);
+    const db = init({
+      appId: this.toCreds.instantAppId,
+      adminToken: this.toCreds.instantAdminToken,
+    });
+    const target = await this.resolveTarget(db, authId);
+    const keys = this.unwrapTargetKeys(crypto, target);
+    const r2 = new R2Client(this.toCreds.r2Config, false, this.log);
+
+    const staleObjectsDeleted = await this.sweepStaleR2Objects(
+      db,
+      r2,
+      crypto,
+      keys.pathKey,
+      authId,
+      target.usersRowId,
+    );
+
+    const builder = await SqlCipherBuilder.create();
+    const store = this.buildStore(db, r2, crypto, authId, target, keys.pathKey);
+    const vfs = await R2Vfs.registerExisting(
+      builder.module,
+      DB_FILE_NAME,
+      target.pageSize,
+      target.pageCount,
+      target.currentVersion,
+      store,
+    );
+    const dbHandle = builder.open(DB_FILE_NAME, vfs.name, keys.dbKey);
+    try {
+      const alreadyMigrated = new Set(
+        builder.selectInts(dbHandle, "SELECT id FROM txt").map(Number),
+      );
+      const docs = await this.prepareDocs(crypto, alreadyMigrated);
+      const summaries = docs.map(toSummary);
+      if (docs.length === 0 || opts.dryRun) {
+        return emptyResult(
+          summaries,
+          alreadyMigrated.size,
+          staleObjectsDeleted,
+        );
+      }
+      await this.confirmOrAbort(docs, alreadyMigrated.size, opts.confirm);
+      docs.forEach((doc) => this.insertOneDoc(builder, dbHandle, doc));
+      const { newVersion } = await this.commit(
+        store,
+        target,
+        vfs.diffDirtyPages(),
+        vfs.currentPageCount,
+      );
+      return {
+        committed: true,
+        authId,
+        migrated: summaries,
+        alreadyMigratedCount: alreadyMigrated.size,
+        staleObjectsDeleted,
+        newVersion,
+        pageCount: vfs.currentPageCount,
+      };
+    } finally {
+      builder.close(dbHandle);
     }
-    await this.confirmOrAbort(docs, opts.confirm);
-    return this.writeToTarget(crypto, docs, summaries);
   }
 
-  private async prepareDocs(crypto: CryptoEngine): Promise<PreparedDoc[]> {
+  private async prepareDocs(
+    crypto: CryptoEngine,
+    alreadyMigrated: Set<number>,
+  ): Promise<PreparedDoc[]> {
     const owner = new TxtOwner(this.fromDb, crypto, this.log);
     const userId = owner.resolveUserId(this.fromCreds);
     const umk = owner.resolveUmk(this.fromCreds, userId);
     const fromR2 = new R2Client(this.fromCreds.r2Config, true, this.log);
     const allTxtIds = owner.listTxtIds(userId);
+    const remaining = allTxtIds.filter((id) => !alreadyMigrated.has(id));
     this.log.info(
-      `Migrating ${allTxtIds.length} txt_id(s): ${allTxtIds.join(", ")}`,
+      `${allTxtIds.length} txt_id(s) total, ${alreadyMigrated.size} already migrated, ` +
+        `${remaining.length} remaining: ${remaining.join(", ")}`,
     );
     const metadataDoc = await owner.resolveTxtMetadataDocument(
       userId,
@@ -104,7 +177,7 @@ export class Migrator {
       fromR2,
     );
     const prepared: PreparedDoc[] = [];
-    for (const txtId of allTxtIds) {
+    for (const txtId of remaining) {
       prepared.push(
         await this.prepareOneDoc(owner, umk, fromR2, metadataDoc, txtId),
       );
@@ -141,50 +214,18 @@ export class Migrator {
 
   private async confirmOrAbort(
     docs: PreparedDoc[],
+    alreadyMigratedCount: number,
     confirm: MigrateOptions["confirm"],
   ): Promise<void> {
     const totalParts = docs.reduce((sum, d) => sum + d.parts.length, 0);
+    const skipNote =
+      alreadyMigratedCount > 0
+        ? ` (${alreadyMigratedCount} already migrated, skipped)`
+        : "";
     const message =
-      `Migrate ${docs.length} document(s) (${totalParts} part(s) total) into the ` +
+      `Migrate ${docs.length} document(s) (${totalParts} part(s) total)${skipNote} into the ` +
       `target InstantDB account's SQLCipher database? This appends new pages/rows and cannot be easily undone.`;
     if (!(await confirm(message))) throw new Error("Aborted.");
-  }
-
-  private async writeToTarget(
-    crypto: CryptoEngine,
-    docs: PreparedDoc[],
-    summaries: MigratedDoc[],
-  ): Promise<MigrateResult> {
-    const authId = await signInToInstant(this.toCreds, this.log);
-    const db = init({
-      appId: this.toCreds.instantAppId,
-      adminToken: this.toCreds.instantAdminToken,
-    });
-    const target = await this.resolveTarget(db, authId);
-    const keys = this.unwrapTargetKeys(crypto, target);
-    const store = this.buildStore(db, crypto, authId, target, keys.pathKey);
-    const builder = await SqlCipherBuilder.create();
-    const { newTxtIds, dirtyPages, pageCount } = await this.writeDocs(
-      builder,
-      store,
-      target,
-      keys.dbKey,
-      docs,
-    );
-    const { newVersion } = await this.commit(
-      store,
-      target,
-      dirtyPages,
-      pageCount,
-    );
-    return {
-      committed: true,
-      authId,
-      newTxtIds,
-      migrated: summaries,
-      newVersion,
-      pageCount,
-    };
   }
 
   private async resolveTarget(db: any, authId: string): Promise<TargetAccount> {
@@ -245,12 +286,12 @@ export class Migrator {
 
   private buildStore(
     db: any,
+    r2: R2Client,
     crypto: CryptoEngine,
     authId: string,
     target: TargetAccount,
     pathKey: Buffer,
   ): RemotePageStore {
-    const r2 = new R2Client(this.toCreds.r2Config, false, this.log);
     return new RemotePageStore({
       db,
       r2,
@@ -261,60 +302,30 @@ export class Migrator {
     });
   }
 
-  private async writeDocs(
-    builder: SqlCipherBuilder,
-    store: RemotePageStore,
-    target: TargetAccount,
-    dbKey: Buffer,
-    docs: PreparedDoc[],
-  ): Promise<{
-    newTxtIds: bigint[];
-    dirtyPages: Map<number, Buffer>;
-    pageCount: number;
-  }> {
-    const vfs = await R2Vfs.registerExisting(
-      builder.module,
-      DB_FILE_NAME,
-      target.pageSize,
-      target.pageCount,
-      target.currentVersion,
-      store,
-    );
-    const dbHandle = builder.open(DB_FILE_NAME, vfs.name, dbKey);
-    let newTxtIds: bigint[];
-    try {
-      newTxtIds = docs.map((doc) => this.insertOneDoc(builder, dbHandle, doc));
-    } finally {
-      builder.close(dbHandle);
-    }
-    return {
-      newTxtIds,
-      dirtyPages: vfs.diffDirtyPages(),
-      pageCount: vfs.currentPageCount,
-    };
-  }
-
+  // Reuses the source's own txt_id as the target's txt_id -- what makes a
+  // re-run resumable (see this file's header comment) without any separate
+  // tracking table: "SELECT id FROM txt" against the target is enough to
+  // know which source txt_ids already made it across.
   private insertOneDoc(
     builder: SqlCipherBuilder,
     db: number,
     doc: PreparedDoc,
-  ): bigint {
-    const newTxtId = builder.insert(
+  ): void {
+    builder.insert(
       db,
-      "INSERT INTO txt (name, metadata, last_part_num, last_accessed, created_at) VALUES (?, ?, ?, ?, ?)",
-      [doc.name, doc.metadataBrotli, null, null, Date.now()],
+      "INSERT INTO txt (id, name, metadata, last_part_num, last_accessed, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+      [doc.oldTxtId, doc.name, doc.metadataBrotli, null, null, Date.now()],
     );
     doc.parts.forEach((content, i) => {
       builder.insert(
         db,
         "INSERT INTO txt_parts (txt_id, part_num, content) VALUES (?, ?, ?)",
-        [newTxtId, i + 1, content],
+        [doc.oldTxtId, i + 1, content],
       );
     });
     this.log.info(
-      `txt_id(old)=${doc.oldTxtId} -> txt_id(new)=${newTxtId}: inserted ${doc.parts.length} part(s), name=${JSON.stringify(doc.name)}`,
+      `txt_id=${doc.oldTxtId}: inserted ${doc.parts.length} part(s), name=${JSON.stringify(doc.name)}`,
     );
-    return newTxtId;
   }
 
   private async commit(
@@ -339,6 +350,87 @@ export class Migrator {
     );
     return { newVersion };
   }
+
+  // Deletes R2 objects under this account's own r2Prefix that no known
+  // `pages` row (any version -- a superseded-but-not-yet-GC'd page's object
+  // is still legitimately known, not stale) resolves to. The only way a
+  // legitimately-created object ends up here is a previous run that crashed
+  // between RemotePageStore.commitPages' own R2 upload step and its final
+  // InstantDB transact (docs/data_model.md's commit-protocol failure modes),
+  // leaving a real object with no `pages`/`$files` row ever created for it.
+  private async sweepStaleR2Objects(
+    db: any,
+    r2: R2Client,
+    crypto: CryptoEngine,
+    pathKey: Buffer,
+    authId: string,
+    usersRowId: string,
+  ): Promise<number> {
+    const r2Prefix = computeR2Prefix(authId);
+    const [objects, known] = await Promise.all([
+      r2.listAllObjects(`${r2Prefix}/`),
+      this.collectKnownRawPaths(db, crypto, pathKey, r2Prefix, usersRowId),
+    ]);
+    const stale = objects.filter((o) => !known.has(o.key));
+    if (stale.length === 0) {
+      this.log.info(`No stale R2 object(s) found under prefix=${r2Prefix}/`);
+      return 0;
+    }
+    this.log.warn(
+      `Found ${stale.length} stale R2 object(s) under prefix=${r2Prefix}/ ` +
+        `(left by a previous incomplete run) -- deleting`,
+    );
+    const result = await r2.deleteObjects(stale.map((o) => o.key));
+    for (const err of result.errors) {
+      this.log.warn(`Failed to delete stale object ${err.key}: ${err.message}`);
+    }
+    this.log.info(
+      `Deleted ${result.deletedKeys.size}/${stale.length} stale object(s)`,
+    );
+    return result.deletedKeys.size;
+  }
+
+  // Every raw_path this account's committed pages resolve to. There's no way
+  // to recover raw_path from InstantDB metadata alone -- it's only ever
+  // visible as $files' encrypted content (docs/data_model.md's $files
+  // design) -- so this means downloading and decrypting every pointerFile.
+  private async collectKnownRawPaths(
+    db: any,
+    crypto: CryptoEngine,
+    pathKey: Buffer,
+    r2Prefix: string,
+    usersRowId: string,
+  ): Promise<Set<string>> {
+    const result = await db.query({
+      pages: { $: { where: { "owner.id": usersRowId } }, pointerFile: {} },
+    });
+    const rows = (result.pages ?? []) as { pointerFile?: { url: string }[] }[];
+    const urls = rows.flatMap((r) => r.pointerFile?.[0]?.url ?? []);
+    const known = new Set<string>();
+    for (let i = 0; i < urls.length; i += C.R2_BATCH_CONCURRENCY) {
+      const batch = urls.slice(i, i + C.R2_BATCH_CONCURRENCY);
+      const rawKeys = await Promise.all(
+        batch.map((url) => this.fetchAndDecodeRawKey(crypto, pathKey, url)),
+      );
+      rawKeys.forEach((rawKey) => known.add(`${r2Prefix}/${rawKey}`));
+    }
+    return known;
+  }
+
+  private async fetchAndDecodeRawKey(
+    crypto: CryptoEngine,
+    pathKey: Buffer,
+    url: string,
+  ): Promise<string> {
+    const resp = await fetch(url);
+    if (!resp.ok) {
+      throw new Error(
+        `failed to download $files pointer content: HTTP ${resp.status} (${url})`,
+      );
+    }
+    const content = Buffer.from(await resp.arrayBuffer());
+    return decodePagePointerContent(crypto, pathKey, content);
+  }
 }
 
 function toSummary(doc: PreparedDoc): MigratedDoc {
@@ -349,12 +441,17 @@ function toSummary(doc: PreparedDoc): MigratedDoc {
   };
 }
 
-function emptyResult(migrated: MigratedDoc[]): MigrateResult {
+function emptyResult(
+  migrated: MigratedDoc[],
+  alreadyMigratedCount: number,
+  staleObjectsDeleted: number,
+): MigrateResult {
   return {
     committed: false,
     authId: null,
-    newTxtIds: [],
     migrated,
+    alreadyMigratedCount,
+    staleObjectsDeleted,
     newVersion: null,
     pageCount: null,
   };

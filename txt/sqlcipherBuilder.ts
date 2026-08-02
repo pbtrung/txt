@@ -8,6 +8,7 @@ import Sqlite3Wasm from "../sqlcipher/sqlcipher.js";
 import { SQLCIPHER_PAGE_SIZE } from "./constants.ts";
 
 const SQLITE_OK = 0;
+const SQLITE_ROW = 100;
 const SQLITE_DONE = 101;
 const SQLITE_OPEN_READWRITE = 0x00000002;
 const SQLITE_OPEN_CREATE = 0x00000004;
@@ -132,6 +133,32 @@ export class SqlCipherBuilder {
       this.module._free(sqlPtr);
       this.module._free(ppStmt);
     }
+  }
+
+  // Runs a parameterless SELECT of a single integer column, e.g. "SELECT id
+  // FROM txt" for --migrate's resume support (which txt_ids the target db
+  // already has, so a resumed run only inserts the remainder).
+  selectInts(db: number, sql: string): bigint[] {
+    const { ptr: sqlPtr } = cString(this.module, sql);
+    const ppStmt = this.module._malloc(4);
+    const out: bigint[] = [];
+    try {
+      const rc = this.module._sqlite3_prepare_v2(db, sqlPtr, -1, ppStmt, 0);
+      if (rc !== SQLITE_OK)
+        throw new Error(`sqlite3_prepare_v2 failed: ${this.errmsg(db)}`);
+      const stmt = this.module.getValue(ppStmt, "i32");
+      try {
+        while (this.module._sqlite3_step(stmt) === SQLITE_ROW) {
+          out.push(this.module._sqlite3_column_int64(stmt, 0));
+        }
+      } finally {
+        this.module._sqlite3_finalize(stmt);
+      }
+    } finally {
+      this.module._free(sqlPtr);
+      this.module._free(ppStmt);
+    }
+    return out;
   }
 
   private runInsert(db: number, stmt: number, params: BindParam[]): bigint {

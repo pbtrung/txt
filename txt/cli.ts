@@ -181,17 +181,19 @@ function printMigrateSummary(
   log: Logger,
 ): void {
   log.info("--- migrate summary ---");
-  log.info(`mode:        ${result.committed ? "live" : "dry-run"}`);
-  log.info(`documents:   ${result.migrated.length}`);
+  log.info(`mode:              ${result.committed ? "live" : "dry-run"}`);
+  log.info(`documents:         ${result.migrated.length}`);
+  log.info(`already migrated:  ${result.alreadyMigratedCount}`);
+  log.info(`stale R2 objects:  ${result.staleObjectsDeleted} deleted`);
   for (const d of result.migrated) {
     log.info(
-      `  txt_id(old)=${d.oldTxtId} name=${JSON.stringify(d.name)} parts=${d.partCount}`,
+      `  txt_id=${d.oldTxtId} name=${JSON.stringify(d.name)} parts=${d.partCount}`,
     );
   }
   if (result.committed) {
-    log.info(`auth.id:     ${result.authId}`);
-    log.info(`new version: ${result.newVersion}`);
-    log.info(`page count:  ${result.pageCount}`);
+    log.info(`auth.id:           ${result.authId}`);
+    log.info(`new version:       ${result.newVersion}`);
+    log.info(`page count:        ${result.pageCount}`);
   }
 }
 
