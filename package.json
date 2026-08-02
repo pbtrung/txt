@@ -16,7 +16,7 @@
     "ui:test:e2e": "vitest run --config ui/vite.config.ts ui/src/smoke.e2e.test.ts",
     "worker:typecheck": "wrangler types worker/worker-configuration.d.ts && tsc -b worker/tsconfig.json",
     "worker:dev": "wrangler dev",
-    "deploy": "npm run ui:build && wrangler deploy"
+    "deploy": "sh scripts/deploy.sh"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1101.0",
