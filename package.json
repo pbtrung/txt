@@ -10,7 +10,6 @@
     "ui:dev": "vite --config ui/vite.config.ts",
     "ui:typecheck": "tsc -b ui/tsconfig.json",
     "ui:build": "tsc -b ui/tsconfig.json && vite build --config ui/vite.config.ts && rm -f dist/sqlcipher.d.ts dist/package.json dist/js-vfs.mjs dist/js-vfs.d.mts dist/sqlcipher.js.symbols dist/test-js-vfs.mjs dist/test-roundtrip.mjs && node ui/scripts/build-integrity.mjs",
-    "postui:build": "rm -rf ui/node_modules",
     "ui:preview": "vite preview --config ui/vite.config.ts",
     "ui:test": "vitest run --config ui/vite.config.ts --exclude \"**/smoke.e2e.test.ts\"",
     "ui:test:watch": "vitest --config ui/vite.config.ts --exclude \"**/smoke.e2e.test.ts\"",
