@@ -19,9 +19,14 @@ import {
   type InstantPageStoreConfig,
 } from "./instantPageStore";
 import { CONTROL_STATUS, CONTROL_LEN } from "./remotePageClient";
-import { createR2Client } from "./r2";
 import type { R2Config } from "./r2Config";
+import { fetchTempR2Credential } from "./tempR2Creds";
 import { verbose } from "../log";
+
+// worker/r2Creds.ts's own TTL_SECONDS is 900s (15 minutes) -- refreshed at
+// a comfortable margin before that, same reasoning as dbWorker.ts's own
+// R2_CRED_REFRESH_INTERVAL_MS.
+const R2_CRED_REFRESH_INTERVAL_MS = 10 * 60 * 1000;
 
 interface StartMessage {
   type: "start";
@@ -54,6 +59,10 @@ let cfg: InstantPageStoreConfig;
 let control: Int32Array;
 let dataBuf: Uint8Array;
 let snapshot: number;
+// Kept around so the R2 credential refresh timer below can re-mint one
+// without the main thread having to resend them.
+let storedIdToken: string;
+let storedAuthId: string;
 // Diagnostic only -- every fetch here is a real, uncached query+R2 GET
 // (remoteVfs.ts's own pageCache lives on the main-thread side of this
 // bridge, not here), so a slow "Loading your books..." unlock phase often
@@ -85,9 +94,16 @@ async function start(msg: StartMessage): Promise<void> {
     clientName: msg.instantClientName,
     idToken: msg.idToken,
   });
+  storedIdToken = msg.idToken;
+  storedAuthId = msg.authId;
+  const r2Cred = await fetchTempR2Credential(
+    msg.idToken,
+    msg.authId,
+    msg.r2Config,
+  );
   cfg = {
     db,
-    r2Client: createR2Client(msg.r2Config),
+    r2Client: r2Cred.client,
     r2Config: msg.r2Config,
     pathKey: msg.pathKey,
     authId: msg.authId,
@@ -96,6 +112,17 @@ async function start(msg: StartMessage): Promise<void> {
   control = new Int32Array(msg.controlSab);
   dataBuf = new Uint8Array(msg.dataSab);
   snapshot = msg.snapshot;
+  setInterval(() => void refreshR2Credential(), R2_CRED_REFRESH_INTERVAL_MS);
+}
+
+async function refreshR2Credential(): Promise<void> {
+  const r2Cred = await fetchTempR2Credential(
+    storedIdToken,
+    storedAuthId,
+    cfg.r2Config,
+  );
+  cfg.r2Client = r2Cred.client;
+  verbose("remotePageWorker: refreshed temporary R2 credential");
 }
 
 async function handleFetch(pageNo: number): Promise<void> {

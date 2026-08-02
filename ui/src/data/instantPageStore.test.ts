@@ -12,10 +12,6 @@ const r2Config: R2Config = {
   endpoint: "https://acct.r2.cloudflarestorage.com",
   region: "auto",
   bucket: "my-bucket",
-  readOnlyAccessKeyId: "ro-id",
-  readOnlySecretAccessKey: "ro-secret",
-  readWriteAccessKeyId: "rw-id",
-  readWriteSecretAccessKey: "rw-secret",
 };
 
 // A real in-memory R2 "bucket" (Map<key, bytes>) fronted by a fake AwsClient

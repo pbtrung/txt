@@ -237,8 +237,23 @@ function mockBackend(
   // $files.url -- stub it to resolve straight from the fake $files store by
   // its rawKey (encrypted the same way a real upload would have -- never the
   // full rawPath, since r2Prefix is re-derived from authId at read time).
+  // Also stubs tempR2Creds.ts's own POST /api/r2-creds call (worker/r2Creds.ts
+  // isn't reachable from this test environment) with a fake-but-well-shaped
+  // temporary credential, so dbWorker.ts's open()/refreshR2Credential() exercise
+  // their real fetchTempR2Credential() call, just against a fake response.
   const realFetch = globalThis.fetch;
   vi.stubGlobal("fetch", async (url: string) => {
+    if (url === "/api/r2-creds") {
+      return new Response(
+        JSON.stringify({
+          accessKeyId: "temp-access-key",
+          secretAccessKey: "temp-secret-key",
+          sessionToken: "temp-session-token",
+          expiresAtMs: Date.now() + 900_000,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
     const fileId = url.replace("instant-file://", "");
     const file = [...store.$files.values()].find((f) => f.id === fileId);
     if (!file) return new Response(null, { status: 404 });

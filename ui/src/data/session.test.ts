@@ -68,7 +68,11 @@ describe("resolveSession", () => {
     expect(Array.from(session.pathKey)).toEqual(Array.from(pathKey));
     expect(Array.from(session.dbKey)).toEqual(Array.from(dbKey));
     expect(session.r2Config.bucket).toBe("my-bucket");
-    expect(session.r2Config.readWriteAccessKeyId).toBe("rw-id");
+    // The stored r2_config still carries read_only/read_write keys (the
+    // CLI's own use), but this account's browser session must never parse
+    // them -- see r2Config.ts's header comment.
+    expect(session.r2Config).not.toHaveProperty("readWriteAccessKeyId");
+    expect(session.r2Config).not.toHaveProperty("readOnlyAccessKeyId");
   });
 
   it("treats users.dbMeta as an array (InstaQL's array-wrapped links), not a plain object", async () => {

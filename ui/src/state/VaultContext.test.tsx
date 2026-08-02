@@ -103,8 +103,6 @@ function installFakeAuth() {
       endpoint: "https://example.r2.cloudflarestorage.com",
       region: "auto",
       bucket: "txt-parts",
-      readOnlyAccessKeyId: "ro-id",
-      readOnlySecretAccessKey: "ro-secret",
     },
   });
   return { instantDb };

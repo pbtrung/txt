@@ -1,15 +1,13 @@
 import type { AwsClient } from "aws4fetch";
 import { describe, expect, it, vi } from "vitest";
 
-import { createR2Client, getObject, putObject } from "./r2";
+import { getObject, putObject } from "./r2";
 import type { R2Config } from "./r2Config";
 
 const config: R2Config = {
   endpoint: "https://acct.r2.cloudflarestorage.com",
   region: "auto",
   bucket: "my-bucket",
-  readOnlyAccessKeyId: "ro-id",
-  readOnlySecretAccessKey: "ro-secret",
 };
 
 function fakeAwsClient(
@@ -148,23 +146,5 @@ describe("putObject", () => {
     await vi.runAllTimersAsync();
     await expectation;
     vi.useRealTimers();
-  });
-});
-
-describe("createR2Client", () => {
-  it("uses the read-only key pair when no read-write keys are present", () => {
-    const client = createR2Client(config);
-    expect(client.accessKeyId).toBe("ro-id");
-    expect(client.secretAccessKey).toBe("ro-secret");
-  });
-
-  it("prefers the read-write key pair when present (the admin's row, post --update-db)", () => {
-    const client = createR2Client({
-      ...config,
-      readWriteAccessKeyId: "rw-id",
-      readWriteSecretAccessKey: "rw-secret",
-    });
-    expect(client.accessKeyId).toBe("rw-id");
-    expect(client.secretAccessKey).toBe("rw-secret");
   });
 });

@@ -1,17 +1,16 @@
-// R2 (S3-compatible) object storage client, mirrors txt/r2.ts's R2Client --
-// signed with aws4fetch (built for exactly this Workers/browser + R2 use
-// case, no Node polyfills needed) instead of the AWS SDK. This port targets
-// the admin account's own session only (docs/data_model.md's "Non-admin
-// (user-role) accounts" temporary-credential Worker is a separate, later
-// effort), so its r2_config always carries the read-write pair --
-// createR2Client itself isn't hardcoded that way, though: a regular user's
-// read-only-only config still gets a (read-only-capable) client back.
-// putObject exists now because page content itself lives in R2 in this
-// design (instantPageStore.ts's commitPages) -- unlike the old rqlite-
-// backed version, where committing a page was a database write, not an R2
-// write, so a write path never needed one here before.
+// R2 (S3-compatible) object access, mirrors txt/r2.ts's R2Client -- signed
+// with aws4fetch (built for exactly this Workers/browser + R2 use case, no
+// Node polyfills needed) instead of the AWS SDK. Unlike the CLI, nothing
+// here ever builds a client from a static key: every AwsClient this app
+// uses comes from tempR2Creds.ts's short-lived, prefix-scoped temporary
+// credential instead (docs/data_model.md's "Temporary, prefix-scoped R2
+// credentials" section, which now applies to every account, admin
+// included). putObject exists because page content itself lives in R2 in
+// this design (instantPageStore.ts's commitPages) -- unlike the old
+// rqlite-backed version, where committing a page was a database write, not
+// an R2 write, so a write path never needed one here before.
 
-import { AwsClient } from "aws4fetch";
+import type { AwsClient } from "aws4fetch";
 
 import { isBrowser } from "../env";
 import type { R2Config } from "./r2Config";
@@ -20,25 +19,6 @@ import type { R2Config } from "./r2Config";
 // txt/r2.ts's own _RETRY_DELAYS/_MAX_ATTEMPTS).
 const RETRY_DELAYS_MS = [2000, 4000, 8000];
 const MAX_ATTEMPTS = 1 + RETRY_DELAYS_MS.length;
-
-/** Builds a client from this account's read-write keys if its r2_config
- * carries them (the admin's own row, populated by txt.ts --update-db),
- * otherwise the read-only pair every account's row has from the start. */
-export function createR2Client(config: R2Config): AwsClient {
-  const canWrite = Boolean(
-    config.readWriteAccessKeyId && config.readWriteSecretAccessKey,
-  );
-  return new AwsClient({
-    accessKeyId: canWrite
-      ? config.readWriteAccessKeyId!
-      : config.readOnlyAccessKeyId,
-    secretAccessKey: canWrite
-      ? config.readWriteSecretAccessKey!
-      : config.readOnlySecretAccessKey,
-    region: config.region,
-    service: "s3",
-  });
-}
 
 function objectUrl(config: R2Config, key: string): string {
   return `${config.endpoint.replace(/\/+$/, "")}/${config.bucket}/${encodeURIComponent(key)}`;
