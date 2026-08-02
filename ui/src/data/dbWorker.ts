@@ -100,13 +100,6 @@ const R2_CRED_REFRESH_MARGIN_MS = 5 * 60 * 1000;
 // silently expiring in the background for minutes before trying again.
 const R2_CRED_RETRY_DELAY_MS = 30 * 1000;
 
-// Bounded concurrency for the initial page prefetch (same value as
-// txt/constants.ts's R2_BATCH_CONCURRENCY / instantPageStore.ts's own
-// upload-side batching) -- each page here is a query + a pointer download +
-// an R2 GET, so one at a time would be slow for anything beyond a handful
-// of pages, and fully unbounded risks exhausting connections.
-const PREFETCH_CONCURRENCY = 15;
-
 // Independent of MAX_CACHED_PAGES in principle, but currently set equal to
 // it: prefetch the whole cache budget upfront (right after open() learns
 // the page count) rather than leaving it all to be discovered and fetched
@@ -156,13 +149,18 @@ function requireOpen(): {
   return { db, vfs, pageStoreCfg, dbMetaId };
 }
 
-/** Eagerly fetches this account's pages in bounded-concurrency batches
- * right after open() learns the page count, instead of leaving every one
- * of them to be discovered and fetched individually later. Capped at
- * PREFETCH_PAGE_LIMIT, not fetching more than that up front just isn't
- * worth the added latency for pages a given session may never touch.
- * Returns pages keyed by page number, fed into vfs.primeCache() by the
- * caller. */
+/** Eagerly fetches this account's pages right after open() learns the page
+ * count, instead of leaving every one of them to be discovered and fetched
+ * individually later. Capped at PREFETCH_PAGE_LIMIT, not fetching more than
+ * that up front just isn't worth the added latency for pages a given
+ * session may never touch. Returns pages keyed by page number, fed into
+ * vfs.primeCache() by the caller. Delegates to instantPageStore's own
+ * fetchPagesBatch (a bounded number of InstantDB queries covering many page
+ * numbers each, not one query per page number) -- this used to be its own
+ * per-page concurrency-batched loop here, which scaled the *number* of
+ * InstantDB queries linearly with PREFETCH_PAGE_LIMIT; fetchPagesBatch
+ * keeps that scaling out of the query count, only the R2 GETs still batch
+ * this way. */
 async function prefetchPages(
   cfg: InstantPageStoreConfig,
   pageCount: number,
@@ -170,15 +168,8 @@ async function prefetchPages(
 ): Promise<Map<number, Uint8Array>> {
   const total = Math.min(pageCount, PREFETCH_PAGE_LIMIT);
   const pageNos = Array.from({ length: total }, (_, i) => i + 1);
-  const pages = new Map<number, Uint8Array>();
   const start = performance.now();
-  for (let i = 0; i < pageNos.length; i += PREFETCH_CONCURRENCY) {
-    const batch = pageNos.slice(i, i + PREFETCH_CONCURRENCY);
-    const results = await Promise.all(
-      batch.map((pageNo) => instantPageStore.fetchPage(cfg, pageNo, snapshot)),
-    );
-    batch.forEach((pageNo, idx) => pages.set(pageNo, results[idx]));
-  }
+  const pages = await instantPageStore.fetchPagesBatch(cfg, pageNos, snapshot);
   verbose(
     `dbWorker: prefetch done -- ${pages.size} page(s), ${(performance.now() - start).toFixed(1)}ms`,
   );

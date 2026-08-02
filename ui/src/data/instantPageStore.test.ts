@@ -2,7 +2,7 @@ import type { AwsClient } from "aws4fetch";
 import { describe, expect, it, vi } from "vitest";
 
 import * as blob from "../crypto/blob";
-import { commitPages, fetchPage } from "./instantPageStore";
+import { commitPages, fetchPage, fetchPagesBatch } from "./instantPageStore";
 import { computeR2Prefix } from "./pagePointer";
 import type { R2Config } from "./r2Config";
 
@@ -76,7 +76,7 @@ function fakeInstantDb() {
       },
     },
     async queryOnce(q: any) {
-      if (q.pages) return { data: { pages: queryPages(store, q.pages) } };
+      if (q.pages) return queryPages(store, q.pages);
       if (q.dbMeta) {
         const row = store.dbMeta.get(q.dbMeta.$.where.id);
         return { data: { dbMeta: row ? [row] : [] } };
@@ -86,22 +86,50 @@ function fakeInstantDb() {
   };
 }
 
+// Supports both fetchPage's single-pageNo query (order by version desc,
+// limit 1) and fetchPagesBatch's own pageNo: {$in: [...]} + order by
+// pageKey asc + cursor pagination. Real queryOnce() resolves with
+// {data: {...}, pageInfo: {...}} as *siblings* (confirmed against
+// @instantdb/core's own queryOnce() type) -- pageInfo is never nested
+// inside data.
 function queryPages(
   store: ReturnType<typeof fakeInstantDb>["store"],
   spec: any,
 ) {
-  const { where, order, limit } = spec.$;
-  let rows = [...store.pages.values()].filter(
-    (r) =>
-      r.owner === where["owner.id"] &&
-      r.pageNo === where.pageNo &&
-      r.version <= where.version.$lte,
-  );
-  rows.sort((a, b) =>
-    order.version === "desc" ? b.version - a.version : a.version - b.version,
-  );
-  rows = rows.slice(0, limit);
-  return rows.map((r) => ({
+  const { where, order, limit, after } = spec.$;
+  let rows = [...store.pages.values()].filter((r) => {
+    if (r.owner !== where["owner.id"]) return false;
+    if (where.pageNo !== undefined) {
+      if (
+        typeof where.pageNo === "object" &&
+        where.pageNo !== null &&
+        "$in" in where.pageNo
+      ) {
+        if (!where.pageNo.$in.includes(r.pageNo)) return false;
+      } else if (r.pageNo !== where.pageNo) {
+        return false;
+      }
+    }
+    if (where.version?.$lte !== undefined && r.version > where.version.$lte) {
+      return false;
+    }
+    return true;
+  });
+  const paginated = order?.pageKey === "asc";
+  if (paginated) {
+    rows.sort((a, b) =>
+      a.pageKey < b.pageKey ? -1 : a.pageKey > b.pageKey ? 1 : 0,
+    );
+  } else if (order?.version) {
+    rows.sort((a, b) =>
+      order.version === "desc" ? b.version - a.version : a.version - b.version,
+    );
+  }
+  if (after !== undefined) rows = rows.filter((r) => r.pageKey > after);
+  const hasNextPage = limit !== undefined && rows.length > limit;
+  if (limit !== undefined) rows = rows.slice(0, limit);
+  const endCursor = rows.length > 0 ? rows[rows.length - 1].pageKey : after;
+  const mapped = rows.map((r) => ({
     ...r,
     pointerFile: r.pointerFile
       ? [
@@ -111,6 +139,10 @@ function queryPages(
         ]
       : [],
   }));
+  return {
+    data: { pages: mapped },
+    pageInfo: paginated ? { pages: { hasNextPage, endCursor } } : undefined,
+  };
 }
 
 const pathKey = new Uint8Array(128).fill(11);
@@ -251,5 +283,121 @@ describe("commitPages / fetchPage", () => {
     expect(rawKey).not.toContain("/");
     expect(rawKey).toMatch(CROCKFORD_BASE32_RE);
     expect(r2Store.has(`${r2Prefix}/${rawKey}`)).toBe(true);
+  });
+});
+
+describe("fetchPagesBatch", () => {
+  it("resolves many page numbers via a single query instead of one per page", async () => {
+    const { client } = fakeR2();
+    const db = fakeInstantDb();
+    db.store.dbMeta.set(dbMetaId, { id: dbMetaId, currentVersion: 0 });
+    const cfg = { db, r2Client: client, r2Config, pathKey, authId, ownerId };
+
+    await commitPages(
+      cfg,
+      new Map([
+        [1, new Uint8Array(64).fill(1)],
+        [2, new Uint8Array(64).fill(2)],
+        [3, new Uint8Array(64).fill(3)],
+      ]),
+      dbMetaId,
+      0,
+      3,
+      64,
+    );
+
+    const queryOnceSpy = vi.spyOn(db, "queryOnce");
+    const pages = await fetchPagesBatch(cfg, [1, 2, 3], 1);
+
+    expect(pages.size).toBe(3);
+    expect(Array.from(pages.get(2)!)).toEqual(
+      Array.from(new Uint8Array(64).fill(2)),
+    );
+    // The whole point: one InstantDB query for all 3 pages, not 3 separate
+    // ones (dbWorker.ts's prefetchPages used to do the latter).
+    expect(queryOnceSpy).toHaveBeenCalledOnce();
+  });
+
+  it("picks the highest version <= targetVersion per page, not just the latest commit overall", async () => {
+    const { client } = fakeR2();
+    const db = fakeInstantDb();
+    db.store.dbMeta.set(dbMetaId, { id: dbMetaId, currentVersion: 0 });
+    const cfg = { db, r2Client: client, r2Config, pathKey, authId, ownerId };
+
+    // version=1: pages 1 and 2.
+    await commitPages(
+      cfg,
+      new Map([
+        [1, new Uint8Array(64).fill(10)],
+        [2, new Uint8Array(64).fill(20)],
+      ]),
+      dbMetaId,
+      0,
+      2,
+      64,
+    );
+    // version=2: page 1 only, re-written with different content.
+    await commitPages(
+      cfg,
+      new Map([[1, new Uint8Array(64).fill(11)]]),
+      dbMetaId,
+      1,
+      2,
+      64,
+    );
+
+    // Asking as of version=1 must still return page 1's *version-1* bytes,
+    // even though a newer version=2 row for page 1 now also exists.
+    const asOfV1 = await fetchPagesBatch(cfg, [1, 2], 1);
+    expect(Array.from(asOfV1.get(1)!)).toEqual(
+      Array.from(new Uint8Array(64).fill(10)),
+    );
+    expect(Array.from(asOfV1.get(2)!)).toEqual(
+      Array.from(new Uint8Array(64).fill(20)),
+    );
+
+    const asOfV2 = await fetchPagesBatch(cfg, [1, 2], 2);
+    expect(Array.from(asOfV2.get(1)!)).toEqual(
+      Array.from(new Uint8Array(64).fill(11)),
+    );
+  });
+
+  it("paginates across many pages rows instead of one unbounded query", async () => {
+    const { client } = fakeR2();
+    const db = fakeInstantDb();
+    db.store.dbMeta.set(dbMetaId, { id: dbMetaId, currentVersion: 0 });
+    const cfg = { db, r2Client: client, r2Config, pathKey, authId, ownerId };
+
+    const pageCount = 1200; // forces 3 rounds at PAGES_QUERY_PAGE_SIZE=500
+    const dirty = new Map(
+      Array.from({ length: pageCount }, (_, i) => [
+        i + 1,
+        new Uint8Array(8).fill(i % 256),
+      ]),
+    );
+    await commitPages(cfg, dirty, dbMetaId, 0, pageCount, 8);
+
+    const queryOnceSpy = vi.spyOn(db, "queryOnce");
+    const pageNos = Array.from({ length: pageCount }, (_, i) => i + 1);
+    const pages = await fetchPagesBatch(cfg, pageNos, 1);
+
+    expect(pages.size).toBe(pageCount);
+    // pageNo 777 was written from array index 776 (pageNo = i + 1).
+    expect(Array.from(pages.get(777)!)).toEqual(
+      Array.from(new Uint8Array(8).fill(776 % 256)),
+    );
+    expect(queryOnceSpy).toHaveBeenCalledTimes(3);
+  });
+
+  it("returns an empty map for an empty page-number list without querying at all", async () => {
+    const { client } = fakeR2();
+    const db = fakeInstantDb();
+    const cfg = { db, r2Client: client, r2Config, pathKey, authId, ownerId };
+    const queryOnceSpy = vi.spyOn(db, "queryOnce");
+
+    const pages = await fetchPagesBatch(cfg, [], 1);
+
+    expect(pages.size).toBe(0);
+    expect(queryOnceSpy).not.toHaveBeenCalled();
   });
 });

@@ -12,6 +12,7 @@
 import { id, tx } from "@instantdb/react";
 import type { AwsClient } from "aws4fetch";
 import * as blob from "../crypto/blob";
+import { collectAllPages } from "./instaqlPagination";
 import { computeR2Prefix, generateRawKey } from "./pagePointer";
 import { getObject, putObject } from "./r2";
 import type { R2Config } from "./r2Config";
@@ -20,6 +21,15 @@ import type { R2Config } from "./r2Config";
 // parallelism for per-page R2/InstantDB round-trips, not one at a time
 // (slow) or fully unbounded (risks exhausting connections/R2 rate limits).
 const UPLOAD_BATCH_CONCURRENCY = 8;
+// Same reasoning, for fetchPagesBatch's own R2 GETs -- matches
+// dbWorker.ts's own (recently tuned) prefetch concurrency, which used to
+// live there as its own loop before that loop moved into fetchPagesBatch.
+const FETCH_BATCH_CONCURRENCY = 15;
+// Bounded page size for fetchPagesBatch's own InstantDB query -- even one
+// prefetch batch of many page numbers could return more rows than this if
+// some of them have several historical versions, so it still needs its own
+// pagination loop (collectAllPages), not just one unbounded query.
+const PAGES_QUERY_PAGE_SIZE = 500;
 const CAS_MAX_RETRIES = 3;
 
 export interface InstantPageStoreConfig {
@@ -62,6 +72,93 @@ export async function fetchPage(
   targetVersion: number,
 ): Promise<Uint8Array> {
   const url = await resolvePagePointerUrl(cfg, pageNo, targetVersion);
+  return resolvePageBytes(cfg, url);
+}
+
+/** Batched counterpart to fetchPage -- resolves many page numbers via a
+ * bounded number of InstantDB queries (pageNo: {$in: pageNos}, paginated)
+ * instead of one query per page number, which is what dbWorker.ts's
+ * open()-time prefetch used to do (up to MAX_CACHED_PAGES individual
+ * queries, concurrency-limited but not count-reduced -- fine for a few
+ * hundred pages, not for an account with tens of thousands). Only usable
+ * for a known, up-front page list -- the lazy on-demand path
+ * (remotePageWorker.ts's own use of fetchPage, one page at a time as
+ * SQLite's own xRead needs it) can't be batched this way, since it doesn't
+ * know its next page number until SQLite asks for it. */
+export async function fetchPagesBatch(
+  cfg: InstantPageStoreConfig,
+  pageNos: number[],
+  targetVersion: number,
+): Promise<Map<number, Uint8Array>> {
+  if (pageNos.length === 0) return new Map();
+  const rows = await collectAllPages<{
+    pageNo: number;
+    version: number;
+    pointerFile?: { url: string }[];
+  }>(async (after) => {
+    const result = await cfg.db.queryOnce({
+      pages: {
+        $: {
+          where: {
+            "owner.id": cfg.ownerId,
+            pageNo: { $in: pageNos },
+            version: { $lte: targetVersion },
+          },
+          order: { pageKey: "asc" },
+          limit: PAGES_QUERY_PAGE_SIZE,
+          ...(after ? { after } : {}),
+        },
+        pointerFile: {},
+      },
+    });
+    const pageInfo = result.pageInfo?.pages;
+    return {
+      rows: result.data.pages ?? [],
+      hasNextPage: !!pageInfo?.hasNextPage,
+      endCursor: pageInfo?.endCursor,
+    };
+  });
+
+  // Multiple historical versions of the same page can come back -- keep
+  // only the highest version <= targetVersion for each requested pageNo
+  // (the same "latest version at or before this snapshot" rule
+  // resolvePagePointerUrl's own order-by-version-desc/limit-1 enforces per
+  // page; a single batched query can't apply a per-group limit, so this is
+  // resolved client-side instead).
+  const bestUrlByPageNo = new Map<number, string>();
+  const bestVersionByPageNo = new Map<number, number>();
+  for (const row of rows) {
+    const url = row.pointerFile?.[0]?.url;
+    if (!url) continue;
+    const bestVersion = bestVersionByPageNo.get(row.pageNo);
+    if (bestVersion === undefined || row.version > bestVersion) {
+      bestVersionByPageNo.set(row.pageNo, row.version);
+      bestUrlByPageNo.set(row.pageNo, url);
+    }
+  }
+
+  const result = new Map<number, Uint8Array>();
+  const entries = [...bestUrlByPageNo.entries()];
+  for (let i = 0; i < entries.length; i += FETCH_BATCH_CONCURRENCY) {
+    const batch = entries.slice(i, i + FETCH_BATCH_CONCURRENCY);
+    const resolved = await Promise.all(
+      batch.map(
+        async ([pageNo, url]) =>
+          [pageNo, await resolvePageBytes(cfg, url)] as const,
+      ),
+    );
+    resolved.forEach(([pageNo, bytes]) => result.set(pageNo, bytes));
+  }
+  return result;
+}
+
+// Shared by fetchPage/fetchPagesBatch: given a $files pointerFile url,
+// download+decrypt it to recover raw_key, then GET the real page bytes
+// from R2.
+async function resolvePageBytes(
+  cfg: InstantPageStoreConfig,
+  url: string,
+): Promise<Uint8Array> {
   const content = await downloadPointerContent(url);
   const rawKey = utf8Decoder.decode(await blob.decrypt(cfg.pathKey, content));
   const rawPath = `${computeR2Prefix(cfg.authId)}/${rawKey}`;

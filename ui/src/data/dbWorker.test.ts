@@ -186,38 +186,73 @@ function mockBackend(
         return { data: { id } };
       }),
     },
+    // Supports both fetchPage's single-pageNo query (order by version desc,
+    // limit 1) and fetchPagesBatch's own pageNo: {$in: [...]} + order by
+    // pageKey asc + cursor pagination -- real queryOnce() resolves with
+    // {data: {...}, pageInfo: {...}} as *siblings* (confirmed against
+    // @instantdb/core's own queryOnce() type), pageInfo never nested inside
+    // data, so this mirrors that exactly rather than the shape it's easy to
+    // assume.
     queryOnce: vi.fn(async (q: any) => {
       if (q.pages) {
-        const { where, order, limit } = q.pages.$;
-        let rows = [...store.pages.values()].filter(
-          (r) =>
-            r.owner === where["owner.id"] &&
-            r.pageNo === where.pageNo &&
-            r.version <= where.version.$lte,
-        );
-        rows.sort((a, b) =>
-          order.version === "desc"
-            ? b.version - a.version
-            : a.version - b.version,
-        );
-        rows = rows.slice(0, limit);
+        const { where, order, limit, after } = q.pages.$;
+        let rows = [...store.pages.values()].filter((r) => {
+          if (r.owner !== where["owner.id"]) return false;
+          if (where.pageNo !== undefined) {
+            if (
+              typeof where.pageNo === "object" &&
+              where.pageNo !== null &&
+              "$in" in where.pageNo
+            ) {
+              if (!where.pageNo.$in.includes(r.pageNo)) return false;
+            } else if (r.pageNo !== where.pageNo) {
+              return false;
+            }
+          }
+          if (
+            where.version?.$lte !== undefined &&
+            r.version > where.version.$lte
+          ) {
+            return false;
+          }
+          return true;
+        });
+        const paginated = order?.pageKey === "asc";
+        if (paginated) {
+          rows.sort((a, b) =>
+            a.pageKey < b.pageKey ? -1 : a.pageKey > b.pageKey ? 1 : 0,
+          );
+        } else if (order?.version) {
+          rows.sort((a, b) =>
+            order.version === "desc"
+              ? b.version - a.version
+              : a.version - b.version,
+          );
+        }
+        if (after !== undefined) rows = rows.filter((r) => r.pageKey > after);
+        const hasNextPage = limit !== undefined && rows.length > limit;
+        if (limit !== undefined) rows = rows.slice(0, limit);
+        const endCursor =
+          rows.length > 0 ? rows[rows.length - 1].pageKey : after;
+        const mapped = rows.map((r) => {
+          const file = store.$files.get(r.pointerFile);
+          return {
+            ...r,
+            pointerFile: file
+              ? [
+                  {
+                    url: `instant-file://${file.id}`,
+                    rawKey: file.rawKey,
+                  },
+                ]
+              : [],
+          };
+        });
         return {
-          data: {
-            pages: rows.map((r) => {
-              const file = store.$files.get(r.pointerFile);
-              return {
-                ...r,
-                pointerFile: file
-                  ? [
-                      {
-                        url: `instant-file://${file.id}`,
-                        rawKey: file.rawKey,
-                      },
-                    ]
-                  : [],
-              };
-            }),
-          },
+          data: { pages: mapped },
+          pageInfo: paginated
+            ? { pages: { hasNextPage, endCursor } }
+            : undefined,
         };
       }
       if (q.dbMeta) {
