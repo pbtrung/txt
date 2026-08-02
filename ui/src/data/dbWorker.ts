@@ -105,7 +105,7 @@ const R2_CRED_RETRY_DELAY_MS = 30 * 1000;
 // upload-side batching) -- each page here is a query + a pointer download +
 // an R2 GET, so one at a time would be slow for anything beyond a handful
 // of pages, and fully unbounded risks exhausting connections.
-const PREFETCH_CONCURRENCY = 8;
+const PREFETCH_CONCURRENCY = 15;
 
 // Independent of MAX_CACHED_PAGES in principle, but currently set equal to
 // it: prefetch the whole cache budget upfront (right after open() learns

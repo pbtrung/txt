@@ -28,7 +28,7 @@ const SQLITE_ACCESS_EXISTS = 0;
 
 // Bounds how much of a large document's pages stay resident across a long
 // reading session -- unbounded would otherwise grow forever, since nothing
-// ever evicted a page once fetched. 4000 pages (~16MB at this build's 4KB
+// ever evicted a page once fetched. 500 pages (~16MB at this build's 32KB
 // page size) is a small vault-wide budget, not per-document; the cache is
 // naturally reset to empty on refresh() anyway (state/VaultContext.tsx's
 // refresh path re-opens against a brand new registerRemoteVfs() call, a
@@ -37,7 +37,7 @@ const SQLITE_ACCESS_EXISTS = 0;
 // primeCache below) at the same size -- fetching more pages up front than
 // the cache can hold would just evict some of them before SQLite ever
 // gets to read them.
-export const MAX_CACHED_PAGES = 4000;
+export const MAX_CACHED_PAGES = 500;
 
 export interface RemoteVfsOptions {
   name?: string;
