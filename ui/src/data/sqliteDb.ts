@@ -26,6 +26,17 @@ const SQLITE_TRANSIENT = -1;
 export interface OpenOptions {
   vfsName?: string;
   rawKey?: Uint8Array;
+  /** Must be set before sqlite3_key() whenever this database's own page
+   * size differs from SQLCipher's compiled-in default (32768 for this
+   * account's real db, via txt/constants.ts's SQLCIPHER_PAGE_SIZE) --
+   * this codec has no plaintext header for SQLite to sniff the real page
+   * size from otherwise, so opening (or reopening) a non-default-page-size
+   * database without this fails to decrypt page 1 at all ("unrecognized
+   * magic/version bytes for pgno=1"), the same fix (and same empirically-
+   * confirmed reasoning) as the CLI's SqlCipherBuilder.setCipherPageSize.
+   * Omit for a fresh, default-page-size test fixture that's never reopened
+   * against a different value. */
+  pageSize?: number;
   readOnly?: boolean;
 }
 
@@ -54,8 +65,13 @@ export class SqliteDb {
     if (rc !== SQLITE_OK)
       throw new Error(`sqlite3_open_v2('${path}') failed: rc=${rc}`);
     const wrapper = new SqliteDb(mod, db);
+    if (opts.pageSize) wrapper.setCipherPageSize(opts.pageSize);
     if (opts.rawKey) wrapper.key(opts.rawKey);
     return wrapper;
+  }
+
+  private setCipherPageSize(pageSize: number): void {
+    this.exec(`PRAGMA cipher_default_page_size = ${pageSize};`);
   }
 
   private key(rawKey: Uint8Array): void {

@@ -57,3 +57,36 @@ describe("Statement.stepDone()", () => {
     db.close();
   });
 });
+
+describe("OpenOptions.pageSize", () => {
+  it("reopening a non-default-page-size db requires pageSize, or page 1 fails to decrypt", async () => {
+    const rootKey = randomBytes(256);
+    const path = `/sqlite-db-test-pagesize-${dbCounter++}.db`;
+
+    const created = await SqliteDb.open(path, { rawKey: rootKey });
+    // page_size only takes effect while the db is still empty -- must be
+    // set before the first CREATE TABLE.
+    created.exec("PRAGMA page_size = 8192;");
+    created.run("CREATE TABLE t (id INTEGER PRIMARY KEY);");
+    created.run("INSERT INTO t (id) VALUES (1);");
+    created.close();
+
+    const reopenedWithoutPageSize = await SqliteDb.open(path, {
+      rawKey: rootKey,
+    });
+    expect(() => reopenedWithoutPageSize.prepare("SELECT id FROM t;")).toThrow(
+      "prepare failed",
+    );
+    reopenedWithoutPageSize.close();
+
+    const reopenedWithPageSize = await SqliteDb.open(path, {
+      rawKey: rootKey,
+      pageSize: 8192,
+    });
+    const stmt = reopenedWithPageSize.prepare("SELECT id FROM t;");
+    expect(stmt.step()).toBe(true);
+    expect(stmt.columnInt64(0)).toBe(1n);
+    stmt.finalize();
+    reopenedWithPageSize.close();
+  });
+});

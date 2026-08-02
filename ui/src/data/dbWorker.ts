@@ -29,10 +29,11 @@
 // VaultContext.tsx's git history) -- queuing every call through one promise
 // chain keeps each write+commit atomic relative to the next.
 
-import { init, tx } from "@instantdb/react";
+import { tx } from "@instantdb/react";
 import { verbose } from "../log";
 import * as access from "./access";
 import * as bookmarks from "./bookmarks";
+import { createInstantClient } from "./instantClient";
 import * as instantPageStore from "./instantPageStore";
 import type { InstantPageStoreConfig } from "./instantPageStore";
 import { loadLibrary } from "./library";
@@ -182,11 +183,14 @@ export async function open(params: OpenParams): Promise<void> {
   await close();
   storedOpenParams = params;
 
-  instantDb = init({ appId: params.instantAppId });
+  verbose("dbWorker: open() -- creating this worker's own InstantDB client");
+  instantDb = createInstantClient(params.instantAppId);
+  verbose("dbWorker: open() -- signing in (db.auth.signInWithIdToken)");
   await instantDb.auth.signInWithIdToken({
     clientName: params.instantClientName,
     idToken: params.idToken,
   });
+  verbose("dbWorker: open() -- signed in");
 
   const r2Prefix = computeR2Prefix(params.authId);
   pageStoreCfg = {
@@ -205,12 +209,15 @@ export async function open(params: OpenParams): Promise<void> {
   // pinning currentVersion and having a lease actually recorded for it is a
   // window GC could still delete a page this snapshot needs.
   readerId = crypto.randomUUID();
+  verbose(`dbWorker: open() -- registering activeReaders lease ${readerId}`);
   await beginRead(readerId, params.currentVersion);
+  verbose("dbWorker: open() -- lease registered");
   renewReaderTimer = setInterval(
     () => void renewReader(),
     READER_RENEW_INTERVAL_MS,
   );
 
+  verbose("dbWorker: open() -- spawning nested remotePageWorker");
   pageWorker = await startRemotePageWorker(
     {
       instantAppId: params.instantAppId,
@@ -225,9 +232,12 @@ export async function open(params: OpenParams): Promise<void> {
     params.pageSize,
     params.currentVersion,
   );
+  verbose("dbWorker: open() -- remotePageWorker ready");
   const sessionId = crypto.randomUUID();
   const backedPath = `/vault-${sessionId}.db`;
+  verbose("dbWorker: open() -- loading sqlcipher.wasm");
   const mod = await loadWasm();
+  verbose("dbWorker: open() -- sqlcipher.wasm loaded, registering VFS");
   vfs = registerRemoteVfs(mod, {
     name: `remotevfs-${sessionId}`,
     pageSize: params.pageSize,
@@ -236,16 +246,20 @@ export async function open(params: OpenParams): Promise<void> {
     backedPath,
     fetchPage: pageWorker.fetchPage,
   });
+  verbose(`dbWorker: open() -- prefetching up to ${params.pageCount} page(s)`);
   const prefetched = await prefetchPages(
     pageStoreCfg,
     params.pageCount,
     params.currentVersion,
   );
   vfs.primeCache(prefetched);
+  verbose("dbWorker: open() -- keying and opening the SQLCipher db");
   db = await SqliteDb.open(backedPath, {
     vfsName: vfs.name,
     rawKey: params.dbKey,
+    pageSize: params.pageSize,
   });
+  verbose("dbWorker: open() -- done");
 }
 
 /** Renews this session's own reader lease at its own latest known snapshot

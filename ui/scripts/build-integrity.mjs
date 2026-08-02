@@ -10,11 +10,16 @@
 //   2. SHA-512s every file under dist/ (including the now-SRI-tagged
 //      index.html) into dist/manifest.json.
 //   3. Writes dist/_headers (Cloudflare Pages' own response-header config
-//      file -- see docker/README.md; ui/ deploys there, not from docker/,
-//      which is rqlite/OpenResty only). Narrows the direct-CDN-visit CSP's
-//      connect-src from index.html's own <meta> tag's deliberately-open '*'
-//      down to 'self' plus this deployment's own rqlite/OpenResty endpoint
-//      (--build-creds's rqlite_url) and R2's host pattern; sets
+//      file). Narrows the direct-CDN-visit CSP's connect-src from
+//      index.html's own <meta> tag's deliberately-open '*' down to 'self'
+//      plus the fixed set of hosts this app actually talks to: InstantDB's
+//      API/websocket host, Firebase Auth's Identity Toolkit/token-refresh
+//      hosts, and R2's host pattern -- all fixed, well-known hosts now,
+//      unlike the old Turso/rqlite-backed design's own per-deployment
+//      database URL, so nothing here needs to come from build-creds.json.
+//      Also widens script-src/frame-src for Firebase Auth's reCAPTCHA
+//      Enterprise abuse-protection check, mirroring index.html's own <meta>
+//      CSP fix for the same requirement. Sets
 //      Access-Control-Allow-Origin: null (the literal string, not a
 //      wildcard) so local_index.html -- opened via file://, which sends
 //      Origin: null on its cross-origin fetches -- can actually read the
@@ -49,20 +54,15 @@
 //      creds/local_index.html -- never dist/, so it's never uploaded to
 //      the CDN. This is the file a user opens (over the same
 //      cross-origin-isolated Cloudflare Pages deployment, not bare
-//      file:///content://, per docker/README.md) to verify everything
-//      before the real app ever renders; see ui/src/localIndex/ for that
-//      verification logic and why it can't live inside dist/ itself.
+//      file:///content://) to verify everything before the real app ever
+//      renders; see ui/src/localIndex/ for that verification logic and why
+//      it can't live inside dist/ itself.
 //
 // build-creds.json (gitignored, ui/build-creds.json by default) is a small,
-// operator-owned deployment config -- asset_base_url/rqlite_url/
-// slhdsa_256f_priv_key are all build-time secrets/facts about *this
-// deployment*, unrelated to any individual end user's own vault creds (see
-// data/creds.ts) -- so it gets its own file rather than reusing the old
-// admin_creds.json shape from the Turso-backed design. rqlite_url mirrors
-// data/creds.ts's own field name for the same concept (a Creds.rqlite_url
-// value one operator account would plausibly already have on hand), even
-// though this is a separate, deployment-level fact, not an end user's own
-// vault credential.
+// operator-owned deployment config -- asset_base_url/slhdsa_256f_priv_key
+// are build-time secrets/facts about *this deployment*, unrelated to any
+// individual end user's own vault creds (see data/creds.ts) -- so it gets
+// its own file rather than reusing that one.
 
 import { createHash } from "node:crypto";
 import {
@@ -179,22 +179,27 @@ function buildManifest() {
 // tag, so it's the one that actually gets inherited by data/dbWorker.ts's
 // Worker, where data/wasmLoader.ts's blob-URL import() of sqlcipher.js runs)
 // except connect-src, narrowed here from that meta tag's deliberately-open
-// '*' down to 'self' plus the two host patterns the app actually talks to:
-// this deployment's own rqlite/OpenResty endpoint (a single,
-// operator-controlled host, unlike the old Turso-backed design where every
-// customer had their own database URL -- hence baking in the real host here
-// instead of a wildcard) and R2's standard custom-domain pattern. A real
-// HTTP response header and a <meta> CSP both apply at once and combine by
-// intersection, so this tightens the effective policy for a direct CDN
-// visit without having to touch the per-account-agnostic meta tag itself.
-function distCsp(rqliteUrl) {
+// '*' down to 'self' plus the fixed hosts the app actually talks to:
+// InstantDB's API/websocket host, Firebase Auth's Identity Toolkit/
+// token-refresh hosts, and R2's standard custom-domain pattern -- all
+// fixed, well-known hosts now, unlike the old Turso/rqlite-backed design's
+// own per-deployment database URL, so nothing here needs to come from
+// build-creds.json. A real HTTP response header and a <meta> CSP both apply
+// at once and combine by intersection, so this tightens the effective
+// policy for a direct CDN visit without having to touch the
+// per-account-agnostic meta tag itself.
+function distCsp() {
   return (
     "default-src 'self'; " +
-    "script-src 'self' 'wasm-unsafe-eval' blob:; " +
+    "script-src 'self' 'wasm-unsafe-eval' blob: https://apis.google.com https://www.gstatic.com; " +
+    "frame-src https://www.google.com; " +
     "style-src 'self' 'unsafe-inline'; " +
     "img-src 'self' data:; " +
     "font-src 'self' data:; " +
-    `connect-src 'self' ${new URL(rqliteUrl).origin} https://*.r2.cloudflarestorage.com; ` +
+    "connect-src 'self' " +
+    "https://api.instantdb.com wss://api.instantdb.com " +
+    "https://identitytoolkit.googleapis.com https://securetoken.googleapis.com " +
+    "https://*.r2.cloudflarestorage.com; " +
     "object-src 'none'; " +
     "base-uri 'self'; " +
     "form-action 'self';"
@@ -203,13 +208,13 @@ function distCsp(rqliteUrl) {
 
 // See this file's own header comment for what each header is for.
 // `credentialless` (not the stricter `require-corp`) for COEP: `require-corp`
-// would also block the app's own cross-origin fetches to the rqlite API and
-// to R2, since neither service necessarily sends back a
+// would also block the app's own cross-origin fetches to InstantDB and to
+// R2, since neither service necessarily sends back a
 // Cross-Origin-Resource-Policy header of its own.
-function writeHeadersFile(rqliteUrl) {
+function writeHeadersFile() {
   const headers =
     `/*\n` +
-    `  Content-Security-Policy: ${distCsp(rqliteUrl)}\n` +
+    `  Content-Security-Policy: ${distCsp()}\n` +
     `  Access-Control-Allow-Origin: null\n` +
     `  Cross-Origin-Opener-Policy: same-origin\n` +
     `  Cross-Origin-Embedder-Policy: credentialless\n`;
@@ -332,18 +337,13 @@ async function main() {
     buildCredsPath,
     "asset_base_url",
   );
-  const rqliteUrl = requireStringField(
-    buildCreds,
-    buildCredsPath,
-    "rqlite_url",
-  );
   const { secretKey, publicKey, generated } = loadOrCreateKeypair(buildCreds);
 
   const originalHtml = readFileSync(INDEX_HTML_PATH, "utf8");
   writeFileSync(INDEX_HTML_PATH, addSri(originalHtml), "utf8");
 
   const manifest = buildManifest();
-  writeHeadersFile(rqliteUrl);
+  writeHeadersFile();
   const manifestBytes = Buffer.from(JSON.stringify(manifest), "utf8");
   writeFileSync(join(DIST_DIR, "manifest.json"), manifestBytes);
   writeFileSync(
