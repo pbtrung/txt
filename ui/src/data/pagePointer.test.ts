@@ -20,8 +20,8 @@ describe("computeR2Prefix", () => {
 
 describe("generateRawKey", () => {
   // No auth.id/prefix involved -- generateRawKey only ever produces the
-  // random suffix that gets encrypted into $files' uploaded content; the
-  // real R2 object address (`${computeR2Prefix(authId)}/${rawKey}`) is
+  // random suffix that gets encrypted into pages.path (encodePagePointerContent);
+  // the real R2 object address (`${computeR2Prefix(authId)}/${rawKey}`) is
   // assembled separately at the point of the actual GET/PUT.
   it("generates a fresh random key on every call", () => {
     const a = generateRawKey();

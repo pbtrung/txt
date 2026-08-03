@@ -5,7 +5,7 @@ import fixtures from "./__fixtures__/vectors.json";
 import { base64ToBytes, bytesToHex } from "./testUtil";
 
 describe("blob", () => {
-  it("encrypt() matches txt/crypto.py's Blob.encrypt byte-for-byte for an uncompressed payload", async () => {
+  it("encrypt() matches this repo's fixed reference vectors byte-for-byte for an uncompressed payload", async () => {
     const { ikm, salt, payload, blob: expected } = fixtures.plainBlob;
     const result = await blob.encrypt(
       base64ToBytes(ikm),
@@ -18,7 +18,7 @@ describe("blob", () => {
     expect(bytesToHex(result)).toBe(bytesToHex(base64ToBytes(expected)));
   });
 
-  it("decrypt() recovers a plain blob produced by txt/crypto.py's Blob.encrypt", async () => {
+  it("decrypt() recovers a plain blob from this repo's fixed reference vectors", async () => {
     const { ikm, payload, blob: encoded } = fixtures.plainBlob;
     const result = await blob.decrypt(
       base64ToBytes(ikm),
@@ -28,11 +28,12 @@ describe("blob", () => {
     expect(bytesToHex(result)).toBe(bytesToHex(base64ToBytes(payload)));
   });
 
-  it("decrypt() reads a brotli-compressed blob produced by Python's brotli + txt/crypto.py", async () => {
+  it("decrypt() reads a brotli-compressed blob from this repo's fixed reference vectors", async () => {
     // Brotli encoders aren't byte-deterministic across implementations, so
-    // this only checks the JS *decoder* against Python-brotli-compressed
-    // ciphertext -- the direction that actually matters for reading a vault
-    // ingested by the Python CLI.
+    // this only checks the JS *decoder* against a fixed, independently-
+    // compressed ciphertext -- the direction that actually matters for
+    // reading real stored data, not for producing byte-identical output
+    // across every possible encoder.
     const { ikm, payload, blob: encoded } = fixtures.compressedBlob;
     const result = await blob.decrypt(
       base64ToBytes(ikm),

@@ -50,10 +50,12 @@ export interface WasmModule {
     writeFile(path: string, data: Uint8Array): void;
     readFile(path: string): Uint8Array;
   };
-  // See txt/wasm.ts's identical declaration for why this stays loose rather
-  // than forcing a false (number | bigint) union onto every callback's
-  // every parameter -- the real param types vary per registered function,
-  // driven entirely by the runtime-only `signature` string.
+  // Stays loose rather than forcing a false (number | bigint) union onto
+  // every callback's every parameter -- the real param types vary per
+  // registered function, driven entirely by the runtime-only `signature`
+  // string. The CLI's own equivalent (txt/lazyVfs.ts/r2Vfs.ts) sidesteps
+  // this the same way, just less formally -- it types its own `mod` as
+  // `any` throughout rather than declaring a shared WasmModule interface.
   addFunction(fn: (...args: any[]) => number, signature: string): number;
   removeFunction(ptr: number): void;
 

@@ -1,14 +1,14 @@
 // Browser mirror of txt/remotePageStore.ts: the read (fetchPage) and write
 // (commitPages) primitives for the page store, talking to InstantDB via the
-// real client SDK (permission-rule-gated -- db.queryOnce/db.transact/
-// db.storage.uploadFile, not an admin token a browser can never safely
-// hold) and R2 via aws4fetch (r2.ts). Unlike the CLI's version, commitPages
-// here actually has to survive a concurrent writer: docs/data_model.md's
-// CAS check (dbMeta's update rule, newData.currentVersion ==
-// data.currentVersion + 1) is enforced by InstantDB's own permission rules
-// for a client-SDK write, so a losing writer's transact() is rejected
-// outright -- retryCommit below is what recovers from that, by re-reading
-// the real current version and retrying, up to a bounded number of times.
+// real client SDK (permission-rule-gated -- db.queryOnce/db.transact, not
+// an admin token a browser can never safely hold) and R2 via aws4fetch
+// (r2.ts). Unlike the CLI's version, commitPages here actually has to
+// survive a concurrent writer: docs/data_model.md's CAS check (dbMeta's
+// update rule, newData.currentVersion == data.currentVersion + 1) is
+// enforced by InstantDB's own permission rules for a client-SDK write, so a
+// losing writer's transact() is rejected outright -- commitPages' own retry
+// loop is what recovers from that, by re-reading the real current version
+// (fetchCurrentVersion) and retrying, up to CAS_MAX_RETRIES times.
 import { id, tx } from "@instantdb/react";
 import type { AwsClient } from "aws4fetch";
 import { collectAllPages } from "./instaqlPagination";

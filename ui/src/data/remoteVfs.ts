@@ -1,6 +1,9 @@
-// Browser port of txt/remoteVfs.ts, extended with real write support: that
-// version is read-only (--test-perf never writes), but the browser needs to
-// persist bookmarks/read-position/deletes back to the page store.
+// The original of this design -- txt/lazyVfs.ts (the CLI's --migrate) is a
+// later Node port of this file, not the other way around, though that one
+// reads against a fixed snapshot version+worker_threads Atomics bridge
+// instead of this file's own live-refreshable snapshot+real Worker bridge.
+// Supports real writes: bookmarks/read-position/deletes get persisted back
+// to the page store from here.
 //
 // Design: xWrite/xTruncate on the backed path are fully synchronous and
 // in-memory only (a Map of dirty pages) -- SQLite's own xWrite/xSync
@@ -28,7 +31,7 @@ const SQLITE_ACCESS_EXISTS = 0;
 
 // Bounds how much of a large document's pages stay resident across a long
 // reading session -- unbounded would otherwise grow forever, since nothing
-// ever evicted a page once fetched. 500 pages (~16MB at this build's 32KB
+// ever evicted a page once fetched. 600 pages (~19MB at this build's 32KB
 // page size) is a small vault-wide budget, not per-document; the cache is
 // naturally reset to empty on refresh() anyway (state/VaultContext.tsx's
 // refresh path re-opens against a brand new registerRemoteVfs() call, a
@@ -37,7 +40,7 @@ const SQLITE_ACCESS_EXISTS = 0;
 // primeCache below) at the same size -- fetching more pages up front than
 // the cache can hold would just evict some of them before SQLite ever
 // gets to read them.
-export const MAX_CACHED_PAGES = 500;
+export const MAX_CACHED_PAGES = 600;
 
 export interface RemoteVfsOptions {
   name?: string;

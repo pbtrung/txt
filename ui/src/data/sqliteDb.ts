@@ -1,4 +1,4 @@
-// Browser port of txt/sqlite.ts's SqliteDb/Statement -- same raw
+// Browser port of txt/sqlcipherBuilder.ts's SqlCipherBuilder -- same raw
 // SQLite/SQLCipher C API surface (see wasmLoader.ts's WasmModule), minus
 // the Node-only bits that don't apply here: no flushToHost()/preload (this
 // project's own on-disk file mirroring), since a browser session never

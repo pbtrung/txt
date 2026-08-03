@@ -1,11 +1,11 @@
 // Exercises registerRemoteVfs's real paging/caching/decryption logic (fake
-// *synchronous* fetchPage -- a plain in-memory lookup, no worker/network,
-// same scope as txt/remoteVfs.test.ts) plus the write/commit path that file
-// doesn't have at all (txt/ only ever reads). Proves: SQLite can open and
-// decrypt a real db while only ever being handed pages it actually asks
-// for; writes stay in memory until an explicit commit(); commit() sends
-// exactly the dirty pages plus the correct old/new version and page count;
-// a committer that rejects (instantPageStore.ts's commitPages, once its own
+// *synchronous* fetchPage -- a plain in-memory lookup, no worker/network) and
+// its write/commit path (txt/ has no test framework at all -- CLAUDE.md's
+// Verification section -- so there's no CLI-side equivalent test to scope
+// against). Proves: SQLite can open and decrypt a real db while only ever
+// being handed pages it actually asks for; writes stay in memory until an
+// explicit commit(); commit() sends exactly the dirty pages plus the correct
+// old/new version and page count; a committer that rejects (instantPageStore.ts's commitPages, once its own
 // internal CAS retries are exhausted) leaves dirty pages intact so the
 // caller can retry.
 

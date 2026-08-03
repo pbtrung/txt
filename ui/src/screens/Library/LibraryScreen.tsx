@@ -22,6 +22,7 @@ import { ProgressStatus } from "../../components/ProgressStatus";
 import { VirtualizedListGroup } from "../../components/VirtualizedListGroup";
 import { Wordmark } from "../../components/Wordmark";
 import { useDropdown } from "../../hooks/useDropdown";
+import { verbose } from "../../log";
 import { useVault } from "../../state/VaultContext";
 import {
   allBooksSorted,
@@ -472,7 +473,16 @@ export function LibraryScreen() {
                         <BookRow
                           book={book}
                           onClick={() => openBook(book)}
-                          onDelete={() => void removeAccessEntry(book.txtId)}
+                          onDelete={() =>
+                            removeAccessEntry(book.txtId).catch(
+                              (err: unknown) => {
+                                verbose(
+                                  "LibraryScreen: removeAccessEntry failed",
+                                  err,
+                                );
+                              },
+                            )
+                          }
                           hidePartNum
                         />
                       )}
@@ -494,7 +504,16 @@ export function LibraryScreen() {
                           line={item.line}
                           txtPreview={item.txtPreview}
                           onClick={() => openBookmark(item)}
-                          onDelete={() => void removeBookmarkEntry(item.id)}
+                          onDelete={() =>
+                            removeBookmarkEntry(item.id).catch(
+                              (err: unknown) => {
+                                verbose(
+                                  "LibraryScreen: removeBookmarkEntry failed",
+                                  err,
+                                );
+                              },
+                            )
+                          }
                           deleteAriaLabel={`Remove this bookmark in ${item.info.title}`}
                         />
                       )}

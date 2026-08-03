@@ -75,8 +75,12 @@ const books: LibraryBook[] = [
   }),
 ];
 
-const removeAccessEntry = vi.fn();
-const removeBookmarkEntry = vi.fn();
+// Both are real async functions on VaultContextValue (Promise<void>/
+// Promise<BookmarksMap>) -- mockResolvedValue, not a bare vi.fn(), so
+// LibraryScreen.tsx's own .catch() on their return value has a real Promise
+// to call it on, matching the real implementation's contract.
+const removeAccessEntry = vi.fn().mockResolvedValue(undefined);
+const removeBookmarkEntry = vi.fn().mockResolvedValue(new Map());
 const lock = vi.fn();
 const refresh = vi.fn();
 

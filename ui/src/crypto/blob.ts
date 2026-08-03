@@ -1,7 +1,8 @@
 // Encrypt/Decrypt per docs/crypto.md's blob format:
 // magic || version || salt || ciphertext || tag.
-// Mirrors txt/crypto.py's Blob class exactly -- same field layout, same HKDF
-// key/IV split, same optional brotli step for structured (JSON) payloads.
+// Mirrors txt/crypto.ts's CryptoEngine exactly -- same field layout, same
+// HKDF key/IV split, same optional brotli step for structured (JSON)
+// payloads.
 
 import * as c from "./constants";
 import { concatBytes, randomBytes } from "./bytes";

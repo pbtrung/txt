@@ -1,9 +1,9 @@
-// Thin wrapper around the brotli-wasm package, mirroring how txt/crypto.py's
-// Blob uses Python's `brotli` module: compress before encrypting a structured
-// (JSON) payload, decompress after decrypting one. Brotli is a deterministic
-// public format (RFC 7932), so any conformant decoder reads any conformant
-// encoder's output -- blobs compressed here stay readable by the Python CLI
-// and vice versa, no version negotiation needed.
+// Thin wrapper around the brotli-wasm package, mirroring how txt/crypto.ts's
+// CryptoEngine uses Node's own `zlib` brotli functions: compress before
+// encrypting a structured (JSON) payload, decompress after decrypting one.
+// Brotli is a deterministic public format (RFC 7932), so any conformant
+// decoder reads any conformant encoder's output -- blobs compressed here
+// stay readable by the CLI and vice versa, no version negotiation needed.
 //
 // brotli-wasm ships a browser build (fetches its .wasm via a URL Vite
 // rewrites at bundle time -- the officially documented usage) and a Node

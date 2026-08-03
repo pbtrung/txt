@@ -36,7 +36,8 @@ function firstLinked(rows: any, what: string): any {
 /** Queries this account's $users/dbMeta/credStore rows (client SDK, subject
  * to instant.perms.ts's rules -- isAdmin || isOwner, same as everywhere
  * else) and unwraps user_root_key -> umk -> credStore.content ->
- * {r2_config, path_key, db_key}, per docs/data_model.md's Key Hierarchy.
+ * {r2_config, path_key, db_key}, per docs/data_model.md's Entities section
+ * (credStore).
  * credStore's "own row" is the one where both owner and user link back to
  * this same auth.id (mirrors txt/collectGarbage.ts's resolveOwnCredStore) --
  * a single owner can hold other rows too (e.g. an admin's copy of another

@@ -1,4 +1,4 @@
-// Byte lengths and blob-format fields, mirroring txt/blobCipher.ts's own
+// Byte lengths and blob-format fields, mirroring txt/constants.ts's own
 // constants 1:1. See docs/crypto.md.
 
 export const MAGIC = Uint8Array.of(0x54, 0x58);

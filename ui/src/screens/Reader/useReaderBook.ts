@@ -20,6 +20,7 @@ import { useSearchParams } from "react-router-dom";
 import type { Bookmark } from "../../data/bookmarks";
 import type { BookInfo } from "../../data/metadata";
 import { decodePart } from "../../data/parts";
+import { verbose } from "../../log";
 import { useVault } from "../../state/VaultContext";
 import { clampPartNum } from "./readerModel";
 
@@ -139,9 +140,17 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
   useEffect(() => {
     if (!session || loading) return;
 
-    void recordReadPosition(txtId, {
+    // Fire-and-forget on purpose (this shouldn't block showing the part
+    // text), but not silently: a real failure here (e.g. instantPageStore.ts's
+    // CAS retries exhausted because another session committed first) would
+    // otherwise be an entirely silent unhandled rejection with zero trace of
+    // what happened -- logged rather than surfaced as a blocking error, since
+    // a stale read position doesn't stop reading from working.
+    recordReadPosition(txtId, {
       lastPartNum: currentPartNum,
       lastAccessedMs: Date.now(),
+    }).catch((err: unknown) => {
+      verbose("useReaderBook: recordReadPosition failed", err);
     });
 
     const cachedText = partTextCache.current.get(currentPartNum);
@@ -227,9 +236,15 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
         (b) => b.partNum === currentPartNum && b.line === line,
       );
       if (existing) {
-        void removeBookmarkEntry(existing.id);
+        removeBookmarkEntry(existing.id).catch((err: unknown) => {
+          verbose("useReaderBook: removeBookmarkEntry failed", err);
+        });
       } else {
-        void addBookmarkEntry(txtId, currentPartNum, line, txtPreview);
+        addBookmarkEntry(txtId, currentPartNum, line, txtPreview).catch(
+          (err: unknown) => {
+            verbose("useReaderBook: addBookmarkEntry failed", err);
+          },
+        );
       }
     },
     [bookmarks, currentPartNum, addBookmarkEntry, removeBookmarkEntry, txtId],
@@ -237,7 +252,9 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
 
   const removeBookmark = useCallback(
     (bookmarkId: number) => {
-      void removeBookmarkEntry(bookmarkId);
+      removeBookmarkEntry(bookmarkId).catch((err: unknown) => {
+        verbose("useReaderBook: removeBookmarkEntry failed", err);
+      });
     },
     [removeBookmarkEntry],
   );

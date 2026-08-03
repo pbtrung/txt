@@ -376,13 +376,11 @@ export async function commitOrThrow(): Promise<void> {
 }
 
 /** This session's remoteVfs.ts page-fetch stats (roundtrip count/timing,
- * bytes fetched) -- mirrors txt/remoteVfs.ts's identical RemoteVfsStats,
- * which txt.ts --test-perf reports on the CLI side; this is ui/'s own
- * consumer of the same instrumentation (VaultContext.tsx logs a summary
- * after unlock's loadLibrary/loadBookmarksMap). Only counts pages fetched
- * individually via getPage() -- prefetchPages' batched reads bypass it
- * entirely via vfs.primeCache(), so this reflects cache misses past the
- * prefetch, not total pages read. */
+ * bytes fetched) -- VaultContext.tsx logs a summary after unlock's
+ * loadLibrary/loadBookmarksMap. Only counts pages fetched individually via
+ * getPage() -- prefetchPages' batched reads bypass it entirely via
+ * vfs.primeCache(), so this reflects cache misses past the prefetch, not
+ * total pages read. */
 export function fetchVfsStats(): RemoteVfsStats {
   const { vfs } = requireOpen();
   return vfs.stats;

@@ -7,29 +7,29 @@ function bytesRange(n: number): Uint8Array {
 }
 
 describe("encode", () => {
-  it("matches txt/base32.py's encode() for 32 sequential bytes", () => {
+  it("matches txt/base32.ts's crockfordBase32Lowercase() for 32 sequential bytes", () => {
     expect(encode(bytesRange(32))).toBe(
       "000g40r40m30e209185gr38e1w8124gk2gahc5rr34d1p70x3rfg",
     );
   });
 
-  it("matches txt/base32.py's encode() for empty input", () => {
+  it("matches txt/base32.ts's crockfordBase32Lowercase() for empty input", () => {
     expect(encode(new Uint8Array())).toBe("");
   });
 
-  it("matches txt/base32.py's encode() for all-0xff bytes", () => {
+  it("matches txt/base32.ts's crockfordBase32Lowercase() for all-0xff bytes", () => {
     expect(encode(new Uint8Array(32).fill(0xff))).toBe(
       "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzg",
     );
   });
 
-  it("matches txt/base32.py's encode() for all-zero bytes", () => {
+  it("matches txt/base32.ts's crockfordBase32Lowercase() for all-zero bytes", () => {
     expect(encode(new Uint8Array(32))).toBe(
       "0000000000000000000000000000000000000000000000000000",
     );
   });
 
-  it("matches txt/base32.py's encode() for a single byte", () => {
+  it("matches txt/base32.ts's crockfordBase32Lowercase() for a single byte", () => {
     expect(encode(Uint8Array.of(0x01))).toBe("04");
   });
 

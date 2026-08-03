@@ -180,16 +180,16 @@ function buildManifest() {
 // Worker, where data/wasmLoader.ts's blob-URL import() of sqlcipher.js runs)
 // except connect-src, narrowed here from that meta tag's deliberately-open
 // '*' down to 'self' plus the fixed hosts the app actually talks to:
-// InstantDB's API/websocket host, InstantDB's separate $files download host
-// (instantPageStore.ts's downloadPointerContent fetches $files.url, which
-// resolves to files.instantdb.com, not api.instantdb.com), Firebase Auth's
-// Identity Toolkit/token-refresh hosts, and R2's standard custom-domain
-// pattern -- all fixed, well-known hosts now, unlike the old Turso/
-// rqlite-backed design's own per-deployment database URL, so nothing here
-// needs to come from build-creds.json. A real HTTP response header and a
-// <meta> CSP both apply at once and combine by intersection, so this
-// tightens the effective policy for a direct CDN visit without having to
-// touch the per-account-agnostic meta tag itself.
+// InstantDB's API/websocket host, Firebase Auth's Identity Toolkit/
+// token-refresh hosts, and R2's standard custom-domain pattern -- all fixed,
+// well-known hosts now, unlike the old Turso/rqlite-backed design's own
+// per-deployment database URL, so nothing here needs to come from
+// build-creds.json. No separate InstantDB Storage/$files download host is
+// needed either: pages.path is a plain field on the row itself now, not a
+// linked file requiring its own fetch to a different host. A real HTTP
+// response header and a <meta> CSP both apply at once and combine by
+// intersection, so this tightens the effective policy for a direct CDN
+// visit without having to touch the per-account-agnostic meta tag itself.
 function distCsp() {
   return (
     "default-src 'self'; " +
@@ -199,7 +199,7 @@ function distCsp() {
     "img-src 'self' data:; " +
     "font-src 'self' data:; " +
     "connect-src 'self' " +
-    "https://api.instantdb.com wss://api.instantdb.com https://files.instantdb.com " +
+    "https://api.instantdb.com wss://api.instantdb.com " +
     "https://identitytoolkit.googleapis.com https://securetoken.googleapis.com " +
     "https://*.r2.cloudflarestorage.com; " +
     "object-src 'none'; " +
