@@ -160,7 +160,10 @@ async function migrate(
   // skips the read-write-key requirement regardless of --migrate's own
   // --dry-run flag.
   const fromCreds = loadCreds(args.fromCredsPath, true);
-  const toCreds = loadInitAdminCreds(args.toCredsPath);
+  // --migrate reads the target's R2 config from its own live credStore row
+  // (migrate.ts's unwrapTargetKeys), not from to-creds.json -- no local
+  // r2_config required here.
+  const toCreds = loadInitAdminCreds(args.toCredsPath, { requireR2: false });
   const fromDb = new DatabaseSync(args.fromDb, { readOnly: true });
   try {
     const migrator = new Migrator(fromDb, fromCreds, toCreds, log);

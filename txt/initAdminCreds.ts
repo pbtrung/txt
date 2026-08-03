@@ -19,7 +19,13 @@ export interface InitAdminCreds {
   firebasePassword: string;
   firebaseApiKey: string;
   displayName: string;
-  r2Config: R2ConfigResolved;
+  // null when loaded with requireR2: false (--migrate --to-creds) -- that
+  // path reads R2 config from the target account's own live credStore row
+  // instead (docs/data_model.md's credStore entity), since it's the
+  // account's actual, current connection info and to-creds.json's own copy
+  // could drift from it. --init-admin still needs a real local one (there's
+  // no credStore row yet to read it from before that command creates it).
+  r2Config: R2ConfigResolved | null;
   userRootKey: Buffer;
 }
 
@@ -32,10 +38,17 @@ function requireReadWriteR2(r2: R2ConfigResolved): void {
   }
 }
 
-export function loadInitAdminCreds(path: string): InitAdminCreds {
+export function loadInitAdminCreds(
+  path: string,
+  opts: { requireR2?: boolean } = {},
+): InitAdminCreds {
+  const requireR2 = opts.requireR2 ?? true;
   const raw = JSON.parse(readFileSync(path, "utf8"));
-  const r2Config = loadR2Config(raw);
-  requireReadWriteR2(r2Config);
+  let r2Config: R2ConfigResolved | null = null;
+  if (requireR2) {
+    r2Config = loadR2Config(raw);
+    requireReadWriteR2(r2Config);
+  }
   const userRootKey = Buffer.from(
     requireField(raw.user_root_key, "user_root_key"),
     "base64",
