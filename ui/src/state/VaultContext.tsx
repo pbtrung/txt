@@ -143,7 +143,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       });
       const authId: string = authResult.user.id;
 
-      verbose("unlock: resolving session (users/dbMeta/$users)");
+      verbose("unlock: resolving session ($users/dbMeta/credStore)");
       const sessionKeys = await resolveSession(
         instantDb,
         authId,
@@ -161,7 +161,6 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         instantClientName: creds.instantClientName,
         idToken,
         authId,
-        ownerId: sessionKeys.usersRowId,
         dbMetaId: sessionKeys.dbMetaId,
         currentVersion: sessionKeys.currentVersion,
         pageCount: sessionKeys.pageCount,

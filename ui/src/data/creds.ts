@@ -12,7 +12,7 @@
 // and r2_config, present in the CLI's version of this same file, are simply
 // ignored here: a browser session never holds an admin token, and this
 // account's R2 config comes from its own (already-InstantDB-stored)
-// $users.creds instead (session.ts's resolveSession).
+// credStore row instead (session.ts's resolveSession).
 
 import { base64ToBytes } from "../crypto/bytes";
 import { optionalString, requireObject, requireString } from "./jsonObject";

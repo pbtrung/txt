@@ -37,7 +37,6 @@ interface StartMessage {
   r2Config: R2Config;
   pathKey: Uint8Array;
   authId: string;
-  ownerId: string;
   snapshot: number;
   controlSab: SharedArrayBuffer;
   dataSab: SharedArrayBuffer;
@@ -108,7 +107,6 @@ async function start(msg: StartMessage): Promise<void> {
     r2Config: msg.r2Config,
     pathKey: msg.pathKey,
     authId: msg.authId,
-    ownerId: msg.ownerId,
   };
   control = new Int32Array(msg.controlSab);
   dataBuf = new Uint8Array(msg.dataSab);

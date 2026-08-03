@@ -10,8 +10,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { randomBytes } from "node:crypto";
 
-import * as blob from "../crypto/blob";
-import { computeR2Prefix } from "./pagePointer";
+import { computeR2Prefix, encodePagePointerContent } from "./pagePointer";
 import { SqliteDb } from "./sqliteDb";
 import { loadWasm } from "./wasmLoader";
 
@@ -90,17 +89,15 @@ const r2Config = {
 
 const pathKey = new Uint8Array(128).fill(4);
 const authId = "auth-1";
-const ownerId = "users-row-1";
 const dbMetaId = "dbmeta-1";
 
-// A stateful fake InstantDB client (queryOnce/transact/storage.uploadFile)
-// -- same shape/reducer as instantPageStore.test.ts's fakeInstantDb, plus
-// activeReaders support for the reader-lease tests here. r2 GET/PUT are
-// backed by a plain in-memory Map (r2.ts is mocked wholesale in this file),
-// keyed by rawPath ("${computeR2Prefix(authId)}/${rawKey}") -- only rawKey
-// is ever what gets encrypted into $files' content, same as the real
-// instantPageStore.ts.
-function mockBackend(
+// A stateful fake InstantDB client (queryOnce/transact) -- same shape/
+// reducer as instantPageStore.test.ts's fakeInstantDb, plus activeReaders
+// support for the reader-lease tests here. r2 GET/PUT are backed by a plain
+// in-memory Map (r2.ts is mocked wholesale in this file), keyed by rawPath
+// ("${computeR2Prefix(authId)}/${rawKey}") -- only rawKey is ever what gets
+// encrypted into pages.path, same as the real instantPageStore.ts.
+async function mockBackend(
   fixture: DbFixture,
   opts: { currentVersion?: number; commitShouldFail?: boolean } = {},
 ) {
@@ -108,7 +105,6 @@ function mockBackend(
   const r2Store = new Map<string, Uint8Array>();
   const store = {
     pages: new Map<string, any>(),
-    $files: new Map<string, any>(),
     dbMeta: new Map<string, any>([
       [
         dbMetaId,
@@ -122,24 +118,21 @@ function mockBackend(
     ]),
     activeReaders: new Map<string, any>(),
   };
-  // Seed every fixture page as an already-committed $files/pages pair at
+  // Seed every fixture page as an already-committed pages row at
   // currentVersion, so open()'s own prefetch (instantPageStore.fetchPage)
   // can resolve them for real, exercising the same code path a live vault
   // would.
-  let fileCounter = 0;
   for (let pageNo = 1; pageNo <= fixture.pageCount; pageNo++) {
     const rawKey = `page-${pageNo}`;
     const rawPath = `${computeR2Prefix(authId)}/${rawKey}`;
     r2Store.set(rawPath, fixture.pages[pageNo - 1]!);
-    fileCounter++;
-    const fileId = `file-${fileCounter}`;
-    store.$files.set(fileId, { id: fileId, owner: ownerId, rawKey });
+    const path = await encodePagePointerContent(pathKey, rawKey);
     store.pages.set(`page-${pageNo}`, {
       id: `page-${pageNo}`,
-      owner: ownerId,
+      owner: authId,
       pageNo,
       version: currentVersion,
-      pointerFile: fileId,
+      path,
     });
   }
 
@@ -172,20 +165,6 @@ function mockBackend(
       }
       return { "tx-id": "fake-tx" };
     }),
-    storage: {
-      uploadFile: vi.fn(async (path: string, content: Blob) => {
-        fileCounter++;
-        const id = `file-${fileCounter}`;
-        const rawKeyBlob = new Uint8Array(await content.arrayBuffer());
-        const rawKey = new TextDecoder().decode(
-          await blob.decrypt(pathKey, rawKeyBlob, false),
-        );
-        const rawPath = `${computeR2Prefix(authId)}/${rawKey}`;
-        r2Store.set(rawPath, new Uint8Array(0)); // placeholder; putObject fills real bytes
-        store.$files.set(id, { id, path, owner: undefined, rawKey });
-        return { data: { id } };
-      }),
-    },
     // Supports both fetchPage's single-pageNo query (order by version desc,
     // limit 1) and fetchPagesBatch's own pageNo: {$in: [...]} + order by
     // pageKey asc + cursor pagination -- real queryOnce() resolves with
@@ -234,22 +213,8 @@ function mockBackend(
         if (limit !== undefined) rows = rows.slice(0, limit);
         const endCursor =
           rows.length > 0 ? rows[rows.length - 1].pageKey : after;
-        const mapped = rows.map((r) => {
-          const file = store.$files.get(r.pointerFile);
-          return {
-            ...r,
-            pointerFile: file
-              ? [
-                  {
-                    url: `instant-file://${file.id}`,
-                    rawKey: file.rawKey,
-                  },
-                ]
-              : [],
-          };
-        });
         return {
-          data: { pages: mapped },
+          data: { pages: rows },
           pageInfo: paginated
             ? { pages: { hasNextPage, endCursor } }
             : undefined,
@@ -263,11 +228,7 @@ function mockBackend(
     }),
   };
 
-  // fetch() is used by instantPageStore.ts's downloadPointerContent to fetch
-  // $files.url -- stub it to resolve straight from the fake $files store by
-  // its rawKey (encrypted the same way a real upload would have -- never the
-  // full rawPath, since r2Prefix is re-derived from authId at read time).
-  // Also stubs tempR2Creds.ts's own POST /api/r2-creds call (worker/r2Creds.ts
+  // Stubs tempR2Creds.ts's own POST /api/r2-creds call (worker/r2Creds.ts
   // isn't reachable from this test environment) with a fake-but-well-shaped
   // temporary credential, so dbWorker.ts's open()/refreshR2Credential() exercise
   // their real fetchTempR2Credential() call, just against a fake response.
@@ -284,14 +245,7 @@ function mockBackend(
         { status: 200, headers: { "content-type": "application/json" } },
       );
     }
-    const fileId = url.replace("instant-file://", "");
-    const file = [...store.$files.values()].find((f) => f.id === fileId);
-    if (!file) return new Response(null, { status: 404 });
-    const content = await blob.encrypt(
-      pathKey,
-      new TextEncoder().encode(file.rawKey),
-    );
-    return new Response(content as BodyInit, { status: 200 });
+    return new Response(null, { status: 404 });
   });
 
   vi.mocked(init).mockReturnValue(fakeDb as never);
@@ -320,7 +274,6 @@ function openParamsFor(fixture: DbFixture, currentVersion = 1): OpenParams {
     instantClientName: "firebase",
     idToken: "fake-id-token",
     authId,
-    ownerId,
     dbMetaId,
     currentVersion,
     pageCount: fixture.pageCount,
@@ -335,7 +288,7 @@ async function openWith(
   fixture: DbFixture,
   opts?: { currentVersion?: number; commitShouldFail?: boolean },
 ) {
-  const backend = mockBackend(fixture, opts);
+  const backend = await mockBackend(fixture, opts);
   await dbWorker.open(openParamsFor(fixture, opts?.currentVersion));
   return backend;
 }
@@ -374,7 +327,7 @@ describe("dbWorker", () => {
     const readers = [...backend.store.activeReaders.values()];
     expect(readers).toHaveLength(1);
     expect(readers[0].snapshotVersion).toBe(1);
-    expect(readers[0].owner).toBe(ownerId);
+    expect(readers[0].owner).toBe(authId);
   });
 
   it("commitOrThrow renews the reader lease to the just-committed version", async () => {

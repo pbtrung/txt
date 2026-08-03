@@ -11,9 +11,13 @@
 // the real current version and retrying, up to a bounded number of times.
 import { id, tx } from "@instantdb/react";
 import type { AwsClient } from "aws4fetch";
-import * as blob from "../crypto/blob";
 import { collectAllPages } from "./instaqlPagination";
-import { computeR2Prefix, generateRawKey } from "./pagePointer";
+import {
+  computeR2Prefix,
+  decodePagePointerContent,
+  encodePagePointerContent,
+  generateRawKey,
+} from "./pagePointer";
 import { getObject, putObject } from "./r2";
 import type { R2Config } from "./r2Config";
 
@@ -37,8 +41,10 @@ export interface InstantPageStoreConfig {
   r2Client: AwsClient;
   r2Config: R2Config;
   pathKey: Uint8Array;
-  authId: string; // $users id -- pageKey identity and (via computeR2Prefix) R2 prefix
-  ownerId: string; // `users` profile row id -- pages/dbMeta/$files owner link target
+  // $users id -- pageKey identity, R2 prefix (via computeR2Prefix), and the
+  // pages/dbMeta/activeReaders owner link target (owner links to $users
+  // directly now, no separate `users` profile row to resolve first).
+  authId: string;
 }
 
 export interface CommitResult {
@@ -47,12 +53,12 @@ export interface CommitResult {
 }
 
 interface UploadedPage {
-  fileId: string;
   pageKey: string;
+  path: string; // base64 -- goes directly onto the pages row, no $files upload
 }
 
-// content only ever wraps rawKey (the random suffix) -- rawPath (the full
-// R2 object address, prefix included) is what the actual PUT needs, but the
+// path only ever wraps rawKey (the random suffix) -- rawPath (the full R2
+// object address, prefix included) is what the actual PUT needs, but the
 // prefix itself is never part of what gets encrypted, since it's already
 // derivable from authId at read time.
 interface PreparedUpload {
@@ -60,19 +66,16 @@ interface PreparedUpload {
   pageKey: string;
   rawPath: string;
   body: Uint8Array;
-  content: Uint8Array;
+  path: string;
 }
-
-const utf8 = new TextEncoder();
-const utf8Decoder = new TextDecoder();
 
 export async function fetchPage(
   cfg: InstantPageStoreConfig,
   pageNo: number,
   targetVersion: number,
 ): Promise<Uint8Array> {
-  const url = await resolvePagePointerUrl(cfg, pageNo, targetVersion);
-  return resolvePageBytes(cfg, url);
+  const path = await resolvePagePath(cfg, pageNo, targetVersion);
+  return resolvePageBytes(cfg, path);
 }
 
 /** Batched counterpart to fetchPage -- resolves many page numbers via a
@@ -94,13 +97,13 @@ export async function fetchPagesBatch(
   const rows = await collectAllPages<{
     pageNo: number;
     version: number;
-    pointerFile?: { url: string }[];
+    path: string;
   }>(async (after) => {
     const result = await cfg.db.queryOnce({
       pages: {
         $: {
           where: {
-            "owner.id": cfg.ownerId,
+            "owner.id": cfg.authId,
             pageNo: { $in: pageNos },
             version: { $lte: targetVersion },
           },
@@ -108,7 +111,6 @@ export async function fetchPagesBatch(
           limit: PAGES_QUERY_PAGE_SIZE,
           ...(after ? { after } : {}),
         },
-        pointerFile: {},
       },
     });
     const pageInfo = result.pageInfo?.pages;
@@ -122,29 +124,27 @@ export async function fetchPagesBatch(
   // Multiple historical versions of the same page can come back -- keep
   // only the highest version <= targetVersion for each requested pageNo
   // (the same "latest version at or before this snapshot" rule
-  // resolvePagePointerUrl's own order-by-version-desc/limit-1 enforces per
-  // page; a single batched query can't apply a per-group limit, so this is
-  // resolved client-side instead).
-  const bestUrlByPageNo = new Map<number, string>();
+  // resolvePagePath's own order-by-version-desc/limit-1 enforces per page; a
+  // single batched query can't apply a per-group limit, so this is resolved
+  // client-side instead).
+  const bestPathByPageNo = new Map<number, string>();
   const bestVersionByPageNo = new Map<number, number>();
   for (const row of rows) {
-    const url = row.pointerFile?.[0]?.url;
-    if (!url) continue;
     const bestVersion = bestVersionByPageNo.get(row.pageNo);
     if (bestVersion === undefined || row.version > bestVersion) {
       bestVersionByPageNo.set(row.pageNo, row.version);
-      bestUrlByPageNo.set(row.pageNo, url);
+      bestPathByPageNo.set(row.pageNo, row.path);
     }
   }
 
   const result = new Map<number, Uint8Array>();
-  const entries = [...bestUrlByPageNo.entries()];
+  const entries = [...bestPathByPageNo.entries()];
   for (let i = 0; i < entries.length; i += FETCH_BATCH_CONCURRENCY) {
     const batch = entries.slice(i, i + FETCH_BATCH_CONCURRENCY);
     const resolved = await Promise.all(
       batch.map(
-        async ([pageNo, url]) =>
-          [pageNo, await resolvePageBytes(cfg, url)] as const,
+        async ([pageNo, path]) =>
+          [pageNo, await resolvePageBytes(cfg, path)] as const,
       ),
     );
     resolved.forEach(([pageNo, bytes]) => result.set(pageNo, bytes));
@@ -152,20 +152,19 @@ export async function fetchPagesBatch(
   return result;
 }
 
-// Shared by fetchPage/fetchPagesBatch: given a $files pointerFile url,
-// download+decrypt it to recover raw_key, then GET the real page bytes
-// from R2.
+// Shared by fetchPage/fetchPagesBatch: path is the pages row's own field
+// (base64, decrypt-in-place to recover raw_key -- no linked file, no
+// download), then GET the real page bytes from R2.
 async function resolvePageBytes(
   cfg: InstantPageStoreConfig,
-  url: string,
+  path: string,
 ): Promise<Uint8Array> {
-  const content = await downloadPointerContent(url);
-  const rawKey = utf8Decoder.decode(await blob.decrypt(cfg.pathKey, content));
+  const rawKey = await decodePagePointerContent(cfg.pathKey, path);
   const rawPath = `${computeR2Prefix(cfg.authId)}/${rawKey}`;
   return getObject(cfg.r2Client, cfg.r2Config, rawPath);
 }
 
-async function resolvePagePointerUrl(
+async function resolvePagePath(
   cfg: InstantPageStoreConfig,
   pageNo: number,
   targetVersion: number,
@@ -174,14 +173,13 @@ async function resolvePagePointerUrl(
     pages: {
       $: {
         where: {
-          "owner.id": cfg.ownerId,
+          "owner.id": cfg.authId,
           pageNo,
           version: { $lte: targetVersion },
         },
         order: { version: "desc" },
         limit: 1,
       },
-      pointerFile: {},
     },
   });
   const row = result.data.pages?.[0];
@@ -190,17 +188,7 @@ async function resolvePagePointerUrl(
       `no page row for pageNo=${pageNo} version<=${targetVersion}`,
     );
   }
-  return row.pointerFile[0].url;
-}
-
-async function downloadPointerContent(url: string): Promise<Uint8Array> {
-  const resp = await fetch(url);
-  if (!resp.ok) {
-    throw new Error(
-      `failed to download $files pointer content: HTTP ${resp.status}`,
-    );
-  }
-  return new Uint8Array(await resp.arrayBuffer());
+  return row.path;
 }
 
 /** Uploads every dirty page as a new version and CAS-bumps dbMeta, retrying
@@ -277,29 +265,20 @@ async function prepareUpload(
   const pageKey = `${cfg.authId}:${pageNo}:${version}`;
   const rawKey = generateRawKey();
   const rawPath = `${computeR2Prefix(cfg.authId)}/${rawKey}`;
-  // Never brotli-compress rawKey before encrypting it -- it's a short
-  // random string, not a structured/JSON payload (crypto/blob.ts's
-  // `compressed` option is left at its default false, same as the CLI's
-  // pagePointer.ts).
-  const content = await blob.encrypt(cfg.pathKey, utf8.encode(rawKey));
-  return { pageNo, pageKey, rawPath, body, content };
+  const path = await encodePagePointerContent(cfg.pathKey, rawKey);
+  return { pageNo, pageKey, rawPath, body, path };
 }
 
-// R2 PUT before the $files upload, matching the commit protocol
-// (docs/data_model.md): if this throws between the two, the result is an
-// untracked R2 object (the GC design's "untracked R2 objects" sweep already
-// accounts for this), never a $files pointer referencing an R2 object that
-// was never written.
+// R2 PUT, matching the commit protocol (docs/data_model.md): if this throws
+// before the pages row is ever created, the result is an untracked R2
+// object (the GC design's "untracked R2 objects" sweep already accounts for
+// this), never a pages row whose path resolves to something never written.
 async function uploadOne(
   cfg: InstantPageStoreConfig,
   p: PreparedUpload,
 ): Promise<UploadedPage> {
   await putObject(cfg.r2Client, cfg.r2Config, p.rawPath, p.body);
-  const { data } = await cfg.db.storage.uploadFile(
-    p.pageKey,
-    new Blob([p.content as BlobPart]),
-  );
-  return { fileId: data.id, pageKey: p.pageKey };
+  return { pageKey: p.pageKey, path: p.path };
 }
 
 async function transactPages(
@@ -313,13 +292,10 @@ async function transactPages(
   const pageTxs = [...uploaded].map(([pageNo, info]) =>
     pageTx(cfg, pageNo, info, newVersion),
   );
-  const fileOwnerTxs = [...uploaded.values()].map((info) =>
-    tx.$files[info.fileId].link({ owner: cfg.ownerId }),
-  );
   const dbMetaTx = tx.dbMeta[dbMetaId]
     .update({ currentVersion: newVersion, pageCount, pageSize, needsGc: false })
-    .link({ owner: cfg.ownerId });
-  await cfg.db.transact([...pageTxs, ...fileOwnerTxs, dbMetaTx]);
+    .link({ owner: cfg.authId });
+  await cfg.db.transact([...pageTxs, dbMetaTx]);
 }
 
 function pageTx(
@@ -329,6 +305,6 @@ function pageTx(
   version: number,
 ) {
   return tx.pages[id()]
-    .update({ pageKey: info.pageKey, pageNo, version })
-    .link({ owner: cfg.ownerId, pointerFile: info.fileId });
+    .update({ pageKey: info.pageKey, pageNo, version, path: info.path })
+    .link({ owner: cfg.authId });
 }

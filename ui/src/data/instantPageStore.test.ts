@@ -40,19 +40,17 @@ function fakeR2(): { client: AwsClient; store: Map<string, Uint8Array> } {
   return { client, store };
 }
 
-// Stateful fake InstantDB client (queryOnce/transact/storage.uploadFile)
-// against a real in-memory store, reducing the REAL @instantdb/react tx
-// builder's {__etype, __ops} shape -- same approach this session's CLI
-// verification used for @instantdb/admin's tx builder. $files content is
-// served back via a data: URL (Node's fetch supports the data: scheme), so
-// fetchPage's real fetch(url) call works with no second mock server.
+// Stateful fake InstantDB client (queryOnce/transact) against a real
+// in-memory store, reducing the REAL @instantdb/react tx builder's
+// {__etype, __ops} shape -- same approach this session's CLI verification
+// used for @instantdb/admin's tx builder. No $files/storage.uploadFile --
+// pages.path is a plain field on the row itself now, so a commit is just one
+// transact() away from readable, no separate upload call to fake.
 function fakeInstantDb() {
   const store = {
     pages: new Map<string, any>(),
-    $files: new Map<string, any>(),
     dbMeta: new Map<string, any>(),
   };
-  let fileCounter = 0;
   return {
     store,
     async transact(txs: any[]) {
@@ -65,15 +63,6 @@ function fakeInstantDb() {
         }
       }
       return { "tx-id": "fake-tx" };
-    },
-    storage: {
-      async uploadFile(path: string, content: Blob) {
-        fileCounter++;
-        const id = `file-${fileCounter}`;
-        const bytes = new Uint8Array(await content.arrayBuffer());
-        store.$files.set(id, { id, path, bytes });
-        return { data: { id } };
-      },
     },
     async queryOnce(q: any) {
       if (q.pages) return queryPages(store, q.pages);
@@ -129,25 +118,14 @@ function queryPages(
   const hasNextPage = limit !== undefined && rows.length > limit;
   if (limit !== undefined) rows = rows.slice(0, limit);
   const endCursor = rows.length > 0 ? rows[rows.length - 1].pageKey : after;
-  const mapped = rows.map((r) => ({
-    ...r,
-    pointerFile: r.pointerFile
-      ? [
-          {
-            url: `data:application/octet-stream;base64,${Buffer.from(store.$files.get(r.pointerFile).bytes).toString("base64")}`,
-          },
-        ]
-      : [],
-  }));
   return {
-    data: { pages: mapped },
+    data: { pages: rows },
     pageInfo: paginated ? { pages: { hasNextPage, endCursor } } : undefined,
   };
 }
 
 const pathKey = new Uint8Array(128).fill(11);
 const authId = "auth-xyz";
-const ownerId = "users-row-1";
 const dbMetaId = "dbmeta-1";
 const r2Prefix = computeR2Prefix(authId);
 
@@ -156,14 +134,7 @@ describe("commitPages / fetchPage", () => {
     const { client, store: r2Store } = fakeR2();
     const db = fakeInstantDb();
     db.store.dbMeta.set(dbMetaId, { id: dbMetaId, currentVersion: 0 });
-    const cfg = {
-      db,
-      r2Client: client,
-      r2Config,
-      pathKey,
-      authId,
-      ownerId,
-    };
+    const cfg = { db, r2Client: client, r2Config, pathKey, authId };
 
     const dirty = new Map([
       [1, new Uint8Array(64).fill(1)],
@@ -177,13 +148,15 @@ describe("commitPages / fetchPage", () => {
       true,
     );
 
-    const fileRows = [...db.store.$files.values()];
-    expect(fileRows).toHaveLength(2);
-    expect(fileRows.every((r) => r.owner === ownerId)).toBe(true);
-    // The uploaded $files content must be the real encrypted pointer, not
-    // a placeholder, and must never be brotli-compressed first (a plain
-    // AEAD blob's minimum length is 132 bytes -- see docs/crypto.md).
-    expect(fileRows.every((r) => r.bytes.length >= 132)).toBe(true);
+    const pageRows = [...db.store.pages.values()];
+    expect(pageRows).toHaveLength(2);
+    expect(pageRows.every((r) => r.owner === authId)).toBe(true);
+    // path must be the real encrypted pointer, not a placeholder, and must
+    // never be brotli-compressed first (a plain AEAD blob's minimum length
+    // is 132 bytes -- see docs/crypto.md).
+    expect(
+      pageRows.every((r) => Buffer.from(r.path, "base64").length >= 132),
+    ).toBe(true);
 
     const page2 = await fetchPage(cfg, 2, 1);
     expect(Array.from(page2)).toEqual(Array.from(new Uint8Array(64).fill(2)));
@@ -193,14 +166,7 @@ describe("commitPages / fetchPage", () => {
     const { client } = fakeR2();
     const db = fakeInstantDb();
     db.store.dbMeta.set(dbMetaId, { id: dbMetaId, currentVersion: 0 });
-    const cfg = {
-      db,
-      r2Client: client,
-      r2Config,
-      pathKey,
-      authId,
-      ownerId,
-    };
+    const cfg = { db, r2Client: client, r2Config, pathKey, authId };
 
     // Simulate another writer: bump currentVersion behind this caller's
     // back, and make the FIRST transact() attempt reject (as InstantDB's
@@ -229,14 +195,7 @@ describe("commitPages / fetchPage", () => {
     const { client } = fakeR2();
     const db = fakeInstantDb();
     db.store.dbMeta.set(dbMetaId, { id: dbMetaId, currentVersion: 0 });
-    const cfg = {
-      db,
-      r2Client: client,
-      r2Config,
-      pathKey,
-      authId,
-      ownerId,
-    };
+    const cfg = { db, r2Client: client, r2Config, pathKey, authId };
 
     let transactCalls = 0;
     db.transact = async () => {
@@ -255,14 +214,7 @@ describe("commitPages / fetchPage", () => {
     const { client, store: r2Store } = fakeR2();
     const db = fakeInstantDb();
     db.store.dbMeta.set(dbMetaId, { id: dbMetaId, currentVersion: 0 });
-    const cfg = {
-      db,
-      r2Client: client,
-      r2Config,
-      pathKey,
-      authId,
-      ownerId,
-    };
+    const cfg = { db, r2Client: client, r2Config, pathKey, authId };
 
     await commitPages(
       cfg,
@@ -273,9 +225,9 @@ describe("commitPages / fetchPage", () => {
       64,
     );
 
-    const [fileRow] = [...db.store.$files.values()];
+    const [pageRow] = [...db.store.pages.values()];
     const rawKey = new TextDecoder().decode(
-      await blob.decrypt(pathKey, fileRow.bytes, false),
+      await blob.decrypt(pathKey, Buffer.from(pageRow.path, "base64"), false),
     );
     // The encrypted content is just the random key -- r2Prefix (a pure,
     // deterministic function of authId) is never baked into it, since it's
@@ -291,7 +243,7 @@ describe("fetchPagesBatch", () => {
     const { client } = fakeR2();
     const db = fakeInstantDb();
     db.store.dbMeta.set(dbMetaId, { id: dbMetaId, currentVersion: 0 });
-    const cfg = { db, r2Client: client, r2Config, pathKey, authId, ownerId };
+    const cfg = { db, r2Client: client, r2Config, pathKey, authId };
 
     await commitPages(
       cfg,
@@ -322,7 +274,7 @@ describe("fetchPagesBatch", () => {
     const { client } = fakeR2();
     const db = fakeInstantDb();
     db.store.dbMeta.set(dbMetaId, { id: dbMetaId, currentVersion: 0 });
-    const cfg = { db, r2Client: client, r2Config, pathKey, authId, ownerId };
+    const cfg = { db, r2Client: client, r2Config, pathKey, authId };
 
     // version=1: pages 1 and 2.
     await commitPages(
@@ -366,7 +318,7 @@ describe("fetchPagesBatch", () => {
     const { client } = fakeR2();
     const db = fakeInstantDb();
     db.store.dbMeta.set(dbMetaId, { id: dbMetaId, currentVersion: 0 });
-    const cfg = { db, r2Client: client, r2Config, pathKey, authId, ownerId };
+    const cfg = { db, r2Client: client, r2Config, pathKey, authId };
 
     const pageCount = 1200; // forces 3 rounds at PAGES_QUERY_PAGE_SIZE=500
     const dirty = new Map(
@@ -392,7 +344,7 @@ describe("fetchPagesBatch", () => {
   it("returns an empty map for an empty page-number list without querying at all", async () => {
     const { client } = fakeR2();
     const db = fakeInstantDb();
-    const cfg = { db, r2Client: client, r2Config, pathKey, authId, ownerId };
+    const cfg = { db, r2Client: client, r2Config, pathKey, authId };
     const queryOnceSpy = vi.spyOn(db, "queryOnce");
 
     const pages = await fetchPagesBatch(cfg, [], 1);

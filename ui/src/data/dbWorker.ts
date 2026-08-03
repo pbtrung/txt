@@ -57,8 +57,7 @@ export interface OpenParams {
   instantAppId: string;
   instantClientName: string;
   idToken: string;
-  authId: string;
-  ownerId: string; // `users` profile row id -- pages/dbMeta/$files/activeReaders owner link target
+  authId: string; // pages/dbMeta/activeReaders owner link target (owner links to $users directly)
   dbMetaId: string;
   currentVersion: number;
   pageCount: number;
@@ -128,7 +127,7 @@ async function beginRead(
           snapshotVersion,
           leaseExpiresAt: Date.now() + READER_LEASE_MS,
         })
-        .link({ owner: storedOpenParams.ownerId }),
+        .link({ owner: storedOpenParams.authId }),
     ]);
   } catch (err) {
     verbose(
@@ -206,7 +205,6 @@ export async function open(params: OpenParams): Promise<void> {
     r2Config: params.r2Config,
     pathKey: params.pathKey,
     authId: params.authId,
-    ownerId: params.ownerId,
   };
   dbMetaId = params.dbMetaId;
   scheduleR2CredRefresh(r2Cred.expiresAtMs);
@@ -233,7 +231,6 @@ export async function open(params: OpenParams): Promise<void> {
       r2Config: params.r2Config,
       pathKey: params.pathKey,
       authId: params.authId,
-      ownerId: params.ownerId,
     },
     params.pageSize,
     params.currentVersion,

@@ -92,7 +92,6 @@ function installFakeAuth() {
   };
   vi.mocked(createInstantClient).mockReturnValue(instantDb as never);
   vi.mocked(resolveSession).mockResolvedValue({
-    usersRowId: "users-row-1",
     dbMetaId: "dbmeta-1",
     currentVersion: 1,
     pageCount: 3,
@@ -165,7 +164,6 @@ describe("VaultProvider", () => {
       instantClientName: "firebase",
       idToken: "fake-id-token",
       authId: "auth-1",
-      ownerId: "users-row-1",
       dbMetaId: "dbmeta-1",
       currentVersion: 1,
       pageCount: 3,

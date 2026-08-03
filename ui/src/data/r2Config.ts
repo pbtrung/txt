@@ -1,7 +1,7 @@
-// R2 connection info, parsed from this account's own unwrapped
-// $users.creds payload (session.ts's resolveSession), not a local
-// credential file or an in-db table: this account's R2 config is part of
-// the same InstantDB-stored, umk-wrapped bundle as path_key/db_key
+// R2 connection info, parsed from this account's own unwrapped credStore
+// row's content (session.ts's resolveSession), not a local credential file
+// or an in-db table: this account's R2 config is part of the same
+// InstantDB-stored, umk-wrapped bundle as path_key/db_key
 // (docs/data_model.md's Key Hierarchy).
 //
 // Deliberately narrower than txt/creds.ts's R2Config (the CLI's own mirror
