@@ -282,10 +282,13 @@ export class GarbageCollector {
 
   // Sweep 1: every `pages` row older than this account's current
   // dbMeta.currentVersion, plus the R2 object each one's decrypted path
-  // resolves to. Deletes pages rows first, then R2 objects -- in that
-  // order, so a crash mid-sweep never leaves a pages row pointing at
-  // something already deleted (a stray object with no row left behind is
-  // caught by sweepStaleObjects below instead).
+  // resolves to. Batched S3_DELETE_BATCH_SIZE at a time (same batch size R2's
+  // own DeleteObjects uses) -- within each batch, delete that batch's pages
+  // rows first, then that batch's R2 objects, in that order, so a crash
+  // mid-batch never leaves a pages row pointing at something already deleted
+  // (a stray object with no row left behind is caught by sweepStaleObjects
+  // below instead). Paired per batch rather than deleting every pages row in
+  // one pass and every R2 object in a separate, later pass.
   private async sweepOldVersions(
     db: any,
     r2: R2Client,
@@ -319,18 +322,23 @@ export class GarbageCollector {
       },
     );
     if (rows.length === 0 || dryRun) return rows.length;
-    for (let i = 0; i < rows.length; i += C.PAGES_QUERY_PAGE_SIZE) {
-      const batch = rows.slice(i, i + C.PAGES_QUERY_PAGE_SIZE);
+    for (let i = 0; i < rows.length; i += C.S3_DELETE_BATCH_SIZE) {
+      const batch = rows.slice(i, i + C.S3_DELETE_BATCH_SIZE);
       await db.transact(batch.map((row) => tx.pages[row.id].delete()));
-    }
-    const rawPaths = rows.map(
-      (row) =>
-        `${r2Prefix}/${decodePagePointerContent(crypto, pathKey, Buffer.from(row.path, "base64"))}`,
-    );
-    const result = await r2.deleteObjects(rawPaths);
-    for (const err of result.errors) {
-      this.log.warn(
-        `Failed to delete old page object ${err.key}: ${err.message}`,
+      const rawPaths = batch.map(
+        (row) =>
+          `${r2Prefix}/${decodePagePointerContent(crypto, pathKey, Buffer.from(row.path, "base64"))}`,
+      );
+      const result = await r2.deleteObjects(rawPaths);
+      for (const err of result.errors) {
+        this.log.warn(
+          `Failed to delete old page object ${err.key}: ${err.message}`,
+        );
+      }
+      this.log.info(
+        `auth.id=${account.ownerId}: batch of ${batch.length} old page(s) -- ` +
+          `${batch.length} pages row(s) deleted from InstantDB, ` +
+          `${result.deletedKeys.size} R2 object(s) deleted`,
       );
     }
     return rows.length;
@@ -361,6 +369,13 @@ export class GarbageCollector {
     for (const err of result.errors) {
       this.log.warn(`Failed to delete stale object ${err.key}: ${err.message}`);
     }
+    // R2-only, deliberately: these objects have no pages row pointing to
+    // them at all (that's the definition of "stale" here), so there's
+    // nothing to delete on the InstantDB side -- unlike sweepOldVersions
+    // above, which deletes a pages row and its R2 object together.
+    this.log.info(
+      `auth.id=${ownerId}: ${result.deletedKeys.size} stale R2 object(s) deleted (no pages rows involved)`,
+    );
     return result.deletedKeys.size;
   }
 
