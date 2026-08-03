@@ -1,7 +1,7 @@
-// Orchestrates --init-admin: provisions the admin account end to end,
-// per docs/data_model.md's Key Hierarchy and "Non-admin (user-role)
-// accounts" > Provisioning (the admin does for itself here exactly what it
-// later does for a user account).
+// Orchestrates --init-admin: provisions the admin account end to end, per
+// docs/data_model.md's Key Hierarchy and "Provisioning a `user` account"
+// (the admin does for itself here exactly what it later does for a user
+// account).
 import { randomBytes } from "node:crypto";
 import { id, init, tx } from "@instantdb/admin";
 import * as C from "./constants.ts";
@@ -27,7 +27,6 @@ interface GeneratedKeys {
 
 export interface AdminInitResult {
   authId: string;
-  usersRowId: string;
   dbMetaId: string;
   pageCount: number;
   version: number;
@@ -51,39 +50,58 @@ export class AdminInitializer {
   }
 
   async run(): Promise<AdminInitResult> {
-    const authId = await this.signIn();
     const db = init({
       appId: this.creds.instantAppId,
       adminToken: this.creds.instantAdminToken,
     });
+    const authId = await this.provisionAuthUser(db);
     await this.failIfAlreadyInitialized(db, authId);
     const keys = generateKeys();
     const cryptoEngine = await CryptoEngine.create();
     const { dirtyPages, pageCount } = await this.buildInitialDatabase(
       keys.dbKey,
     );
-    const usersRowId = id();
-    await this.createAdminProfile(db, authId, usersRowId, cryptoEngine, keys);
+    await this.writeAdminIdentity(db, authId, cryptoEngine, keys);
     const commit = await this.commitInitialPages(
       db,
       cryptoEngine,
       keys,
       authId,
-      usersRowId,
       dirtyPages,
       pageCount,
     );
+    await this.verifyFirebaseLogin(authId);
     return {
       authId,
-      usersRowId,
       dbMetaId: commit.dbMetaId,
       pageCount,
       version: commit.newVersion,
     };
   }
 
-  private async signIn(): Promise<string> {
-    return signInToInstant(this.creds, this.log);
+  // Creates (or resolves) this account's $users row directly via the Admin
+  // SDK -- db.auth.* calls bypass instant.perms.ts entirely, same as
+  // db.transact/db.query (InstantDB's own backend docs: "Permission checks
+  // will not run for queries and writes from our admin API"). This has to
+  // happen *before* the real Firebase sign-in below: instant.perms.ts's
+  // $users.create rule is "isAdmin", which nothing can satisfy for a
+  // genuinely new row (auth.ref finds no type yet, so isAdmin is always
+  // false at create time). Pre-creating the row here first means the later
+  // oauth/id_token exchange only ever resolves an already-existing row --
+  // it never attempts to create one, so that rule is never evaluated against
+  // this account at all. createToken creates the user as a side effect if
+  // the email doesn't exist yet, or resolves the existing one if it does;
+  // verifyToken on the token it returns is what actually hands back the
+  // row's real id.
+  private async provisionAuthUser(db: any): Promise<string> {
+    const token = await db.auth.createToken({
+      email: this.creds.firebaseEmail,
+    });
+    const user = await db.auth.verifyToken(token);
+    this.log.debug(
+      `Resolved $users row via Admin SDK: id=${user.id} email=${user.email}`,
+    );
+    return user.id;
   }
 
   private async failIfAlreadyInitialized(
@@ -91,13 +109,14 @@ export class AdminInitializer {
     authId: string,
   ): Promise<void> {
     const result = await db.query({
-      users: { $: { where: { "authUser.id": authId } } },
+      dbMeta: { $: { where: { "owner.id": authId } } },
     });
-    if (result.users?.length > 0) {
+    if (result.dbMeta?.length > 0) {
       throw new Error(
-        `account for auth.id=${authId} is already initialized (users row ${result.users[0].id} exists)`,
+        `account for auth.id=${authId} is already initialized (dbMeta row ${result.dbMeta[0].id} exists)`,
       );
     }
+    this.log.debug(`No existing dbMeta row for auth.id=${authId}`);
   }
 
   private async buildInitialDatabase(
@@ -110,35 +129,48 @@ export class AdminInitializer {
       C.SQLCIPHER_PAGE_SIZE,
     );
     builder.run(DB_FILE_NAME, vfs.name, dbKey, SCHEMA_SQL);
+    const dirtyPages = vfs.diffDirtyPages();
+    this.log.debug(
+      `Built initial SQLCipher database: ${dirtyPages.size} dirty page(s), pageCount=${vfs.currentPageCount}`,
+    );
     return {
-      dirtyPages: vfs.diffDirtyPages(),
+      dirtyPages,
       pageCount: vfs.currentPageCount,
     };
   }
 
-  private async createAdminProfile(
+  // Sets type/umk directly on $users (no separate profile row -- see
+  // instant.schema.ts) and writes this account's own credStore row (owner =
+  // user = this account, docs/data_model.md's credStore entity).
+  private async writeAdminIdentity(
     db: any,
     authId: string,
-    usersRowId: string,
     cryptoEngine: CryptoEngine,
     keys: GeneratedKeys,
   ): Promise<void> {
     const umkBlob = cryptoEngine
       .blobEncrypt(this.creds.userRootKey, keys.umk)
       .toString("base64");
-    const credsBlob = this.wrapCreds(cryptoEngine, keys);
+    const contentBlob = this.wrapCredStoreContent(cryptoEngine, keys);
+    const credStoreId = id();
     await db.transact([
-      tx.users[usersRowId].update({ type: "admin" }).link({ authUser: authId }),
-      tx.$users[authId].update({ umk: umkBlob, creds: credsBlob }),
+      tx.$users[authId].update({ type: "admin", umk: umkBlob }),
+      tx.credStore[credStoreId]
+        .update({ content: contentBlob })
+        .link({ owner: authId, user: authId }),
     ]);
     this.log.info(
-      `Created users row ${usersRowId} (type=admin) and set $users.umk/creds`,
+      `Set $users.type=admin/umk and wrote credStore row ${credStoreId}`,
     );
   }
 
-  // docs/data_model.md's $users.creds shape uses snake_case keys (mirroring
-  // the original creds.json), not this codebase's camelCase R2ConfigResolved.
-  private wrapCreds(cryptoEngine: CryptoEngine, keys: GeneratedKeys): string {
+  // docs/data_model.md's credStore content shape uses snake_case keys
+  // (mirroring the original creds.json), not this codebase's camelCase
+  // R2ConfigResolved.
+  private wrapCredStoreContent(
+    cryptoEngine: CryptoEngine,
+    keys: GeneratedKeys,
+  ): string {
     const r2 = this.creds.r2Config;
     const payload = {
       r2_config: {
@@ -162,7 +194,6 @@ export class AdminInitializer {
     cryptoEngine: CryptoEngine,
     keys: GeneratedKeys,
     authId: string,
-    usersRowId: string,
     dirtyPages: Map<number, Buffer>,
     pageCount: number,
   ): Promise<{ dbMetaId: string; newVersion: number }> {
@@ -173,7 +204,6 @@ export class AdminInitializer {
       crypto: cryptoEngine,
       pathKey: keys.pathKey,
       authId,
-      ownerId: usersRowId,
     });
     const dbMetaId = id();
     const { newVersion } = await store.commitPages(
@@ -187,5 +217,24 @@ export class AdminInitializer {
       `Committed ${dirtyPages.size} page(s) as version=${newVersion}, dbMeta=${dbMetaId}`,
     );
     return { dbMetaId, newVersion };
+  }
+
+  // Confirms the real client-facing login path (Firebase password sign-in ->
+  // POST /runtime/oauth/id_token, docs/data_model.md's Auth section)
+  // resolves to the SAME $users row provisioned above rather than creating a
+  // second one -- this is exactly what depends on instant.perms.ts's
+  // $users.create: "isAdmin" never actually being evaluated for an existing
+  // row. signInToInstant already logs each of its own steps (Firebase
+  // password sign-in, then the oauth/id_token exchange) via this.log.
+  private async verifyFirebaseLogin(expectedAuthId: string): Promise<void> {
+    const resolvedAuthId = await signInToInstant(this.creds, this.log);
+    if (resolvedAuthId !== expectedAuthId) {
+      throw new Error(
+        `Firebase login resolved to a different $users row (expected ${expectedAuthId}, got ${resolvedAuthId}) -- this should never happen for the same email`,
+      );
+    }
+    this.log.info(
+      `Firebase login verified: auth.id=${resolvedAuthId} matches the provisioned account`,
+    );
   }
 }

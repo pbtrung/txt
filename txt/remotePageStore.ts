@@ -1,7 +1,8 @@
 // The read/write primitives from docs/data_model.md's Read protocol and
-// Commit protocol: resolving a page's current pointer and fetching its bytes
-// from R2, and uploading dirty pages (real R2 PUT + $files pointer +
-// pages/dbMeta transact). Talks to InstantDB via the admin SDK (bypasses
+// Commit protocol: resolving a page's current path and fetching its bytes
+// from R2, and uploading dirty pages (real R2 PUT, then one transact()
+// writing pages.path directly and CAS-bumping dbMeta -- no separate
+// pointer-row upload). Talks to InstantDB via the admin SDK (bypasses
 // permission rules entirely) -- fine for --init-admin's one-time,
 // single-writer bootstrap, but a live multi-device app would need the CAS
 // retry loop the docs flag as unverified (dbMeta.currentVersion ==
@@ -23,8 +24,7 @@ export interface RemotePageStoreConfig {
   r2: R2Client;
   crypto: CryptoEngine;
   pathKey: Buffer;
-  authId: string; // $users id -- pageKey identity and (via computeR2Prefix) R2 prefix
-  ownerId: string; // `users` profile row id -- pages/dbMeta owner link target
+  authId: string; // $users id -- pageKey identity, R2 prefix, and pages/dbMeta owner link target
 }
 
 export interface CommitResult {
@@ -32,16 +32,11 @@ export interface CommitResult {
   pageCount: number;
 }
 
-interface UploadedPage {
-  fileId: string;
-  pageKey: string;
-}
-
 // The pure (no I/O) half of uploading a page -- rawPath/pageKey/the encrypted
-// pointer content are all derivable from the page bytes and this store's own
-// config, so every page can be prepared up front before any network call.
-// content only ever wraps rawKey (the random suffix) -- rawPath (the full
-// R2 object address, prefix included) is what the actual PUT needs, but the
+// path are all derivable from the page bytes and this store's own config, so
+// every page can be prepared up front before any network call. The encrypted
+// path only ever wraps rawKey (the random suffix) -- rawPath (the full R2
+// object address, prefix included) is what the actual PUT needs, but the
 // prefix itself is never part of what gets encrypted, since it's already
 // derivable from authId at read time.
 interface PreparedUpload {
@@ -49,7 +44,7 @@ interface PreparedUpload {
   pageKey: string;
   rawPath: string;
   body: Buffer;
-  content: Buffer;
+  path: string; // base64 -- goes directly onto the pages row
 }
 
 export class RemotePageStore {
@@ -60,18 +55,17 @@ export class RemotePageStore {
   }
 
   async fetchPage(pageNo: number, targetVersion: number): Promise<Buffer> {
-    const url = await this.resolvePagePointerUrl(pageNo, targetVersion);
-    const content = await this.downloadPointerContent(url);
+    const path = await this.resolvePagePath(pageNo, targetVersion);
     const rawKey = decodePagePointerContent(
       this.cfg.crypto,
       this.cfg.pathKey,
-      content,
+      Buffer.from(path, "base64"),
     );
     const rawPath = `${computeR2Prefix(this.cfg.authId)}/${rawKey}`;
     return this.cfg.r2.getObject(rawPath);
   }
 
-  private async resolvePagePointerUrl(
+  private async resolvePagePath(
     pageNo: number,
     targetVersion: number,
   ): Promise<string> {
@@ -79,14 +73,13 @@ export class RemotePageStore {
       pages: {
         $: {
           where: {
-            "owner.id": this.cfg.ownerId,
+            "owner.id": this.cfg.authId,
             pageNo,
             version: { $lte: targetVersion },
           },
           order: { version: "desc" },
           limit: 1,
         },
-        pointerFile: {},
       },
     });
     const row = result.pages?.[0];
@@ -94,20 +87,12 @@ export class RemotePageStore {
       throw new Error(
         `no page row for pageNo=${pageNo} version<=${targetVersion}`,
       );
-    return row.pointerFile[0].url;
-  }
-
-  private async downloadPointerContent(url: string): Promise<Buffer> {
-    const resp = await fetch(url);
-    if (!resp.ok)
-      throw new Error(
-        `failed to download $files pointer content: HTTP ${resp.status}`,
-      );
-    return Buffer.from(await resp.arrayBuffer());
+    return row.path;
   }
 
   // Uploads every dirty page as a new version (all sharing one new version
-  // number, per the commit protocol) and CAS-bumps dbMeta in one transact.
+  // number, per the commit protocol) and CAS-bumps dbMeta in the same
+  // transact() that creates the new pages rows.
   async commitPages(
     dirtyPages: Map<number, Buffer>,
     dbMetaId: string,
@@ -116,35 +101,16 @@ export class RemotePageStore {
     pageSize: number,
   ): Promise<CommitResult> {
     const newVersion = currentVersion + 1;
-    const uploaded = await this.uploadPages(dirtyPages, newVersion);
+    const prepared = this.preparePages(dirtyPages, newVersion);
+    await this.uploadPages(prepared);
     await this.transactPages(
-      uploaded,
+      prepared,
       newVersion,
       dbMetaId,
       pageCount,
       pageSize,
     );
     return { newVersion, pageCount };
-  }
-
-  // Prepares every dirty page (pure -- rawPath generation + pointer
-  // encryption, no I/O) up front, then issues the actual R2 PUT / $files
-  // upload round-trips R2_BATCH_CONCURRENCY at a time -- bounded parallelism
-  // instead of one page at a time (slow for anything beyond a handful of
-  // pages) or all of them at once (risks exhausting connections / R2 rate
-  // limits, especially for a bulk --migrate commit).
-  private async uploadPages(
-    dirtyPages: Map<number, Buffer>,
-    version: number,
-  ): Promise<Map<number, UploadedPage>> {
-    const prepared = this.preparePages(dirtyPages, version);
-    const uploaded = new Map<number, UploadedPage>();
-    for (let i = 0; i < prepared.length; i += C.R2_BATCH_CONCURRENCY) {
-      const batch = prepared.slice(i, i + C.R2_BATCH_CONCURRENCY);
-      const results = await Promise.all(batch.map((p) => this.uploadOne(p)));
-      batch.forEach((p, idx) => uploaded.set(p.pageNo, results[idx]));
-    }
-    return uploaded;
   }
 
   private preparePages(
@@ -155,39 +121,39 @@ export class RemotePageStore {
       const pageKey = `${this.cfg.authId}:${pageNo}:${version}`;
       const rawKey = generateRawKey();
       const rawPath = `${computeR2Prefix(this.cfg.authId)}/${rawKey}`;
-      const content = encodePagePointerContent(
+      const path = encodePagePointerContent(
         this.cfg.crypto,
         this.cfg.pathKey,
         rawKey,
-      );
-      return { pageNo, pageKey, rawPath, body, content };
+      ).toString("base64");
+      return { pageNo, pageKey, rawPath, body, path };
     });
   }
 
-  // R2 PUT before the $files upload, same order within one page as before --
-  // matches the commit protocol (docs/data_model.md): if this crashes
-  // between the two, the result is an untracked R2 object (the GC design's
-  // "untracked R2 objects" sweep already accounts for this), never a $files
-  // pointer referencing an R2 object that was never written.
-  private async uploadOne(p: PreparedUpload): Promise<UploadedPage> {
-    await this.cfg.r2.putObject(p.rawPath, p.body);
-    const { data } = await this.cfg.db.storage.uploadFile(p.pageKey, p.content);
-    return { fileId: data.id, pageKey: p.pageKey };
+  // Issues the real R2 PUTs R2_BATCH_CONCURRENCY at a time -- bounded
+  // parallelism instead of one page at a time (slow for anything beyond a
+  // handful of pages) or all of them at once (risks exhausting connections /
+  // R2 rate limits, especially for a bulk --migrate commit). The one failure
+  // mode this leaves (docs/data_model.md's commit protocol): a crash between
+  // a page's PUT here and the transact() below leaves an untracked R2
+  // object, never a pages row pointing at something that was never written.
+  private async uploadPages(prepared: PreparedUpload[]): Promise<void> {
+    for (let i = 0; i < prepared.length; i += C.R2_BATCH_CONCURRENCY) {
+      const batch = prepared.slice(i, i + C.R2_BATCH_CONCURRENCY);
+      await Promise.all(
+        batch.map((p) => this.cfg.r2.putObject(p.rawPath, p.body)),
+      );
+    }
   }
 
   private async transactPages(
-    uploaded: Map<number, UploadedPage>,
+    prepared: PreparedUpload[],
     newVersion: number,
     dbMetaId: string,
     pageCount: number,
     pageSize: number,
   ): Promise<void> {
-    const pageTxs = [...uploaded].map(([pageNo, info]) =>
-      this.pageTx(pageNo, info, newVersion),
-    );
-    const fileOwnerTxs = [...uploaded.values()].map((info) =>
-      this.fileTx(info),
-    );
+    const pageTxs = prepared.map((p) => this.pageTx(p, newVersion));
     const dbMetaTx = tx.dbMeta[dbMetaId]
       .update({
         currentVersion: newVersion,
@@ -195,20 +161,13 @@ export class RemotePageStore {
         pageSize,
         needsGc: false,
       })
-      .link({ owner: this.cfg.ownerId }); // idempotent if already linked
-    await this.cfg.db.transact([...pageTxs, ...fileOwnerTxs, dbMetaTx]);
+      .link({ owner: this.cfg.authId }); // idempotent if already linked
+    await this.cfg.db.transact([...pageTxs, dbMetaTx]);
   }
 
-  private pageTx(pageNo: number, info: UploadedPage, version: number) {
+  private pageTx(p: PreparedUpload, version: number) {
     return tx.pages[id()]
-      .update({ pageKey: info.pageKey, pageNo, version })
-      .link({ owner: this.cfg.ownerId, pointerFile: info.fileId });
-  }
-
-  // uploadFile() only creates the $files row -- it never links `owner`
-  // (there's nothing to link to yet at upload time), so that link has to be
-  // set explicitly here, same as pages.owner above.
-  private fileTx(info: UploadedPage) {
-    return tx.$files[info.fileId].link({ owner: this.cfg.ownerId });
+      .update({ pageKey: p.pageKey, pageNo: p.pageNo, version, path: p.path })
+      .link({ owner: this.cfg.authId });
   }
 }

@@ -145,7 +145,6 @@ async function initAdmin(
   const result = await new AdminInitializer(creds, log).run();
   log.info("--- init-admin summary ---");
   log.info(`auth.id:     ${result.authId}`);
-  log.info(`users row:   ${result.usersRowId}`);
   log.info(`dbMeta:      ${result.dbMetaId}`);
   log.info(`page count:  ${result.pageCount}`);
   log.info(`version:     ${result.version}`);

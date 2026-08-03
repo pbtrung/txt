@@ -8,22 +8,24 @@ import { i } from "@instantdb/core";
 
 const _schema = i.schema({
   entities: {
-    // umk carries this account's root key-wrapping attribute directly on the
-    // auth entity itself (docs/data_model.md's Key Hierarchy) -- InstantDB's
-    // own built-in entity, but custom attributes on it are allowed like any
-    // other. Never readable/writable except by isSelf/isAdmin
-    // (instant.perms.ts) -- a leaked query result still can't be unwrapped
-    // without the external user_root_key (never stored here).
+    // $users is InstantDB's own built-in auth entity, but custom attributes
+    // on it are allowed like any other -- there's no separate app-level
+    // profile entity in this design, so $users is also the one thing every
+    // other entity's owner/user link points at directly. Never
+    // readable/writable except by isSelf/isAdmin (instant.perms.ts).
     $users: i.entity({
       email: i.string().unique().indexed(),
       // base64, 128 random bytes, generated once per account and wrapped
       // (crypto.md's Blob format) under user_root_key (an external secret
       // from creds.json, never stored in InstantDB). Encrypts this account's
-      // own credStore row(s) -- see credStore below.
+      // own credStore row(s) -- see credStore below. A leaked query result
+      // still can't be unwrapped without the external user_root_key.
       umk: i.string().optional(),
-    }),
-    users: i.entity({
-      type: i.string(), // 'admin' | 'user'
+      // 'admin' | 'user' -- the permission system's role switch. Only ever
+      // admin-writable (instant.perms.ts's $users.update: "isAdmin", no
+      // isSelf branch at all), so self-promotion isn't possible through the
+      // normal write path.
+      type: i.string().optional(),
     }),
     // The encrypted key-material store (docs/data_model.md's credStore
     // entity). One row per (owner, subject) pair -- a single owner can hold
@@ -65,23 +67,15 @@ const _schema = i.schema({
     }),
   },
   links: {
-    // Cascade chain rooted at $users: deleting the auth identity deletes its
-    // users profile (below), which in turn deletes everything that profile
-    // owns (dbMetaOwner/pagesOwner/activeReadersOwner/credStoreOwner/
-    // credStoreUser) -- one delete cleans up the whole account's
-    // InstantDB-side footprint. `on`, not `data`, is what's authoritative
+    // Every owner/user link below targets $users directly -- auth.id already
+    // equals a $users row's own id, so instant.perms.ts's isOwner checks are
+    // a single-hop data.ref('owner.id'), never a two-hop traversal through an
+    // intermediate profile row. `on`, not `data`, is what's authoritative
     // here: onDelete goes on whichever side of a link has `has: "one"` (the
     // only cardinality it's valid on) and fires when the *other* side's
-    // entity is deleted.
-    usersAuth: {
-      forward: {
-        on: "users",
-        has: "one",
-        label: "authUser",
-        onDelete: "cascade",
-      },
-      reverse: { on: "$users", has: "one", label: "profile" },
-    },
+    // entity is deleted -- so deleting a $users row cascades directly to
+    // every dbMeta/pages/activeReaders/credStore row it owns, in one step
+    // each, no intermediate entity to cascade through first.
     dbMetaOwner: {
       forward: {
         on: "dbMeta",
@@ -89,11 +83,11 @@ const _schema = i.schema({
         label: "owner",
         onDelete: "cascade",
       },
-      reverse: { on: "users", has: "one", label: "dbMeta" },
+      reverse: { on: "$users", has: "one", label: "dbMeta" },
     },
     pagesOwner: {
       forward: { on: "pages", has: "one", label: "owner", onDelete: "cascade" },
-      reverse: { on: "users", has: "many", label: "pages" },
+      reverse: { on: "$users", has: "many", label: "pages" },
     },
     activeReadersOwner: {
       forward: {
@@ -102,7 +96,7 @@ const _schema = i.schema({
         label: "owner",
         onDelete: "cascade",
       },
-      reverse: { on: "users", has: "many", label: "activeReaders" },
+      reverse: { on: "$users", has: "many", label: "activeReaders" },
     },
     // Whoever's umk encrypts this row's content -- deleting that account
     // cascades away every row it owns.
@@ -113,7 +107,7 @@ const _schema = i.schema({
         label: "owner",
         onDelete: "cascade",
       },
-      reverse: { on: "users", has: "many", label: "credStoreAsOwner" },
+      reverse: { on: "$users", has: "many", label: "credStoreAsOwner" },
     },
     // Which account's key material this row actually describes -- left
     // unlinked when a row describes its own owner (docs/data_model.md's
@@ -127,7 +121,7 @@ const _schema = i.schema({
         label: "user",
         onDelete: "cascade",
       },
-      reverse: { on: "users", has: "many", label: "credStoreAsUser" },
+      reverse: { on: "$users", has: "many", label: "credStoreAsUser" },
     },
   },
 });
