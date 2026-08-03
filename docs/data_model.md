@@ -2,79 +2,76 @@
 
 This project stores data in a single InstantDB app — isolation between users is enforced entirely by InstantDB's permission rules (CEL expressions), not by physical separation into per-user databases. Identity comes from Firebase Auth; InstantDB maps a verified Firebase ID token to an InstantDB user by its email claim.
 
-InstantDB itself holds only two things: `$users` (identity plus this account's wrapped key hierarchy) and a page-store (`dbMeta`/`pages`/`$files`/`activeReaders`) for **one SQLCipher-encrypted SQLite database per user**, paged remotely into R2. The actual application schema — documents, their content, bookmarks — lives entirely _inside_ that per-user SQLCipher database (see "Per-user SQLCipher database schema" below) and is never visible to InstantDB as rows at all: InstantDB only ever sees opaque, client-encrypted page pointers.
+InstantDB itself holds only three things: `$users` (identity plus a per-account `umk`), `credStore` (encrypted key-material blobs), and a page-store (`dbMeta`/`pages`/`activeReaders`) for **one SQLCipher-encrypted SQLite database per user**, paged remotely into R2. The actual application schema — documents, their content, bookmarks — lives entirely _inside_ that per-user SQLCipher database (see "Per-user SQLCipher database schema" below) and is never visible to InstantDB as rows at all: InstantDB only ever sees an opaque, client-encrypted object key per page.
 
-Exact InstantDB API names below (`i.entity`, `unique()`, `.ref()`, permission rule shape) come from InstantDB's own docs (`instantdb.com/docs/modeling-data`, `/docs/permissions`, `/docs/auth/firebase`, `/docs/storage`) — verify against a real `npx instant-cli@latest push schema` before treating any of this as final. Two items below are explicitly flagged as unverified and worth confirming empirically before this design is trustworthy enough to build on.
+Exact InstantDB API names below (`i.entity`, `unique()`, `.ref()`, permission rule shape) come from InstantDB's own docs (`instantdb.com/docs/modeling-data`, `/docs/permissions`, `/docs/auth/firebase`) — verify against a real `npx instant-cli@latest push schema` before treating any of this as final. One item below is explicitly flagged as unverified and worth confirming empirically before this design is trustworthy enough to build on.
 
 ## Entities
 
-- **`$users`** (InstantDB's built-in auth entity) — one row per Firebase-authenticated identity, keyed by email. Also carries this account's key hierarchy directly, as custom attributes:
-  - **`umk`** — base64, 128 random bytes, generated once per account and wrapped (`crypto.md`'s Blob format) under `user_root_key` — an external secret supplied by `creds.json`, never stored in InstantDB.
-  - **`creds`** — base64, itself a Blob-wrapped JSON payload under `umk`. For the admin role:
+- **`$users`** (InstantDB's built-in auth entity) — one row per Firebase-authenticated identity, keyed by email. Carries exactly one custom attribute beyond the built-in ones:
+  - **`umk`** — base64, 128 random bytes, generated once per account and wrapped (`crypto.md`'s Blob format) under `user_root_key` — an external secret supplied by `creds.json`, never stored in InstantDB. `umk` is the encryption key for this account's `credStore` rows (below) — nothing else about this account's key hierarchy lives on `$users` itself.
+- **`credStore`** — the encrypted key-material store. One row per (owner, subject) pair; a single `owner` can hold multiple rows. Fields: `owner` (link to `users`, whoever's `umk` encrypts this row's `content`), `user` (link to `users`, optional — which account's key material this row actually describes; left empty when a row describes its own owner), and `content` (a string: JSON, wrapped whole via `crypto.md`'s Blob format under `owner`'s `$users.umk`).
 
-    ```json
-    {
-      "r2_config": {
-        "endpoint": "",
-        "read_only_access_key_id": "",
-        "read_only_secret_access_key": "",
-        "read_write_access_key_id": "",
-        "read_write_secret_access_key": "",
-        "region": "",
-        "bucket": ""
-      },
-      "path_key": "<base64, 128 random bytes>",
-      "db_key": "<base64, 256 random bytes>"
-    }
-    ```
+  For a `user`-role account's own row (`owner` = that user, `user` link empty):
 
-    `r2_config` is this account's Cloudflare R2 connection info, needed to read/write this user's page objects directly in R2. `path_key` wraps each page-version's `raw_key` (the random component of its real R2 object key — see `$files` below) before it's uploaded as `$files`' file content — never embedded in `$files.path` itself, which stays plaintext. `db_key` is the raw SQLCipher key for this user's own database — **must be ≥256 raw bytes**: the leancrypto cipher provider (`sqlcipher/sqlcipher.js`, this repo's vendored WASM build) rejects anything shorter (`sqlcipher_cipher_ctx_key_derive: key must be supplied as a raw key blob x'...' of at least 256 bytes`, confirmed against the real WASM module) — unlike `umk`/`path_key`, which are just HKDF input keying material and have no such hard minimum.
+  ```json
+  {
+    "r2_config": {
+      "endpoint": "",
+      "region": "",
+      "bucket": ""
+    },
+    "path_key": "<base64, 128 random bytes>",
+    "db_key": "<base64, 256 random bytes>"
+  }
+  ```
 
-    For the `user` role:
+  For the admin's own row (`owner` = admin, `user` = admin):
 
-    ```json
-    {
-      "r2_config": {
-        "endpoint": "",
-        "region": "",
-        "bucket": ""
-      },
-      "path_key": "<base64, 128 random bytes>",
-      "db_key": "<base64, 256 random bytes>"
-    }
-    ```
+  ```json
+  {
+    "r2_config": {
+      "endpoint": "",
+      "read_only_access_key_id": "",
+      "read_only_secret_access_key": "",
+      "read_write_access_key_id": "",
+      "read_write_secret_access_key": "",
+      "region": "",
+      "bucket": ""
+    },
+    "path_key": "<base64, 128 random bytes>",
+    "db_key": "<base64, 256 random bytes>"
+  }
+  ```
 
-    `path_key`/`db_key` are generated by the admin at account-creation time, alongside this user's own SQLCipher database (see "Non-admin (`user`-role) accounts" below) — same role and sizing as the admin's. `r2_config` here carries no access keys at all, only connection info: a `user` session never holds a static R2 credential of any kind, permanent or otherwise. Instead, R2 access is entirely mediated by short-lived, prefix-scoped temporary credentials, minted on demand — see "Non-admin (`user`-role) accounts" below.
-- **`users`** — an app-level profile entity, one-to-one linked to `$users`, holding `type: 'admin' | 'user'`. Kept separate from `$users` because `$users` is managed by InstantDB's auth system and isn't meant to carry arbitrary app fields (aside from the key-hierarchy attributes above, which are a deliberate, narrow exception — see `instant.perms.ts`'s `$users` rules for why). `type` is the permission system's role switch: a `'user'` can only view/create/update their own `dbMeta`/`pages`/`$files`/`activeReaders` rows (every rule is `isAdmin || isOwner`), an `'admin'` can act on any user's data, full stop — including operations (updating/deleting `pages`/`$files` rows) an ordinary owner is never allowed, since those violate the page store's append-only MVCC invariant and are meant only as a deliberate support/repair escape hatch. A `'user'` can update their own profile row but never their own `type` field (blocked via `request.modifiedFields`), so self-promotion to admin isn't possible through the normal write path.
+  `path_key` wraps each page's `raw_key` (see `pages` below) before it's written into `pages.path`. `db_key` is the raw SQLCipher key for the described account's own database — **must be ≥256 raw bytes**: the leancrypto cipher provider (`sqlcipher/sqlcipher.js`, this repo's vendored WASM build) rejects anything shorter (`sqlcipher_cipher_ctx_key_derive: key must be supplied as a raw key blob x'...' of at least 256 bytes`, confirmed against the real WASM module) — unlike `umk`/`path_key`, which are just HKDF input keying material and have no such hard minimum. `r2_config` is the connection info needed to read/write the described account's page objects — for the admin, this also includes the actual R2 access keys; a `user`-role row's `r2_config` carries no access keys at all, since a `user` session never holds a static R2 credential of any kind, only a short-lived, prefix-scoped temporary one minted on demand (see "Temporary, prefix-scoped R2 credentials" below).
+
+  A third row shape — `owner` = admin, `user` = some other user, letting the admin hold its own encrypted copy of that user's `path_key`/`db_key` for repair purposes without needing that user's own `umk` — is anticipated by this design but its `content` shape isn't decided yet.
+
+- **`users`** — an app-level profile entity, one-to-one linked to `$users`, holding `type: 'admin' | 'user'`. Kept separate from `$users` because `$users` is managed by InstantDB's auth system and isn't meant to carry arbitrary app fields (aside from `umk`, a deliberate, narrow exception — see `instant.perms.ts`'s `$users` rules for why). `type` is the permission system's role switch: a `'user'` can only view/create/update their own `dbMeta`/`pages`/`activeReaders`/`credStore` rows (every rule is `isAdmin || isOwner`), an `'admin'` can act on any user's data, full stop — including operations (updating/deleting `pages` rows) an ordinary owner is never allowed, since those violate the page store's append-only MVCC invariant and are meant only as a deliberate support/repair escape hatch. A `'user'` can update their own profile row but never their own `type` field (blocked via `request.modifiedFields`), so self-promotion to admin isn't possible through the normal write path.
 - **`dbMeta`** — one row per user (one-to-one link to `users`): `currentVersion`, `pageCount`, `pageSize`, `needsGc` — the table of contents for that user's SQLCipher database's page store. `pageSize` matches that database's own page size (`PRAGMA page_size`, set to `32768` — see the schema's `PRAGMA` block below); SQLCipher's own `cipher_page_size` follows the same value.
-- **`pages`** — one row per (owner, page_no, version) triple of the SQLCipher database above: `pageNo`, `version`, a synthetic `pageKey` (see below), linked to `users` (owner) and to `$files` (the page's pointer). A "page" here is a literal SQLite/SQLCipher page, not an arbitrary document chunk.
-- **`$files`** (InstantDB's built-in storage entity) — one row per page-version's pointer. InstantDB only allows creating a `$files` row via `db.storage.uploadFile(path, file)` — `transact()` can update an existing row's `path` or delete the row, but never create one ([instantdb.com/docs/storage#link-files](https://instantdb.com/docs/storage#link-files)). `path` is the **same value** as `pages.pageKey` (`"${auth.id}:${pageNo}:${version}"`, deterministic, plaintext) — `instant.perms.ts`'s string-prefix ownership check (`data.path.startsWith(auth.id + ':')`) still holds, since `pageKey` already starts with that same prefix. The real secret — this page-version's actual R2 object key, `raw_path = "${r2Prefix}/${raw_key}"` (`r2Prefix = base32_lowercase(sha3-256(auth.id))` for every account, admin included — see "Non-admin (`user`-role) accounts" below for why every account's objects are namespaced this way even though only `user`-role R2 access is actually restricted to it; `raw_key` a fresh Crockford-base32-lowercase encoding of 32 random bytes) — only `raw_key` is wrapped via `crypto.md`'s Blob format (IKM = `path_key`) and uploaded as the **file's content**, not embedded in `path`; `r2Prefix` is never part of that encrypted content, since it's a pure, deterministic function of `auth.id` that costs nothing to recompute at the point of the actual R2 GET/PUT, so storing it too would just be dead weight in every one of these blobs. Reading it back means downloading `$files.url` (a real hop, since the pointer isn't in the query result the way `path` would be), decrypting the response body to recover `raw_key`, and reassembling `raw_path` from it.
+- **`pages`** — one row per (owner, page_no, version) triple of the SQLCipher database above: `pageNo`, `version`, a synthetic `pageKey` (see below), linked to `users` (owner), and `path` — this page-version's real R2 object key, encrypted and stored directly as base64: `path = base64(Blob(raw_key; IKM = path_key))`, where `raw_key` is a fresh Crockford-base32-lowercase encoding of 32 random bytes and the object's real address is `raw_path = "${r2Prefix}/${raw_key}"` (`r2Prefix = base32_lowercase(sha3-256(auth.id))`, a pure function of the owning account's `auth.id`, never itself encrypted or stored — cheap to recompute at the point of the actual R2 GET/PUT, so leaving it out of every encrypted `path` is pure savings, not a missing piece). A "page" here is a literal SQLite/SQLCipher page, not an arbitrary document chunk.
 - **`activeReaders`** — one row per open read session: `snapshotVersion` (the version that session pinned at open) and `leaseExpiresAt`, linked to `users`. Lets garbage collection compute the oldest version still in use by any live reader.
-
-### Why route pointers through `$files` instead of a plain column on `pages`
-
-Two independent, separately-gated permission surfaces (`pages`' rules and `$files`' rules) rather than one — a bug in one rule set doesn't automatically expose the other. These are genuinely different mechanisms: `pages`' rules are ref-traversal (`auth.id in data.ref('owner.authUser.id')`), while `$files`' rules are a string-prefix check on `path` (ref traversal isn't available there at creation time). This also means the encrypted pointer gets to live as real file content (InstantDB storage, not a plain attribute value) rather than needing its own ad hoc encoding squeezed into a string column — `db.storage.uploadFile` is the InstantDB mechanism built for exactly that, and it comes with its own independently-gated permission check for free.
 
 ## The composite-uniqueness problem (guarded insert)
 
-InstantDB's `unique()` constraint is per-attribute, whole-namespace — it cannot express "unique per (owner, page_no, version)" directly, since every user's page store independently starts at page 1, version 1, and those would collide across users on a bare `pageNo`/`version` attribute. Fix: compute a synthetic `pageKey = "${ownerId}:${pageNo}:${version}"` client-side and mark _that_ attribute `unique().indexed()`. Attempting to write a `pages` row whose `pageKey` already exists then fails outright — the guarded-insert guarantee for concurrent writers, enforced by the constraint itself, no hand-rolled SQL needed. `pageKey` is deterministic and plaintext by design (it only needs to be unique and computable, never secret) — unlike the `raw_key` wrapped inside `$files`' uploaded content, which is random and encrypted precisely because it's half of a real R2 object address (the other half, `r2Prefix`, is deterministic and never encrypted at all — see `$files` above).
+InstantDB's `unique()` constraint is per-attribute, whole-namespace — it cannot express "unique per (owner, page_no, version)" directly, since every user's page store independently starts at page 1, version 1, and those would collide across users on a bare `pageNo`/`version` attribute. Fix: compute a synthetic `pageKey = "${ownerId}:${pageNo}:${version}"` client-side and mark _that_ attribute `unique().indexed()`. Attempting to write a `pages` row whose `pageKey` already exists then fails outright — the guarded-insert guarantee for concurrent writers, enforced by the constraint itself, no hand-rolled SQL needed. `pageKey` is deterministic and plaintext by design (it only needs to be unique and computable, never secret) — unlike `raw_key` (wrapped into `pages.path`), which is random and encrypted precisely because it's half of a real R2 object address (the other half, `r2Prefix`, is deterministic and never encrypted at all — see `pages` above).
 
 ## Commit protocol (MVCC write path)
 
 1. Client stages dirty pages of its local SQLCipher database (via the vendored `sqlcipher.wasm` + `js-vfs.mjs` remote-page VFS) in memory.
 2. On commit, for each dirty page: the SQLCipher layer has already produced that page's ciphertext (encrypted under `db_key`, Ascon-Keccak at the SQLite page level) — this _is_ the R2 object body; no separate app-level wrapping of page content is needed.
-3. Generate a fresh `raw_key = crockford_base32_lowercase(32 random bytes)` for this page-version, and `PUT` the page ciphertext to the user's own R2 bucket at `"${r2Prefix}/${raw_key}"` (`r2Prefix = base32_lowercase(sha3-256(auth.id))`) — via the admin's static read-write credentials for an admin session, or a freshly-minted temporary credential scoped to `${r2Prefix}/*` for a `user` session (see "Non-admin (`user`-role) accounts" below).
-4. Encrypt `raw_key` alone (`crypto.md`'s Blob format, IKM = `path_key`) — this ciphertext is the file content for step 5, not anything embedded in a path string. `r2Prefix` is deliberately left out: it's a pure function of `auth.id`, so re-deriving it at read time (step 3 of the Read protocol below) costs nothing, while baking it into every one of these blobs would not.
-5. `await db.storage.uploadFile(pageKey, <the encrypted raw_key from step 4>)`, where `pageKey = "${auth.id}:${pageNo}:${version}"` (the same value `pages.pageKey` will use). This _creates_ the `$files` row (`path = pageKey`). This is the only way to create a `$files` row and can't be folded into the `transact()` below; ownership at this point is enforced purely by `instant.perms.ts` checking `data.path.startsWith(auth.id + ':')`, which `pageKey` already satisfies, since no link to any other entity exists yet.
-6. One `db.transact([...])`: create the new `pages` row (`pageKey` — the same value used as `$files.path` above — linked to `owner` and, via the upload's returned `data.id`, to the `$files` row through `pointerFile`), and CAS-bump `dbMeta.currentVersion` — all in the same atomic transaction. The CAS is enforced by a permission rule on `dbMeta`'s `update`: `newData.currentVersion == data.currentVersion + 1` — since the rule evaluates against the record's state at commit time inside the same transaction, a concurrent writer that already advanced the version makes the whole transaction fail.
+3. Generate a fresh `raw_key = crockford_base32_lowercase(32 random bytes)` for this page-version, and `PUT` the page ciphertext to the user's own R2 bucket at `"${r2Prefix}/${raw_key}"` (`r2Prefix = base32_lowercase(sha3-256(auth.id))`) — via the admin's static read-write credentials for an admin session, or a freshly-minted temporary credential scoped to `${r2Prefix}/*` for a `user` session (see "Temporary, prefix-scoped R2 credentials" below).
+4. Encrypt `raw_key` alone (`crypto.md`'s Blob format, IKM = `path_key`) and base64-encode the result — this becomes the new `pages` row's `path` value directly; no separate upload call is needed to produce it.
+5. One `db.transact([...])`: create the new `pages` row (`pageKey = "${auth.id}:${pageNo}:${version}"`, `path` from step 4, linked to `owner`) and CAS-bump `dbMeta.currentVersion` — all in the same atomic transaction. The CAS is enforced by a permission rule on `dbMeta`'s `update`: `newData.currentVersion == data.currentVersion + 1` — since the rule evaluates against the record's state at commit time inside the same transaction, a concurrent writer that already advanced the version makes the whole transaction fail.
 
-   **New failure modes:** steps 3, 4/5, and 6 are three separate operations, not one atomic unit. A crash between step 3 and step 5 leaves a real R2 object with no `$files` pointer at all. A crash between step 5 and step 6 leaves an uploaded-but-unlinked `$files` row (no `pages` row points at it, though the R2 object from step 3 is fine since that upload already succeeded independently). Garbage collection needs sweeps for both (see below).
+   **The one failure mode:** step 3 (the R2 `PUT`) and step 5 (the InstantDB `transact`) are two separate operations, not one atomic unit. A crash between them leaves a real R2 object with no `pages` row pointing at it — since `path` is written directly by the same `transact()` that creates the row, there's no second, separately-created metadata step in between to fail on its own. Garbage collection sweeps for this one case (see below).
 
    **Unverified — confirm before relying on this:** whether `transact()` is truly serializable per-record, or just "check rules against a possibly-stale read, then apply." This is the one piece of this design load-bearing enough to need real verification.
 
 ## Read protocol
 
-Query `pages` for `owner = self, pageNo = N, version <= target`, ordered by version descending, limit 1 (indexed `version` column enables the comparison/ordering), with the linked `$files.url` included in the same query result. `GET $files.url` to download the (small) encrypted content, decrypt it with `path_key` to recover `raw_key`, reassemble `raw_path = "${r2Prefix}/${raw_key}"` (`r2Prefix` re-derived from `auth.id`, already known at this point — never part of the encrypted content itself), then `GET` that key from R2 — the real (SQLCipher-encrypted) page bytes, handed to the local SQLite/SQLCipher engine, which decrypts them with `db_key` as the page is loaded. Three hops: one InstantDB query, one download for the pointer content, one R2 fetch for the real page bytes.
+Query `pages` for `owner = self, pageNo = N, version <= target`, ordered by version descending, limit 1 (indexed `version` column enables the comparison/ordering) — the result already includes `path`, so no second query or download is needed to reach it. Decrypt `path` with `path_key` to recover `raw_key`, reassemble `raw_path = "${r2Prefix}/${raw_key}"` (`r2Prefix` re-derived from `auth.id`, already known at this point), then `GET` that key from R2 — the real (SQLCipher-encrypted) page bytes, handed to the local SQLite/SQLCipher engine, which decrypts them with `db_key` as the page is loaded. Two hops: one InstantDB query, one R2 fetch.
 
 ## Temporary, prefix-scoped R2 credentials
 
@@ -82,11 +79,11 @@ No account holds a static R2 access key in the browser, admin included — the a
 
 ### Provisioning a `user` account
 
-Creating a `user` account is an admin-side action: the admin generates that user's `path_key`/`db_key`, initializes their SQLCipher database (schema, `PRAGMA`s — see below — and an empty `dbMeta`), uploads its initial pages to R2 under that user's `r2Prefix` using the admin's own credentials, and writes the resulting `$users.creds` (wrapped under that user's `umk`) and `dbMeta`/`pages`/`$files` rows. From that point on, the user reads and writes their own database entirely through the temporary-credential flow below, the same one the admin's own session also uses — the admin never needs to touch it again for ordinary use.
+Creating a `user` account is an admin-side action: the admin generates that user's `path_key`/`db_key`, initializes their SQLCipher database (schema, `PRAGMA`s — see below — and an empty `dbMeta`), uploads its initial pages to R2 under that user's `r2Prefix` using the admin's own credentials, and writes the resulting `credStore` row (`owner` = that user, `user` link empty, `content` wrapped under that user's own `umk`) plus `dbMeta`/`pages` rows. From that point on, the user reads and writes their own database entirely through the temporary-credential flow below, the same one the admin's own session also uses — the admin never needs to touch it again for ordinary use.
 
 ### The credential flow
 
-Every account's `raw_path` values live under `r2Prefix = base32_lowercase(sha3-256(auth.id))` (see `$files` above) — deterministic, computable by anyone who knows `auth.id`. R2 access for any account is restricted to exactly that slice, via a Cloudflare Worker (`worker/r2Creds.ts`, deployed alongside the app's own static build as one Worker-with-static-assets resource, not a separate platform):
+Every account's `raw_path` values live under `r2Prefix = base32_lowercase(sha3-256(auth.id))` (see `pages` above) — deterministic, computable by anyone who knows `auth.id`. R2 access for any account is restricted to exactly that slice, via a Cloudflare Worker (`worker/r2Creds.ts`, deployed alongside the app's own static build as one Worker-with-static-assets resource, not a separate platform):
 
 1. The client calls Firebase's `getIdToken()` (not a cached raw token string — see below) and sends `{idToken, prefix: computeR2Prefix(auth.id), bucket, endpoint}` to the Worker's `POST /api/r2-creds`.
 2. The Worker verifies the token itself — RS256 signature against Firebase's own public JWKS via `jose` (Workers-compatible), issuer/audience pinned to a Worker-configured Firebase project ID that's never accepted from the request itself (accepting it from the client would let a caller point verification at a different Firebase project they control). It does **not** independently re-derive or cross-check the requested prefix against the token's own subject — the prefix is trusted as given once the token itself is proven real, a deliberate simplification for a small, admin-curated user base.
@@ -100,21 +97,18 @@ This is the one place this design needs a server component — every other unloc
 
 ## Garbage collection
 
-Three sweeps, since content and its pointer live outside the metadata store, in two different places:
+Two sweeps:
 
-1. Once no `activeReaders` row still needs a superseded page version, delete the `pages` row.
-2. Only then delete the `$files` row and the R2 object its decrypted content (`raw_key`, combined with the owning account's own re-derived `r2Prefix`) resolves to — in that order, so a crash mid-GC never leaves a `pages` row pointing at something already deleted.
-3. Two orphan sweeps for the commit protocol's failure modes above, both needing a full R2 bucket listing diffed against everything currently reachable — structurally the same shape as the existing `txt.ts --clean-bucket` tool, just decrypting via `path_key` instead of that tool's `txt_key`/`txt_metadata_key` chain:
-   - **Unlinked `$files` rows**: rows with no incoming `pointerFile` link, older than some grace period (long enough to outlast any in-flight commit's step 5-to-6 gap) — download and decrypt each row's content to recover `raw_key`, reassemble `raw_path` from the owner's `r2Prefix`, then delete the row and that R2 object.
-   - **Untracked R2 objects**: real R2 objects with no `$files` row pointing at them at all (the step-3 `PUT` succeeded, but the step-5 upload or step-6 transact never completed) — same grace-period reasoning, delete directly.
+1. Once no `activeReaders` row still needs a superseded page version, delete the `pages` row, then delete the R2 object its `path` (decrypted via `path_key`, combined with the owning account's own re-derived `r2Prefix`) resolves to — in that order, so a crash mid-GC never leaves a `pages` row pointing at something already deleted.
+2. An orphan sweep for the commit protocol's one failure mode above, needing a full R2 bucket listing diffed against everything currently reachable — structurally the same shape as the existing `txt.ts --clean-bucket` tool, just decrypting via `path_key` instead of that tool's `txt_key`/`txt_metadata_key` chain: real R2 objects with no `pages` row whose decrypted `path` resolves to them (the step-3 `PUT` succeeded, but the step-5 `transact` never completed) — after some grace period (long enough to outlast any in-flight commit's step-3-to-step-5 gap), delete them directly.
 
-`txt.ts --migrate` implements a version of the untracked-R2-objects sweep scoped to its own target account, run at the start of every invocation (no grace period needed there, since it's the same operator re-running the same command, not a background job racing an in-flight commit): list R2 objects under the target account's own `r2Prefix`, diff against every `pages` row's own decrypted `raw_key` (any version, not just the current one — a superseded-but-not-yet-GC'd page's object is still legitimately known), and delete whatever's left over from a previous run that crashed between `RemotePageStore.commitPages`' own R2-upload step and its final `transact`. This is what makes `--migrate` resumable without duplicating documents: each migrated document keeps its source `txt_id` as its target `txt_id`, so a re-run only needs `SELECT id FROM txt` against the target to know which source documents already made it across.
+`txt.ts --migrate` implements a version of this sweep scoped to its own target account, run at the start of every invocation (no grace period needed there, since it's the same operator re-running the same command, not a background job racing an in-flight commit): list R2 objects under the target account's own `r2Prefix`, diff against every `pages` row's own decrypted `raw_key` (any version, not just the current one — a superseded-but-not-yet-GC'd page's object is still legitimately known), and delete whatever's left over from a previous run that crashed between `RemotePageStore.commitPages`' own R2-upload step and its final `transact`. This is what makes `--migrate` resumable without duplicating documents: each migrated document keeps its source `txt_id` as its target `txt_id`, so a re-run only needs `SELECT id FROM txt` against the target to know which source documents already made it across.
 
 Maintenance/GC tooling almost certainly needs to run via InstantDB's server-side Admin SDK (an app-level secret token bypassing permission rules entirely, analogous to Firebase's Admin SDK) rather than as an ordinary authenticated client — GC needs cross-user visibility that per-user CEL rules should never grant to a regular client.
 
 ## Auth
 
-Every unlock requires a live Firebase sign-in (`getIdToken()` → `db.auth.signInWithIdToken()`), since InstantDB resolves identity from the token's email claim at session-creation time, not from a long-lived static credential. A non-interactive, file-based unlock flow would need Firebase custom tokens minted from a small backend instead. After sign-in, the client reads its own `$users.umk`/`creds`, unwraps them (`user_root_key` → `umk` → `creds`), and uses `creds.db_key` to open (or create) its own per-user SQLCipher database via the vendored `sqlcipher.wasm` + `js-vfs.mjs` remote-page VFS, backed by the `dbMeta`/`pages`/`$files` page store above. A `user`-role session additionally depends on the temporary-credential intermediary ("Non-admin (`user`-role) accounts" below) for its R2 access — the only server component this design needs.
+Every unlock requires a live Firebase sign-in (`getIdToken()` → `db.auth.signInWithIdToken()`), since InstantDB resolves identity from the token's email claim at session-creation time, not from a long-lived static credential. A non-interactive, file-based unlock flow would need Firebase custom tokens minted from a small backend instead. After sign-in, the client reads its own `$users.umk`, unwraps it under `user_root_key`, then reads its own `credStore` row (`owner = self`) and decrypts its `content` under `umk` to recover `path_key`/`db_key`/`r2_config`, and uses `db_key` to open (or create) its own per-user SQLCipher database via the vendored `sqlcipher.wasm` + `js-vfs.mjs` remote-page VFS, backed by the `dbMeta`/`pages` page store above. A `user`-role session additionally depends on the temporary-credential intermediary (above) for its R2 access — the only server component this design needs.
 
 ## Per-user SQLCipher database schema
 
@@ -177,8 +171,8 @@ END;
 
 ### Pragmas
 
-- **`page_size = 32768`** — must be set before any table is created (SQLite only honors a `page_size` change on an empty database, or via a subsequent `VACUUM`); this is what `dbMeta.pageSize`/`pages`/`$files` above are keyed to. A larger-than-default page size means fewer, bigger R2 objects per database for a given document size — fewer round-trips to page a large document in, at the cost of moving more bytes than strictly needed when only a small part of a page actually changed.
-- **`auto_vacuum = INCREMENTAL`** — also only settable before any table exists. Lets freed pages (e.g. after deleting a document) be reclaimed via an explicit `PRAGMA incremental_vacuum` sweep without rewriting the whole file, unlike a full `VACUUM` — important here since every reclaimed page is also a page-store entry (`pages`/`$files`) and an R2 object to garbage-collect, not just local disk space.
+- **`page_size = 32768`** — must be set before any table is created (SQLite only honors a `page_size` change on an empty database, or via a subsequent `VACUUM`); this is what `dbMeta.pageSize`/`pages` above are keyed to. A larger-than-default page size means fewer, bigger R2 objects per database for a given document size — fewer round-trips to page a large document in, at the cost of moving more bytes than strictly needed when only a small part of a page actually changed.
+- **`auto_vacuum = INCREMENTAL`** — also only settable before any table exists. Lets freed pages (e.g. after deleting a document) be reclaimed via an explicit `PRAGMA incremental_vacuum` sweep without rewriting the whole file, unlike a full `VACUUM` — important here since every reclaimed page is also a page-store entry (`pages`) and an R2 object to garbage-collect, not just local disk space.
 
 ### Tables
 

@@ -13,8 +13,8 @@
 // noted). isAdmin traverses auth -> $users.profile (the reverse of this
 // schema's usersAuth link) -> users.type.
 //
-// $users is InstantDB's own auth-managed entity, but it now carries custom
-// umk/creds attributes (docs/data_model.md's Key Hierarchy) alongside the
+// $users is InstantDB's own auth-managed entity, but it now carries a custom
+// umk attribute (docs/data_model.md's Key Hierarchy) alongside the
 // system-managed ones -- see its own rules below.
 //
 // Also confirmed via push (2026-08-01): $users.allow.delete must be the
@@ -29,11 +29,10 @@ const rules = {
     // isSelf is a direct id comparison here, not a ref traversal like every
     // other entity in this file -- $users *is* the auth identity, so
     // auth.id already equals this row's own id. view lets a session read
-    // and locally decrypt its own umk/creds after unlock; update is
-    // admin-only, since setting/rotating umk/creds is a provisioning action
+    // and locally decrypt its own umk after unlock; update is admin-only,
+    // since setting/rotating umk is a provisioning action
     // (AdminInitializer-equivalent), never a regular user self-service
-    // write -- mirrors umk_store never being regular-user-writable in the
-    // pre-InstantDB Turso design.
+    // write.
     //
     // create MUST be unconditional ("true"), confirmed against a real
     // sign-in attempt: InstantDB enforces this rule for its own internal
@@ -44,8 +43,8 @@ const rules = {
     // first admin's own, a bootstrap deadlock (no $users row -> no users
     // row -> never isAdmin -> can never create the $users row). Firebase's
     // own token verification is the real gate on who can trigger this in
-    // the first place; umk/creds themselves stay protected by update:
-    // isAdmin regardless of how permissive create is.
+    // the first place; umk itself stays protected by update: isAdmin
+    // regardless of how permissive create is.
     bind: [...ADMIN_BIND, "isSelf", "auth.id == data.id"],
     allow: {
       view: "isAdmin || isSelf",
@@ -107,24 +106,25 @@ const rules = {
       delete: "isAdmin",
     },
   },
-  $files: {
-    // $files rows are only ever created via db.storage.uploadFile(path, ...)
-    // (instantdb.com/docs/storage#link-files), which happens before any link
-    // to another entity exists -- so ownership can't be a ref traversal here
-    // the way it is for every other entity in this file. path is the same
-    // value as pages.pageKey ("${auth.id}:${pageNo}:${version}", plaintext,
-    // docs/data_model.md's commit protocol), which already starts with that
-    // same prefix -- the real secret (this page-version's R2 object key) is
-    // wrapped under path_key as the uploaded file's *content* instead, never
-    // in path. isOwnPath covers both create (governs the upload itself) and
-    // view (must hold both before and after the file gets linked to its
-    // pages row, so it can't switch to a ref-based check post-link).
-    bind: [...ADMIN_BIND, "isOwnPath", "data.path.startsWith(auth.id + ':')"],
+  credStore: {
+    // isOwner here is whoever's umk encrypts this row's content (the owner
+    // link, docs/data_model.md's credStore entity) -- not the `user` link,
+    // which only says which account's key material the row describes and
+    // has no bearing on who can decrypt or should be allowed to view it.
+    // view lets an owner read and locally decrypt their own row(s); create/
+    // update/delete are admin-only, same rationale as $users.umk above --
+    // provisioning/rotating key material is a provisioning action, never a
+    // regular user self-service write.
+    bind: [
+      ...ADMIN_BIND,
+      "isOwner",
+      "auth.id in data.ref('owner.authUser.id')",
+    ],
     allow: {
-      view: "isAdmin || isOwnPath",
-      create: "isAdmin || isOwnPath",
+      view: "isAdmin || isOwner",
+      create: "isAdmin",
       update: "isAdmin",
-      delete: "isAdmin", // ordinary GC still goes through the Admin SDK, bypassing rules entirely
+      delete: "isAdmin",
     },
   },
   activeReaders: {

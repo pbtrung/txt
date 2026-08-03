@@ -8,43 +8,30 @@ import { i } from "@instantdb/core";
 
 const _schema = i.schema({
   entities: {
-    // $files rows can only ever be created via db.storage.uploadFile(path,
-    // file) -- never via transact() (instantdb.com/docs/storage#link-files).
-    // path is the SAME value as pages.pageKey ("${auth.id}:${pageNo}:${version}",
-    // deterministic, plaintext) -- instant.perms.ts's string-prefix ownership
-    // check (data.path.startsWith(auth.id + ':')) still holds, since pageKey
-    // already starts with that same prefix. The real secret -- this
-    // page-version's actual R2 object key (crockford base32 of 32 random
-    // bytes, namespaced under this account's r2Prefix) -- is wrapped via
-    // crypto.md's Blob format (IKM = path_key) and uploaded as the *file's
-    // content*, not embedded in path. Reading it back means downloading
-    // $files.url (an extra hop versus embedding the pointer in path
-    // directly), then decrypting the response body.
-    $files: i.entity({
-      path: i.string().unique().indexed(),
-    }),
-    // umk/creds carry this account's whole key hierarchy on the auth entity
-    // itself (docs/data_model.md's Key Hierarchy) -- InstantDB's own
-    // built-in entity, but custom attributes on it are allowed like any
-    // other. Neither is ever readable/writable except by isSelf/isAdmin
+    // umk carries this account's root key-wrapping attribute directly on the
+    // auth entity itself (docs/data_model.md's Key Hierarchy) -- InstantDB's
+    // own built-in entity, but custom attributes on it are allowed like any
+    // other. Never readable/writable except by isSelf/isAdmin
     // (instant.perms.ts) -- a leaked query result still can't be unwrapped
     // without the external user_root_key (never stored here).
     $users: i.entity({
       email: i.string().unique().indexed(),
       // base64, 128 random bytes, generated once per account and wrapped
       // (crypto.md's Blob format) under user_root_key (an external secret
-      // from creds.json, never stored in InstantDB).
+      // from creds.json, never stored in InstantDB). Encrypts this account's
+      // own credStore row(s) -- see credStore below.
       umk: i.string().optional(),
-      // base64, itself a Blob-wrapped JSON payload under umk -- shape
-      // differs by role (admin: r2_config + path_key + db_key; user: same
-      // minus any R2 access key, since a user session gets R2 access only
-      // via a short-lived prefix-scoped temporary credential, never a
-      // stored one) -- see data_model.md's $users bullet and "Non-admin
-      // (user-role) accounts" section.
-      creds: i.string().optional(),
     }),
     users: i.entity({
       type: i.string(), // 'admin' | 'user'
+    }),
+    // The encrypted key-material store (docs/data_model.md's credStore
+    // entity). One row per (owner, subject) pair -- a single owner can hold
+    // multiple rows (see the owner/user links below). content is a
+    // Blob-wrapped (crypto.md format) JSON string, encrypted under the
+    // owner's own $users.umk.
+    credStore: i.entity({
+      content: i.string(),
     }),
     // Table of contents for this user's own SQLCipher-encrypted SQLite
     // database, paged remotely via the vendored sqlcipher.wasm + js-vfs.mjs
@@ -65,6 +52,12 @@ const _schema = i.schema({
       pageKey: i.string().unique().indexed(), // `${ownerId}:${pageNo}:${version}`
       pageNo: i.number().indexed(),
       version: i.number().indexed(),
+      // This page-version's real R2 object key, encrypted and stored
+      // directly as base64: base64(Blob(raw_key; IKM = path_key)). The real
+      // object address is `${r2Prefix}/${raw_key}`, where r2Prefix is a pure
+      // function of the owning account's auth.id and is never itself
+      // encrypted or stored (see data_model.md's pages entity).
+      path: i.string(),
     }),
     activeReaders: i.entity({
       snapshotVersion: i.number(),
@@ -74,11 +67,12 @@ const _schema = i.schema({
   links: {
     // Cascade chain rooted at $users: deleting the auth identity deletes its
     // users profile (below), which in turn deletes everything that profile
-    // owns (dbMetaOwner/pagesOwner/filesOwner/activeReadersOwner) -- one
-    // delete cleans up the whole account's InstantDB-side footprint. `on`,
-    // not `data`, is what's authoritative here: onDelete goes on whichever
-    // side of a link has `has: "one"` (the only cardinality it's valid on)
-    // and fires when the *other* side's entity is deleted.
+    // owns (dbMetaOwner/pagesOwner/activeReadersOwner/credStoreOwner/
+    // credStoreUser) -- one delete cleans up the whole account's
+    // InstantDB-side footprint. `on`, not `data`, is what's authoritative
+    // here: onDelete goes on whichever side of a link has `has: "one"` (the
+    // only cardinality it's valid on) and fires when the *other* side's
+    // entity is deleted.
     usersAuth: {
       forward: {
         on: "users",
@@ -101,27 +95,6 @@ const _schema = i.schema({
       forward: { on: "pages", has: "one", label: "owner", onDelete: "cascade" },
       reverse: { on: "users", has: "many", label: "pages" },
     },
-    // Deliberately NOT cascaded: garbage collection (data_model.md) deletes
-    // `pages` and `$files` as two explicit, separately-ordered steps
-    // (pages first, then $files + its R2 object), specifically so a crash
-    // mid-GC can never leave a pages row pointing at an already-deleted
-    // $files row. An automatic cascade here would collapse that ordering
-    // back into one implicit step and still wouldn't clean up the R2 object
-    // (cascade only ever touches InstantDB rows) -- GC needs to keep doing
-    // this explicitly either way.
-    pagesPointer: {
-      forward: { on: "pages", has: "one", label: "pointerFile" },
-      reverse: { on: "$files", has: "one", label: "page" },
-    },
-    filesOwner: {
-      forward: {
-        on: "$files",
-        has: "one",
-        label: "owner",
-        onDelete: "cascade",
-      },
-      reverse: { on: "users", has: "many", label: "files" },
-    },
     activeReadersOwner: {
       forward: {
         on: "activeReaders",
@@ -130,6 +103,31 @@ const _schema = i.schema({
         onDelete: "cascade",
       },
       reverse: { on: "users", has: "many", label: "activeReaders" },
+    },
+    // Whoever's umk encrypts this row's content -- deleting that account
+    // cascades away every row it owns.
+    credStoreOwner: {
+      forward: {
+        on: "credStore",
+        has: "one",
+        label: "owner",
+        onDelete: "cascade",
+      },
+      reverse: { on: "users", has: "many", label: "credStoreAsOwner" },
+    },
+    // Which account's key material this row actually describes -- left
+    // unlinked when a row describes its own owner (docs/data_model.md's
+    // credStore entity). Deleting the described account cascades away rows
+    // about it too, even ones owned by someone else (e.g. an admin-held copy
+    // of a since-deleted user's keys).
+    credStoreUser: {
+      forward: {
+        on: "credStore",
+        has: "one",
+        label: "user",
+        onDelete: "cascade",
+      },
+      reverse: { on: "users", has: "many", label: "credStoreAsUser" },
     },
   },
 });
