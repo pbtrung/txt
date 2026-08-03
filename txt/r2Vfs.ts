@@ -106,6 +106,9 @@ export class R2Vfs {
 
   // Pages whose bytes differ from the prefetched snapshot (or that didn't
   // exist in it at all -- newly-grown pages), keyed by 1-based page number.
+  // Pure/repeatable: doesn't itself advance the snapshot (see
+  // markCommitted below), so calling it again before that returns the same
+  // pages again, plus anything newly dirtied since.
   diffDirtyPages(): Map<number, Buffer> {
     const entry = this.files.get(this.dbFileName);
     if (!entry) return new Map();
@@ -115,6 +118,21 @@ export class R2Vfs {
       if (this.pageChanged(pageNo, page)) dirty.set(pageNo, Buffer.from(page));
     }
     return dirty;
+  }
+
+  // Advances the snapshot diffDirtyPages() compares against, so a
+  // just-committed set of pages stops showing up as dirty on the next call
+  // -- lets a caller commit multiple times over one VFS's lifetime (e.g.
+  // migrate.ts committing per document) without re-uploading earlier
+  // commits' pages every time. Call this ONLY after the pages have actually
+  // been persisted (the real R2 PUTs + InstantDB transact genuinely
+  // succeeded) -- calling it speculatively before that would make a failed
+  // commit's pages silently look already-safe on any later diff, without
+  // them ever having actually reached R2/InstantDB.
+  markCommitted(dirtyPages: Map<number, Buffer>): void {
+    for (const [pageNo, bytes] of dirtyPages) {
+      this.originalPages.set(pageNo, bytes);
+    }
   }
 
   private pageBytes(bytes: Uint8Array, pageNo: number): Uint8Array {

@@ -155,15 +155,20 @@ export class Migrator {
 
       const namesByTxtId = new Map(summaries.map((s) => [s.oldTxtId, s.name]));
 
-      // MIGRATE_BATCH_SIZE documents at a time -- fetched/decrypted in
-      // parallel within a batch (each document's own parts also fetched in
-      // parallel, TxtOwner.fetchTxtParts), then inserted locally, rather
-      // than downloading every remaining document's content into memory
-      // before inserting any of it. The R2/InstantDB commit itself stays a
-      // single step after every batch is inserted, not one per batch:
-      // R2Vfs.diffDirtyPages() diffs against a fixed snapshot taken when the
-      // VFS was opened, so calling it more than once would just re-report
-      // (and re-upload) earlier batches' already-dirty pages every time.
+      // MIGRATE_BATCH_SIZE documents fetched/decrypted at a time -- each
+      // document's own parts also fetched in parallel (TxtOwner.
+      // fetchTxtParts) -- but committed to R2/InstantDB one txt_id at a
+      // time, immediately after its own local insert: a crash mid-run then
+      // only ever loses the one in-flight document, not the whole batch or
+      // run, and no batch has to wait for its slowest document's commit
+      // before starting the next batch's downloads. Commits must stay
+      // strictly sequential (never run two in parallel): each one CAS-bumps
+      // dbMeta.currentVersion off the previous commit's returned version,
+      // and RemotePageStore's admin-SDK transacts bypass instant.perms.ts
+      // entirely (no real CAS enforcement to fall back on if two raced).
+      let currentVersion = target.currentVersion;
+      let pageCount = target.pageCount;
+      let migratedCount = 0;
       for (let i = 0; i < remaining.length; i += C.MIGRATE_BATCH_SIZE) {
         const batchIds = remaining.slice(i, i + C.MIGRATE_BATCH_SIZE);
         const batchDocs = await Promise.all(
@@ -178,27 +183,36 @@ export class Migrator {
             ),
           ),
         );
-        batchDocs.forEach((doc) => this.insertOneDoc(builder, dbHandle, doc));
-        this.log.info(
-          `Batch ${Math.floor(i / C.MIGRATE_BATCH_SIZE) + 1}: ` +
-            `inserted ${batchDocs.length} document(s) locally (${i + batchDocs.length}/${remaining.length})`,
-        );
+        for (const doc of batchDocs) {
+          this.insertOneDoc(builder, dbHandle, doc);
+          const dirtyPages = vfs.diffDirtyPages();
+          const committed = await this.commit(
+            store,
+            target.dbMetaId,
+            currentVersion,
+            target.pageSize,
+            dirtyPages,
+            vfs.currentPageCount,
+          );
+          vfs.markCommitted(dirtyPages);
+          currentVersion = committed.newVersion;
+          pageCount = vfs.currentPageCount;
+          migratedCount++;
+          this.log.info(
+            `txt_id=${doc.oldTxtId}: committed as version=${currentVersion} ` +
+              `(${migratedCount}/${remaining.length})`,
+          );
+        }
       }
 
-      const { newVersion } = await this.commit(
-        store,
-        target,
-        vfs.diffDirtyPages(),
-        vfs.currentPageCount,
-      );
       return {
         committed: true,
         authId,
         migrated: summaries,
         alreadyMigratedCount: alreadyMigrated.size,
         staleObjectsDeleted,
-        newVersion,
-        pageCount: vfs.currentPageCount,
+        newVersion: currentVersion,
+        pageCount,
       };
     } finally {
       builder.close(dbHandle);
@@ -374,22 +388,24 @@ export class Migrator {
 
   private async commit(
     store: RemotePageStore,
-    target: TargetAccount,
+    dbMetaId: string,
+    currentVersion: number,
+    pageSize: number,
     dirtyPages: Map<number, Buffer>,
     pageCount: number,
   ): Promise<{ newVersion: number }> {
     if (dirtyPages.size === 0) {
-      this.log.warn("no dirty pages produced -- nothing to commit");
-      return { newVersion: target.currentVersion };
+      this.log.debug("no dirty pages produced -- nothing to commit");
+      return { newVersion: currentVersion };
     }
     const { newVersion } = await store.commitPages(
       dirtyPages,
-      target.dbMetaId,
-      target.currentVersion,
+      dbMetaId,
+      currentVersion,
       pageCount,
-      target.pageSize,
+      pageSize,
     );
-    this.log.info(
+    this.log.debug(
       `Committed ${dirtyPages.size} page(s) as version=${newVersion}`,
     );
     return { newVersion };
