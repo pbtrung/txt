@@ -31,14 +31,6 @@ const SQLITE_NOTFOUND = 12;
 const SQLITE_OPEN_DELETEONCLOSE = 0x00000008;
 const SQLITE_ACCESS_EXISTS = 0;
 
-// Bounds how much of a large database's pages stay resident across one
-// --migrate run -- unbounded would otherwise grow forever, since nothing
-// ever evicted a page once fetched. 2000 pages (~64MB at this build's
-// 32768-byte page size) is generous for a CLI process (no browser tab
-// memory pressure to worry about), while still bounding a pathological
-// case (a run that ends up touching most of a huge database anyway).
-const MAX_CACHED_PAGES = 2000;
-
 export interface LazyVfsOptions {
   name?: string;
   pageSize: number;
@@ -85,22 +77,17 @@ export function registerLazyVfs(mod: any, opts: LazyVfsOptions): LazyVfsHandle {
   let tempCounter = 0;
   let ioMethodsPtr = 0;
 
+  // Unbounded on purpose -- a --migrate run is a single, bounded CLI
+  // process (no browser tab memory pressure to worry about), and a page
+  // evicted here just to be re-fetched later trades a real network round
+  // trip for memory that would otherwise sit idle anyway. Never grows past
+  // the target account's own page count either way.
   function cacheGet(pageNo: number): Uint8Array | undefined {
-    const cached = pageCache.get(pageNo);
-    if (cached) {
-      pageCache.delete(pageNo);
-      pageCache.set(pageNo, cached);
-    }
-    return cached;
+    return pageCache.get(pageNo);
   }
 
   function cacheSet(pageNo: number, bytes: Uint8Array): void {
-    pageCache.delete(pageNo);
     pageCache.set(pageNo, bytes);
-    if (pageCache.size > MAX_CACHED_PAGES) {
-      const oldest = pageCache.keys().next().value;
-      if (oldest !== undefined) pageCache.delete(oldest);
-    }
   }
 
   function getPage(pageNo: number): Uint8Array {
