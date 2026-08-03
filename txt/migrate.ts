@@ -65,13 +65,12 @@ interface PreparedDoc {
 }
 
 interface TargetAccount {
-  usersRowId: string;
   dbMetaId: string;
   currentVersion: number;
   pageCount: number;
   pageSize: number;
   umkBlob: string;
-  credsBlob: string;
+  contentBlob: string;
 }
 
 export class Migrator {
@@ -109,11 +108,10 @@ export class Migrator {
       crypto,
       keys.pathKey,
       authId,
-      target.usersRowId,
     );
 
     const builder = await SqlCipherBuilder.create();
-    const store = this.buildStore(db, r2, crypto, authId, target, keys.pathKey);
+    const store = this.buildStore(db, r2, crypto, authId, keys.pathKey);
     const vfs = await R2Vfs.registerExisting(
       builder.module,
       DB_FILE_NAME,
@@ -229,40 +227,39 @@ export class Migrator {
     if (!(await confirm(message))) throw new Error("Aborted.");
   }
 
+  // $users/dbMeta/credStore all link directly to $users now (no separate
+  // `users` profile entity -- docs/data_model.md) -- so every piece of the
+  // target account's own state is a single-hop "owner.id"/"id" lookup by
+  // authId, not a two-hop traversal through an intermediate profile row.
   private async resolveTarget(db: any, authId: string): Promise<TargetAccount> {
     const result = await db.query({
-      users: { $: { where: { "authUser.id": authId } }, dbMeta: {} },
       $users: { $: { where: { id: authId } } },
+      dbMeta: { $: { where: { "owner.id": authId } } },
+      credStore: {
+        $: { where: { "owner.id": authId, "user.id": authId } },
+      },
     });
-    const usersRow = result.users?.[0];
-    if (!usersRow) {
+    const authRow = result.$users?.[0];
+    if (!authRow?.umk) {
       throw new Error(
-        `no users row for auth.id=${authId} -- run --init-admin first to provision this account`,
+        `$users row for auth.id=${authId} is missing umk -- run --init-admin first to provision this account`,
       );
     }
-    const authRow = result.$users?.[0];
-    if (!authRow?.umk || !authRow?.creds) {
-      throw new Error(`$users row for auth.id=${authId} is missing umk/creds`);
-    }
-    // InstaQL returns a linked sub-entity as an array regardless of that
-    // link's own cardinality (confirmed already for pages.pointerFile in
-    // remotePageStore.ts -- users.dbMeta, also a "has: one" reverse link,
-    // behaves the same way: dbMeta itself, not [0], was silently undefined
-    // everywhere below, which produced a 0-byte "reopened" database that
-    // SQLite just treated as a brand-new empty one -- no error until the
-    // first real query against it, "no such table: txt").
-    const dbMetaRow = usersRow.dbMeta?.[0];
+    const dbMetaRow = result.dbMeta?.[0];
     if (!dbMetaRow) {
-      throw new Error(`users row ${usersRow.id} has no linked dbMeta row`);
+      throw new Error(`auth.id=${authId} has no linked dbMeta row`);
+    }
+    const credStoreRow = result.credStore?.[0];
+    if (!credStoreRow) {
+      throw new Error(`auth.id=${authId} has no own credStore row`);
     }
     return {
-      usersRowId: usersRow.id,
       dbMetaId: dbMetaRow.id,
       currentVersion: dbMetaRow.currentVersion,
       pageCount: dbMetaRow.pageCount,
       pageSize: dbMetaRow.pageSize,
       umkBlob: authRow.umk,
-      credsBlob: authRow.creds,
+      contentBlob: credStoreRow.content,
     };
   }
 
@@ -276,7 +273,7 @@ export class Migrator {
     );
     const payload = JSON.parse(
       crypto
-        .blobDecrypt(umk, Buffer.from(target.credsBlob, "base64"))
+        .blobDecrypt(umk, Buffer.from(target.contentBlob, "base64"))
         .toString("utf8"),
     );
     return {
@@ -290,7 +287,6 @@ export class Migrator {
     r2: R2Client,
     crypto: CryptoEngine,
     authId: string,
-    target: TargetAccount,
     pathKey: Buffer,
   ): RemotePageStore {
     return new RemotePageStore({
@@ -299,7 +295,6 @@ export class Migrator {
       crypto,
       pathKey,
       authId,
-      ownerId: target.usersRowId,
     });
   }
 
@@ -358,19 +353,18 @@ export class Migrator {
   // legitimately-created object ends up here is a previous run that crashed
   // between RemotePageStore.commitPages' own R2 upload step and its final
   // InstantDB transact (docs/data_model.md's commit-protocol failure modes),
-  // leaving a real object with no `pages`/`$files` row ever created for it.
+  // leaving a real object with no `pages` row ever created for it.
   private async sweepStaleR2Objects(
     db: any,
     r2: R2Client,
     crypto: CryptoEngine,
     pathKey: Buffer,
     authId: string,
-    usersRowId: string,
   ): Promise<number> {
     const r2Prefix = computeR2Prefix(authId);
     const [objects, known] = await Promise.all([
       r2.listAllObjects(`${r2Prefix}/`),
-      this.collectKnownRawPaths(db, crypto, pathKey, r2Prefix, usersRowId),
+      this.collectKnownRawPaths(db, crypto, pathKey, r2Prefix, authId),
     ]);
     const stale = objects.filter((o) => !known.has(o.key));
     if (stale.length === 0) {
@@ -391,14 +385,14 @@ export class Migrator {
     return result.deletedKeys.size;
   }
 
-  // Every raw_path this account's committed pages resolve to. There's no way
-  // to recover raw_path from InstantDB metadata alone -- it's only ever
-  // visible as $files' encrypted content (docs/data_model.md's $files
-  // design) -- so this means downloading and decrypting every pointerFile.
-  // Pages through `pages` (tens of thousands of rows for a large, long-lived
-  // vault) PAGES_QUERY_PAGE_SIZE at a time via InstantDB's own cursor
-  // pagination (order by pageKey -- unique+indexed, so a stable sort with no
-  // ties -- and `after: pageInfo.pages.endCursor` each round) rather than one
+  // Every raw_path this account's committed pages resolve to. path lives
+  // directly on each pages row now (base64, docs/data_model.md's pages
+  // entity) -- no separate pointer row to download per page, just a decrypt
+  // once the rows themselves are in hand. Pages through `pages` (tens of
+  // thousands of rows for a large, long-lived vault) PAGES_QUERY_PAGE_SIZE
+  // at a time via InstantDB's own cursor pagination (order by pageKey --
+  // unique+indexed, so a stable sort with no ties -- and
+  // `after: pageInfo.pages.endCursor` each round) rather than one
   // unpaginated query, which risks exceeding InstantDB's own query timeout
   // at that scale.
   private async collectKnownRawPaths(
@@ -406,58 +400,40 @@ export class Migrator {
     crypto: CryptoEngine,
     pathKey: Buffer,
     r2Prefix: string,
-    usersRowId: string,
+    authId: string,
   ): Promise<Set<string>> {
-    const rows = await collectAllPages<{ pointerFile?: { url: string }[] }>(
-      async (after) => {
-        const result = await db.query({
-          pages: {
-            $: {
-              where: { "owner.id": usersRowId },
-              order: { pageKey: "asc" },
-              limit: C.PAGES_QUERY_PAGE_SIZE,
-              ...(after ? { after } : {}),
-            },
-            pointerFile: {},
+    const rows = await collectAllPages<{ path: string }>(async (after) => {
+      const result = await db.query({
+        pages: {
+          $: {
+            where: { "owner.id": authId },
+            order: { pageKey: "asc" },
+            limit: C.PAGES_QUERY_PAGE_SIZE,
+            ...(after ? { after } : {}),
           },
-        });
-        const pageInfo = result.pageInfo?.pages;
-        this.log.debug(
-          `collectKnownRawPaths: fetched ${result.pages?.length ?? 0} page row(s)` +
-            (pageInfo?.hasNextPage ? ", continuing..." : ""),
-        );
-        return {
-          rows: result.pages ?? [],
-          hasNextPage: !!pageInfo?.hasNextPage,
-          endCursor: pageInfo?.endCursor,
-        };
-      },
-    );
-    const urls = rows.flatMap((r) => r.pointerFile?.[0]?.url ?? []);
-    const known = new Set<string>();
-    for (let i = 0; i < urls.length; i += C.R2_BATCH_CONCURRENCY) {
-      const batch = urls.slice(i, i + C.R2_BATCH_CONCURRENCY);
-      const rawKeys = await Promise.all(
-        batch.map((url) => this.fetchAndDecodeRawKey(crypto, pathKey, url)),
+        },
+      });
+      const pageInfo = result.pageInfo?.pages;
+      this.log.debug(
+        `collectKnownRawPaths: fetched ${result.pages?.length ?? 0} page row(s)` +
+          (pageInfo?.hasNextPage ? ", continuing..." : ""),
       );
-      rawKeys.forEach((rawKey) => known.add(`${r2Prefix}/${rawKey}`));
+      return {
+        rows: result.pages ?? [],
+        hasNextPage: !!pageInfo?.hasNextPage,
+        endCursor: pageInfo?.endCursor,
+      };
+    });
+    const known = new Set<string>();
+    for (const row of rows) {
+      const rawKey = decodePagePointerContent(
+        crypto,
+        pathKey,
+        Buffer.from(row.path, "base64"),
+      );
+      known.add(`${r2Prefix}/${rawKey}`);
     }
     return known;
-  }
-
-  private async fetchAndDecodeRawKey(
-    crypto: CryptoEngine,
-    pathKey: Buffer,
-    url: string,
-  ): Promise<string> {
-    const resp = await fetch(url);
-    if (!resp.ok) {
-      throw new Error(
-        `failed to download $files pointer content: HTTP ${resp.status} (${url})`,
-      );
-    }
-    const content = Buffer.from(await resp.arrayBuffer());
-    return decodePagePointerContent(crypto, pathKey, content);
   }
 }
 
