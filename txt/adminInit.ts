@@ -50,11 +50,11 @@ export class AdminInitializer {
   }
 
   async run(): Promise<AdminInitResult> {
+    const authId = await this.signIn();
     const db = init({
       appId: this.creds.instantAppId,
       adminToken: this.creds.instantAdminToken,
     });
-    const authId = await this.provisionAuthUser(db);
     await this.failIfAlreadyInitialized(db, authId);
     const keys = generateKeys();
     const cryptoEngine = await CryptoEngine.create();
@@ -70,7 +70,6 @@ export class AdminInitializer {
       dirtyPages,
       pageCount,
     );
-    await this.verifyFirebaseLogin(authId);
     return {
       authId,
       dbMetaId: commit.dbMetaId,
@@ -79,29 +78,20 @@ export class AdminInitializer {
     };
   }
 
-  // Creates (or resolves) this account's $users row directly via the Admin
-  // SDK -- db.auth.* calls bypass instant.perms.ts entirely, same as
-  // db.transact/db.query (InstantDB's own backend docs: "Permission checks
-  // will not run for queries and writes from our admin API"). This has to
-  // happen *before* the real Firebase sign-in below: instant.perms.ts's
-  // $users.create rule is "isAdmin", which nothing can satisfy for a
-  // genuinely new row (auth.ref finds no type yet, so isAdmin is always
-  // false at create time). Pre-creating the row here first means the later
-  // oauth/id_token exchange only ever resolves an already-existing row --
-  // it never attempts to create one, so that rule is never evaluated against
-  // this account at all. createToken creates the user as a side effect if
-  // the email doesn't exist yet, or resolves the existing one if it does;
-  // verifyToken on the token it returns is what actually hands back the
-  // row's real id.
-  private async provisionAuthUser(db: any): Promise<string> {
-    const token = await db.auth.createToken({
-      email: this.creds.firebaseEmail,
-    });
-    const user = await db.auth.verifyToken(token);
-    this.log.debug(
-      `Resolved $users row via Admin SDK: id=${user.id} email=${user.email}`,
-    );
-    return user.id;
+  // The real client-facing login path (Firebase password sign-in ->
+  // POST /runtime/oauth/id_token, docs/data_model.md's Auth section) is what
+  // actually creates (or resolves) this account's $users row -- confirmed
+  // NOT interchangeable with pre-creating a row via the Admin SDK's
+  // db.auth.createToken/verifyToken: a real end-to-end test showed the two
+  // paths resolve to two different $users rows for the same email (the
+  // oauth/id_token exchange came back with created=true and email=null,
+  // meaning it never matched the Admin-SDK-created row at all). So this has
+  // to be the one and only place this account's $users row gets created;
+  // instant.perms.ts's $users.create rule stays unconditional ("true") to
+  // allow it -- see that rule's own comment for why "isAdmin" doesn't work
+  // here even once the row already exists.
+  private async signIn(): Promise<string> {
+    return signInToInstant(this.creds, this.log);
   }
 
   private async failIfAlreadyInitialized(
@@ -217,24 +207,5 @@ export class AdminInitializer {
       `Committed ${dirtyPages.size} page(s) as version=${newVersion}, dbMeta=${dbMetaId}`,
     );
     return { dbMetaId, newVersion };
-  }
-
-  // Confirms the real client-facing login path (Firebase password sign-in ->
-  // POST /runtime/oauth/id_token, docs/data_model.md's Auth section)
-  // resolves to the SAME $users row provisioned above rather than creating a
-  // second one -- this is exactly what depends on instant.perms.ts's
-  // $users.create: "isAdmin" never actually being evaluated for an existing
-  // row. signInToInstant already logs each of its own steps (Firebase
-  // password sign-in, then the oauth/id_token exchange) via this.log.
-  private async verifyFirebaseLogin(expectedAuthId: string): Promise<void> {
-    const resolvedAuthId = await signInToInstant(this.creds, this.log);
-    if (resolvedAuthId !== expectedAuthId) {
-      throw new Error(
-        `Firebase login resolved to a different $users row (expected ${expectedAuthId}, got ${resolvedAuthId}) -- this should never happen for the same email`,
-      );
-    }
-    this.log.info(
-      `Firebase login verified: auth.id=${resolvedAuthId} matches the provisioned account`,
-    );
   }
 }

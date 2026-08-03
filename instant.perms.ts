@@ -46,35 +46,26 @@ const rules = {
     // user self-service write -- there's no isSelf branch on update at all,
     // which alone is what keeps a plain user from self-promoting to admin.
     //
-    // create: "isAdmin" (not unconditional "true") -- confirmed working
-    // against a real InstantDB app: every account's $users row is always
-    // created via the Admin SDK first (adminInit.ts's provisionAuthUser,
-    // using db.auth.createToken/verifyToken -- like all Admin SDK calls,
-    // this bypasses instant.perms.ts entirely, InstantDB's own backend docs:
-    // "Permission checks will not run for queries and writes from our admin
-    // API"), *before* the real Firebase sign-in ever happens. That live
-    // sign-in's own oauth/id_token exchange then only ever resolves that
-    // already-existing row by email -- it never attempts to create one, and
-    // resolving an existing row doesn't evaluate the create rule at all. So
-    // as long as an account is always provisioned this way first (this
-    // design's Provisioning section assumes exactly that, admin included),
-    // create's value only matters for a stray sign-in attempt against an
-    // email nobody provisioned, which isAdmin correctly rejects.
-    //
-    // A prior version of this design routed $users row creation through
-    // that live oauth/id_token exchange itself instead (no Admin SDK
-    // pre-creation step), which genuinely did deadlock under create:
-    // "isAdmin" -- confirmed against a real sign-in attempt back then,
-    // InstantDB enforces the create rule for its own internal $users row
-    // creation during that exchange (not exempted for platform-internal
-    // writes, as had been assumed), and there's no way to satisfy isAdmin
-    // before any users row exists to admin-promote. create: "true" was the
-    // fix at the time; provisioning the row via the Admin SDK first removes
-    // the need for that unconditional escape hatch entirely.
+    // create MUST be unconditional ("true"), confirmed against a real
+    // end-to-end run of --init-admin (2026-08-03) -- and confirmed to still
+    // be necessary even with this account's $users row pre-created via the
+    // Admin SDK first (adminInit.ts's provisionAuthUser, using
+    // db.auth.createToken/verifyToken -- which, like all Admin SDK calls,
+    // bypasses instant.perms.ts entirely) and already carrying type: "admin"
+    // by the time the real Firebase sign-in happens: create: "isAdmin" still
+    // made that live sign-in's oauth/id_token exchange fail ("Permission
+    // denied: not perms-pass?"), row already existing or not. So this isn't
+    // only about the row not existing yet -- auth apparently isn't (fully)
+    // bound for self-referential CEL checks (isSelf's auth.id == data.id,
+    // isAdmin's auth.ref('$user.type')) during this specific internal
+    // operation at all, existing row or not. Firebase's own token
+    // verification is the real gate on who can trigger this in the first
+    // place; umk/type themselves stay protected by update: isAdmin
+    // regardless of how permissive create is.
     bind: [...ADMIN_BIND, "isSelf", "auth.id == data.id"],
     allow: {
       view: "isAdmin || isSelf",
-      create: "isAdmin",
+      create: "true",
       update: "isAdmin",
       // $users doesn't support a delete permission at all -- InstantDB's own
       // push API rejects anything but the literal "false" here (confirmed:
