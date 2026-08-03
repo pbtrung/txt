@@ -3,8 +3,10 @@ import { DatabaseSync } from "node:sqlite";
 import { parseArgs } from "node:util";
 import { AdminInitializer } from "./adminInit.ts";
 import { TxtBucketCleaner } from "./bucket.ts";
+import { GarbageCollector } from "./collectGarbage.ts";
 import { type Creds, loadCreds } from "./creds.ts";
 import { CryptoEngine } from "./crypto.ts";
+import { loadGcCreds } from "./gcCreds.ts";
 import { loadInitAdminCreds } from "./initAdminCreds.ts";
 import { ConsoleLogger, type Logger } from "./logger.ts";
 import { Migrator } from "./migrate.ts";
@@ -30,13 +32,21 @@ type CliArgs =
       verbose: boolean;
       dryRun: boolean;
       yes: boolean;
+    }
+  | {
+      command: "collect-garbage";
+      credsPath: string;
+      verbose: boolean;
+      dryRun: boolean;
+      yes: boolean;
     };
 
 function printUsage(): void {
   console.error(
     "Usage: node txt.ts --clean-bucket <in.db> --creds <creds.json> [-v|--verbose] [--dry-run] [-y|--yes]\n" +
       "       node txt.ts --init-admin <creds.json> [-v|--verbose]\n" +
-      "       node txt.ts --migrate --from <in.db> --from-creds <from_creds.json> --to-creds <to_creds.json> [-v|--verbose] [--dry-run] [-y|--yes]",
+      "       node txt.ts --migrate --from <in.db> --from-creds <from_creds.json> --to-creds <to_creds.json> [-v|--verbose] [--dry-run] [-y|--yes]\n" +
+      "       node txt.ts --collect-garbage --creds <creds.json> [-v|--verbose] [--dry-run] [-y|--yes]",
   );
 }
 
@@ -47,6 +57,7 @@ function parseCliArgs(argv: string[]): CliArgs {
       "clean-bucket": { type: "string" },
       "init-admin": { type: "string" },
       migrate: { type: "boolean", default: false },
+      "collect-garbage": { type: "boolean", default: false },
       from: { type: "string" },
       "from-creds": { type: "string" },
       "to-creds": { type: "string" },
@@ -83,6 +94,15 @@ function parseCliArgs(argv: string[]): CliArgs {
     return {
       command: "clean-bucket",
       inDb: values["clean-bucket"],
+      credsPath: values.creds,
+      verbose: values.verbose!,
+      dryRun: values["dry-run"]!,
+      yes: values.yes!,
+    };
+  }
+  if (values["collect-garbage"] && values.creds) {
+    return {
+      command: "collect-garbage",
       credsPath: values.creds,
       verbose: values.verbose!,
       dryRun: values["dry-run"]!,
@@ -199,9 +219,42 @@ function printMigrateSummary(
   }
 }
 
+async function collectGarbage(
+  args: Extract<CliArgs, { command: "collect-garbage" }>,
+  log: Logger,
+): Promise<number> {
+  const creds = loadGcCreds(args.credsPath);
+  const collector = new GarbageCollector(creds, log);
+  const result = await collector.run({
+    dryRun: args.dryRun,
+    confirm: (message) => confirm(message, args.yes),
+  });
+  printCollectGarbageSummary(result, log);
+  return 0;
+}
+
+function printCollectGarbageSummary(
+  result: Awaited<ReturnType<GarbageCollector["run"]>>,
+  log: Logger,
+): void {
+  log.info("--- collect-garbage summary ---");
+  log.info(`mode:              ${result.dryRun ? "dry-run" : "live"}`);
+  log.info(`accounts:          ${result.accounts.length}`);
+  for (const a of result.accounts) {
+    if (a.skipped) {
+      log.info(`  auth.id=${a.authId} SKIPPED (${a.skipped})`);
+      continue;
+    }
+    log.info(
+      `  auth.id=${a.authId} old-pages=${a.oldPagesDeleted} stale-objects=${a.staleObjectsDeleted}`,
+    );
+  }
+}
+
 async function dispatch(args: CliArgs, log: Logger): Promise<number> {
   if (args.command === "init-admin") return initAdmin(args, log);
   if (args.command === "migrate") return migrate(args, log);
+  if (args.command === "collect-garbage") return collectGarbage(args, log);
   return cleanBucket(args, log);
 }
 
