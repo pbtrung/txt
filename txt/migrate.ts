@@ -556,11 +556,15 @@ export class Migrator {
   // entity) -- no separate pointer row to download per page, just a decrypt
   // once the rows themselves are in hand. Pages through `pages` (tens of
   // thousands of rows for a large, long-lived vault) PAGES_QUERY_PAGE_SIZE
-  // at a time via InstantDB's own cursor pagination (order by pageKey --
-  // unique+indexed, so a stable sort with no ties -- and
-  // `after: pageInfo.pages.endCursor` each round) rather than one
-  // unpaginated query, which risks exceeding InstantDB's own query timeout
-  // at that scale.
+  // at a time via InstaQL's offset-based pagination (order by pageKey --
+  // unique+indexed, so a stable sort with no ties, required for offset
+  // pagination to be safe at all -- and `offset` incremented by however many
+  // rows actually came back) rather than one unpaginated query, which risks
+  // exceeding InstantDB's own query timeout at that scale. Not cursor-based
+  // (after/pageInfo): confirmed the Admin SDK's query() never returns
+  // pageInfo at all (see txt/instaqlPagination.ts's own header comment) --
+  // an earlier version of this method assumed it did and silently stopped
+  // after the first page every time.
   private async collectKnownRawPaths(
     db: any,
     crypto: CryptoEngine,
@@ -569,25 +573,26 @@ export class Migrator {
     authId: string,
   ): Promise<Set<string>> {
     const rows = await collectAllPages<{ path: string }>(async (after) => {
+      const offset = (after as number | undefined) ?? 0;
       const result = await db.query({
         pages: {
           $: {
             where: { "owner.id": authId },
             order: { pageKey: "asc" },
             limit: C.PAGES_QUERY_PAGE_SIZE,
-            ...(after ? { after } : {}),
+            offset,
           },
         },
       });
-      const pageInfo = result.pageInfo?.pages;
+      const page = result.pages ?? [];
       this.log.debug(
-        `collectKnownRawPaths: fetched ${result.pages?.length ?? 0} page row(s)` +
-          (pageInfo?.hasNextPage ? ", continuing..." : ""),
+        `collectKnownRawPaths: fetched ${page.length} page row(s) at offset=${offset}` +
+          (page.length === C.PAGES_QUERY_PAGE_SIZE ? ", continuing..." : ""),
       );
       return {
-        rows: result.pages ?? [],
-        hasNextPage: !!pageInfo?.hasNextPage,
-        endCursor: pageInfo?.endCursor,
+        rows: page,
+        hasNextPage: page.length === C.PAGES_QUERY_PAGE_SIZE,
+        endCursor: offset + page.length,
       };
     });
     const known = new Set<string>();

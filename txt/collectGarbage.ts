@@ -306,27 +306,34 @@ export class GarbageCollector {
     account: AccountRow,
     dryRun: boolean,
   ): Promise<number> {
+    // Offset-based, not cursor-based: confirmed the Admin SDK's query()
+    // never returns pageInfo at all (txt/instaqlPagination.ts's own header
+    // comment) -- an after/pageInfo-based version of this silently stopped
+    // after the first page every time, which is exactly what produced the
+    // pageCount-vs-distinct-pageNo mismatch this method's own cross-check
+    // below is designed to catch.
     const rows = await collectAllPages<{
       id: string;
       pageNo: number;
       version: number;
       path: string;
     }>(async (after) => {
+      const offset = (after as number | undefined) ?? 0;
       const result = await db.query({
         pages: {
           $: {
             where: { "owner.id": account.ownerId },
             order: { pageKey: "asc" },
             limit: C.PAGES_QUERY_PAGE_SIZE,
-            ...(after ? { after } : {}),
+            offset,
           },
         },
       });
-      const pageInfo = result.pageInfo?.pages;
+      const page = result.pages ?? [];
       return {
-        rows: result.pages ?? [],
-        hasNextPage: !!pageInfo?.hasNextPage,
-        endCursor: pageInfo?.endCursor,
+        rows: page,
+        hasNextPage: page.length === C.PAGES_QUERY_PAGE_SIZE,
+        endCursor: offset + page.length,
       };
     });
     const maxVersionByPageNo = new Map<number, number>();
@@ -414,22 +421,26 @@ export class GarbageCollector {
     r2Prefix: string,
     ownerId: string,
   ): Promise<Set<string>> {
+    // Offset-based -- see sweepOldVersions above for why (Admin SDK query()
+    // never returns pageInfo, so cursor-based after/pageInfo pagination
+    // silently stops after the first page).
     const rows = await collectAllPages<{ path: string }>(async (after) => {
+      const offset = (after as number | undefined) ?? 0;
       const result = await db.query({
         pages: {
           $: {
             where: { "owner.id": ownerId },
             order: { pageKey: "asc" },
             limit: C.PAGES_QUERY_PAGE_SIZE,
-            ...(after ? { after } : {}),
+            offset,
           },
         },
       });
-      const pageInfo = result.pageInfo?.pages;
+      const page = result.pages ?? [];
       return {
-        rows: result.pages ?? [],
-        hasNextPage: !!pageInfo?.hasNextPage,
-        endCursor: pageInfo?.endCursor,
+        rows: page,
+        hasNextPage: page.length === C.PAGES_QUERY_PAGE_SIZE,
+        endCursor: offset + page.length,
       };
     });
     const known = new Set<string>();
