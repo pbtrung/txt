@@ -8,10 +8,10 @@
 // user_root_key, wrapped under the admin's own umk).
 //
 // Deliberate simplification of sweep 1's full design: this always keeps
-// only the single current dbMeta.currentVersion, without checking whether
-// any activeReaders row still needs an older one -- --collect-garbage is a
-// manually-run maintenance operation, not a background job expected to race
-// live readers.
+// only each page number's own current (highest-version) row, without
+// checking whether any activeReaders row still needs an older one --
+// --collect-garbage is a manually-run maintenance operation, not a
+// background job expected to race live readers.
 import { init, tx } from "@instantdb/admin";
 import * as C from "./constants.ts";
 import { loadR2Config, type R2ConfigResolved } from "./creds.ts";
@@ -52,6 +52,7 @@ interface AccountRow {
   ownerId: string;
   dbMetaId: string;
   currentVersion: number;
+  pageCount: number;
 }
 
 export class GarbageCollector {
@@ -213,6 +214,7 @@ export class GarbageCollector {
       ownerId: row.owner[0].id,
       dbMetaId: row.id,
       currentVersion: row.currentVersion,
+      pageCount: row.pageCount,
     }));
   }
 
@@ -280,15 +282,21 @@ export class GarbageCollector {
     };
   }
 
-  // Sweep 1: every `pages` row older than this account's current
-  // dbMeta.currentVersion, plus the R2 object each one's decrypted path
-  // resolves to. Batched S3_DELETE_BATCH_SIZE at a time (same batch size R2's
-  // own DeleteObjects uses) -- within each batch, delete that batch's pages
-  // rows first, then that batch's R2 objects, in that order, so a crash
-  // mid-batch never leaves a pages row pointing at something already deleted
-  // (a stray object with no row left behind is caught by sweepStaleObjects
-  // below instead). Paired per batch rather than deleting every pages row in
-  // one pass and every R2 object in a separate, later pass.
+  // Sweep 1: "keep only the current version" is per *page number*, not a
+  // flat `version < dbMeta.currentVersion` filter -- most page numbers were
+  // never touched in whatever commit last bumped currentVersion, so their
+  // only row legitimately has some earlier version and is NOT stale (a flat
+  // version cutoff would delete real, still-current content). The correct
+  // rule: for each pageNo, find its own max version among this owner's rows,
+  // and delete every row for that pageNo that isn't the one at that max --
+  // regardless of how that max compares to dbMeta.currentVersion overall.
+  // Also deletes the R2 object each deleted row's decrypted path resolves
+  // to. Batched S3_DELETE_BATCH_SIZE at a time (same batch size R2's own
+  // DeleteObjects uses) -- within each batch, delete that batch's pages rows
+  // first, then that batch's R2 objects, in that order, so a crash mid-batch
+  // never leaves a pages row pointing at something already deleted (a stray
+  // object with no row left behind is caught by sweepStaleObjects below
+  // instead).
   private async sweepOldVersions(
     db: any,
     r2: R2Client,
@@ -298,32 +306,52 @@ export class GarbageCollector {
     account: AccountRow,
     dryRun: boolean,
   ): Promise<number> {
-    const rows = await collectAllPages<{ id: string; path: string }>(
-      async (after) => {
-        const result = await db.query({
-          pages: {
-            $: {
-              where: {
-                "owner.id": account.ownerId,
-                version: { $lt: account.currentVersion },
-              },
-              order: { pageKey: "asc" },
-              limit: C.PAGES_QUERY_PAGE_SIZE,
-              ...(after ? { after } : {}),
-            },
+    const rows = await collectAllPages<{
+      id: string;
+      pageNo: number;
+      version: number;
+      path: string;
+    }>(async (after) => {
+      const result = await db.query({
+        pages: {
+          $: {
+            where: { "owner.id": account.ownerId },
+            order: { pageKey: "asc" },
+            limit: C.PAGES_QUERY_PAGE_SIZE,
+            ...(after ? { after } : {}),
           },
-        });
-        const pageInfo = result.pageInfo?.pages;
-        return {
-          rows: result.pages ?? [],
-          hasNextPage: !!pageInfo?.hasNextPage,
-          endCursor: pageInfo?.endCursor,
-        };
-      },
+        },
+      });
+      const pageInfo = result.pageInfo?.pages;
+      return {
+        rows: result.pages ?? [],
+        hasNextPage: !!pageInfo?.hasNextPage,
+        endCursor: pageInfo?.endCursor,
+      };
+    });
+    const maxVersionByPageNo = new Map<number, number>();
+    for (const row of rows) {
+      const current = maxVersionByPageNo.get(row.pageNo) ?? -1;
+      if (row.version > current)
+        maxVersionByPageNo.set(row.pageNo, row.version);
+    }
+    const toDelete = rows.filter(
+      (row) => row.version !== maxVersionByPageNo.get(row.pageNo),
     );
-    if (rows.length === 0 || dryRun) return rows.length;
-    for (let i = 0; i < rows.length; i += C.S3_DELETE_BATCH_SIZE) {
-      const batch = rows.slice(i, i + C.S3_DELETE_BATCH_SIZE);
+    // Cheap correctness cross-check: after this sweep, exactly one row per
+    // page number should remain (its own max version), so that count should
+    // equal dbMeta.pageCount -- a mismatch here means either this account's
+    // page store is missing rows for some page number(s), or this sweep's
+    // own selection logic is wrong, either way worth surfacing loudly rather
+    // than silently under- or over-deleting.
+    if (maxVersionByPageNo.size !== account.pageCount) {
+      this.log.warn(
+        `auth.id=${account.ownerId}: dbMeta.pageCount=${account.pageCount} but found ${maxVersionByPageNo.size} distinct page number(s) among current pages rows -- investigate before trusting this sweep's results`,
+      );
+    }
+    if (toDelete.length === 0 || dryRun) return toDelete.length;
+    for (let i = 0; i < toDelete.length; i += C.S3_DELETE_BATCH_SIZE) {
+      const batch = toDelete.slice(i, i + C.S3_DELETE_BATCH_SIZE);
       await db.transact(batch.map((row) => tx.pages[row.id].delete()));
       const rawPaths = batch.map(
         (row) =>
@@ -341,7 +369,7 @@ export class GarbageCollector {
           `${result.deletedKeys.size} R2 object(s) deleted`,
       );
     }
-    return rows.length;
+    return toDelete.length;
   }
 
   // Sweep 2: after sweepOldVersions above, every remaining `pages` row for
