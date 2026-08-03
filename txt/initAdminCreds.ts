@@ -2,7 +2,8 @@
 // from txt/creds.ts's Creds (that one's for --clean-bucket, against a local
 // sqlite snapshot; this one provisions the admin account directly against a
 // live Firebase project + InstantDB app).
-import { readFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { readFileSync, writeFileSync } from "node:fs";
 import * as C from "./constants.ts";
 import {
   checkKeyLength,
@@ -10,6 +11,7 @@ import {
   requireField,
   type R2ConfigResolved,
 } from "./creds.ts";
+import type { Logger } from "./logger.ts";
 
 export interface InitAdminCreds {
   instantAppId: string;
@@ -27,6 +29,30 @@ export interface InitAdminCreds {
   // no credStore row yet to read it from before that command creates it).
   r2Config: R2ConfigResolved | null;
   userRootKey: Buffer;
+}
+
+// --init-admin only: if creds.json's user_root_key is empty/missing,
+// generates USER_ROOT_KEY_MIN_LEN (256) random bytes and writes them back
+// into the same file, base64-encoded -- mirrors
+// ui/scripts/build-integrity.mjs's own generate-once-then-reuse pattern for
+// build-creds.json's slhdsa_256f_priv_key. user_root_key is the one external
+// secret this whole design's key hierarchy is wrapped under (docs/
+// data_model.md) -- losing it means losing the ability to ever unlock this
+// account's data again, so this only ever fills in a *missing* value, never
+// overwrites one that's already present (even a too-short one -- that's
+// still a real, deliberate value from somewhere, and loadInitAdminCreds's
+// own checkKeyLength will reject it with a clear error instead).
+export function ensureUserRootKeyGenerated(path: string, log: Logger): void {
+  const raw = JSON.parse(readFileSync(path, "utf8"));
+  if (typeof raw.user_root_key === "string" && raw.user_root_key.length > 0) {
+    return;
+  }
+  raw.user_root_key = randomBytes(C.USER_ROOT_KEY_MIN_LEN).toString("base64");
+  writeFileSync(path, JSON.stringify(raw, null, 2) + "\n");
+  log.info(
+    `${path}: user_root_key was empty -- generated a new one and saved it back into this file. ` +
+      `Back this file up now: it's the only way to ever unlock this account's data again.`,
+  );
 }
 
 function requireReadWriteR2(r2: R2ConfigResolved): void {

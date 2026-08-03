@@ -7,7 +7,10 @@ import { GarbageCollector } from "./collectGarbage.ts";
 import { type Creds, loadCreds } from "./creds.ts";
 import { CryptoEngine } from "./crypto.ts";
 import { loadGcCreds } from "./gcCreds.ts";
-import { loadInitAdminCreds } from "./initAdminCreds.ts";
+import {
+  ensureUserRootKeyGenerated,
+  loadInitAdminCreds,
+} from "./initAdminCreds.ts";
 import { ConsoleLogger, type Logger } from "./logger.ts";
 import { Migrator } from "./migrate.ts";
 import { TxtOwner } from "./owner.ts";
@@ -161,6 +164,7 @@ async function initAdmin(
   args: Extract<CliArgs, { command: "init-admin" }>,
   log: Logger,
 ): Promise<number> {
+  ensureUserRootKeyGenerated(args.credsPath, log);
   const creds = loadInitAdminCreds(args.credsPath);
   const result = await new AdminInitializer(creds, log).run();
   log.info("--- init-admin summary ---");
