@@ -62,9 +62,17 @@ export async function resolveSession(
   const credStoreRow = firstLinked(result.data.credStore, "credStore row");
 
   const umk = await blob.decrypt(userRootKey, base64ToBytes(authRow.umk));
+  // compressed:true -- credStore.content is a structured (JSON) payload,
+  // brotli-compressed before encryption same as every other JSON blob in
+  // this hierarchy (txt/adminInit.ts's wrapCredStoreContent writes it with
+  // blobEncrypt(..., true)); omitting this here decrypts fine (the AEAD tag
+  // still checks out) but leaves raw brotli bytes where JSON text is
+  // expected, failing JSON.parse with a confusing "not valid JSON" error
+  // instead of ever surfacing as a decrypt-level problem.
   const contentJson = await blob.decrypt(
     umk,
     base64ToBytes(credStoreRow.content),
+    true,
   );
   const content = requireObject(
     JSON.parse(new TextDecoder().decode(contentJson)),

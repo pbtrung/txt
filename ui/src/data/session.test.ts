@@ -28,9 +28,16 @@ async function buildCredStoreRow() {
     path_key: bytesToBase64(pathKey),
     db_key: bytesToBase64(dbKey),
   };
+  // compressed:true -- matches txt/adminInit.ts's wrapCredStoreContent, the
+  // real producer of this row's content (blobEncrypt(..., true)). Encrypting
+  // uncompressed here would let session.ts's own decrypt call get away with
+  // omitting compressed:true too -- exactly the real bug this fixture missed
+  // once (session.ts silently decrypted to raw brotli bytes instead of JSON
+  // text, failing JSON.parse with a confusing error, not a decrypt error).
   const contentBlob = await blob.encrypt(
     umk,
     new TextEncoder().encode(JSON.stringify(contentPayload)),
+    { compressed: true },
   );
   return { content: bytesToBase64(contentBlob) };
 }
