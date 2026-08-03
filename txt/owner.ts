@@ -122,12 +122,28 @@ export class TxtOwner {
     return this.crypto.blobDecrypt(umk, row.txt_key, false);
   }
 
+  // Public: --migrate needs a cheap (no R2, no decrypt) part count up front
+  // -- for its dry-run/confirm summaries, which shouldn't have to download
+  // every document's content just to report how many parts it has.
+  countParts(txtId: number): number {
+    const row = this.db
+      .prepare("SELECT COUNT(*) AS n FROM txt_parts WHERE txt_id = ?")
+      .get(txtId) as { n: number };
+    return row.n;
+  }
+
   // Downloads and decrypts every part's content for one document, in
   // part_num order -- unlike listPartRawPaths (paths only, no download),
   // this actually fetches each part's ciphertext from R2 and unwraps it.
   // Each returned Buffer is still brotli(raw text) exactly as ingest.py
   // originally wrote it; a caller that just wants to re-store it elsewhere
-  // (this tool's --migrate) never needs to decompress it itself.
+  // (this tool's --migrate) never needs to decompress it itself. Fetches
+  // R2_BATCH_CONCURRENCY parts at a time rather than one at a time (slow for
+  // a document with many parts) or all at once (risks exhausting
+  // connections/rate limits) -- same bounded-parallelism pattern as
+  // RemotePageStore's own R2 round-trips. Promise.all preserves each batch's
+  // input order, so the result stays in part_num order despite completing
+  // out of order.
   async fetchTxtParts(
     txtId: number,
     txtKey: Buffer,
@@ -135,9 +151,15 @@ export class TxtOwner {
   ): Promise<Buffer[]> {
     const rawPaths = this.listPartRawPaths(txtId, txtKey);
     const parts: Buffer[] = [];
-    for (const rawPath of rawPaths) {
-      const ciphertext = await r2.getObject(rawPath);
-      parts.push(this.crypto.blobDecrypt(txtKey, ciphertext, false));
+    for (let i = 0; i < rawPaths.length; i += C.R2_BATCH_CONCURRENCY) {
+      const batch = rawPaths.slice(i, i + C.R2_BATCH_CONCURRENCY);
+      const decrypted = await Promise.all(
+        batch.map(async (rawPath) => {
+          const ciphertext = await r2.getObject(rawPath);
+          return this.crypto.blobDecrypt(txtKey, ciphertext, false);
+        }),
+      );
+      parts.push(...decrypted);
     }
     return parts;
   }

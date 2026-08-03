@@ -50,3 +50,10 @@ export const R2_BATCH_CONCURRENCY = 15;
 // query -- InstantDB enforces its own query timeout, and a single query
 // over that many rows risks exceeding it.
 export const PAGES_QUERY_PAGE_SIZE = 500;
+
+// migrate.ts fetches/decrypts/inserts this many source documents at a time
+// (each document's own parts fetched in parallel too, R2_BATCH_CONCURRENCY
+// at once) instead of downloading every remaining document's content into
+// memory before inserting any of it -- bounds peak memory for a large
+// backlog and gets useful local-DB progress sooner.
+export const MIGRATE_BATCH_SIZE = 10;

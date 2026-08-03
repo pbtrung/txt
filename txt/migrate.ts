@@ -125,17 +125,66 @@ export class Migrator {
       const alreadyMigrated = new Set(
         builder.selectInts(dbHandle, "SELECT id FROM txt").map(Number),
       );
-      const docs = await this.prepareDocs(crypto, alreadyMigrated);
-      const summaries = docs.map(toSummary);
-      if (docs.length === 0 || opts.dryRun) {
+      const owner = new TxtOwner(this.fromDb, crypto, this.log);
+      const userId = owner.resolveUserId(this.fromCreds);
+      const umk = owner.resolveUmk(this.fromCreds, userId);
+      const fromR2 = new R2Client(this.fromCreds.r2Config, true, this.log);
+      const allTxtIds = owner.listTxtIds(userId);
+      const remaining = allTxtIds.filter((id) => !alreadyMigrated.has(id));
+      this.log.info(
+        `${allTxtIds.length} txt_id(s) total, ${alreadyMigrated.size} already migrated, ` +
+          `${remaining.length} remaining: ${remaining.join(", ")}`,
+      );
+      const metadataDoc = await owner.resolveTxtMetadataDocument(
+        userId,
+        umk,
+        fromR2,
+      );
+      // Cheap (local counts only, no R2 download) -- dry-run/confirm can
+      // report exactly what a live run would migrate without having to
+      // download any document's actual content first.
+      const summaries = this.summarizeRemaining(owner, metadataDoc, remaining);
+      if (remaining.length === 0 || opts.dryRun) {
         return emptyResult(
           summaries,
           alreadyMigrated.size,
           staleObjectsDeleted,
         );
       }
-      await this.confirmOrAbort(docs, alreadyMigrated.size, opts.confirm);
-      docs.forEach((doc) => this.insertOneDoc(builder, dbHandle, doc));
+      await this.confirmOrAbort(summaries, alreadyMigrated.size, opts.confirm);
+
+      const namesByTxtId = new Map(summaries.map((s) => [s.oldTxtId, s.name]));
+
+      // MIGRATE_BATCH_SIZE documents at a time -- fetched/decrypted in
+      // parallel within a batch (each document's own parts also fetched in
+      // parallel, TxtOwner.fetchTxtParts), then inserted locally, rather
+      // than downloading every remaining document's content into memory
+      // before inserting any of it. The R2/InstantDB commit itself stays a
+      // single step after every batch is inserted, not one per batch:
+      // R2Vfs.diffDirtyPages() diffs against a fixed snapshot taken when the
+      // VFS was opened, so calling it more than once would just re-report
+      // (and re-upload) earlier batches' already-dirty pages every time.
+      for (let i = 0; i < remaining.length; i += C.MIGRATE_BATCH_SIZE) {
+        const batchIds = remaining.slice(i, i + C.MIGRATE_BATCH_SIZE);
+        const batchDocs = await Promise.all(
+          batchIds.map((txtId) =>
+            this.prepareOneDoc(
+              owner,
+              umk,
+              fromR2,
+              metadataDoc,
+              txtId,
+              namesByTxtId.get(txtId)!,
+            ),
+          ),
+        );
+        batchDocs.forEach((doc) => this.insertOneDoc(builder, dbHandle, doc));
+        this.log.info(
+          `Batch ${Math.floor(i / C.MIGRATE_BATCH_SIZE) + 1}: ` +
+            `inserted ${batchDocs.length} document(s) locally (${i + batchDocs.length}/${remaining.length})`,
+        );
+      }
+
       const { newVersion } = await this.commit(
         store,
         target,
@@ -156,45 +205,36 @@ export class Migrator {
     }
   }
 
-  private async prepareDocs(
-    crypto: CryptoEngine,
-    alreadyMigrated: Set<number>,
-  ): Promise<PreparedDoc[]> {
-    const owner = new TxtOwner(this.fromDb, crypto, this.log);
-    const userId = owner.resolveUserId(this.fromCreds);
-    const umk = owner.resolveUmk(this.fromCreds, userId);
-    const fromR2 = new R2Client(this.fromCreds.r2Config, true, this.log);
-    const allTxtIds = owner.listTxtIds(userId);
-    const remaining = allTxtIds.filter((id) => !alreadyMigrated.has(id));
-    this.log.info(
-      `${allTxtIds.length} txt_id(s) total, ${alreadyMigrated.size} already migrated, ` +
-        `${remaining.length} remaining: ${remaining.join(", ")}`,
-    );
-    const metadataDoc = await owner.resolveTxtMetadataDocument(
-      userId,
-      umk,
-      fromR2,
-    );
-    const prepared: PreparedDoc[] = [];
-    for (const txtId of remaining) {
-      prepared.push(
-        await this.prepareOneDoc(owner, umk, fromR2, metadataDoc, txtId),
-      );
-    }
-    return prepared;
+  // No R2/decrypt work at all -- just this doc's name (from the already-
+  // resolved metadata document) and a cheap local COUNT(*) for part count.
+  private summarizeRemaining(
+    owner: TxtOwner,
+    metadataDoc: Record<string, TxtMetadataEntry> | null,
+    remaining: number[],
+  ): MigratedDoc[] {
+    return remaining.map((txtId) => {
+      const entry = metadataDoc?.[String(txtId)];
+      return {
+        oldTxtId: txtId,
+        name: entry?.name ?? this.fallbackName(txtId),
+        partCount: owner.countParts(txtId),
+      };
+    });
   }
 
+  // name comes from summarizeRemaining (already resolved once, up front) --
+  // avoids re-deriving it here and double-logging fallbackName's warning.
   private async prepareOneDoc(
     owner: TxtOwner,
     umk: Buffer,
     fromR2: R2Client,
     metadataDoc: Record<string, TxtMetadataEntry> | null,
     txtId: number,
+    name: string,
   ): Promise<PreparedDoc> {
     const txtKey = owner.resolveTxtKey(txtId, umk);
     const parts = await owner.fetchTxtParts(txtId, txtKey, fromR2);
     const entry = metadataDoc?.[String(txtId)];
-    const name = entry?.name ?? this.fallbackName(txtId);
     const metadataBrotli = entry?.metadata
       ? brotliCompressSync(Buffer.from(JSON.stringify(entry.metadata), "utf8"))
       : null;
@@ -212,11 +252,11 @@ export class Migrator {
   }
 
   private async confirmOrAbort(
-    docs: PreparedDoc[],
+    docs: MigratedDoc[],
     alreadyMigratedCount: number,
     confirm: MigrateOptions["confirm"],
   ): Promise<void> {
-    const totalParts = docs.reduce((sum, d) => sum + d.parts.length, 0);
+    const totalParts = docs.reduce((sum, d) => sum + d.partCount, 0);
     const skipNote =
       alreadyMigratedCount > 0
         ? ` (${alreadyMigratedCount} already migrated, skipped)`
@@ -443,14 +483,6 @@ export class Migrator {
     }
     return known;
   }
-}
-
-function toSummary(doc: PreparedDoc): MigratedDoc {
-  return {
-    oldTxtId: doc.oldTxtId,
-    name: doc.name,
-    partCount: doc.parts.length,
-  };
 }
 
 function emptyResult(
