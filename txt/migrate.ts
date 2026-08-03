@@ -6,12 +6,18 @@
 // transport (R2Vfs/RemotePageStore) --init-admin itself uses -- there's no
 // separate "migration" write path, just more rows in the same database.
 //
-// Resumable: each migrated document keeps its *source* txt_id as its target
-// txt_id (insertOneDoc), rather than letting the target db assign a fresh
-// one -- a re-run only ever needs "SELECT id FROM txt" against the target to
-// know which source txt_ids are already there, no separate tracking table.
-// Before doing any new work, also sweeps the account's own R2 prefix for
-// objects left behind by a previous run that crashed between
+// Resumable at the *part* level, not just per-document: each migrated
+// document keeps its *source* txt_id as its target txt_id, and a re-run
+// compares each txt_id's target part count (COUNT(*) against the reopened
+// target's own txt_parts) to its source part count to find not just which
+// documents are fully done, but how far into a partially-committed one to
+// resume from -- no separate tracking table needed either way. This exists
+// because commits themselves are chunked at MIGRATE_PARTS_PER_COMMIT parts,
+// not one commit per whole document (a document with many parts blew up a
+// single commit into "too many pages," confirmed against a real InstantDB
+// app) -- so a crash can leave a document with some but not all of its
+// parts committed. Before doing any new work, also sweeps the account's own
+// R2 prefix for objects left behind by a previous run that crashed between
 // RemotePageStore.commitPages' own R2-upload step and its final InstantDB
 // transact (docs/data_model.md's "Untracked R2 objects" GC sweep, scoped to
 // this one account rather than a whole-bucket sweep).
@@ -44,7 +50,7 @@ export interface MigrateOptions {
 export interface MigratedDoc {
   oldTxtId: number;
   name: string;
-  partCount: number;
+  partCount: number; // parts still remaining to migrate, not the document's total
 }
 
 export interface MigrateResult {
@@ -57,11 +63,26 @@ export interface MigrateResult {
   pageCount: number | null;
 }
 
+// What's left to do for one document, computed once up front against the
+// reopened target's own txt_parts counts -- fromPartNum > 1 means this
+// document already has some parts committed from an earlier, interrupted
+// run, and only needs the rest.
+interface ResumePlan {
+  oldTxtId: number;
+  name: string;
+  metadata: unknown; // this document's txt_metadata entry, if any -- only used when needsTxtRow
+  needsTxtRow: boolean;
+  fromPartNum: number; // 1-based
+  totalParts: number; // this document's total part count in the source
+}
+
 interface PreparedDoc {
   oldTxtId: number;
   name: string;
   metadataBrotli: Buffer | null;
-  parts: Buffer[]; // brotli(raw text) each, part_num order, unchanged from the source
+  needsTxtRow: boolean;
+  fromPartNum: number; // 1-based -- parts[0]'s real part_num
+  parts: Buffer[]; // brotli(raw text) each, part_num order, from fromPartNum on
 }
 
 interface TargetAccount {
@@ -122,19 +143,11 @@ export class Migrator {
     );
     const dbHandle = builder.open(DB_FILE_NAME, vfs.name, keys.dbKey);
     try {
-      const alreadyMigrated = new Set(
-        builder.selectInts(dbHandle, "SELECT id FROM txt").map(Number),
-      );
       const owner = new TxtOwner(this.fromDb, crypto, this.log);
       const userId = owner.resolveUserId(this.fromCreds);
       const umk = owner.resolveUmk(this.fromCreds, userId);
       const fromR2 = new R2Client(this.fromCreds.r2Config, true, this.log);
       const allTxtIds = owner.listTxtIds(userId);
-      const remaining = allTxtIds.filter((id) => !alreadyMigrated.has(id));
-      this.log.info(
-        `${allTxtIds.length} txt_id(s) total, ${alreadyMigrated.size} already migrated, ` +
-          `${remaining.length} remaining: ${remaining.join(", ")}`,
-      );
       const metadataDoc = await owner.resolveTxtMetadataDocument(
         userId,
         umk,
@@ -142,25 +155,43 @@ export class Migrator {
       );
       // Cheap (local counts only, no R2 download) -- dry-run/confirm can
       // report exactly what a live run would migrate without having to
-      // download any document's actual content first.
-      const summaries = this.summarizeRemaining(owner, metadataDoc, remaining);
-      if (remaining.length === 0 || opts.dryRun) {
+      // download any document's actual content first. Also where resume
+      // happens: a document already fully committed (target part count >=
+      // source total) is skipped entirely; one partially committed only
+      // gets its remaining parts planned.
+      const plans = this.computeResumePlans(
+        builder,
+        dbHandle,
+        owner,
+        metadataDoc,
+        allTxtIds,
+      );
+      const alreadyMigratedCount = allTxtIds.length - plans.length;
+      this.log.info(
+        `${allTxtIds.length} txt_id(s) total, ${alreadyMigratedCount} already migrated, ` +
+          `${plans.length} remaining: ${plans.map((p) => p.oldTxtId).join(", ")}`,
+      );
+      const summaries = plans.map((p) => ({
+        oldTxtId: p.oldTxtId,
+        name: p.name,
+        partCount: p.totalParts - p.fromPartNum + 1,
+      }));
+      if (plans.length === 0 || opts.dryRun) {
         return emptyResult(
           summaries,
-          alreadyMigrated.size,
+          alreadyMigratedCount,
           staleObjectsDeleted,
         );
       }
-      await this.confirmOrAbort(summaries, alreadyMigrated.size, opts.confirm);
-
-      const namesByTxtId = new Map(summaries.map((s) => [s.oldTxtId, s.name]));
+      await this.confirmOrAbort(summaries, alreadyMigratedCount, opts.confirm);
 
       // MIGRATE_BATCH_SIZE documents fetched/decrypted at a time -- each
-      // document's own parts also fetched in parallel (TxtOwner.
-      // fetchTxtParts) -- but committed to R2/InstantDB one txt_id at a
-      // time, immediately after its own local insert: a crash mid-run then
-      // only ever loses the one in-flight document, not the whole batch or
-      // run, and no batch has to wait for its slowest document's commit
+      // document's own remaining parts also fetched in parallel (TxtOwner.
+      // fetchTxtParts) -- but committed to R2/InstantDB
+      // MIGRATE_PARTS_PER_COMMIT parts at a time, immediately after their
+      // own local insert: a crash mid-run then only ever loses the one
+      // in-flight chunk, not a whole document (let alone a whole batch or
+      // run), and no batch has to wait for its slowest document's commits
       // before starting the next batch's downloads. Commits must stay
       // strictly sequential (never run two in parallel): each one CAS-bumps
       // dbMeta.currentVersion off the previous commit's returned version,
@@ -168,40 +199,63 @@ export class Migrator {
       // entirely (no real CAS enforcement to fall back on if two raced).
       let currentVersion = target.currentVersion;
       let pageCount = target.pageCount;
-      let migratedCount = 0;
-      for (let i = 0; i < remaining.length; i += C.MIGRATE_BATCH_SIZE) {
-        const batchIds = remaining.slice(i, i + C.MIGRATE_BATCH_SIZE);
+      let totalPartsCommitted = 0;
+      let totalPagesCommitted = 0;
+      for (let i = 0; i < plans.length; i += C.MIGRATE_BATCH_SIZE) {
+        const batchPlans = plans.slice(i, i + C.MIGRATE_BATCH_SIZE);
         const batchDocs = await Promise.all(
-          batchIds.map((txtId) =>
-            this.prepareOneDoc(
-              owner,
-              umk,
-              fromR2,
-              metadataDoc,
-              txtId,
-              namesByTxtId.get(txtId)!,
-            ),
+          batchPlans.map((plan) =>
+            this.prepareOneDoc(owner, umk, fromR2, plan),
           ),
         );
         for (const doc of batchDocs) {
-          this.insertOneDoc(builder, dbHandle, doc);
-          const dirtyPages = vfs.diffDirtyPages();
-          const committed = await this.commit(
-            store,
-            target.dbMetaId,
-            currentVersion,
-            target.pageSize,
-            dirtyPages,
-            vfs.currentPageCount,
+          const chunkCount = Math.max(
+            1,
+            Math.ceil(doc.parts.length / C.MIGRATE_PARTS_PER_COMMIT),
           );
-          vfs.markCommitted(dirtyPages);
-          currentVersion = committed.newVersion;
-          pageCount = vfs.currentPageCount;
-          migratedCount++;
-          this.log.info(
-            `txt_id=${doc.oldTxtId}: committed as version=${currentVersion} ` +
-              `(${migratedCount}/${remaining.length})`,
-          );
+          for (let c = 0; c < chunkCount; c++) {
+            const start = c * C.MIGRATE_PARTS_PER_COMMIT;
+            const chunk = doc.parts.slice(
+              start,
+              start + C.MIGRATE_PARTS_PER_COMMIT,
+            );
+            if (c === 0 && doc.needsTxtRow) {
+              this.insertTxtRow(builder, dbHandle, doc);
+            }
+            if (chunk.length > 0) {
+              this.insertPartsChunk(
+                builder,
+                dbHandle,
+                doc.oldTxtId,
+                chunk,
+                doc.fromPartNum + start,
+              );
+            }
+            const dirtyPages = vfs.diffDirtyPages();
+            const committed = await this.commit(
+              store,
+              target.dbMetaId,
+              currentVersion,
+              target.pageSize,
+              dirtyPages,
+              vfs.currentPageCount,
+            );
+            vfs.markCommitted(dirtyPages);
+            currentVersion = committed.newVersion;
+            pageCount = vfs.currentPageCount;
+            totalPartsCommitted += chunk.length;
+            totalPagesCommitted += dirtyPages.size;
+            const avgPagesPerPart =
+              totalPartsCommitted > 0
+                ? (totalPagesCommitted / totalPartsCommitted).toFixed(1)
+                : "0.0";
+            this.log.info(
+              `txt_id=${doc.oldTxtId}: committed ${chunk.length} part(s), ` +
+                `${dirtyPages.size} page(s) new/overwritten, version=${currentVersion} ` +
+                `-- running total ${totalPartsCommitted} part(s)/${totalPagesCommitted} page(s), ` +
+                `avg ${avgPagesPerPart} page(s)/part`,
+            );
+          }
         }
       }
 
@@ -209,7 +263,7 @@ export class Migrator {
         committed: true,
         authId,
         migrated: summaries,
-        alreadyMigratedCount: alreadyMigrated.size,
+        alreadyMigratedCount,
         staleObjectsDeleted,
         newVersion: currentVersion,
         pageCount,
@@ -220,42 +274,78 @@ export class Migrator {
   }
 
   // No R2/decrypt work at all -- just this doc's name (from the already-
-  // resolved metadata document) and a cheap local COUNT(*) for part count.
-  private summarizeRemaining(
+  // resolved metadata document) and cheap local COUNT(*)s (source total via
+  // TxtOwner.countParts, target-so-far via the reopened target db's own
+  // txt_parts). A document is skipped entirely once its target row exists
+  // and its target part count is already >= its source total; otherwise it
+  // gets a plan resuming from (target part count + 1).
+  private computeResumePlans(
+    builder: SqlCipherBuilder,
+    dbHandle: number,
     owner: TxtOwner,
     metadataDoc: Record<string, TxtMetadataEntry> | null,
-    remaining: number[],
-  ): MigratedDoc[] {
-    return remaining.map((txtId) => {
+    allTxtIds: number[],
+  ): ResumePlan[] {
+    const existingTxtIds = new Set(
+      builder.selectInts(dbHandle, "SELECT id FROM txt").map(Number),
+    );
+    const targetPartCounts = new Map<number, number>();
+    for (const txtId of builder
+      .selectInts(dbHandle, "SELECT txt_id FROM txt_parts")
+      .map(Number)) {
+      targetPartCounts.set(txtId, (targetPartCounts.get(txtId) ?? 0) + 1);
+    }
+    const plans: ResumePlan[] = [];
+    for (const txtId of allTxtIds) {
+      const totalParts = owner.countParts(txtId);
+      const already = targetPartCounts.get(txtId) ?? 0;
+      if (existingTxtIds.has(txtId) && already >= totalParts) continue;
       const entry = metadataDoc?.[String(txtId)];
-      return {
+      plans.push({
         oldTxtId: txtId,
         name: entry?.name ?? this.fallbackName(txtId),
-        partCount: owner.countParts(txtId),
-      };
-    });
+        metadata: entry?.metadata,
+        needsTxtRow: !existingTxtIds.has(txtId),
+        fromPartNum: already + 1,
+        totalParts,
+      });
+      if (already > 0) {
+        this.log.debug(
+          `txt_id=${txtId}: resuming from part ${already + 1} (${already}/${totalParts} already committed)`,
+        );
+      }
+    }
+    return plans;
   }
 
-  // name comes from summarizeRemaining (already resolved once, up front) --
-  // avoids re-deriving it here and double-logging fallbackName's warning.
   private async prepareOneDoc(
     owner: TxtOwner,
     umk: Buffer,
     fromR2: R2Client,
-    metadataDoc: Record<string, TxtMetadataEntry> | null,
-    txtId: number,
-    name: string,
+    plan: ResumePlan,
   ): Promise<PreparedDoc> {
-    const txtKey = owner.resolveTxtKey(txtId, umk);
-    const parts = await owner.fetchTxtParts(txtId, txtKey, fromR2);
-    const entry = metadataDoc?.[String(txtId)];
-    const metadataBrotli = entry?.metadata
-      ? brotliCompressSync(Buffer.from(JSON.stringify(entry.metadata), "utf8"))
-      : null;
-    this.log.debug(
-      `txt_id=${txtId}: name=${JSON.stringify(name)}, ${parts.length} part(s)`,
+    const txtKey = owner.resolveTxtKey(plan.oldTxtId, umk);
+    const parts = await owner.fetchTxtParts(
+      plan.oldTxtId,
+      txtKey,
+      fromR2,
+      plan.fromPartNum,
     );
-    return { oldTxtId: txtId, name, metadataBrotli, parts };
+    const metadataBrotli =
+      plan.needsTxtRow && plan.metadata
+        ? brotliCompressSync(Buffer.from(JSON.stringify(plan.metadata), "utf8"))
+        : null;
+    this.log.debug(
+      `txt_id=${plan.oldTxtId}: name=${JSON.stringify(plan.name)}, ${parts.length} part(s) to fetch`,
+    );
+    return {
+      oldTxtId: plan.oldTxtId,
+      name: plan.name,
+      metadataBrotli,
+      needsTxtRow: plan.needsTxtRow,
+      fromPartNum: plan.fromPartNum,
+      parts,
+    };
   }
 
   private fallbackName(txtId: number): string {
@@ -362,9 +452,12 @@ export class Migrator {
 
   // Reuses the source's own txt_id as the target's txt_id -- what makes a
   // re-run resumable (see this file's header comment) without any separate
-  // tracking table: "SELECT id FROM txt" against the target is enough to
-  // know which source txt_ids already made it across.
-  private insertOneDoc(
+  // tracking table: comparing the target's own txt/txt_parts counts against
+  // the source's is enough to know what's already there (computeResumePlans).
+  // Split from the parts insert below since a document's parts now commit in
+  // MIGRATE_PARTS_PER_COMMIT-sized chunks -- the txt row itself is only ever
+  // inserted once, alongside that document's first chunk.
+  private insertTxtRow(
     builder: SqlCipherBuilder,
     db: number,
     doc: PreparedDoc,
@@ -374,16 +467,25 @@ export class Migrator {
       "INSERT INTO txt (id, name, metadata, last_part_num, last_accessed, created_at) VALUES (?, ?, ?, ?, ?, ?)",
       [doc.oldTxtId, doc.name, doc.metadataBrotli, null, null, Date.now()],
     );
-    doc.parts.forEach((content, i) => {
+    this.log.debug(
+      `txt_id=${doc.oldTxtId}: inserted txt row, name=${JSON.stringify(doc.name)}`,
+    );
+  }
+
+  private insertPartsChunk(
+    builder: SqlCipherBuilder,
+    db: number,
+    txtId: number,
+    chunk: Buffer[],
+    startPartNum: number,
+  ): void {
+    chunk.forEach((content, i) => {
       builder.insert(
         db,
         "INSERT INTO txt_parts (txt_id, part_num, content) VALUES (?, ?, ?)",
-        [doc.oldTxtId, i + 1, content],
+        [txtId, startPartNum + i, content],
       );
     });
-    this.log.info(
-      `txt_id=${doc.oldTxtId}: inserted ${doc.parts.length} part(s), name=${JSON.stringify(doc.name)}`,
-    );
   }
 
   private async commit(

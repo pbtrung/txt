@@ -143,13 +143,16 @@ export class TxtOwner {
   // connections/rate limits) -- same bounded-parallelism pattern as
   // RemotePageStore's own R2 round-trips. Promise.all preserves each batch's
   // input order, so the result stays in part_num order despite completing
-  // out of order.
+  // out of order. fromPartNum (1-based, inclusive) lets a caller resume a
+  // partially-migrated document without re-fetching/re-decrypting parts it
+  // already has -- --migrate's own resume logic.
   async fetchTxtParts(
     txtId: number,
     txtKey: Buffer,
     r2: R2Client,
+    fromPartNum = 1,
   ): Promise<Buffer[]> {
-    const rawPaths = this.listPartRawPaths(txtId, txtKey);
+    const rawPaths = this.listPartRawPaths(txtId, txtKey, fromPartNum);
     const parts: Buffer[] = [];
     for (let i = 0; i < rawPaths.length; i += C.R2_BATCH_CONCURRENCY) {
       const batch = rawPaths.slice(i, i + C.R2_BATCH_CONCURRENCY);
@@ -212,12 +215,16 @@ export class TxtOwner {
     return this.crypto.blobDecrypt(txtMetadataKey, objectBytes, false);
   }
 
-  private listPartRawPaths(txtId: number, txtKey: Buffer): string[] {
+  private listPartRawPaths(
+    txtId: number,
+    txtKey: Buffer,
+    fromPartNum = 1,
+  ): string[] {
     const rows = this.db
       .prepare(
-        "SELECT path FROM txt_parts WHERE txt_id = ? ORDER BY part_num ASC",
+        "SELECT path FROM txt_parts WHERE txt_id = ? AND part_num >= ? ORDER BY part_num ASC",
       )
-      .all(txtId) as { path: Uint8Array }[];
+      .all(txtId, fromPartNum) as { path: Uint8Array }[];
     return rows.map((r) =>
       this.crypto.blobDecrypt(txtKey, r.path, false).toString("ascii"),
     );

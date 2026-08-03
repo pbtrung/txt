@@ -57,3 +57,11 @@ export const PAGES_QUERY_PAGE_SIZE = 500;
 // memory before inserting any of it -- bounds peak memory for a large
 // backlog and gets useful local-DB progress sooner.
 export const MIGRATE_BATCH_SIZE = 10;
+
+// migrate.ts commits at most this many txt_parts rows (and whatever pages
+// they end up touching) per R2/InstantDB commit -- one commit per whole
+// txt_id blew up a real document with many parts into a single db.transact()
+// with too many pages ("The query took too long to complete", confirmed
+// against a real InstantDB app). A document with more parts than this gets
+// multiple commits instead of one.
+export const MIGRATE_PARTS_PER_COMMIT = 20;
