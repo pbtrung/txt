@@ -8,7 +8,8 @@ See [`docs/data_model.md`](docs/data_model.md) for the full design (entities, ke
 
 - **`--init-admin`** — provisions the admin account end to end: signs into Firebase, resolves an InstantDB identity for it, generates its key hierarchy, builds its initial encrypted per-user SQLite database, and uploads it page-by-page to R2.
 - **`--clean-bucket`** — sweeps an R2 bucket for objects no longer referenced by a (legacy, pre-InstantDB) account snapshot, with a dry-run mode and a confirmation prompt before deleting anything.
-- **`--migrate`** — imports every document from a legacy account's database into an already-provisioned InstantDB account's own SQLCipher database, through the same page-by-page R2 transport `--init-admin` uses.
+- **`--migrate`** — imports every document from a legacy account's database into an already-provisioned InstantDB account's own SQLCipher database, through the same page-by-page R2 transport `--init-admin` uses. Fetches documents in parallel batches, commits to R2/InstantDB in small part-sized chunks (so one huge document can't blow up a single commit), and resumes an interrupted run at the exact part it left off on, not just the last fully-migrated document.
+- **`--collect-garbage`** — the same two garbage-collection sweeps `--migrate` already does for its own target account (delete superseded page-store versions, sweep untracked R2 objects), run app-wide across every provisioned account instead, one account at a time.
 - **`ui/`** — the React viewer: unlock a vault with a creds.json file, browse/read documents, bookmark, and write back read-position/bookmark updates, all client-side against InstantDB + R2 directly.
 - **`worker/`** — the one server component the design needs: verifies a Firebase ID token and mints a short-lived, prefix-scoped R2 credential for it, so `ui/` never needs a static R2 key.
 - **End-to-end encryption throughout**: page content is SQLCipher-encrypted; R2 object addresses and the pointers to them are separately wrapped (Ascon-Keccak AEAD + HKDF-SHA3-512) so neither InstantDB nor R2 ever see plaintext content, real object addresses, or unwrapped keys.
@@ -30,6 +31,8 @@ node txt.ts --clean-bucket <in.db> --creds <creds.json> [-v|--verbose] [--dry-ru
 
 node txt.ts --migrate --from <in.db> --from-creds <from_creds.json> --to-creds <to_creds.json> \
   [-v|--verbose] [--dry-run] [-y|--yes]
+
+node txt.ts --collect-garbage --creds <creds.json> [-v|--verbose] [--dry-run] [-y|--yes]
 ```
 
 `-v`/`--verbose` enables debug logging; `--dry-run` reports what would happen without writing anything; `-y`/`--yes` skips the confirmation prompt for a live (non-dry-run) run.
@@ -56,6 +59,18 @@ node txt.ts --migrate --from <in.db> --from-creds <from_creds.json> --to-creds <
     "read_write_access_key_id": "",
     "read_write_secret_access_key": ""
   },
+  "user_root_key": ""
+}
+```
+
+`--migrate --to-creds` doesn't actually need `r2_config` filled in — it reads that account's real R2 connection info from its own live `credStore` row instead (see `docs/data_model.md`), so only the rest of this shape matters there.
+
+`--collect-garbage` takes a much smaller file instead — it never signs into Firebase as any particular account (it enumerates every account directly via the InstantDB Admin SDK), so it only needs enough to find the admin identity and unwrap its own key material:
+
+```json
+{
+  "instant_app_id": "",
+  "instant_admin_token": "",
   "user_root_key": ""
 }
 ```
