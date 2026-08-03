@@ -19,7 +19,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { brotliCompressSync } from "node:zlib";
 import { init } from "@instantdb/admin";
 import * as C from "./constants.ts";
-import type { Creds } from "./creds.ts";
+import { type Creds, loadR2Config, type R2ConfigResolved } from "./creds.ts";
 import { CryptoEngine } from "./crypto.ts";
 import { collectAllPages } from "./instaqlPagination.ts";
 import type { InitAdminCreds } from "./initAdminCreds.ts";
@@ -100,7 +100,7 @@ export class Migrator {
     });
     const target = await this.resolveTarget(db, authId);
     const keys = this.unwrapTargetKeys(crypto, target);
-    const r2 = new R2Client(this.toCreds.r2Config, false, this.log);
+    const r2 = new R2Client(keys.r2Config, false, this.log);
 
     const staleObjectsDeleted = await this.sweepStaleR2Objects(
       db,
@@ -263,10 +263,16 @@ export class Migrator {
     };
   }
 
+  // r2Config comes from the target's own credStore content, not
+  // this.toCreds.r2Config -- the live credStore row (written by --init-admin)
+  // is this account's actual R2 connection info, and a local to-creds.json
+  // could drift from it (rotated keys, a stale file, etc.). to-creds.json's
+  // own r2Config is only ever used for --init-admin's initial bootstrap,
+  // before any credStore row exists to read it from.
   private unwrapTargetKeys(
     crypto: CryptoEngine,
     target: TargetAccount,
-  ): { pathKey: Buffer; dbKey: Buffer } {
+  ): { pathKey: Buffer; dbKey: Buffer; r2Config: R2ConfigResolved } {
     const umk = crypto.blobDecrypt(
       this.toCreds.userRootKey,
       Buffer.from(target.umkBlob, "base64"),
@@ -279,6 +285,7 @@ export class Migrator {
     return {
       pathKey: Buffer.from(payload.path_key, "base64"),
       dbKey: Buffer.from(payload.db_key, "base64"),
+      r2Config: loadR2Config(payload),
     };
   }
 
