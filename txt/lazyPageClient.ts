@@ -20,6 +20,12 @@ const FETCH_TIMEOUT_MS = 30_000;
 
 export interface LazyPageBridge {
   fetchPage: (pageNo: number) => Buffer;
+  /** Pushes a just-committed chunk's own page bytes straight into the
+   * worker's cache -- called right after migrate.ts's vfs.markCommitted, so
+   * the worker never has to re-fetch (query+GET) a page this run itself
+   * just wrote. Fire-and-forget: no response awaited, since nothing here
+   * depends on the worker having processed it yet. */
+  updateCommittedPages: (pages: Map<number, Buffer>) => void;
   terminate: () => Promise<number>;
 }
 
@@ -63,6 +69,8 @@ export async function startLazyPageWorker(
 
   return {
     fetchPage: (pageNo) => fetchPageSync(worker, control, dataBuf, pageNo, log),
+    updateCommittedPages: (pages) =>
+      worker.postMessage({ type: "update-pages", pages }),
     terminate: () => worker.terminate(),
   };
 }

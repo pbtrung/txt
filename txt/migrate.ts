@@ -139,15 +139,18 @@ export class Migrator {
 
     const builder = await SqlCipherBuilder.create();
     const store = this.buildStore(db, r2, crypto, authId, keys.pathKey);
-    // Lazy, on-demand page fetching (lazyVfs.ts/lazyPageClient.ts) instead of
-    // R2Vfs's prefetch-every-current-page-up-front model -- resuming a large,
-    // long-lived account no longer means downloading its entire database
-    // just to compute a resume plan or insert a few more documents; SQLite
-    // only ever fetches the pages it actually touches (e.g. an index-only
-    // scan over txt_parts(txt_id, part_num) for computeResumePlans below
-    // never even reads the much larger content pages). The nested
-    // worker_threads Worker this spawns needs its own cleanup -- see the
-    // finally block.
+    // lazyVfs.ts/lazyPageClient.ts, not R2Vfs: the nested worker_threads
+    // Worker this spawns prefetches every one of the target's current pages
+    // up front too (lazyPageWorker.ts's own prefetchAllPages), but via a
+    // bounded number of batched InstantDB queries (pageNo: {$in: [...]})
+    // instead of R2Vfs's one-query-per-page model (bounded concurrency, but
+    // still one InstantDB round trip per page) -- far fewer queries against
+    // a large, long-lived account's page count, not fewer bytes downloaded.
+    // Any page number that didn't exist at construction (i.e. one this run
+    // allocates itself) is filled in afterward instead, straight from each
+    // commit's own dirty pages (pageWorker.updateCommittedPages below), so
+    // it's never re-fetched from InstantDB/R2 at all. The nested Worker
+    // needs its own cleanup -- see the finally block.
     const pageWorker = await startLazyPageWorker(
       {
         instantAppId: this.toCreds.instantAppId,
@@ -279,6 +282,7 @@ export class Migrator {
               vfs.currentPageCount,
             );
             vfs.markCommitted(dirtyPages);
+            pageWorker.updateCommittedPages(dirtyPages);
             currentVersion = committed.newVersion;
             pageCount = vfs.currentPageCount;
             totalPartsCommitted += chunk.length;

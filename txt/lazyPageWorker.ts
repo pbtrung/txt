@@ -28,7 +28,6 @@
 // its whole lifetime, set once at construction.
 import { parentPort, workerData } from "node:worker_threads";
 import { init } from "@instantdb/admin";
-import * as C from "./constants.ts";
 import { CryptoEngine } from "./crypto.ts";
 import { ConsoleLogger } from "./logger.ts";
 import {
@@ -44,6 +43,19 @@ import { RemotePageStore } from "./remotePageStore.ts";
 interface FetchMessage {
   type: "fetch";
   pageNo: number;
+}
+
+// Sent by lazyPageClient.ts's updateCommittedPages, right after each of
+// migrate.ts's commits succeeds -- pushes that commit's own just-written
+// page bytes straight into this cache, no re-fetch involved (this worker
+// never otherwise learns about a write at all: xWrite only ever touches
+// lazyVfs.ts's own in-memory dirtyPages map on the main thread). Keeps this
+// cache from serving a stale copy of a page number this run itself
+// overwrote after having prefetched (or on-demand fetched) an older version
+// of it earlier in the same run.
+interface UpdatePagesMessage {
+  type: "update-pages";
+  pages: Map<number, Buffer>;
 }
 
 async function main(): Promise<void> {
@@ -94,8 +106,19 @@ async function main(): Promise<void> {
   // this file's fixed snapshot already relies on).
   const cache = new Map<number, Buffer>();
 
-  async function prefetchFirstPages(): Promise<void> {
-    const n = Math.min(C.MIGRATE_PREFETCH_PAGE_COUNT, data.pageCount);
+  // Prefetches every page that exists as of this run's own fixed snapshot
+  // (data.pageCount, not some smaller guess) in one batched InstantDB query
+  // + batched R2 GETs, before SQLite's own xRead ever asks for a single
+  // page. computeResumePlans' index scans over an existing, possibly large
+  // target account would otherwise pay a full query+GET round trip per
+  // page, one at a time, serially -- and since this cache is unbounded
+  // (never evicted), prefetching everything up front means virtually every
+  // later read this run makes is a cache hit, not just the low-numbered
+  // pages a smaller guess would have covered. Pages created *after* this
+  // run's own construction (i.e. by this run's own commits) aren't fetched
+  // here at all -- they arrive via updateCommittedPages below instead.
+  async function prefetchAllPages(): Promise<void> {
+    const n = data.pageCount;
     if (n <= 0) return;
     const pageNos = Array.from({ length: n }, (_, i) => i + 1);
     const start = performance.now();
@@ -139,10 +162,17 @@ async function main(): Promise<void> {
     }
   }
 
-  parentPort!.on("message", (msg: FetchMessage) => {
+  parentPort!.on("message", (msg: FetchMessage | UpdatePagesMessage) => {
+    if (msg.type === "update-pages") {
+      for (const [pageNo, bytes] of msg.pages) cache.set(pageNo, bytes);
+      log.debug(
+        `lazyPageWorker: cached ${msg.pages.size} newly-committed page(s)`,
+      );
+      return;
+    }
     void handleFetch(msg.pageNo);
   });
-  await prefetchFirstPages();
+  await prefetchAllPages();
   parentPort!.postMessage({ type: "ready" });
 }
 
