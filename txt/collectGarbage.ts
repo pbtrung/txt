@@ -77,7 +77,10 @@ export class GarbageCollector {
       await this.confirmOrAbort(accounts.length, opts.confirm);
     }
     const results: AccountGcResult[] = [];
-    for (const account of accounts) {
+    for (const [i, account] of accounts.entries()) {
+      this.log.info(
+        `Processing account ${i + 1}/${accounts.length}: auth.id=${account.ownerId}`,
+      );
       results.push(
         await this.processAccount(db, crypto, admin, account, opts.dryRun),
       );
@@ -252,6 +255,7 @@ export class GarbageCollector {
       };
     }
     const r2Prefix = computeR2Prefix(account.ownerId);
+    this.log.info(`auth.id=${account.ownerId}: sweep 1 -- old page versions`);
     const oldPagesDeleted = await this.sweepOldVersions(
       db,
       admin.r2,
@@ -260,6 +264,9 @@ export class GarbageCollector {
       r2Prefix,
       account,
       dryRun,
+    );
+    this.log.info(
+      `auth.id=${account.ownerId}: sweep 2 -- untracked R2 objects`,
     );
     const staleObjectsDeleted = await this.sweepStaleObjects(
       db,
@@ -330,6 +337,9 @@ export class GarbageCollector {
         },
       });
       const page = result.pages ?? [];
+      this.log.info(
+        `auth.id=${account.ownerId}: fetched ${offset + page.length} pages row(s) so far...`,
+      );
       return {
         rows: page,
         hasNextPage: page.length === C.PAGES_QUERY_PAGE_SIZE,
@@ -454,6 +464,9 @@ export class GarbageCollector {
         },
       });
       const page = result.pages ?? [];
+      this.log.info(
+        `auth.id=${ownerId}: fetched ${offset + page.length} known pages row(s) so far...`,
+      );
       return {
         rows: page,
         hasNextPage: page.length === C.PAGES_QUERY_PAGE_SIZE,
