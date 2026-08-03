@@ -148,17 +148,20 @@ export class Migrator {
     // never even reads the much larger content pages). The nested
     // worker_threads Worker this spawns needs its own cleanup -- see the
     // finally block.
-    const pageWorker = await startLazyPageWorker({
-      instantAppId: this.toCreds.instantAppId,
-      instantAdminToken: this.toCreds.instantAdminToken,
-      r2Config: keys.r2Config,
-      pathKey: keys.pathKey,
-      authId,
-      snapshot: target.currentVersion,
-      pageCount: target.pageCount,
-      pageSize: target.pageSize,
-      verbose: this.log.verbose,
-    });
+    const pageWorker = await startLazyPageWorker(
+      {
+        instantAppId: this.toCreds.instantAppId,
+        instantAdminToken: this.toCreds.instantAdminToken,
+        r2Config: keys.r2Config,
+        pathKey: keys.pathKey,
+        authId,
+        snapshot: target.currentVersion,
+        pageCount: target.pageCount,
+        pageSize: target.pageSize,
+        verbose: this.log.verbose,
+      },
+      this.log,
+    );
     const vfs = registerLazyVfs(builder.module, {
       pageSize: target.pageSize,
       pageCount: target.pageCount,

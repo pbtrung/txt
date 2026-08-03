@@ -14,6 +14,7 @@ import {
   STATUS_ERROR,
   type LazyPageWorkerData,
 } from "./lazyPageProtocol.ts";
+import type { Logger } from "./logger.ts";
 
 const FETCH_TIMEOUT_MS = 30_000;
 
@@ -36,6 +37,7 @@ export interface LazyPageWorkerConfig {
 
 export async function startLazyPageWorker(
   cfg: LazyPageWorkerConfig,
+  log: Logger,
 ): Promise<LazyPageBridge> {
   const controlSab = new SharedArrayBuffer(8);
   const dataSab = new SharedArrayBuffer(Math.max(cfg.pageSize, 4096) + 4096);
@@ -60,7 +62,7 @@ export async function startLazyPageWorker(
   await waitReady(worker);
 
   return {
-    fetchPage: (pageNo) => fetchPageSync(worker, control, dataBuf, pageNo),
+    fetchPage: (pageNo) => fetchPageSync(worker, control, dataBuf, pageNo, log),
     terminate: () => worker.terminate(),
   };
 }
@@ -77,14 +79,24 @@ function waitReady(worker: Worker): Promise<void> {
   });
 }
 
+// Atomics.wait() below blocks this *entire* thread, not just JS execution --
+// while it's blocked, the worker's own console.log calls (relayed back over
+// an internal message channel this thread's event loop has to process)
+// physically cannot reach the terminal, even though they already fired
+// inside the worker. Logging here, immediately before the block starts, is
+// the only way to show real-time progress during that window -- otherwise a
+// page fetch that takes a while looks indistinguishable from a genuine hang
+// until the block ends and every queued worker log line lands at once.
 function fetchPageSync(
   worker: Worker,
   control: Int32Array,
   dataBuf: Uint8Array,
   pageNo: number,
+  log: Logger,
 ): Buffer {
   Atomics.store(control, CONTROL_STATUS, 0);
   worker.postMessage({ type: "fetch", pageNo });
+  log.debug(`lazyPageClient: blocking on page ${pageNo}...`);
   if (
     Atomics.wait(control, CONTROL_STATUS, 0, FETCH_TIMEOUT_MS) === "timed-out"
   ) {
