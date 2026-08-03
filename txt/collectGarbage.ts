@@ -350,10 +350,27 @@ export class GarbageCollector {
     // equal dbMeta.pageCount -- a mismatch here means either this account's
     // page store is missing rows for some page number(s), or this sweep's
     // own selection logic is wrong, either way worth surfacing loudly rather
-    // than silently under- or over-deleting.
+    // than silently under- or over-deleting. Logs which page numbers are
+    // actually missing (not just the count) -- a contiguous range at the
+    // tail end (e.g. the last few hundred of a large pageCount) points at a
+    // commit whose R2/InstantDB write never actually landed even though
+    // dbMeta.pageCount was bumped to reflect the local file's grown size (a
+    // real failure mode: docs/data_model.md's commit protocol has no way to
+    // make the local page-count bump and the remote pages-row write atomic
+    // with each other); scattered gaps would mean something else entirely.
     if (maxVersionByPageNo.size !== account.pageCount) {
+      const missing: number[] = [];
+      for (let pageNo = 1; pageNo <= account.pageCount; pageNo++) {
+        if (!maxVersionByPageNo.has(pageNo)) missing.push(pageNo);
+      }
+      const preview = missing.slice(0, C.ORPHAN_PREVIEW_LIMIT);
       this.log.warn(
-        `auth.id=${account.ownerId}: dbMeta.pageCount=${account.pageCount} but found ${maxVersionByPageNo.size} distinct page number(s) among current pages rows -- investigate before trusting this sweep's results`,
+        `auth.id=${account.ownerId}: dbMeta.pageCount=${account.pageCount} but found ${maxVersionByPageNo.size} distinct page number(s) among current pages rows -- ` +
+          `${missing.length} missing page number(s): ${preview.join(", ")}` +
+          (missing.length > preview.length
+            ? ` ... (${missing.length - preview.length} more)`
+            : "") +
+          ` -- investigate before trusting this sweep's results`,
       );
     }
     if (toDelete.length === 0 || dryRun) return toDelete.length;
