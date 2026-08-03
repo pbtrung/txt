@@ -27,6 +27,7 @@ There's no app-level profile entity in this design — `$users` (InstantDB's own
       "region": "",
       "bucket": ""
     },
+    "display_name": "",
     "path_key": "<base64, 128 random bytes>",
     "db_key": "<base64, 256 random bytes>"
   }
@@ -45,12 +46,13 @@ There's no app-level profile entity in this design — `$users` (InstantDB's own
       "region": "",
       "bucket": ""
     },
+    "display_name": "",
     "path_key": "<base64, 128 random bytes>",
     "db_key": "<base64, 256 random bytes>"
   }
   ```
 
-  `path_key` wraps each page's `raw_key` (see `pages` below) before it's written into `pages.path`. `db_key` is the raw SQLCipher key for the described account's own database — **must be ≥256 raw bytes**: the leancrypto cipher provider (`sqlcipher/sqlcipher.js`, this repo's vendored WASM build) rejects anything shorter (`sqlcipher_cipher_ctx_key_derive: key must be supplied as a raw key blob x'...' of at least 256 bytes`, confirmed against the real WASM module) — unlike `umk`/`path_key`, which are just HKDF input keying material and have no such hard minimum. `r2_config` is the connection info needed to read/write the described account's page objects — for the admin, this also includes the actual R2 access keys; a `user`-role row's `r2_config` carries no access keys at all, since a `user` session never holds a static R2 credential of any kind, only a short-lived, prefix-scoped temporary one minted on demand (see "Temporary, prefix-scoped R2 credentials" below).
+  `path_key` wraps each page's `raw_key` (see `pages` below) before it's written into `pages.path`. `db_key` is the raw SQLCipher key for the described account's own database — **must be ≥256 raw bytes**: the leancrypto cipher provider (`sqlcipher/sqlcipher.js`, this repo's vendored WASM build) rejects anything shorter (`sqlcipher_cipher_ctx_key_derive: key must be supplied as a raw key blob x'...' of at least 256 bytes`, confirmed against the real WASM module) — unlike `umk`/`path_key`, which are just HKDF input keying material and have no such hard minimum. `r2_config` is the connection info needed to read/write the described account's page objects — for the admin, this also includes the actual R2 access keys; a `user`-role row's `r2_config` carries no access keys at all, since a `user` session never holds a static R2 credential of any kind, only a short-lived, prefix-scoped temporary one minted on demand (see "Temporary, prefix-scoped R2 credentials" below). `display_name` is a human-readable label for the described account (e.g. for an account picker) — plaintext-adjacent (protected by the same `content` wrapping as everything else here, but not itself security-sensitive), sourced from `creds.json`'s own `display_name` field at provisioning time.
 
   A third row shape — `owner` = admin, `user` = some other user — also exists. Its `content` shape is defined later.
 

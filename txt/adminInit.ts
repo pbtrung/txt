@@ -187,6 +187,7 @@ export class AdminInitializer {
         region: r2.region,
         bucket: r2.bucket,
       },
+      display_name: this.creds.displayName,
       path_key: keys.pathKey.toString("base64"),
       db_key: keys.dbKey.toString("base64"),
     };
