@@ -3,6 +3,11 @@
 // Node crypto covers HMAC-SHA3-256 (username_hash), a standard primitive
 // with no leancrypto-specific behavior to replicate.
 import { createHmac, randomBytes } from "node:crypto";
+import {
+  brotliCompressSync,
+  brotliDecompressSync,
+  constants as zlibConstants,
+} from "node:zlib";
 // @ts-ignore -- no type declarations beyond `declare function Sqlite3Wasm(): Promise<any>`
 import Sqlite3Wasm from "../sqlcipher/sqlcipher.js";
 import * as C from "./constants.ts";
@@ -67,15 +72,30 @@ export class CryptoEngine {
       .digest();
   }
 
-  blobDecrypt(ikm: Uint8Array, blob: Uint8Array): Buffer {
+  // compressed must match the value passed to blobEncrypt for this blob --
+  // there's no in-blob flag recording it (docs/crypto.md's format has none),
+  // so the caller is the one source of truth for whether a given field's
+  // payload is a structured (e.g. JSON) one worth compressing.
+  blobDecrypt(ikm: Uint8Array, blob: Uint8Array, compressed: boolean): Buffer {
     const { ad, salt, ciphertext, tag } = parseBlob(blob);
     const { key, iv } = this.deriveKeyIv(ikm, salt);
-    return this.aeadDecrypt(key, iv, ad, ciphertext, tag);
+    const plaintext = this.aeadDecrypt(key, iv, ad, ciphertext, tag);
+    return compressed ? brotliDecompressSync(plaintext) : plaintext;
   }
 
-  // crypto.md's Encrypt algorithm: fresh salt, HKDF-derive key+IV from it,
+  // crypto.md's Encrypt algorithm: brotli-compress first if this is a
+  // structured (e.g. JSON) payload, fresh salt, HKDF-derive key+IV from it,
   // AEAD-encrypt with AD = magic||version||salt, assemble the blob.
-  blobEncrypt(ikm: Uint8Array, plaintext: Uint8Array): Buffer {
+  blobEncrypt(
+    ikm: Uint8Array,
+    plaintext: Uint8Array,
+    compressed: boolean,
+  ): Buffer {
+    const payload = compressed
+      ? brotliCompressSync(plaintext, {
+          params: { [zlibConstants.BROTLI_PARAM_QUALITY]: C.BROTLI_QUALITY },
+        })
+      : plaintext;
     const salt = randomBytes(C.SALT_LEN);
     const ad = Buffer.from([
       ...C.MAGIC,
@@ -84,7 +104,7 @@ export class CryptoEngine {
       ...salt,
     ]);
     const { key, iv } = this.deriveKeyIv(ikm, salt);
-    const { ciphertext, tag } = this.aeadEncrypt(key, iv, ad, plaintext);
+    const { ciphertext, tag } = this.aeadEncrypt(key, iv, ad, payload);
     return Buffer.concat([ad, ciphertext, tag]);
   }
 

@@ -17,6 +17,13 @@ export const HEADER_LEN = 4; // magic(2) + version(2)
 export const AD_LEN = HEADER_LEN + SALT_LEN; // 68
 export const BLOB_MIN_LEN = AD_LEN + TAG_LEN; // 132
 
+// docs/crypto.md's Blob format: structured (e.g. JSON) payloads are
+// brotli-compressed before AEAD encryption, at the max quality level --
+// matches ui/src/crypto/constants.ts's own BROTLI_QUALITY (brotli is a
+// deterministic public format, RFC 7932, so both sides producing/reading
+// each other's blobs need no version negotiation over the quality level).
+export const BROTLI_QUALITY = 11;
+
 export const TXT_METADATA_LEGACY_THRESHOLD = 200;
 export const USERNAME_LOOKUP_KEY_MIN_LEN = 32;
 export const USER_ROOT_KEY_MIN_LEN = 256;

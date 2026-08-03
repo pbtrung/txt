@@ -58,7 +58,7 @@ export class TxtOwner {
       .prepare("SELECT umk FROM umk_store WHERE user_id = ?")
       .get(userId) as { umk: Uint8Array } | undefined;
     if (!row) throw new Error(`no umk_store row for user_id=${userId}`);
-    const umk = this.crypto.blobDecrypt(creds.userRootKey, row.umk);
+    const umk = this.crypto.blobDecrypt(creds.userRootKey, row.umk, false);
     this.log.debug(`Unwrapped umk for user_id=${userId}`);
     return umk;
   }
@@ -119,7 +119,7 @@ export class TxtOwner {
       .prepare("SELECT txt_key FROM txt WHERE id = ?")
       .get(txtId) as { txt_key: Uint8Array } | undefined;
     if (!row) throw new Error(`no txt row for txt_id=${txtId}`);
-    return this.crypto.blobDecrypt(umk, row.txt_key);
+    return this.crypto.blobDecrypt(umk, row.txt_key, false);
   }
 
   // Downloads and decrypts every part's content for one document, in
@@ -137,7 +137,7 @@ export class TxtOwner {
     const parts: Buffer[] = [];
     for (const rawPath of rawPaths) {
       const ciphertext = await r2.getObject(rawPath);
-      parts.push(this.crypto.blobDecrypt(txtKey, ciphertext));
+      parts.push(this.crypto.blobDecrypt(txtKey, ciphertext, false));
     }
     return parts;
   }
@@ -159,7 +159,11 @@ export class TxtOwner {
       .get(userId) as
       { txt_metadata_key: Uint8Array; content: Uint8Array | null } | undefined;
     if (!row || row.content === null) return null;
-    const txtMetadataKey = this.crypto.blobDecrypt(umk, row.txt_metadata_key);
+    const txtMetadataKey = this.crypto.blobDecrypt(
+      umk,
+      row.txt_metadata_key,
+      false,
+    );
     const jsonBytes = await this.decodeMetadataContent(
       row.content,
       txtMetadataKey,
@@ -177,13 +181,13 @@ export class TxtOwner {
     r2: R2Client,
   ): Promise<Buffer> {
     if (content.length >= C.TXT_METADATA_LEGACY_THRESHOLD) {
-      return this.crypto.blobDecrypt(txtMetadataKey, content);
+      return this.crypto.blobDecrypt(txtMetadataKey, content, false);
     }
     const rawPath = this.crypto
-      .blobDecrypt(txtMetadataKey, content)
+      .blobDecrypt(txtMetadataKey, content, false)
       .toString("ascii");
     const objectBytes = await r2.getObject(rawPath);
-    return this.crypto.blobDecrypt(txtMetadataKey, objectBytes);
+    return this.crypto.blobDecrypt(txtMetadataKey, objectBytes, false);
   }
 
   private listPartRawPaths(txtId: number, txtKey: Buffer): string[] {
@@ -193,7 +197,7 @@ export class TxtOwner {
       )
       .all(txtId) as { path: Uint8Array }[];
     return rows.map((r) =>
-      this.crypto.blobDecrypt(txtKey, r.path).toString("ascii"),
+      this.crypto.blobDecrypt(txtKey, r.path, false).toString("ascii"),
     );
   }
 
@@ -217,9 +221,13 @@ export class TxtOwner {
     ) {
       return null;
     }
-    const txtMetadataKey = this.crypto.blobDecrypt(umk, row.txt_metadata_key);
+    const txtMetadataKey = this.crypto.blobDecrypt(
+      umk,
+      row.txt_metadata_key,
+      false,
+    );
     return this.crypto
-      .blobDecrypt(txtMetadataKey, row.content)
+      .blobDecrypt(txtMetadataKey, row.content, false)
       .toString("ascii");
   }
 }

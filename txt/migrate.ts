@@ -276,10 +276,11 @@ export class Migrator {
     const umk = crypto.blobDecrypt(
       this.toCreds.userRootKey,
       Buffer.from(target.umkBlob, "base64"),
+      false,
     );
     const payload = JSON.parse(
       crypto
-        .blobDecrypt(umk, Buffer.from(target.contentBlob, "base64"))
+        .blobDecrypt(umk, Buffer.from(target.contentBlob, "base64"), true)
         .toString("utf8"),
     );
     return {

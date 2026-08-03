@@ -26,12 +26,14 @@ export function generateRawKey(): string {
   return crockfordBase32Lowercase(randomBytes(RAW_KEY_RANDOM_BYTES));
 }
 
+// rawKey is a bare random key string, not a structured payload -- no brotli
+// step (crypto.md: "raw binary payloads are used as-is").
 export function encodePagePointerContent(
   cryptoEngine: CryptoEngine,
   pathKey: Buffer,
   rawKey: string,
 ): Buffer {
-  return cryptoEngine.blobEncrypt(pathKey, Buffer.from(rawKey, "ascii"));
+  return cryptoEngine.blobEncrypt(pathKey, Buffer.from(rawKey, "ascii"), false);
 }
 
 export function decodePagePointerContent(
@@ -39,5 +41,5 @@ export function decodePagePointerContent(
   pathKey: Buffer,
   content: Buffer,
 ): string {
-  return cryptoEngine.blobDecrypt(pathKey, content).toString("ascii");
+  return cryptoEngine.blobDecrypt(pathKey, content, false).toString("ascii");
 }

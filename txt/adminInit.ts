@@ -139,7 +139,7 @@ export class AdminInitializer {
     keys: GeneratedKeys,
   ): Promise<void> {
     const umkBlob = cryptoEngine
-      .blobEncrypt(this.creds.userRootKey, keys.umk)
+      .blobEncrypt(this.creds.userRootKey, keys.umk, false)
       .toString("base64");
     const contentBlob = this.wrapCredStoreContent(cryptoEngine, keys);
     const credStoreId = id();
@@ -176,7 +176,9 @@ export class AdminInitializer {
       db_key: keys.dbKey.toString("base64"),
     };
     const plaintext = Buffer.from(JSON.stringify(payload), "utf8");
-    return cryptoEngine.blobEncrypt(keys.umk, plaintext).toString("base64");
+    return cryptoEngine
+      .blobEncrypt(keys.umk, plaintext, true)
+      .toString("base64");
   }
 
   private async commitInitialPages(
