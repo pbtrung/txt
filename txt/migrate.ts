@@ -155,6 +155,7 @@ export class Migrator {
       pathKey: keys.pathKey,
       authId,
       snapshot: target.currentVersion,
+      pageCount: target.pageCount,
       pageSize: target.pageSize,
       verbose: this.log.verbose,
     });
@@ -206,6 +207,17 @@ export class Migrator {
           staleObjectsDeleted,
         );
       }
+      // console.log calls made from inside the pageWorker's worker_threads
+      // Worker aren't written to the terminal directly -- they relay back to
+      // this thread over an internal message channel first, with real
+      // latency. computeResumePlans above has already fully finished (and
+      // every one of its own page fetches has genuinely completed) by this
+      // point, but some of that relay's queued output can still land on the
+      // terminal after the confirm prompt below has already printed,
+      // visually breaking up the prompt and confusing readline's own cursor
+      // tracking enough to look like it swallowed the answer. A short pause
+      // here lets that queue drain before the prompt appears.
+      await new Promise((resolve) => setTimeout(resolve, 250));
       await this.confirmOrAbort(summaries, alreadyMigratedCount, opts.confirm);
 
       // MIGRATE_BATCH_SIZE documents fetched/decrypted at a time -- each
@@ -348,6 +360,18 @@ export class Migrator {
     fromR2: R2Client,
     plan: ResumePlan,
   ): Promise<PreparedDoc> {
+    // Logged before, not just after, fetchTxtParts: prepareOneDoc runs for a
+    // whole MIGRATE_BATCH_SIZE-wide batch concurrently (Promise.all below),
+    // and the loop can't move on to inserting/committing any of them until
+    // every one resolves -- without this, a document that finishes fast logs
+    // its own completion while up to MIGRATE_BATCH_SIZE-1 siblings could
+    // still be silently fetching (small ones especially: fetchTxtParts' own
+    // progress log only fires past R2_BATCH_CONCURRENCY parts), making the
+    // whole batch look stalled even though it's making real progress.
+    const remaining = plan.totalParts - plan.fromPartNum + 1;
+    this.log.debug(
+      `txt_id=${plan.oldTxtId}: name=${JSON.stringify(plan.name)}, fetching ${remaining} part(s)`,
+    );
     const txtKey = owner.resolveTxtKey(plan.oldTxtId, umk);
     const parts = await owner.fetchTxtParts(
       plan.oldTxtId,
@@ -360,7 +384,7 @@ export class Migrator {
         ? brotliCompressSync(Buffer.from(JSON.stringify(plan.metadata), "utf8"))
         : null;
     this.log.debug(
-      `txt_id=${plan.oldTxtId}: name=${JSON.stringify(plan.name)}, ${parts.length} part(s) to fetch`,
+      `txt_id=${plan.oldTxtId}: fetched all ${parts.length} part(s)`,
     );
     return {
       oldTxtId: plan.oldTxtId,

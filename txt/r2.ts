@@ -95,6 +95,7 @@ export class R2Client {
   }
 
   async putObject(key: string, body: Buffer): Promise<void> {
+    this.log.debug(`Put ${key}: issuing (${body.length} bytes)...`);
     await this.withRetries(`put ${key}`, () =>
       this.s3.send(
         new PutObjectCommand({ Bucket: this.r2.bucket, Key: key, Body: body }),
@@ -103,7 +104,12 @@ export class R2Client {
     this.log.debug(`Put ${key} (${body.length} bytes)`);
   }
 
+  // Logs before, not just after, issuing the request: a batch of these runs
+  // R2_BATCH_CONCURRENCY at a time (fetchTxtParts/uploadPages), and a single
+  // slow/stuck one among them otherwise gives no sign of which key it's
+  // actually waiting on until the whole batch settles.
   async getObject(key: string): Promise<Buffer> {
+    this.log.debug(`Get ${key}: issuing...`);
     const resp = await this.withRetries(`get ${key}`, () =>
       this.s3.send(new GetObjectCommand({ Bucket: this.r2.bucket, Key: key })),
     );

@@ -28,6 +28,7 @@ export interface LazyPageWorkerData {
   pathKey: string; // base64
   authId: string;
   snapshot: number;
+  pageCount: number; // for the startup prefetch's own 1..min(N, pageCount) range
   verbose: boolean;
   controlSab: SharedArrayBuffer;
   dataSab: SharedArrayBuffer;

@@ -65,3 +65,16 @@ export const MIGRATE_BATCH_SIZE = 10;
 // against a real InstantDB app). A document with more parts than this gets
 // multiple commits instead of one.
 export const MIGRATE_PARTS_PER_COMMIT = 20;
+
+// lazyPageWorker.ts prefetches pages numbered 1..min(this, pageCount) as one
+// batched InstantDB query + batched R2 GETs the moment it starts, before
+// SQLite's own xRead ever asks for a single page -- computeResumePlans'
+// index scans over an existing, possibly large target account otherwise pay
+// a full query+GET round trip per page, one at a time, serially (lazyVfs.ts
+// has no way to know ahead of time which page numbers SQLite will touch, but
+// low-numbered pages -- schema page 1, early btree/index pages -- are
+// disproportionately likely to be touched early and often regardless of
+// which txt_id/txt_parts rows a given run actually needs). Anything not
+// covered by this cache still falls back to fetchPage's own one-at-a-time
+// path unchanged.
+export const MIGRATE_PREFETCH_PAGE_COUNT = 1000;

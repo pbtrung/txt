@@ -28,6 +28,7 @@
 // its whole lifetime, set once at construction.
 import { parentPort, workerData } from "node:worker_threads";
 import { init } from "@instantdb/admin";
+import * as C from "./constants.ts";
 import { CryptoEngine } from "./crypto.ts";
 import { ConsoleLogger } from "./logger.ts";
 import {
@@ -74,11 +75,77 @@ async function main(): Promise<void> {
     Atomics.notify(control, CONTROL_STATUS);
   }
 
+  // General bounded LRU, not just a one-shot prefetch buffer: the initial
+  // prefetch below warms it, but any later on-demand fetch also adds to it
+  // (evicting the least-recently-touched entry past MIGRATE_PREFETCH_PAGE_
+  // COUNT), so a page re-read after leaving the prefetch range -- or after
+  // eviction -- can still hit this cache instead of paying another round
+  // trip. lazyVfs.ts's own MAX_CACHED_PAGES=2000 cache on the main thread
+  // already covers most repeat reads (getPage checks it before ever calling
+  // opts.fetchPage into this worker at all); this one's main value is
+  // low-numbered pages (schema page 1, early btree/index pages --
+  // disproportionately likely to be hit early and often regardless of which
+  // txt_id/txt_parts rows a given run needs) served from the very first
+  // xRead, before they've ever been fetched individually. Never invalidated
+  // -- correct only because --migrate is single-writer/strictly sequential
+  // and this run's own commits always advance to freshly-allocated page
+  // numbers past whatever pageCount was at construction (docs/data_model.md;
+  // the same invariant this file's fixed snapshot already relies on).
+  const cache = new Map<number, Buffer>();
+
+  function cacheGet(pageNo: number): Buffer | undefined {
+    const cached = cache.get(pageNo);
+    if (cached !== undefined) {
+      cache.delete(pageNo);
+      cache.set(pageNo, cached);
+    }
+    return cached;
+  }
+
+  function cacheSet(pageNo: number, bytes: Buffer): void {
+    cache.delete(pageNo);
+    cache.set(pageNo, bytes);
+    if (cache.size > C.MIGRATE_PREFETCH_PAGE_COUNT) {
+      const oldest = cache.keys().next().value;
+      if (oldest !== undefined) cache.delete(oldest);
+    }
+  }
+
+  async function prefetchFirstPages(): Promise<void> {
+    const n = Math.min(C.MIGRATE_PREFETCH_PAGE_COUNT, data.pageCount);
+    if (n <= 0) return;
+    const pageNos = Array.from({ length: n }, (_, i) => i + 1);
+    const start = performance.now();
+    const pages = await store.fetchPagesBatch(pageNos, snapshot);
+    for (const [pageNo, bytes] of pages) cacheSet(pageNo, bytes);
+    log.debug(
+      `lazyPageWorker: prefetched ${pages.size}/${n} page(s) in ${(performance.now() - start).toFixed(1)}ms`,
+    );
+  }
+
   async function handleFetch(pageNo: number): Promise<void> {
+    const cached = cacheGet(pageNo);
+    if (cached !== undefined) {
+      fetchCount++;
+      log.debug(
+        `lazyPageWorker: served page ${pageNo} (#${fetchCount}) from cache`,
+      );
+      respond(STATUS_OK, cached);
+      return;
+    }
+    // Logged before, not just after, store.fetchPage: that call does an
+    // @instantdb/admin db.query() (resolving pages.path for this pageNo/
+    // version) *before* ever reaching R2Client.getObject's own issuing/done
+    // logs -- without a log here, a slow/stuck admin-SDK query looks
+    // identical to total silence, since the code never even gets to R2.
+    log.debug(
+      `lazyPageWorker: fetching page ${pageNo} (#${fetchCount + 1})...`,
+    );
     try {
       const start = performance.now();
       const bytes = await store.fetchPage(pageNo, snapshot);
       fetchCount++;
+      cacheSet(pageNo, bytes);
       log.debug(
         `lazyPageWorker: fetched page ${pageNo} (#${fetchCount}, ${bytes.length}B) in ${(performance.now() - start).toFixed(1)}ms`,
       );
@@ -92,6 +159,7 @@ async function main(): Promise<void> {
   parentPort!.on("message", (msg: FetchMessage) => {
     void handleFetch(msg.pageNo);
   });
+  await prefetchFirstPages();
   parentPort!.postMessage({ type: "ready" });
 }
 

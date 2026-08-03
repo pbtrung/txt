@@ -163,6 +163,16 @@ export class TxtOwner {
         }),
       );
       parts.push(...decrypted);
+      // A document with many parts can spend a long stretch of wall-clock
+      // time here with nothing else logging in the meantime (unlike the
+      // lazy VFS's own per-page debug logs on the target side) -- without
+      // this, a large document looks indistinguishable from a genuine hang
+      // until its whole part list finishes downloading.
+      if (rawPaths.length > C.R2_BATCH_CONCURRENCY) {
+        this.log.debug(
+          `txt_id=${txtId}: fetched ${parts.length}/${rawPaths.length} part(s) so far`,
+        );
+      }
     }
     return parts;
   }

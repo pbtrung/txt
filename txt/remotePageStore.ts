@@ -11,6 +11,7 @@
 import { id, tx } from "@instantdb/admin";
 import * as C from "./constants.ts";
 import type { CryptoEngine } from "./crypto.ts";
+import { collectAllPages } from "./instaqlPagination.ts";
 import {
   computeR2Prefix,
   decodePagePointerContent,
@@ -63,6 +64,83 @@ export class RemotePageStore {
     );
     const rawPath = `${computeR2Prefix(this.cfg.authId)}/${rawKey}`;
     return this.cfg.r2.getObject(rawPath);
+  }
+
+  // Batched counterpart to fetchPage -- resolves many page numbers via a
+  // bounded number of InstantDB queries (pageNo: {$in: pageNos}, offset-
+  // paginated -- the Admin SDK has no pageInfo, see instaqlPagination.ts's
+  // header) instead of one query per page number, then downloads
+  // R2_BATCH_CONCURRENCY pages at a time. Only usable for a known, up-front
+  // page number list (lazyPageWorker.ts's own startup prefetch) -- the lazy
+  // on-demand path (fetchPage above, driven by SQLite's own xRead) can't be
+  // batched this way, since it doesn't know its next page number until
+  // SQLite asks for it.
+  async fetchPagesBatch(
+    pageNos: number[],
+    targetVersion: number,
+  ): Promise<Map<number, Buffer>> {
+    if (pageNos.length === 0) return new Map();
+    const rows = await collectAllPages<{
+      pageNo: number;
+      version: number;
+      path: string;
+    }>(async (after) => {
+      const offset = (after as number | undefined) ?? 0;
+      const result = await this.cfg.db.query({
+        pages: {
+          $: {
+            where: {
+              "owner.id": this.cfg.authId,
+              pageNo: { $in: pageNos },
+              version: { $lte: targetVersion },
+            },
+            order: { pageKey: "asc" },
+            limit: C.PAGES_QUERY_PAGE_SIZE,
+            offset,
+          },
+        },
+      });
+      const page = result.pages ?? [];
+      return {
+        rows: page,
+        hasNextPage: page.length === C.PAGES_QUERY_PAGE_SIZE,
+        endCursor: offset + page.length,
+      };
+    });
+
+    // Multiple historical versions of the same page can come back --
+    // fetchPage's own resolvePagePath applies "highest version <= target"
+    // per page via order-by-version-desc/limit-1; a single $in-batched query
+    // can't apply a per-group limit like that, so it's resolved client-side
+    // here instead.
+    const bestPathByPageNo = new Map<number, string>();
+    const bestVersionByPageNo = new Map<number, number>();
+    for (const row of rows) {
+      const bestVersion = bestVersionByPageNo.get(row.pageNo);
+      if (bestVersion === undefined || row.version > bestVersion) {
+        bestVersionByPageNo.set(row.pageNo, row.version);
+        bestPathByPageNo.set(row.pageNo, row.path);
+      }
+    }
+
+    const result = new Map<number, Buffer>();
+    const entries = [...bestPathByPageNo.entries()];
+    for (let i = 0; i < entries.length; i += C.R2_BATCH_CONCURRENCY) {
+      const batch = entries.slice(i, i + C.R2_BATCH_CONCURRENCY);
+      const fetched = await Promise.all(
+        batch.map(async ([pageNo, path]) => {
+          const rawKey = decodePagePointerContent(
+            this.cfg.crypto,
+            this.cfg.pathKey,
+            Buffer.from(path, "base64"),
+          );
+          const rawPath = `${computeR2Prefix(this.cfg.authId)}/${rawKey}`;
+          return [pageNo, await this.cfg.r2.getObject(rawPath)] as const;
+        }),
+      );
+      fetched.forEach(([pageNo, bytes]) => result.set(pageNo, bytes));
+    }
+    return result;
   }
 
   private async resolvePagePath(

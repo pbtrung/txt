@@ -29,6 +29,7 @@ export interface LazyPageWorkerConfig {
   pathKey: Buffer;
   authId: string;
   snapshot: number;
+  pageCount: number;
   pageSize: number;
   verbose: boolean;
 }
@@ -48,6 +49,7 @@ export async function startLazyPageWorker(
     pathKey: cfg.pathKey.toString("base64"),
     authId: cfg.authId,
     snapshot: cfg.snapshot,
+    pageCount: cfg.pageCount,
     verbose: cfg.verbose,
     controlSab,
     dataSab,
