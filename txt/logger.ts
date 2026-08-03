@@ -1,4 +1,10 @@
 export interface Logger {
+  // Whether debug() actually prints anything -- lazyPageClient.ts's
+  // startLazyPageWorker reads this to tell its own worker_threads Worker
+  // (which can't share this Logger object across threads, only
+  // structured-cloneable data) whether to build its own verbose or quiet
+  // ConsoleLogger.
+  readonly verbose: boolean;
   debug(msg: string): void;
   info(msg: string): void;
   warn(msg: string): void;
@@ -9,7 +15,7 @@ export interface Logger {
 // always print. No global/singleton state -- one instance is built in
 // txt/cli.ts and passed explicitly to everything that logs.
 export class ConsoleLogger implements Logger {
-  private verbose: boolean;
+  readonly verbose: boolean;
 
   constructor(verbose: boolean) {
     this.verbose = verbose;

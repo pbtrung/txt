@@ -2,9 +2,14 @@
 // account (docs/data_model.md as of commit
 // 1ed39d433365c39a6973303c171c7bb5510d7e3e -- the schema txt/owner.ts reads)
 // across into an already-`--init-admin`-provisioned InstantDB account's own
-// per-user SQLCipher database, going through the exact same page-by-page R2
-// transport (R2Vfs/RemotePageStore) --init-admin itself uses -- there's no
-// separate "migration" write path, just more rows in the same database.
+// per-user SQLCipher database -- there's no separate "migration" write path,
+// just more rows in the same database, committed via the same RemotePageStore
+// --init-admin itself uses. The *read* side differs from --init-admin's own
+// R2Vfs (which prefetches every one of a fresh database's current pages up
+// front -- fine when pageCount starts at 0): reopening an existing, possibly
+// large target uses lazyVfs.ts/lazyPageClient.ts's on-demand VFS instead, so
+// resuming a long-lived account doesn't mean downloading its entire database
+// just to compute a resume plan or insert a few more documents.
 //
 // Resumable at the *part* level, not just per-document: each migrated
 // document keeps its *source* txt_id as its target txt_id, and a re-run
@@ -30,11 +35,12 @@ import { CryptoEngine } from "./crypto.ts";
 import { collectAllPages } from "./instaqlPagination.ts";
 import type { InitAdminCreds } from "./initAdminCreds.ts";
 import { signInToInstant } from "./instantSignIn.ts";
+import { startLazyPageWorker } from "./lazyPageClient.ts";
+import { registerLazyVfs } from "./lazyVfs.ts";
 import type { Logger } from "./logger.ts";
 import { TxtOwner, type TxtMetadataEntry } from "./owner.ts";
 import { computeR2Prefix, decodePagePointerContent } from "./pagePointer.ts";
 import { R2Client } from "./r2.ts";
-import { R2Vfs } from "./r2Vfs.ts";
 import { RemotePageStore } from "./remotePageStore.ts";
 import { SqlCipherBuilder } from "./sqlcipherBuilder.ts";
 
@@ -133,14 +139,31 @@ export class Migrator {
 
     const builder = await SqlCipherBuilder.create();
     const store = this.buildStore(db, r2, crypto, authId, keys.pathKey);
-    const vfs = await R2Vfs.registerExisting(
-      builder.module,
-      DB_FILE_NAME,
-      target.pageSize,
-      target.pageCount,
-      target.currentVersion,
-      store,
-    );
+    // Lazy, on-demand page fetching (lazyVfs.ts/lazyPageClient.ts) instead of
+    // R2Vfs's prefetch-every-current-page-up-front model -- resuming a large,
+    // long-lived account no longer means downloading its entire database
+    // just to compute a resume plan or insert a few more documents; SQLite
+    // only ever fetches the pages it actually touches (e.g. an index-only
+    // scan over txt_parts(txt_id, part_num) for computeResumePlans below
+    // never even reads the much larger content pages). The nested
+    // worker_threads Worker this spawns needs its own cleanup -- see the
+    // finally block.
+    const pageWorker = await startLazyPageWorker({
+      instantAppId: this.toCreds.instantAppId,
+      instantAdminToken: this.toCreds.instantAdminToken,
+      r2Config: keys.r2Config,
+      pathKey: keys.pathKey,
+      authId,
+      snapshot: target.currentVersion,
+      pageSize: target.pageSize,
+      verbose: this.log.verbose,
+    });
+    const vfs = registerLazyVfs(builder.module, {
+      pageSize: target.pageSize,
+      pageCount: target.pageCount,
+      dbFileName: DB_FILE_NAME,
+      fetchPage: pageWorker.fetchPage,
+    });
     const dbHandle = builder.open(DB_FILE_NAME, vfs.name, keys.dbKey);
     try {
       const owner = new TxtOwner(this.fromDb, crypto, this.log);
@@ -270,6 +293,7 @@ export class Migrator {
       };
     } finally {
       builder.close(dbHandle);
+      await pageWorker.terminate();
     }
   }
 
