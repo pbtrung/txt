@@ -29,6 +29,15 @@ export interface InitAdminCreds {
   // no credStore row yet to read it from before that command creates it).
   r2Config: R2ConfigResolved | null;
   userRootKey: Buffer;
+  // Neither field is read by --init-admin/--migrate/--collect-garbage --
+  // both are carried through unvalidated, purely so a single creds.json can
+  // also serve as ui/'s own build-creds.json (npm run deploy) without a
+  // second file: slhdsa256fPrivKey is that command's SLH-DSA-256f signing
+  // key (generated once, then reused -- see
+  // ui/scripts/build-integrity.mjs), assetBaseUrl the public URL its build
+  // is served from. Empty string when absent from creds.json.
+  slhdsa256fPrivKey: string;
+  assetBaseUrl: string;
 }
 
 // --init-admin only: if creds.json's user_root_key is empty/missing,
@@ -96,5 +105,11 @@ export function loadInitAdminCreds(
     displayName: requireField(raw.display_name, "display_name"),
     r2Config,
     userRootKey,
+    slhdsa256fPrivKey:
+      typeof raw.slhdsa_256f_priv_key === "string"
+        ? raw.slhdsa_256f_priv_key
+        : "",
+    assetBaseUrl:
+      typeof raw.asset_base_url === "string" ? raw.asset_base_url : "",
   };
 }
