@@ -216,6 +216,20 @@ export interface AeadResult {
   tag: Uint8Array;
 }
 
+interface AeadPointers {
+  keyPtr: number;
+  keyLen: number;
+  ivPtr: number;
+  ivLen: number;
+  aadPtr: number;
+  aadLen: number;
+  inputPtr: number;
+  inputLen: number;
+  outputPtr: number;
+  tagPtr: number;
+  tagLen: number;
+}
+
 function withAeadCtx<T>(
   mod: LeanCryptoModule,
   sha3_512: number,
@@ -235,6 +249,117 @@ function withAeadCtx<T>(
   }
 }
 
+function aeadPointers(
+  mod: LeanCryptoModule,
+  key: Uint8Array,
+  iv: Uint8Array,
+  aad: Uint8Array,
+  input: Uint8Array,
+  tag: Uint8Array | number,
+): AeadPointers {
+  const tagLen = typeof tag === "number" ? tag : tag.length;
+  return {
+    keyPtr: writeBuffer(mod, key),
+    keyLen: key.length,
+    ivPtr: writeBuffer(mod, iv),
+    ivLen: iv.length,
+    aadPtr: writeBuffer(mod, aad),
+    aadLen: aad.length,
+    inputPtr: writeBuffer(mod, input),
+    inputLen: input.length,
+    outputPtr: mod._malloc(input.length || 1),
+    tagPtr:
+      typeof tag === "number"
+        ? mod._malloc(tagLen || 1)
+        : writeBuffer(mod, tag),
+    tagLen,
+  };
+}
+
+function freeAeadPointers(mod: LeanCryptoModule, ptrs: AeadPointers): void {
+  mod._free(ptrs.keyPtr);
+  mod._free(ptrs.ivPtr);
+  mod._free(ptrs.aadPtr);
+  mod._free(ptrs.inputPtr);
+  mod._free(ptrs.outputPtr);
+  mod._free(ptrs.tagPtr);
+}
+
+function withAeadPointers<T>(
+  mod: LeanCryptoModule,
+  key: Uint8Array,
+  iv: Uint8Array,
+  aad: Uint8Array,
+  input: Uint8Array,
+  tag: Uint8Array | number,
+  fn: (ptrs: AeadPointers) => T,
+): T {
+  const ptrs = aeadPointers(mod, key, iv, aad, input, tag);
+  try {
+    return fn(ptrs);
+  } finally {
+    freeAeadPointers(mod, ptrs);
+  }
+}
+
+function setAeadKey(
+  mod: LeanCryptoModule,
+  ctx: number,
+  ptrs: AeadPointers,
+): void {
+  const rc = mod._lc_aead_setkey(
+    ctx,
+    ptrs.keyPtr,
+    ptrs.keyLen,
+    ptrs.ivPtr,
+    ptrs.ivLen,
+  );
+  check(rc, "lc_aead_setkey");
+}
+
+function encryptWithPointers(
+  mod: LeanCryptoModule,
+  ctx: number,
+  ptrs: AeadPointers,
+): AeadResult {
+  setAeadKey(mod, ctx, ptrs);
+  const rc = mod._lc_aead_encrypt(
+    ctx,
+    ptrs.inputPtr,
+    ptrs.outputPtr,
+    ptrs.inputLen,
+    ptrs.aadPtr,
+    ptrs.aadLen,
+    ptrs.tagPtr,
+    ptrs.tagLen,
+  );
+  check(rc, "lc_aead_encrypt");
+  return {
+    ciphertext: readBuffer(mod, ptrs.outputPtr, ptrs.inputLen),
+    tag: readBuffer(mod, ptrs.tagPtr, ptrs.tagLen),
+  };
+}
+
+function decryptWithPointers(
+  mod: LeanCryptoModule,
+  ctx: number,
+  ptrs: AeadPointers,
+): Uint8Array {
+  setAeadKey(mod, ctx, ptrs);
+  const rc = mod._lc_aead_decrypt(
+    ctx,
+    ptrs.inputPtr,
+    ptrs.outputPtr,
+    ptrs.inputLen,
+    ptrs.aadPtr,
+    ptrs.aadLen,
+    ptrs.tagPtr,
+    ptrs.tagLen,
+  );
+  check(rc, "lc_aead_decrypt (auth failure)");
+  return readBuffer(mod, ptrs.outputPtr, ptrs.inputLen);
+}
+
 /** AEAD encrypt (Ascon-Keccak, keyed by HKDF-derived key/iv -- see crypto/blob.ts). */
 export async function aeadEncrypt(
   key: Uint8Array,
@@ -246,44 +371,9 @@ export async function aeadEncrypt(
   const mod = await loadLeanCrypto();
   const sha3_512 = deref(mod, mod._lc_sha3_512);
   return withAeadCtx(mod, sha3_512, tagLen, (ctx) => {
-    const keyPtr = writeBuffer(mod, key);
-    const ivPtr = writeBuffer(mod, iv);
-    const aadPtr = writeBuffer(mod, aad);
-    const ptPtr = writeBuffer(mod, plaintext);
-    const ctPtr = mod._malloc(plaintext.length || 1);
-    const tagPtr = mod._malloc(tagLen);
-    try {
-      const setRc = mod._lc_aead_setkey(
-        ctx,
-        keyPtr,
-        key.length,
-        ivPtr,
-        iv.length,
-      );
-      check(setRc, "lc_aead_setkey");
-      const rc = mod._lc_aead_encrypt(
-        ctx,
-        ptPtr,
-        ctPtr,
-        plaintext.length,
-        aadPtr,
-        aad.length,
-        tagPtr,
-        tagLen,
-      );
-      check(rc, "lc_aead_encrypt");
-      return {
-        ciphertext: readBuffer(mod, ctPtr, plaintext.length),
-        tag: readBuffer(mod, tagPtr, tagLen),
-      };
-    } finally {
-      mod._free(keyPtr);
-      mod._free(ivPtr);
-      mod._free(aadPtr);
-      mod._free(ptPtr);
-      mod._free(ctPtr);
-      mod._free(tagPtr);
-    }
+    return withAeadPointers(mod, key, iv, aad, plaintext, tagLen, (ptrs) =>
+      encryptWithPointers(mod, ctx, ptrs),
+    );
   });
 }
 
@@ -298,41 +388,9 @@ export async function aeadDecrypt(
   const mod = await loadLeanCrypto();
   const sha3_512 = deref(mod, mod._lc_sha3_512);
   return withAeadCtx(mod, sha3_512, tag.length, (ctx) => {
-    const keyPtr = writeBuffer(mod, key);
-    const ivPtr = writeBuffer(mod, iv);
-    const aadPtr = writeBuffer(mod, aad);
-    const ctPtr = writeBuffer(mod, ciphertext);
-    const tagPtr = writeBuffer(mod, tag);
-    const ptPtr = mod._malloc(ciphertext.length || 1);
-    try {
-      const setRc = mod._lc_aead_setkey(
-        ctx,
-        keyPtr,
-        key.length,
-        ivPtr,
-        iv.length,
-      );
-      check(setRc, "lc_aead_setkey");
-      const rc = mod._lc_aead_decrypt(
-        ctx,
-        ctPtr,
-        ptPtr,
-        ciphertext.length,
-        aadPtr,
-        aad.length,
-        tagPtr,
-        tag.length,
-      );
-      check(rc, "lc_aead_decrypt (auth failure)");
-      return readBuffer(mod, ptPtr, ciphertext.length);
-    } finally {
-      mod._free(keyPtr);
-      mod._free(ivPtr);
-      mod._free(aadPtr);
-      mod._free(ctPtr);
-      mod._free(tagPtr);
-      mod._free(ptPtr);
-    }
+    return withAeadPointers(mod, key, iv, aad, ciphertext, tag, (ptrs) =>
+      decryptWithPointers(mod, ctx, ptrs),
+    );
   });
 }
 
