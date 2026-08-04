@@ -14,3 +14,14 @@ export const AD_LEN = HEADER_LEN + SALT_LEN;
 export const BLOB_MIN_LEN = AD_LEN + TAG_LEN;
 
 export const BROTLI_QUALITY = 11; // max brotli compression level (see src/crypto/brotli.ts)
+
+// docs/key_hierarchy.md: every symmetric wrapping/content key in the current
+// design (umk, keyStore.keyStoreKey, credStore.credStoreKey, txt.txtKey,
+// txtParts.txtPartKey, txtAccess.txtAccessKey, txtBookmarks.txtBookmarkKey)
+// is 128 random bytes -- mirrors txt/constants.ts's own RANDOM_KEY_LEN.
+export const RANDOM_KEY_LEN = 128;
+
+// docs/data_model.md's txt.prefix / txtParts.path: both are a
+// Crockford-base32-lowercase encoding of this many random bytes -- mirrors
+// txt/constants.ts's own RAW_TOKEN_LEN.
+export const RAW_TOKEN_LEN = 32;

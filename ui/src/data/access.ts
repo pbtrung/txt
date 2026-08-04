@@ -1,47 +1,85 @@
-// Read-position tracking against txt.last_part_num/last_accessed (see
-// docs/data_model.md) -- plain columns on the document's own row now, not a
-// separate per-user encrypted blob keyed by txt_id. No cap/eviction here
-// either: "recently opened" is just an ORDER BY last_accessed DESC LIMIT n
-// query at read time (idx_txt_last_accessed backs it), not a bounded blob
-// a client has to prune.
-
-import { verbose } from "../log";
-import type { SqliteDb } from "./sqliteDb";
+// Read-position tracking (docs/data_model.md's txtAccess entity): one
+// InstantDB row per account, holding every document's read position as a
+// single encrypted JSON blob keyed by txt_id --
+// {"<txt_id>": {"last_part_num": int, "last_accessed": int}, ...} -- rather
+// than a separate SQL row per document. Capped at ACCESS_MAX_ENTRIES,
+// evicting the entry with the oldest lastAccessedMs first, all enforced here
+// (no DB-level cap) since the whole map lives in one column.
 
 export interface ReadPosition {
   lastPartNum: number;
   lastAccessedMs: number;
 }
 
-export type AccessMap = Map<number, ReadPosition>;
+/** Keyed by txt_id (an InstantDB row id, not the old integer SQL primary key). */
+export type AccessMap = Record<string, ReadPosition>;
 
-export function setReadPosition(
-  db: SqliteDb,
-  txtId: number,
-  partNum: number,
-  lastAccessedMs: number,
-): void {
-  db.run(
-    "UPDATE txt SET last_part_num = ?, last_accessed = ? WHERE id = ?;",
-    (s) => {
-      s.bindInt64(1, partNum);
-      s.bindInt64(2, lastAccessedMs);
-      s.bindInt64(3, txtId);
-    },
-  );
-  const changed = db.changes();
-  verbose(
-    `access: setReadPosition txtId=${txtId} matched ${changed} row(s)` +
-      (changed !== 1 ? " (expected 1)" : ""),
+export const ACCESS_MAX_ENTRIES = 10;
+
+function isReadPositionJson(
+  value: unknown,
+): value is { last_part_num: number; last_accessed: number } {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.last_part_num === "number" && typeof v.last_accessed === "number"
   );
 }
 
-/** "Remove from recently opened" (LibraryScreen.tsx) -- resets a document's
- * read position back to its never-opened state, rather than deleting the
- * document itself. */
-export function clearReadPosition(db: SqliteDb, txtId: number): void {
-  db.run(
-    "UPDATE txt SET last_part_num = NULL, last_accessed = NULL WHERE id = ?;",
-    (s) => s.bindInt64(1, txtId),
-  );
+/** Decodes txtAccess.content's decrypted JSON into an AccessMap -- silently
+ * drops any entry that doesn't match the expected shape rather than
+ * throwing, so one malformed entry can't block reading every other one. */
+export function decodeAccessContent(json: unknown): AccessMap {
+  if (typeof json !== "object" || json === null) return {};
+  const map: AccessMap = {};
+  for (const [txtId, raw] of Object.entries(json as Record<string, unknown>)) {
+    if (isReadPositionJson(raw)) {
+      map[txtId] = {
+        lastPartNum: raw.last_part_num,
+        lastAccessedMs: raw.last_accessed,
+      };
+    }
+  }
+  return map;
+}
+
+export function encodeAccessContent(map: AccessMap): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [txtId, position] of Object.entries(map)) {
+    out[txtId] = {
+      last_part_num: position.lastPartNum,
+      last_accessed: position.lastAccessedMs,
+    };
+  }
+  return out;
+}
+
+/** Sets (or overwrites) txtId's read position, evicting the entry with the
+ * oldest lastAccessedMs first if this would exceed ACCESS_MAX_ENTRIES. */
+export function setReadPosition(
+  map: AccessMap,
+  txtId: string,
+  position: ReadPosition,
+): AccessMap {
+  const next: AccessMap = { ...map, [txtId]: position };
+  const keys = Object.keys(next);
+  if (keys.length > ACCESS_MAX_ENTRIES) {
+    const oldest = keys.reduce((a, b) =>
+      next[a]!.lastAccessedMs <= next[b]!.lastAccessedMs ? a : b,
+    );
+    // Never evict the entry just written, even if its own lastAccessedMs
+    // happens to be the oldest (a caller-supplied timestamp, not generated
+    // here) -- the eviction is only ever meant to make room for a genuinely
+    // new entry.
+    if (oldest !== txtId) delete next[oldest];
+  }
+  return next;
+}
+
+/** "Remove from recently opened" (LibraryScreen.tsx) -- clears a document's
+ * read position entirely, rather than resetting it to some sentinel. */
+export function clearReadPosition(map: AccessMap, txtId: string): AccessMap {
+  const next = { ...map };
+  delete next[txtId];
+  return next;
 }

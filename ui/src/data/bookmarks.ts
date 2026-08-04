@@ -1,85 +1,135 @@
-// Plain SQL CRUD against txt_bookmarks (see docs/data_model.md) -- one row
-// per bookmark, no encrypted blob and no client-side eviction: the schema's
-// own trg_txt_bookmarks_cap trigger keeps at most BOOKMARK_LIMIT rows per
-// document, so a caller here never has to reason about the cap at all.
-
-import { verbose } from "../log";
-import type { SqliteDb } from "./sqliteDb";
+// Bookmark tracking (docs/data_model.md's txtBookmarks entity): one
+// InstantDB row per account, holding every document's bookmarks as a single
+// encrypted JSON blob keyed by txt_id --
+// {"<txt_id>": [{"part_num": int, "line": int, "txt_preview": str,
+// "created_at": int}, ...], ...} -- rather than a separate SQL row per
+// bookmark. Each txt_id's list is capped at BOOKMARKS_MAX_PER_DOC, evicting
+// the oldest entry first, all enforced here (no DB-level cap/trigger to
+// lean on now that the whole map lives in one column).
 
 export interface Bookmark {
-  id: number;
-  txtId: number;
+  /** Synthetic, deterministic id (`${txtId}:${partNum}:${line}:${createdAt}`)
+   * -- there's no per-bookmark row anymore to hand back a real one, but a
+   * stable id is still needed to key a rendered list and to target a
+   * specific entry for delete/goto. Deterministic (not random) so decoding
+   * the same content twice (e.g. after a refresh) produces the same ids. */
+  id: string;
   partNum: number;
   line: number;
   preview: string;
   createdAt: number;
 }
 
-export type BookmarksMap = Map<number, Bookmark[]>;
+/** Keyed by txt_id (an InstantDB row id, not the old integer SQL primary key). */
+export type BookmarksMap = Record<string, Bookmark[]>;
 
-/** Every bookmark in the vault, grouped by txt_id -- one query for the whole
- * library (VaultContext.tsx's unlock/refresh and every add/remove), not one
- * per document: the schema's own per-document cap keeps the total row count
- * small regardless of library size. */
-export function loadBookmarksMap(db: SqliteDb): BookmarksMap {
-  const stmt = db.prepare(
-    "SELECT id, txt_id, part_num, line, preview, created_at FROM txt_bookmarks " +
-      "ORDER BY txt_id, created_at DESC, id DESC",
+export const BOOKMARKS_MAX_PER_DOC = 20;
+export const BOOKMARK_PREVIEW_MAX_LEN = 60;
+
+function isBookmarkJson(value: unknown): value is {
+  part_num: number;
+  line: number;
+  txt_preview: string;
+  created_at: number;
+} {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.part_num === "number" &&
+    typeof v.line === "number" &&
+    typeof v.txt_preview === "string" &&
+    typeof v.created_at === "number"
   );
-  const map: BookmarksMap = new Map();
-  while (stmt.step()) {
-    const txtId = Number(stmt.columnInt64(1));
-    const bookmark: Bookmark = {
-      id: Number(stmt.columnInt64(0)),
-      txtId,
-      partNum: Number(stmt.columnInt64(2)),
-      line: Number(stmt.columnInt64(3)),
-      preview: stmt.columnText(4),
-      createdAt: Number(stmt.columnInt64(5)),
-    };
-    const list = map.get(txtId);
-    if (list) list.push(bookmark);
-    else map.set(txtId, [bookmark]);
+}
+
+function bookmarkId(
+  txtId: string,
+  partNum: number,
+  line: number,
+  createdAt: number,
+): string {
+  return `${txtId}:${partNum}:${line}:${createdAt}`;
+}
+
+/** Decodes txtBookmarks.content's decrypted JSON into a BookmarksMap --
+ * silently drops any entry that doesn't match the expected shape (see
+ * access.ts's decodeAccessContent for the same rationale), and sorts each
+ * txt_id's list most-recently-created first, matching the old SQL schema's
+ * own `ORDER BY created_at DESC` reader. */
+export function decodeBookmarksContent(json: unknown): BookmarksMap {
+  if (typeof json !== "object" || json === null) return {};
+  const map: BookmarksMap = {};
+  for (const [txtId, rawList] of Object.entries(
+    json as Record<string, unknown>,
+  )) {
+    if (!Array.isArray(rawList)) continue;
+    const list: Bookmark[] = rawList.filter(isBookmarkJson).map((raw) => ({
+      id: bookmarkId(txtId, raw.part_num, raw.line, raw.created_at),
+      partNum: raw.part_num,
+      line: raw.line,
+      preview: raw.txt_preview,
+      createdAt: raw.created_at,
+    }));
+    if (list.length > 0) {
+      map[txtId] = list.sort((a, b) => b.createdAt - a.createdAt);
+    }
   }
-  stmt.finalize();
   return map;
 }
 
-/** Re-bookmarking an already-bookmarked line is a silent no-op (INSERT OR
- * IGNORE against the UNIQUE (txt_id, part_num, line) constraint), not an
- * error the caller needs to handle. */
+export function encodeBookmarksContent(
+  map: BookmarksMap,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [txtId, list] of Object.entries(map)) {
+    out[txtId] = list.map((b) => ({
+      part_num: b.partNum,
+      line: b.line,
+      txt_preview: b.preview,
+      created_at: b.createdAt,
+    }));
+  }
+  return out;
+}
+
+/** Adds a bookmark at (partNum, line); re-bookmarking an already-bookmarked
+ * line is a silent no-op (the old SQL schema's own UNIQUE (txt_id, part_num,
+ * line) + INSERT OR IGNORE behavior). Truncates preview to
+ * BOOKMARK_PREVIEW_MAX_LEN and evicts the oldest entry first if this would
+ * exceed BOOKMARKS_MAX_PER_DOC for this txtId. */
 export function addBookmark(
-  db: SqliteDb,
-  txtId: number,
+  map: BookmarksMap,
+  txtId: string,
   partNum: number,
   line: number,
   preview: string,
-  createdAt: number,
-): void {
-  db.run(
-    "INSERT OR IGNORE INTO txt_bookmarks (txt_id, part_num, line, preview, created_at) " +
-      "VALUES (?, ?, ?, ?, ?);",
-    (s) => {
-      s.bindInt64(1, txtId);
-      s.bindInt64(2, partNum);
-      s.bindInt64(3, line);
-      s.bindText(4, preview.slice(0, 60));
-      s.bindInt64(5, createdAt);
-    },
-  );
-  const changed = db.changes();
-  verbose(
-    `bookmarks: addBookmark txtId=${txtId} partNum=${partNum} line=${line} inserted ${changed} row(s)` +
-      (changed === 0 ? " (OR IGNORE no-op -- already bookmarked?)" : ""),
-  );
+  createdAtMs: number,
+): BookmarksMap {
+  const list = map[txtId] ?? [];
+  if (list.some((b) => b.partNum === partNum && b.line === line)) return map;
+  const entry: Bookmark = {
+    id: bookmarkId(txtId, partNum, line, createdAtMs),
+    partNum,
+    line,
+    preview: preview.slice(0, BOOKMARK_PREVIEW_MAX_LEN),
+    createdAt: createdAtMs,
+  };
+  const next = [entry, ...list]
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, BOOKMARKS_MAX_PER_DOC);
+  return { ...map, [txtId]: next };
 }
 
-export function removeBookmark(db: SqliteDb, bookmarkId: number): void {
-  db.run("DELETE FROM txt_bookmarks WHERE id = ?;", (s) =>
-    s.bindInt64(1, bookmarkId),
-  );
-  const changed = db.changes();
-  verbose(
-    `bookmarks: removeBookmark id=${bookmarkId} deleted ${changed} row(s)`,
-  );
+export function removeBookmark(
+  map: BookmarksMap,
+  txtId: string,
+  bookmarkIdToRemove: string,
+): BookmarksMap {
+  const list = map[txtId];
+  if (!list) return map;
+  const next = list.filter((b) => b.id !== bookmarkIdToRemove);
+  const out = { ...map };
+  if (next.length > 0) out[txtId] = next;
+  else delete out[txtId];
+  return out;
 }

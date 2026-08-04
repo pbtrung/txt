@@ -1,69 +1,85 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
-import { SqliteDb } from "./sqliteDb";
-import * as access from "./access";
+import {
+  ACCESS_MAX_ENTRIES,
+  clearReadPosition,
+  decodeAccessContent,
+  encodeAccessContent,
+  setReadPosition,
+  type AccessMap,
+} from "./access";
 
-let db: SqliteDb;
-let dbCounter = 0;
-
-beforeEach(async () => {
-  const rootKey = new Uint8Array(256).fill(9);
-  db = await SqliteDb.open(`/access-test-${dbCounter++}.db`, {
-    rawKey: rootKey,
-  });
-  db.exec(`
-    CREATE TABLE txt (
-      id            INTEGER PRIMARY KEY,
-      name          TEXT NOT NULL,
-      last_part_num INTEGER,
-      last_accessed INTEGER
-    );
-  `);
-  db.run("INSERT INTO txt (id, name) VALUES (1, 'doc-one.txt');");
-});
-
-// No production reader queries a single document's position in isolation
-// (library.ts's loadLibrary reads last_part_num/last_accessed for the whole
-// library in one query instead) -- this stands in as a test-only assertion
-// helper for setReadPosition/clearReadPosition's column writes.
-function readPosition(txtId: number): access.ReadPosition | null {
-  const stmt = db.prepare(
-    "SELECT last_part_num, last_accessed FROM txt WHERE id = ?",
-  );
-  stmt.bindInt64(1, txtId);
-  const found = stmt.step();
-  const position =
-    found && !stmt.columnIsNull(0)
-      ? {
-          lastPartNum: Number(stmt.columnInt64(0)),
-          lastAccessedMs: Number(stmt.columnInt64(1)),
-        }
-      : null;
-  stmt.finalize();
-  return position;
-}
-
-describe("setReadPosition", () => {
-  it("returns null before a document has ever been opened", () => {
-    expect(readPosition(1)).toBeNull();
-  });
-
+describe("setReadPosition / clearReadPosition", () => {
   it("records a position that reads back correctly", () => {
-    access.setReadPosition(db, 1, 3, 5000);
-    expect(readPosition(1)).toEqual({ lastPartNum: 3, lastAccessedMs: 5000 });
+    let map: AccessMap = {};
+    map = setReadPosition(map, "txt-1", {
+      lastPartNum: 3,
+      lastAccessedMs: 5000,
+    });
+    expect(map["txt-1"]).toEqual({ lastPartNum: 3, lastAccessedMs: 5000 });
   });
 
   it("overwrites a previously recorded position", () => {
-    access.setReadPosition(db, 1, 1, 1000);
-    access.setReadPosition(db, 1, 7, 9000);
-    expect(readPosition(1)).toEqual({ lastPartNum: 7, lastAccessedMs: 9000 });
+    let map: AccessMap = {};
+    map = setReadPosition(map, "txt-1", {
+      lastPartNum: 1,
+      lastAccessedMs: 1000,
+    });
+    map = setReadPosition(map, "txt-1", {
+      lastPartNum: 7,
+      lastAccessedMs: 9000,
+    });
+    expect(map["txt-1"]).toEqual({ lastPartNum: 7, lastAccessedMs: 9000 });
+  });
+
+  it("evicts the oldest entry once past ACCESS_MAX_ENTRIES", () => {
+    let map: AccessMap = {};
+    for (let i = 0; i < ACCESS_MAX_ENTRIES; i++) {
+      map = setReadPosition(map, `txt-${i}`, {
+        lastPartNum: 1,
+        lastAccessedMs: i,
+      });
+    }
+    expect(Object.keys(map)).toHaveLength(ACCESS_MAX_ENTRIES);
+    map = setReadPosition(map, "txt-new", {
+      lastPartNum: 1,
+      lastAccessedMs: 1000,
+    });
+    expect(Object.keys(map)).toHaveLength(ACCESS_MAX_ENTRIES);
+    expect(map["txt-0"]).toBeUndefined(); // oldest (lastAccessedMs: 0) evicted
+    expect(map["txt-new"]).toBeDefined();
+  });
+
+  it("clearReadPosition resets a recorded position back to never-opened", () => {
+    let map: AccessMap = {};
+    map = setReadPosition(map, "txt-1", {
+      lastPartNum: 3,
+      lastAccessedMs: 5000,
+    });
+    map = clearReadPosition(map, "txt-1");
+    expect(map["txt-1"]).toBeUndefined();
   });
 });
 
-describe("clearReadPosition", () => {
-  it("resets a recorded position back to never-opened", () => {
-    access.setReadPosition(db, 1, 3, 5000);
-    access.clearReadPosition(db, 1);
-    expect(readPosition(1)).toBeNull();
+describe("decodeAccessContent / encodeAccessContent", () => {
+  it("round-trips a well-formed map", () => {
+    const map: AccessMap = { "txt-1": { lastPartNum: 2, lastAccessedMs: 42 } };
+    expect(decodeAccessContent(encodeAccessContent(map))).toEqual(map);
+  });
+
+  it("drops entries that don't match the expected shape", () => {
+    const decoded = decodeAccessContent({
+      "txt-1": { last_part_num: 1, last_accessed: 100 },
+      "txt-2": { last_part_num: "not a number", last_accessed: 100 },
+      "txt-3": "not even an object",
+    });
+    expect(decoded).toEqual({
+      "txt-1": { lastPartNum: 1, lastAccessedMs: 100 },
+    });
+  });
+
+  it("returns an empty map for non-object input", () => {
+    expect(decodeAccessContent(null)).toEqual({});
+    expect(decodeAccessContent("garbage")).toEqual({});
   });
 });
