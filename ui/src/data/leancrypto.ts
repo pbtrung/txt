@@ -1,10 +1,15 @@
 // Loads the repo-root leancrypto/leancrypto.js WASM bundle (see CLAUDE.md,
 // shared with txt/crypto.ts, whose alloc/setkey/run/free AEAD lifecycle and
 // GOT-global-dereference trick this file mirrors) -- exposes the HKDF-SHA3-512
-// and Ascon-Keccak AEAD primitives crypto/blob.ts needs, plus
-// lc_kyber_1024_x448 Decapsulate (the one KEM operation a reader ever needs
-// client-side, to unwrap a shared document's txtKey -- Encapsulate/keypair
-// generation are admin-only actions performed by txt.ts, never in ui/).
+// and Ascon-Keccak AEAD primitives crypto/blob.ts needs, plus the full
+// lc_kyber_1024_x448 KEM triplet. Only kemDecapsulate is ever called from
+// real ui/ application code (unwrapping a shared document's txtKey --
+// Encapsulate/keypair generation are admin-only actions performed by
+// txt.ts); kemKeypair/kemEncapsulate exist so this module's own tests (and
+// library.test.ts's shared-document fixtures) can build real KEM ciphertexts
+// to decapsulate against, rather than mocking crypto internals -- this
+// project's own stated testing philosophy (real building blocks, not
+// mocks).
 //
 // Same two loading paths as the old wasmLoader.ts (see its own now-removed
 // header comment for the full rationale, still accurate here): a real
@@ -69,6 +74,9 @@ interface LeanCryptoModule {
     tagLen: number,
   ): number;
   _lc_aead_zero_free(ctx: number): void;
+  _lc_seeded_rng: number;
+  _lc_kyber_1024_x448_keypair(pk: number, sk: number, rng: number): number;
+  _lc_kyber_1024_x448_enc(ct: number, ss: number, pk: number): number;
   _lc_kyber_1024_x448_dec(ss: number, ct: number, sk: number): number;
 }
 
@@ -334,9 +342,64 @@ export async function aeadDecrypt(
   });
 }
 
+const KEM_PUB_KEY_LEN = 1624;
 const KEM_CT_LEN = 1624;
 const KEM_SS_LEN = 88;
 const KEM_PRIV_KEY_LEN = 3224;
+
+export interface KemKeypair {
+  pubKey: Uint8Array;
+  privKey: Uint8Array;
+}
+
+/** Test-only in real ui/ application code (see this file's header comment) --
+ * generates a fresh lc_kyber_1024_x448 composite keypair. */
+export async function kemKeypair(): Promise<KemKeypair> {
+  const mod = await loadLeanCrypto();
+  const seededRng = deref(mod, mod._lc_seeded_rng);
+  const pkPtr = mod._malloc(KEM_PUB_KEY_LEN);
+  const skPtr = mod._malloc(KEM_PRIV_KEY_LEN);
+  try {
+    const rc = mod._lc_kyber_1024_x448_keypair(pkPtr, skPtr, seededRng);
+    check(rc, "lc_kyber_1024_x448_keypair");
+    return {
+      pubKey: readBuffer(mod, pkPtr, KEM_PUB_KEY_LEN),
+      privKey: readBuffer(mod, skPtr, KEM_PRIV_KEY_LEN),
+    };
+  } finally {
+    mod._free(pkPtr);
+    mod._free(skPtr);
+  }
+}
+
+export interface KemEncapsulation {
+  ct: Uint8Array;
+  ss: Uint8Array;
+}
+
+/** Test-only in real ui/ application code (see this file's header comment) --
+ * crypto.md's Encapsulate step 2: KEM ciphertext + the raw, uncombined
+ * shared secret. */
+export async function kemEncapsulate(
+  pubKey: Uint8Array,
+): Promise<KemEncapsulation> {
+  const mod = await loadLeanCrypto();
+  const pkPtr = writeBuffer(mod, pubKey);
+  const ctPtr = mod._malloc(KEM_CT_LEN);
+  const ssPtr = mod._malloc(KEM_SS_LEN);
+  try {
+    const rc = mod._lc_kyber_1024_x448_enc(ctPtr, ssPtr, pkPtr);
+    check(rc, "lc_kyber_1024_x448_enc");
+    return {
+      ct: readBuffer(mod, ctPtr, KEM_CT_LEN),
+      ss: readBuffer(mod, ssPtr, KEM_SS_LEN),
+    };
+  } finally {
+    mod._free(pkPtr);
+    mod._free(ctPtr);
+    mod._free(ssPtr);
+  }
+}
 
 /** crypto.md's Decapsulate step 2: recovers the raw 88-byte shared secret
  * from a KEM ciphertext using this account's own composite privKey -- the

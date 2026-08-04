@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { aeadDecrypt, aeadEncrypt, hkdf } from "./leancrypto";
+import {
+  aeadDecrypt,
+  aeadEncrypt,
+  hkdf,
+  kemDecapsulate,
+  kemEncapsulate,
+  kemKeypair,
+} from "./leancrypto";
 import { bytesToHex, hexToBytes } from "../crypto/testUtil";
 
 // Same known-good vectors as txt/crypto.ts's own test vectors
@@ -69,5 +76,28 @@ describe("leancrypto", () => {
     await expect(
       aeadDecrypt(key, iv, aad, ciphertext, badTag),
     ).rejects.toThrow();
+  });
+});
+
+describe("lc_kyber_1024_x448 KEM", () => {
+  it("Encapsulate/Decapsulate round-trips to the same shared secret", async () => {
+    const { pubKey, privKey } = await kemKeypair();
+    expect(pubKey).toHaveLength(1624);
+    expect(privKey).toHaveLength(3224);
+
+    const { ct, ss } = await kemEncapsulate(pubKey);
+    expect(ct).toHaveLength(1624);
+    expect(ss).toHaveLength(88);
+
+    const recovered = await kemDecapsulate(privKey, ct);
+    expect(Array.from(recovered)).toEqual(Array.from(ss));
+  });
+
+  it("Decapsulate under the wrong privKey recovers a different shared secret", async () => {
+    const { pubKey } = await kemKeypair();
+    const { privKey: wrongPrivKey } = await kemKeypair();
+    const { ct, ss } = await kemEncapsulate(pubKey);
+    const recovered = await kemDecapsulate(wrongPrivKey, ct);
+    expect(Array.from(recovered)).not.toEqual(Array.from(ss));
   });
 });

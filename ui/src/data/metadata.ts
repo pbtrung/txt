@@ -3,14 +3,16 @@
 // tags collapsed into a list) into a tolerant BookInfo -- mirrors
 // txt/download.py's _txt_names but keeps the full metadata, not just name.
 //
-// Unlike the old schema's shared, R2-hosted, per-account txt_metadata blob,
-// docs/data_model.md's new schema stores this per-document, brotli-compressed
-// only (no separate encryption layer -- it's already inside the SQLCipher
-// file), directly on that txt's own `metadata` column (NULL when absent).
-// See data/owner.ts for reading that column; this file has no DB/R2
-// dependency of its own.
+// docs/data_model.md's txtMetadata.content decrypts (under that document's
+// own txtKey -- see library.ts, which resolves that key and calls
+// parseMetadataContent below) to a single JSON object: {"name": "original
+// filename", "metadata": {...opf sidecar fields, when present}}. name and
+// metadata used to be two separate SQL columns (one always-present TEXT,
+// one nullable BLOB); now they're both fields of the one decrypted payload.
 
-import * as brotli from "../crypto/brotli";
+import * as blob from "../crypto/blob";
+import { base64ToBytes } from "../crypto/bytes";
+import { requireObject, requireString } from "./jsonObject";
 
 export interface MetadataField {
   key: string;
@@ -18,7 +20,7 @@ export interface MetadataField {
 }
 
 export interface BookInfo {
-  txtId: number;
+  txtId: string;
   /** Original ingested filename -- always present, the fallback title. */
   name: string;
   title: string;
@@ -137,14 +139,16 @@ function toRawMetadata(md: OpfMetadata): MetadataField[] {
     .filter((field) => field.values.length > 0);
 }
 
-/** `name` is the txt row's own ingested-filename column; `metadata` is that
- * same row's decompressed `metadata` BLOB (empty object if the column was
- * NULL -- no OPF sidecar was found for this document). */
+export interface TxtMetadataContent {
+  name: string;
+  metadata: OpfMetadata;
+}
+
 export function toBookInfo(
-  txtId: number,
-  name: string,
-  metadata: OpfMetadata,
+  txtId: string,
+  content: TxtMetadataContent,
 ): BookInfo {
+  const { name, metadata } = content;
   return {
     txtId,
     name,
@@ -159,12 +163,25 @@ export function toBookInfo(
   };
 }
 
-/** Decompresses a txt row's `metadata` BLOB into its OPF metadata object --
- * `{}` if the column was NULL (no sidecar found at ingest time). */
-export async function parseMetadataBlob(
-  compressed: Uint8Array | null,
-): Promise<OpfMetadata> {
-  if (compressed === null) return {};
-  const json = await brotli.decompress(compressed);
-  return JSON.parse(new TextDecoder().decode(json)) as OpfMetadata;
+/** Decrypts a txtMetadata row's own `content` blob (base64) under this
+ * document's already-resolved docKey (library.ts) and decodes it into
+ * {name, metadata} -- docs/data_model.md's txtMetadata entity: a single
+ * encrypted, brotli-compressed JSON blob, wrapped directly under txtKey (no
+ * intermediate key, unlike keyStore/credStore/txtAccess/txtBookmarks). */
+export async function parseMetadataContent(
+  docKey: Uint8Array,
+  contentBase64: string,
+): Promise<TxtMetadataContent> {
+  const json = await blob.decrypt(docKey, base64ToBytes(contentBase64), true);
+  const parsed = requireObject(
+    JSON.parse(new TextDecoder().decode(json)),
+    "txtMetadata.content must decode to a JSON object",
+  );
+  const metadata = parsed.metadata;
+  return {
+    name: requireString(parsed, "name"),
+    metadata: (typeof metadata === "object" && metadata !== null
+      ? metadata
+      : {}) as OpfMetadata,
+  };
 }

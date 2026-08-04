@@ -1,12 +1,18 @@
 import { describe, expect, it } from "vitest";
 
+import * as blob from "../crypto/blob";
+import { bytesToBase64, randomBytes } from "../crypto/bytes";
 import {
   formatOpfDate,
-  parseMetadataBlob,
+  parseMetadataContent,
   toBookInfo,
   type OpfMetadata,
+  type TxtMetadataContent,
 } from "./metadata";
-import * as brotli from "../crypto/brotli";
+
+function content(name: string, metadata: OpfMetadata = {}): TxtMetadataContent {
+  return { name, metadata };
+}
 
 describe("toBookInfo", () => {
   it("normalizes OPF metadata, tolerating missing fields", () => {
@@ -19,8 +25,10 @@ describe("toBookInfo", () => {
       "calibre:series_index": "8",
     };
 
-    expect(toBookInfo(7, "the-white-order.epub.txt", metadata)).toEqual({
-      txtId: 7,
+    expect(
+      toBookInfo("txt-7", content("the-white-order.epub.txt", metadata)),
+    ).toEqual({
+      txtId: "txt-7",
       name: "the-white-order.epub.txt",
       title: "The White Order",
       author: "L. E. Modesitt, Jr.",
@@ -40,8 +48,8 @@ describe("toBookInfo", () => {
   });
 
   it("falls back to name when there's no title, and tolerates an empty metadata object", () => {
-    expect(toBookInfo(8, "plain-notes.txt", {})).toEqual({
-      txtId: 8,
+    expect(toBookInfo("txt-8", content("plain-notes.txt"))).toEqual({
+      txtId: "txt-8",
       name: "plain-notes.txt",
       title: "plain-notes.txt",
       author: undefined,
@@ -61,7 +69,9 @@ describe("toBookInfo", () => {
       identifier: { text: "978-0-000-00000-0", scheme: "ISBN" },
       language: "en",
     };
-    expect(toBookInfo(9, "some-book.epub.txt", metadata).rawMetadata).toEqual([
+    expect(
+      toBookInfo("txt-9", content("some-book.epub.txt", metadata)).rawMetadata,
+    ).toEqual([
       { key: "title", values: ["Some Book"] },
       { key: "date", values: ["January 1, 2020"] },
       { key: "identifier", values: ["978-0-000-00000-0"] },
@@ -77,9 +87,9 @@ describe("toBookInfo", () => {
       description: "A book about things.",
       subject: ["Fantasy"],
     };
-    expect(toBookInfo(1, "book.epub.txt", metadata).rawMetadata).toEqual([
-      { key: "title", values: ["Some Book"] },
-    ]);
+    expect(
+      toBookInfo("txt-1", content("book.epub.txt", metadata)).rawMetadata,
+    ).toEqual([{ key: "title", values: ["Some Book"] }]);
   });
 });
 
@@ -103,16 +113,44 @@ describe("formatOpfDate", () => {
   });
 });
 
-describe("parseMetadataBlob", () => {
-  it("returns {} for a null column (no OPF sidecar found at ingest time)", async () => {
-    expect(await parseMetadataBlob(null)).toEqual({});
+describe("parseMetadataContent", () => {
+  it("decrypts and JSON-parses a real txtMetadata.content blob", async () => {
+    const docKey = randomBytes(128);
+    const payload = { name: "doc-one.txt", metadata: { title: "Some Book" } };
+    const encrypted = await blob.encrypt(
+      docKey,
+      new TextEncoder().encode(JSON.stringify(payload)),
+      { compressed: true },
+    );
+    const decoded = await parseMetadataContent(
+      docKey,
+      bytesToBase64(encrypted),
+    );
+    expect(decoded).toEqual(payload);
   });
 
-  it("brotli-decompresses and JSON-parses a real metadata blob", async () => {
-    const metadata = { title: "Some Book" };
-    const compressed = await brotli.compress(
-      new TextEncoder().encode(JSON.stringify(metadata)),
+  it("defaults metadata to {} when the payload omits it", async () => {
+    const docKey = randomBytes(128);
+    const encrypted = await blob.encrypt(
+      docKey,
+      new TextEncoder().encode(JSON.stringify({ name: "plain.txt" })),
+      { compressed: true },
     );
-    expect(await parseMetadataBlob(compressed)).toEqual(metadata);
+    const decoded = await parseMetadataContent(
+      docKey,
+      bytesToBase64(encrypted),
+    );
+    expect(decoded).toEqual({ name: "plain.txt", metadata: {} });
+  });
+
+  it("throws (via blob.decrypt's own AEAD check) under the wrong docKey", async () => {
+    const encrypted = await blob.encrypt(
+      randomBytes(128),
+      new TextEncoder().encode(JSON.stringify({ name: "x" })),
+      { compressed: true },
+    );
+    await expect(
+      parseMetadataContent(randomBytes(128), bytesToBase64(encrypted)),
+    ).rejects.toThrow();
   });
 });
