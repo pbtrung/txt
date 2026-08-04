@@ -3,5 +3,5 @@
 // (not under txt/ or ui/) since both sides load the same build -- see
 // txt/crypto.ts (Node) and, once ported, ui/'s own crypto module (browser)
 // for how this factory is used.
-declare const factory: (opts?: Record<string, unknown>) => Promise<unknown>;
-export default factory;
+declare function factory(opts?: Record<string, unknown>): Promise<any>;
+export = factory;

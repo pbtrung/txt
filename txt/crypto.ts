@@ -1,15 +1,17 @@
-// Ascon-Keccak AEAD + HKDF-SHA3-512 (docs/crypto.md's Blob format), via the
-// prebuilt sqlcipher/sqlcipher.js WASM module -- never hand-rolled. Native
-// Node crypto covers HMAC-SHA3-256 (username_hash), a standard primitive
-// with no leancrypto-specific behavior to replicate.
+// Ascon-Keccak AEAD + HKDF-SHA3-512 (docs/crypto.md's Blob format) and the
+// lc_kyber_1024_x448 composite KEM (docs/crypto.md's Encapsulate/Decapsulate),
+// via the vendored leancrypto WASM module (leancrypto/leancrypto.js, shared
+// with ui/) -- never hand-rolled. Native Node crypto covers HMAC-SHA3-256
+// (username_hash), a standard primitive with no leancrypto-specific behavior
+// to replicate.
 import { createHmac, randomBytes } from "node:crypto";
 import {
   brotliCompressSync,
   brotliDecompressSync,
   constants as zlibConstants,
 } from "node:zlib";
-// @ts-ignore -- no type declarations beyond `declare function Sqlite3Wasm(): Promise<any>`
-import Sqlite3Wasm from "../sqlcipher/sqlcipher.js";
+// @ts-ignore -- no type declarations beyond `declare function factory(): Promise<any>`
+import leancryptoFactory from "../leancrypto/leancrypto.js";
 import * as C from "./constants.ts";
 import { WasmMem } from "./wasmMem.ts";
 
@@ -40,30 +42,55 @@ function parseBlob(blob: Uint8Array): ParsedBlob {
   };
 }
 
-function checkWasmSizes(mod: any): void {
-  const key = mod._lc_wasm_key_size();
-  const nonce = mod._lc_wasm_nonce_size();
-  const tag = mod._lc_wasm_tag_size();
-  if (key !== C.KEY_LEN || nonce !== C.IV_LEN || tag !== C.TAG_LEN) {
-    throw new Error(
-      `unexpected leancrypto wasm sizes: key=${key} nonce=${nonce} tag=${tag}`,
-    );
-  }
+// lc_sha3_512/lc_seeded_rng are C `extern <type> *name;` globals (pointers,
+// not structs) -- this wasm build exposes them as PIC-style GOT globals:
+// `Module._lc_sha3_512` is the *address of the pointer variable*, not the
+// pointer's value. One more dereference is required before passing the
+// result as the "hash type" argument to lc_hkdf/lc_ak_alloc_taglen (or
+// lc_seeded_rng before lc_kyber_1024_x448_keypair) -- skipping it crashes
+// with "RuntimeError: table index is out of bounds".
+function deref(mod: any, gotAddr: number): number {
+  return mod.HEAPU32[gotAddr / 4];
+}
+
+const KEM_PUB_KEY_LEN = 1624;
+const KEM_PRIV_KEY_LEN = 3224;
+const KEM_CT_LEN = 1624;
+const KEM_SS_LEN = 88;
+
+export interface KemKeypair {
+  pubKey: Buffer;
+  privKey: Buffer;
+}
+
+export interface KemEncapsulation {
+  ct: Buffer;
+  ss: Buffer;
 }
 
 export class CryptoEngine {
   private module: any;
   private mem: WasmMem;
+  private sha3_512: number;
+  private seededRng: number;
 
-  private constructor(module: any, mem: WasmMem) {
+  private constructor(
+    module: any,
+    mem: WasmMem,
+    sha3_512: number,
+    seededRng: number,
+  ) {
     this.module = module;
     this.mem = mem;
+    this.sha3_512 = sha3_512;
+    this.seededRng = seededRng;
   }
 
   static async create(): Promise<CryptoEngine> {
-    const module = await Sqlite3Wasm();
-    checkWasmSizes(module);
-    return new CryptoEngine(module, new WasmMem(module));
+    const module = await leancryptoFactory();
+    const sha3_512 = deref(module, module._lc_sha3_512);
+    const seededRng = deref(module, module._lc_seeded_rng);
+    return new CryptoEngine(module, new WasmMem(module), sha3_512, seededRng);
   }
 
   usernameHash(usernameLookupKey: Buffer, username: string): Buffer {
@@ -108,6 +135,67 @@ export class CryptoEngine {
     return Buffer.concat([ad, ciphertext, tag]);
   }
 
+  // Composite KEM keypair generation (crypto.md's Composite KEM Key Sizes) --
+  // pubKey raw (1624 bytes, not sensitive), privKey raw (3224 bytes, caller's
+  // job to wrap under the owner's own intermediate key before storing).
+  kemKeypair(): KemKeypair {
+    return this.mem.withBuffers(
+      {},
+      { pk: KEM_PUB_KEY_LEN, sk: KEM_PRIV_KEY_LEN },
+      (p) => {
+        const rc = this.module._lc_kyber_1024_x448_keypair(
+          p.pk,
+          p.sk,
+          this.seededRng,
+        );
+        if (rc !== 0) {
+          throw new Error(`lc_kyber_1024_x448_keypair failed, rc=${rc}`);
+        }
+        return {
+          pubKey: this.mem.read(p.pk, KEM_PUB_KEY_LEN),
+          privKey: this.mem.read(p.sk, KEM_PRIV_KEY_LEN),
+        };
+      },
+    );
+  }
+
+  // crypto.md's Encapsulate step 2: KEM ciphertext (1624 bytes) + the raw,
+  // uncombined 88-byte shared secret (ML-KEM-1024-SS || X448-SS) -- the
+  // caller still has to run the standard Encrypt (via blobEncrypt, reusing
+  // its own fresh salt per crypto.md) with ss as IKM to finish wrapping the
+  // shared key material.
+  kemEncapsulate(pubKey: Buffer): KemEncapsulation {
+    return this.mem.withBuffers(
+      { pk: pubKey },
+      { ct: KEM_CT_LEN, ss: KEM_SS_LEN },
+      (p) => {
+        const rc = this.module._lc_kyber_1024_x448_enc(p.ct, p.ss, p.pk);
+        if (rc !== 0) {
+          throw new Error(`lc_kyber_1024_x448_enc failed, rc=${rc}`);
+        }
+        return {
+          ct: this.mem.read(p.ct, KEM_CT_LEN),
+          ss: this.mem.read(p.ss, KEM_SS_LEN),
+        };
+      },
+    );
+  }
+
+  // crypto.md's Decapsulate step 2: recovers the same raw 88-byte ss from a
+  // KEM ciphertext using this account's own composite privKey.
+  kemDecapsulate(privKey: Buffer, ct: Buffer): Buffer {
+    return this.mem.withBuffers(
+      { sk: privKey, ct },
+      { ss: KEM_SS_LEN },
+      (p) => {
+        const rc = this.module._lc_kyber_1024_x448_dec(p.ss, p.ct, p.sk);
+        if (rc !== 0)
+          throw new Error(`lc_kyber_1024_x448_dec failed, rc=${rc}`);
+        return this.mem.read(p.ss, KEM_SS_LEN);
+      },
+    );
+  }
+
   private deriveKeyIv(
     ikm: Uint8Array,
     salt: Uint8Array,
@@ -125,7 +213,8 @@ export class CryptoEngine {
     outLen: number,
   ): Buffer {
     return this.mem.withBuffers({ ikm, salt }, { out: outLen }, (p) => {
-      const rc = this.module._lc_wasm_hkdf_sha3_512(
+      const rc = this.module._lc_hkdf(
+        this.sha3_512,
         p.ikm,
         ikm.length,
         p.salt,
@@ -135,9 +224,30 @@ export class CryptoEngine {
         p.out,
         outLen,
       );
-      if (rc !== 0) throw new Error(`lc_wasm_hkdf_sha3_512 failed, rc=${rc}`);
+      if (rc !== 0) throw new Error(`lc_hkdf failed, rc=${rc}`);
       return this.mem.read(p.out, outLen);
     });
+  }
+
+  // Unlike the old sqlcipher.js-embedded wrapper (a single _lc_wasm_aead_*
+  // call each), this WASM build's own raw AEAD API is a real
+  // alloc/setkey/run/free lifecycle around one lc_aead_ctx.
+  private withAeadCtx<T>(tagLen: number, fn: (ctx: number) => T): T {
+    const ctxPtrPtr = this.module._malloc(4);
+    let ctx = 0;
+    try {
+      const rc = this.module._lc_ak_alloc_taglen(
+        this.sha3_512,
+        tagLen,
+        ctxPtrPtr,
+      );
+      if (rc !== 0) throw new Error(`lc_ak_alloc_taglen failed, rc=${rc}`);
+      ctx = this.module.HEAPU32[ctxPtrPtr / 4];
+      return fn(ctx);
+    } finally {
+      if (ctx) this.module._lc_aead_zero_free(ctx);
+      this.module._free(ctxPtrPtr);
+    }
   }
 
   private aeadDecrypt(
@@ -147,46 +257,36 @@ export class CryptoEngine {
     ct: Uint8Array,
     tag: Uint8Array,
   ): Buffer {
-    return this.mem.withBuffers(
-      { key, iv, aad, ct, tag },
-      { pt: ct.length },
-      (p) => {
-        const rc = this.runAeadDecrypt(
-          p,
-          key.length,
-          iv.length,
-          aad.length,
-          ct.length,
-          tag.length,
-        );
-        return rc;
-      },
+    return this.withAeadCtx(tag.length, (ctx) =>
+      this.mem.withBuffers(
+        { key, iv, aad, ct, tag },
+        { pt: ct.length },
+        (p) => {
+          const setRc = this.module._lc_aead_setkey(
+            ctx,
+            p.key,
+            key.length,
+            p.iv,
+            iv.length,
+          );
+          if (setRc !== 0)
+            throw new Error(`lc_aead_setkey failed, rc=${setRc}`);
+          const rc = this.module._lc_aead_decrypt(
+            ctx,
+            p.ct,
+            p.pt,
+            ct.length,
+            p.aad,
+            aad.length,
+            p.tag,
+            tag.length,
+          );
+          if (rc !== 0)
+            throw new BlobDecryptError("AEAD tag verification failed");
+          return this.mem.read(p.pt, ct.length);
+        },
+      ),
     );
-  }
-
-  private runAeadDecrypt(
-    p: Record<string, number>,
-    keyLen: number,
-    ivLen: number,
-    aadLen: number,
-    ctLen: number,
-    tagLen: number,
-  ): Buffer {
-    const rc = this.module._lc_wasm_aead_decrypt(
-      p.key,
-      keyLen,
-      p.iv,
-      ivLen,
-      p.aad,
-      aadLen,
-      p.ct,
-      ctLen,
-      p.pt,
-      p.tag,
-      tagLen,
-    );
-    if (rc !== 0) throw new BlobDecryptError("AEAD tag verification failed");
-    return this.mem.read(p.pt, ctLen);
   }
 
   private aeadEncrypt(
@@ -195,38 +295,37 @@ export class CryptoEngine {
     aad: Uint8Array,
     pt: Uint8Array,
   ): { ciphertext: Buffer; tag: Buffer } {
-    return this.mem.withBuffers(
-      { key, iv, aad, pt },
-      { ct: pt.length, tag: C.TAG_LEN },
-      (p) =>
-        this.runAeadEncrypt(p, key.length, iv.length, aad.length, pt.length),
+    return this.withAeadCtx(C.TAG_LEN, (ctx) =>
+      this.mem.withBuffers(
+        { key, iv, aad, pt },
+        { ct: pt.length, tag: C.TAG_LEN },
+        (p) => {
+          const setRc = this.module._lc_aead_setkey(
+            ctx,
+            p.key,
+            key.length,
+            p.iv,
+            iv.length,
+          );
+          if (setRc !== 0)
+            throw new Error(`lc_aead_setkey failed, rc=${setRc}`);
+          const rc = this.module._lc_aead_encrypt(
+            ctx,
+            p.pt,
+            p.ct,
+            pt.length,
+            p.aad,
+            aad.length,
+            p.tag,
+            C.TAG_LEN,
+          );
+          if (rc !== 0) throw new Error(`lc_aead_encrypt failed, rc=${rc}`);
+          return {
+            ciphertext: this.mem.read(p.ct, pt.length),
+            tag: this.mem.read(p.tag, C.TAG_LEN),
+          };
+        },
+      ),
     );
-  }
-
-  private runAeadEncrypt(
-    p: Record<string, number>,
-    keyLen: number,
-    ivLen: number,
-    aadLen: number,
-    ptLen: number,
-  ): { ciphertext: Buffer; tag: Buffer } {
-    const rc = this.module._lc_wasm_aead_encrypt(
-      p.key,
-      keyLen,
-      p.iv,
-      ivLen,
-      p.aad,
-      aadLen,
-      p.pt,
-      ptLen,
-      p.ct,
-      p.tag,
-      C.TAG_LEN,
-    );
-    if (rc !== 0) throw new Error(`lc_wasm_aead_encrypt failed, rc=${rc}`);
-    return {
-      ciphertext: this.mem.read(p.ct, ptLen),
-      tag: this.mem.read(p.tag, C.TAG_LEN),
-    };
   }
 }

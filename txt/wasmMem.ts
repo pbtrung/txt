@@ -28,16 +28,29 @@ export class WasmMem {
   // Allocates one WASM pointer per entry in `inputs` (copying each buffer
   // in) and per entry in `outLens` (an empty output buffer of that length),
   // hands the named pointer map to `fn`, and frees everything afterwards --
-  // regardless of whether `fn` throws.
-  withBuffers<T>(
-    inputs: Record<string, Uint8Array>,
-    outLens: Record<string, number>,
-    fn: (ptrs: Record<string, number>) => T,
+  // regardless of whether `fn` throws. Generic over the exact key sets of
+  // `inputs`/`outLens` (rather than a plain `Record<string, number>`) so
+  // `fn`'s own `ptrs` parameter has real, individually-typed properties --
+  // under this project's `noUncheckedIndexedAccess`, a generic index
+  // signature would make every `ptrs.foo` access `number | undefined`
+  // instead of `number`, even though the caller already knows exactly which
+  // keys it passed in.
+  withBuffers<
+    TIn extends Record<string, Uint8Array>,
+    TOut extends Record<string, number>,
+    T,
+  >(
+    inputs: TIn,
+    outLens: TOut,
+    fn: (ptrs: { [K in keyof TIn | keyof TOut]: number }) => T,
   ): T {
-    const ptrs: Record<string, number> = {};
-    for (const [k, v] of Object.entries(inputs)) ptrs[k] = this.alloc(v);
-    for (const [k, len] of Object.entries(outLens))
-      ptrs[k] = this.allocOut(len);
+    const ptrs = {} as { [K in keyof TIn | keyof TOut]: number };
+    for (const [k, v] of Object.entries(inputs)) {
+      (ptrs as Record<string, number>)[k] = this.alloc(v);
+    }
+    for (const [k, len] of Object.entries(outLens)) {
+      (ptrs as Record<string, number>)[k] = this.allocOut(len);
+    }
     try {
       return fn(ptrs);
     } finally {
