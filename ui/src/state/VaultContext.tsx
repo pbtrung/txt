@@ -92,8 +92,10 @@ export interface VaultSession {
    * ever used once, for the initial signInWithIdToken() call above. */
   auth: Auth;
   authId: string;
+  isAdmin: boolean;
   umk: Uint8Array;
   keyStorePrivKey: Uint8Array;
+  credStoreKey: Uint8Array;
   r2Config: R2Config;
   metadataById: Map<string, BookInfo>;
   /** This account's own unwrapped txtKey for every document it can read --
@@ -225,8 +227,10 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         instantDb,
         auth,
         authId,
+        isAdmin: keys.isAdmin,
         umk: keys.umk,
         keyStorePrivKey: keys.keyStorePrivKey,
+        credStoreKey: keys.credStoreKey,
         r2Config: keys.r2Config,
         metadataById,
         docKeys,

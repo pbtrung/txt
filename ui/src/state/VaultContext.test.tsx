@@ -51,8 +51,10 @@ function fakeBookInfo(txtId: string, title: string) {
 function fakeSession(overrides: Partial<Session> = {}): Session {
   return {
     authId: "auth-1",
+    isAdmin: false,
     umk: randomBytes(128),
     keyStorePrivKey: randomBytes(3224),
+    credStoreKey: randomBytes(128),
     r2Config: {
       endpoint: "https://example.r2.cloudflarestorage.com",
       region: "auto",
@@ -143,6 +145,8 @@ describe("VaultProvider", () => {
     const { result, instantDb } = await unlockWith();
 
     expect(result.current.session?.displayName).toBe("admin@example.com");
+    expect(result.current.session?.isAdmin).toBe(false);
+    expect(result.current.session?.credStoreKey).toBeInstanceOf(Uint8Array);
     expect(result.current.session?.metadataById.get("txt-1")?.title).toBe(
       "doc-one.txt",
     );

@@ -10,9 +10,9 @@ const keyStoreKey = new Uint8Array(128).fill(11);
 const privKey = new Uint8Array(3224).fill(13);
 const credStoreKey = new Uint8Array(128).fill(17);
 
-async function buildAuthRow() {
+async function buildAuthRow(type?: string) {
   const umkBlob = await blob.encrypt(userRootKey, umk);
-  return { umk: bytesToBase64(umkBlob) };
+  return { umk: bytesToBase64(umkBlob), type };
 }
 
 async function buildKeyStoreRow() {
@@ -71,7 +71,11 @@ describe("resolveSession", () => {
     const session = await resolveSession(db, "auth-1", userRootKey);
 
     expect(Array.from(session.umk)).toEqual(Array.from(umk));
+    expect(session.isAdmin).toBe(false);
     expect(Array.from(session.keyStorePrivKey)).toEqual(Array.from(privKey));
+    expect(Array.from(session.credStoreKey)).toEqual(
+      Array.from(credStoreKey),
+    );
     expect(session.r2Config.bucket).toBe("my-bucket");
     expect(session.r2Config).not.toHaveProperty("readWriteAccessKeyId");
     expect(session.displayName).toBeUndefined();
@@ -81,6 +85,28 @@ describe("resolveSession", () => {
     expect(session.txtAccess.content).toEqual({});
     expect(session.txtBookmarks.id).toBeNull();
     expect(session.txtBookmarks.content).toEqual({});
+  });
+
+  it("marks admin sessions from $users.type", async () => {
+    const authRow = await buildAuthRow("admin");
+    const keyStoreRow = await buildKeyStoreRow();
+    const credStoreRow = await buildCredStoreRow();
+    const db = fakeDb({
+      $users: [
+        {
+          id: "auth-1",
+          ...authRow,
+          keyStore: [{ id: "keystore-1", ...keyStoreRow }],
+          credStore: [{ id: "credstore-1", ...credStoreRow }],
+          txtAccess: [],
+          txtBookmarks: [],
+        },
+      ],
+    });
+
+    const session = await resolveSession(db, "auth-1", userRootKey);
+
+    expect(session.isAdmin).toBe(true);
   });
 
   it("resolves displayName and decodes existing txtAccess/txtBookmarks rows", async () => {

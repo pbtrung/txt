@@ -12,8 +12,10 @@ const umk = randomBytes(128);
 function fakeSession(overrides: Partial<Session> = {}): Session {
   return {
     authId: "auth-1",
+    isAdmin: false,
     umk,
     keyStorePrivKey: new Uint8Array(3224),
+    credStoreKey: randomBytes(128),
     r2Config: {
       endpoint: "https://acct.r2.cloudflarestorage.com",
       region: "auto",

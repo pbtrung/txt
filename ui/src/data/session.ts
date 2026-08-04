@@ -36,11 +36,28 @@ export interface KeyedContent<T> {
 
 export interface Session {
   authId: string;
+  /** $users.type === 'admin' -- gates the Manage screen (RequireAdmin) and
+   * every admin-only write ui/'s data layer performs (adminUsers.ts/
+   * adminBooks.ts/adminShares.ts). A 'user'-role session's own umk/
+   * keyStorePrivKey are exactly as capable as an admin's own for reading
+   * shared documents -- this flag is purely about which screens/actions are
+   * offered, never a capability instant.perms.ts's own isAdmin rules don't
+   * already enforce server-side. */
+  isAdmin: boolean;
   umk: Uint8Array;
   /** Unwrapped lc_kyber_1024_x448 composite private key -- Decapsulates a
    * txtShares grant's txtKey (docs/protocols.md's Sharing protocol); the one
-   * KEM operation ui/ ever needs client-side. */
+   * KEM operation every session needs client-side. An admin session also
+   * uses the matching keyStore.pubKey (fetched fresh per grant, not kept
+   * here) to Encapsulate when granting a new share (adminShares.ts). */
   keyStorePrivKey: Uint8Array;
+  /** Unwrapped credStoreKey -- normally discarded once credStore.content is
+   * decrypted below, but an admin session keeps it: docs/data_model.md's
+   * credStore entity lets the admin hold several rows that all share this
+   * same raw key (rather than each minting its own), which is exactly what
+   * adminUsers.ts's createUser/deleteUser need to create/remove the admin's
+   * own escrowed copy of another account's full credentials. */
+  credStoreKey: Uint8Array;
   r2Config: R2Config;
   /** This account's own display_name, as stored in credStore.content --
    * sourced from creds.json's own display_name field at provisioning time
@@ -199,8 +216,10 @@ export async function resolveSession(
 
   return {
     authId,
+    isAdmin: authRow.type === "admin",
     umk,
     keyStorePrivKey,
+    credStoreKey,
     r2Config: parseR2Config(content.r2_config),
     displayName: optionalString(content, "display_name"),
     txtAccess,
