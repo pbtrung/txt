@@ -25,15 +25,9 @@ async function buildKeyStoreRow() {
   };
 }
 
-async function buildCredStoreRow(overrides: Record<string, unknown> = {}) {
-  const contentPayload = {
-    r2_config: {
-      endpoint: "https://acct.r2.cloudflarestorage.com",
-      region: "auto",
-      bucket: "my-bucket",
-    },
-    ...overrides,
-  };
+async function buildCredStoreRowWithContent(
+  contentPayload: Record<string, unknown>,
+) {
   const credStoreKeyBlob = await blob.encrypt(umk, credStoreKey);
   const contentBlob = await blob.encrypt(
     credStoreKey,
@@ -44,6 +38,17 @@ async function buildCredStoreRow(overrides: Record<string, unknown> = {}) {
     credStoreKey: bytesToBase64(credStoreKeyBlob),
     content: bytesToBase64(contentBlob),
   };
+}
+
+async function buildCredStoreRow(overrides: Record<string, unknown> = {}) {
+  return buildCredStoreRowWithContent({
+    r2_config: {
+      endpoint: "https://acct.r2.cloudflarestorage.com",
+      region: "auto",
+      bucket: "my-bucket",
+    },
+    ...overrides,
+  });
 }
 
 function fakeDb(queryResult: unknown) {
@@ -73,9 +78,7 @@ describe("resolveSession", () => {
     expect(Array.from(session.umk)).toEqual(Array.from(umk));
     expect(session.isAdmin).toBe(false);
     expect(Array.from(session.keyStorePrivKey)).toEqual(Array.from(privKey));
-    expect(Array.from(session.credStoreKey)).toEqual(
-      Array.from(credStoreKey),
-    );
+    expect(Array.from(session.credStoreKey)).toEqual(Array.from(credStoreKey));
     expect(session.r2Config.bucket).toBe("my-bucket");
     expect(session.r2Config).not.toHaveProperty("readWriteAccessKeyId");
     expect(session.displayName).toBeUndefined();
@@ -107,6 +110,44 @@ describe("resolveSession", () => {
     const session = await resolveSession(db, "auth-1", userRootKey);
 
     expect(session.isAdmin).toBe(true);
+  });
+
+  it("skips admin-owned credential escrow rows when resolving its own R2 config", async () => {
+    const authRow = await buildAuthRow("admin");
+    const keyStoreRow = await buildKeyStoreRow();
+    const adminEscrowRow = await buildCredStoreRowWithContent({
+      instant_app_id: "app-1",
+      instant_client_name: "firebase",
+      firebase_email: "bob@example.com",
+      firebase_password: "pw",
+      firebase_api_key: "api-key",
+      display_name: "Bob",
+      user_root_key: bytesToBase64(new Uint8Array(256).fill(5)),
+      user_auth_id: "user-2",
+    });
+    const ownCredStoreRow = await buildCredStoreRow({
+      display_name: "Admin",
+    });
+    const db = fakeDb({
+      $users: [
+        {
+          id: "auth-1",
+          ...authRow,
+          keyStore: [{ id: "keystore-1", ...keyStoreRow }],
+          credStore: [
+            { id: "escrow-1", ...adminEscrowRow },
+            { id: "credstore-1", ...ownCredStoreRow },
+          ],
+          txtAccess: [],
+          txtBookmarks: [],
+        },
+      ],
+    });
+
+    const session = await resolveSession(db, "auth-1", userRootKey);
+
+    expect(session.r2Config.bucket).toBe("my-bucket");
+    expect(session.displayName).toBe("Admin");
   });
 
   it("resolves displayName and decodes existing txtAccess/txtBookmarks rows", async () => {

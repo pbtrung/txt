@@ -2,7 +2,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { BookInfo } from "../../data/metadata";
 import * as VaultContextModule from "../../state/VaultContext";
@@ -18,7 +18,15 @@ vi.mock("../../data/adminUsers", async () => {
   const actual = await vi.importActual<typeof import("../../data/adminUsers")>(
     "../../data/adminUsers",
   );
-  return { ...actual, listUsersWithInfo: vi.fn() };
+  return {
+    ...actual,
+    createUser: vi.fn(),
+    deleteUser: vi.fn(),
+    generateUserRootKey: vi.fn(() => "generated-root-key"),
+    getUserCreds: vi.fn(),
+    listUsersWithInfo: vi.fn(),
+    updateUserCreds: vi.fn(),
+  };
 });
 vi.mock("../../data/adminShares", async () => {
   const actual = await vi.importActual<typeof import("../../data/adminShares")>(
@@ -28,7 +36,13 @@ vi.mock("../../data/adminShares", async () => {
 });
 
 import { listShares } from "../../data/adminShares";
-import { listUsersWithInfo } from "../../data/adminUsers";
+import {
+  createUser,
+  deleteUser,
+  getUserCreds,
+  listUsersWithInfo,
+  updateUserCreds,
+} from "../../data/adminUsers";
 
 const metadataById = new Map<string, BookInfo>([
   [
@@ -55,6 +69,9 @@ function setup(refreshing = false) {
       instantDb: {},
       auth: {},
       authId: "auth-1",
+      instantAppId: "app-1",
+      instantClientName: "firebase",
+      firebaseApiKey: "fake-api-key",
       isAdmin: true,
       umk: new Uint8Array(),
       keyStorePrivKey: new Uint8Array(),
@@ -87,6 +104,10 @@ function setup(refreshing = false) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    callback(0);
+    return 0;
+  });
   vi.mocked(listUsersWithInfo).mockResolvedValue([
     {
       id: "auth-1",
@@ -109,6 +130,22 @@ beforeEach(() => {
       toUserId: "user-2",
     },
   ]);
+  vi.mocked(createUser).mockResolvedValue("user-3");
+  vi.mocked(getUserCreds).mockResolvedValue({
+    instantAppId: "app-1",
+    instantClientName: "firebase",
+    firebaseEmail: "bob@example.com",
+    firebasePassword: "pw",
+    firebaseApiKey: "fake-api-key",
+    displayName: "Bob",
+    userRootKey: "stored-root-key",
+  });
+  vi.mocked(updateUserCreds).mockResolvedValue(undefined);
+  vi.mocked(deleteUser).mockResolvedValue(undefined);
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
 });
 
 describe("ManageScreen", () => {
@@ -120,10 +157,9 @@ describe("ManageScreen", () => {
     );
 
     expect(screen.getAllByText("Skypiea").length).toBeGreaterThan(0);
-    expect(screen.getAllByRole("link", { name: /back to library/i })[0]).toHaveAttribute(
-      "href",
-      "/library",
-    );
+    expect(
+      screen.getAllByRole("link", { name: /back to library/i })[0],
+    ).toHaveAttribute("href", "/library");
     expect(screen.getByRole("button", { name: /^Users/ })).toHaveTextContent(
       "2",
     );
@@ -178,6 +214,112 @@ describe("ManageScreen", () => {
     );
     expect(vi.mocked(listShares).mock.calls.length).toBeGreaterThan(
       shareCallsBefore,
+    );
+  });
+
+  it("creates users from the toolbar modal", async () => {
+    setup();
+    await waitFor(() => expect(screen.getByText("Bob")).toBeInTheDocument());
+    const userCallsBefore = vi.mocked(listUsersWithInfo).mock.calls.length;
+
+    await userEvent.click(screen.getByRole("button", { name: "Create" }));
+    expect(
+      screen.getByRole("dialog", { name: "Create user" }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Instant app ID")).toHaveValue("app-1");
+    expect(screen.getByLabelText("Instant client name")).toHaveValue(
+      "firebase",
+    );
+    expect(screen.getByLabelText("Firebase API key")).toHaveValue(
+      "fake-api-key",
+    );
+    expect(screen.getByLabelText("User root key")).toHaveValue(
+      "generated-root-key",
+    );
+
+    await userEvent.type(
+      screen.getByLabelText("Firebase email"),
+      "new@example.com",
+    );
+    await userEvent.type(screen.getByLabelText("Firebase password"), "pw");
+    await userEvent.type(screen.getByLabelText("Display name"), "New User");
+    await userEvent.click(screen.getByRole("button", { name: "Create user" }));
+
+    await waitFor(() => expect(createUser).toHaveBeenCalledOnce());
+    expect(createUser).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ authId: "auth-1" }),
+      expect.objectContaining({
+        instantAppId: "app-1",
+        instantClientName: "firebase",
+        firebaseEmail: "new@example.com",
+        firebasePassword: "pw",
+        firebaseApiKey: "fake-api-key",
+        displayName: "New User",
+        userRootKey: "generated-root-key",
+      }),
+      expect.any(Function),
+    );
+    await waitFor(() =>
+      expect(vi.mocked(listUsersWithInfo).mock.calls.length).toBeGreaterThan(
+        userCallsBefore,
+      ),
+    );
+  });
+
+  it("loads and saves stored user credentials from the edit modal", async () => {
+    setup();
+    await waitFor(() => expect(screen.getByText("Bob")).toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole("button", { name: /^Bob/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Edit" }));
+
+    await waitFor(() =>
+      expect(getUserCreds).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ authId: "auth-1" }),
+        "user-2",
+      ),
+    );
+    const displayName = screen.getByLabelText("Display name");
+    await userEvent.clear(displayName);
+    await userEvent.type(displayName, "Bobby");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(updateUserCreds).toHaveBeenCalledOnce());
+    expect(updateUserCreds).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ authId: "auth-1" }),
+      "user-2",
+      expect.objectContaining({ displayName: "Bobby" }),
+    );
+  });
+
+  it("deletes a user after typed confirmation and reloads shares", async () => {
+    setup();
+    await waitFor(() => expect(screen.getByText("Bob")).toBeInTheDocument());
+    const shareCallsBefore = vi.mocked(listShares).mock.calls.length;
+
+    await userEvent.click(screen.getByRole("button", { name: /^Bob/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await userEvent.type(
+      screen.getByLabelText("Type user-2 to confirm"),
+      "user-2",
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Confirm delete" }),
+    );
+
+    await waitFor(() => expect(deleteUser).toHaveBeenCalledOnce());
+    expect(deleteUser).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ authId: "auth-1" }),
+      "user-2",
+    );
+    await waitFor(() =>
+      expect(vi.mocked(listShares).mock.calls.length).toBeGreaterThan(
+        shareCallsBefore,
+      ),
     );
   });
 });

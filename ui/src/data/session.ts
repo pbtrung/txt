@@ -73,10 +73,59 @@ export interface Session {
 // but still comes back as `keyStore: [...]`, not a plain object. Getting
 // this wrong here silently produces `undefined` fields that only surface
 // much later (see the instantdb-instaql-array-links lesson).
+function linkedRows(rows: any, what: string): any[] {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    throw new SessionError(`missing linked ${what}`);
+  }
+  return rows;
+}
+
 function firstLinked(rows: any, what: string): any {
-  const row = rows?.[0];
-  if (!row) throw new SessionError(`missing linked ${what}`);
-  return row;
+  return linkedRows(rows, what)[0];
+}
+
+async function decodeCredStoreRow(
+  umk: Uint8Array,
+  row: any,
+): Promise<{ credStoreKey: Uint8Array; content: Record<string, unknown> }> {
+  const credStoreKey = await blob.decrypt(umk, base64ToBytes(row.credStoreKey));
+  // compressed:true -- credStore.content is a structured (JSON) payload,
+  // brotli-compressed before encryption same as every other JSON blob in
+  // this hierarchy; omitting this decrypts fine (the AEAD tag still checks
+  // out) but leaves raw brotli bytes where JSON text is expected, failing
+  // JSON.parse with a confusing "not valid JSON" error instead of ever
+  // surfacing as a decrypt-level problem.
+  const contentJson = await blob.decrypt(
+    credStoreKey,
+    base64ToBytes(row.content),
+    true,
+  );
+  const content = requireObject(
+    JSON.parse(new TextDecoder().decode(contentJson)),
+    "credStore.content must decode to a JSON object",
+    SessionError,
+  );
+  return { credStoreKey, content };
+}
+
+async function resolveOwnCredStore(
+  umk: Uint8Array,
+  rows: any,
+): Promise<{
+  credStoreKey: Uint8Array;
+  content: Record<string, unknown>;
+  r2Config: R2Config;
+}> {
+  const allRows = linkedRows(rows, "credStore row");
+  for (const row of allRows) {
+    const decoded = await decodeCredStoreRow(umk, row);
+    if (!("r2_config" in decoded.content)) continue;
+    return {
+      ...decoded,
+      r2Config: parseR2Config(decoded.content.r2_config),
+    };
+  }
+  throw new SessionError("missing linked credStore row with r2_config");
 }
 
 /** Resolves (row id, unwrapped key, decoded content) for a has:-one-per-
@@ -175,26 +224,9 @@ export async function resolveSession(
     base64ToBytes(keyStoreRow.privKey),
   );
 
-  const credStoreRow = firstLinked(authRow.credStore, "credStore row");
-  const credStoreKey = await blob.decrypt(
+  const { credStoreKey, content, r2Config } = await resolveOwnCredStore(
     umk,
-    base64ToBytes(credStoreRow.credStoreKey),
-  );
-  // compressed:true -- credStore.content is a structured (JSON) payload,
-  // brotli-compressed before encryption same as every other JSON blob in
-  // this hierarchy; omitting this decrypts fine (the AEAD tag still checks
-  // out) but leaves raw brotli bytes where JSON text is expected, failing
-  // JSON.parse with a confusing "not valid JSON" error instead of ever
-  // surfacing as a decrypt-level problem.
-  const contentJson = await blob.decrypt(
-    credStoreKey,
-    base64ToBytes(credStoreRow.content),
-    true,
-  );
-  const content = requireObject(
-    JSON.parse(new TextDecoder().decode(contentJson)),
-    "credStore.content must decode to a JSON object",
-    SessionError,
+    authRow.credStore,
   );
 
   const [txtAccess, txtBookmarks] = await Promise.all([
@@ -220,7 +252,7 @@ export async function resolveSession(
     umk,
     keyStorePrivKey,
     credStoreKey,
-    r2Config: parseR2Config(content.r2_config),
+    r2Config,
     displayName: optionalString(content, "display_name"),
     txtAccess,
     txtBookmarks,

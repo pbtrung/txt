@@ -10,9 +10,13 @@ import { useDropdown } from "../../hooks/useDropdown";
 import { useVault } from "../../state/VaultContext";
 import { BooksSection } from "./BooksSection";
 import { ManageNavContent, type Section } from "./ManageNav";
-import { errorMessage } from "./manageShared";
+import {
+  ManageToolbar,
+  errorMessage,
+  type ToolbarButtonConfig,
+} from "./manageShared";
 import { SharesSection } from "./SharesSection";
-import { UsersSection } from "./UsersSection";
+import { UsersSection, type UsersMode } from "./UsersSection";
 
 const INITIAL_LOAD_PHASES = ["Loading users", "Loading shares"] as const;
 
@@ -31,6 +35,7 @@ export function ManageScreen() {
   const nav = useDropdown();
 
   const [usersSelectedId, setUsersSelectedId] = useState<string | null>(null);
+  const [usersMode, setUsersMode] = useState<UsersMode>("none");
   const [booksSelectedId, setBooksSelectedId] = useState<string | null>(null);
   const [sharesSelectedId, setSharesSelectedId] = useState<string | null>(null);
 
@@ -45,7 +50,7 @@ export function ManageScreen() {
     if (!session) return;
     try {
       setUsersError(null);
-      setUsers(await listUsersWithInfo(session.instantDb));
+      setUsers(await listUsersWithInfo(session.instantDb, session));
     } catch (err) {
       setUsersError(errorMessage(err));
     }
@@ -88,6 +93,7 @@ export function ManageScreen() {
     setSection(next);
     setSearch("");
     setUsersSelectedId(null);
+    setUsersMode("none");
     setBooksSelectedId(null);
     setSharesSelectedId(null);
     nav.close();
@@ -112,6 +118,35 @@ export function ManageScreen() {
     !refreshing && initialLoadStep !== null
       ? phaseProgress(initialLoadStep)
       : progress;
+  const toolbarButtons: ToolbarButtonConfig[] =
+    section === "users"
+      ? [
+          {
+            key: "create",
+            icon: "bi-plus-lg",
+            label: "Create",
+            onClick: () =>
+              setUsersMode(usersMode === "create" ? "none" : "create"),
+          },
+          {
+            key: "edit",
+            icon: "bi-pencil",
+            label: "Edit",
+            disabled: usersSelectedId === null,
+            onClick: () => setUsersMode(usersMode === "edit" ? "none" : "edit"),
+          },
+          {
+            key: "delete",
+            icon: "bi-trash",
+            label: "Delete",
+            variant: "danger",
+            disabled:
+              usersSelectedId === null || usersSelectedId === session.authId,
+            onClick: () =>
+              setUsersMode(usersMode === "delete" ? "none" : "delete"),
+          },
+        ]
+      : [];
 
   return (
     <div className="shell-60 d-flex flex-column vh-100">
@@ -182,18 +217,22 @@ export function ManageScreen() {
           <div className="position-relative search-bar-width">
             <i
               className="bi bi-search position-absolute top-50 start-0 translate-middle-y ms-2 text-body-secondary pe-none"
+              style={{ zIndex: 6 }}
               aria-hidden="true"
             />
-            <input
-              type="search"
-              className="form-control form-control-sm themed-control"
-              style={{ paddingLeft: "2rem" }}
-              placeholder={`Search ${heading.toLowerCase()}`}
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              disabled={isLoadingGate}
-              aria-label={`Search ${heading.toLowerCase()}`}
-            />
+            <div className="input-group">
+              <input
+                type="search"
+                className="form-control form-control-sm themed-control"
+                style={{ paddingLeft: "2rem" }}
+                placeholder={`Search ${heading.toLowerCase()}`}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                disabled={isLoadingGate}
+                aria-label={`Search ${heading.toLowerCase()}`}
+              />
+              {!isLoadingGate && <ManageToolbar buttons={toolbarButtons} />}
+            </div>
           </div>
         </div>
       </div>
@@ -258,11 +297,15 @@ export function ManageScreen() {
               <div className="flex-grow-1 d-flex flex-column overflow-hidden">
                 {section === "users" && (
                   <UsersSection
-                    sessionAuthId={session.authId}
+                    session={session}
                     users={users ?? []}
                     search={search}
                     selectedUserId={usersSelectedId}
+                    mode={usersMode}
                     onSelectRow={setUsersSelectedId}
+                    onSetMode={setUsersMode}
+                    onChanged={() => void loadUsers()}
+                    onUserDeleted={() => void loadShares()}
                   />
                 )}
                 {section === "books" && (

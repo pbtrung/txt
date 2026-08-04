@@ -44,6 +44,7 @@ import {
 import * as blob from "../crypto/blob";
 import { bytesToBase64 } from "../crypto/bytes";
 import { loadCredsFromFile } from "../data/creds";
+import type { Creds } from "../data/creds";
 import * as firebaseAuth from "../data/firebaseAuth";
 import { createInstantClient } from "../data/instantClient";
 import { loadLibrary } from "../data/library";
@@ -92,6 +93,9 @@ export interface VaultSession {
    * ever used once, for the initial signInWithIdToken() call above. */
   auth: Auth;
   authId: string;
+  instantAppId: string;
+  instantClientName: string;
+  firebaseApiKey: string;
   isAdmin: boolean;
   umk: Uint8Array;
   keyStorePrivKey: Uint8Array;
@@ -159,6 +163,7 @@ async function resolveIdentity(file: File): Promise<{
   instantDb: any;
   auth: Auth;
   authId: string;
+  creds: Creds;
   keys: Session;
   displayName: string | null | undefined;
 }> {
@@ -189,6 +194,7 @@ async function resolveIdentity(file: File): Promise<{
     instantDb,
     auth,
     authId,
+    creds,
     keys,
     displayName: keys.displayName ?? creds.displayName ?? authResult.user.email,
   };
@@ -211,7 +217,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     setError(null);
     setProgress(phaseProgress(UNLOCK_PHASES, 0));
     try {
-      const { instantDb, auth, authId, keys, displayName } =
+      const { instantDb, auth, authId, creds, keys, displayName } =
         await resolveIdentity(file);
 
       setProgress(phaseProgress(UNLOCK_PHASES, 1));
@@ -227,6 +233,9 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         instantDb,
         auth,
         authId,
+        instantAppId: creds.instantAppId,
+        instantClientName: creds.instantClientName,
+        firebaseApiKey: creds.firebaseApiKey,
         isAdmin: keys.isAdmin,
         umk: keys.umk,
         keyStorePrivKey: keys.keyStorePrivKey,
