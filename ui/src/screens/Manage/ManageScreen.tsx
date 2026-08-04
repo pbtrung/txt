@@ -311,15 +311,6 @@ export function ManageScreen() {
               className="flex-grow-1 d-flex flex-column overflow-hidden"
               style={{ minWidth: 0 }}
             >
-              <div className="d-flex justify-content-between align-items-baseline px-3 py-2 border-bottom">
-                <h2 className="h6 mb-0">{heading}</h2>
-                <span className="small text-body-secondary">
-                  {section === "users" && `${users?.length ?? 0} users`}
-                  {section === "books" && `${booksById.size} books`}
-                  {section === "shares" && `${shares?.length ?? 0} shares`}
-                </span>
-              </div>
-
               {usersError && section === "users" && (
                 <div className="alert alert-danger m-2 py-2 px-3" role="alert">
                   {usersError}
@@ -331,7 +322,7 @@ export function ManageScreen() {
                 </div>
               )}
 
-              <div className="flex-grow-1 d-flex flex-column overflow-hidden">
+              <div className="flex-grow-1 d-flex flex-column overflow-hidden pt-2">
                 {section === "users" && (
                   <UsersSection
                     session={session}
