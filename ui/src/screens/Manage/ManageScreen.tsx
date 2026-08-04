@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 
 import { DropdownToggleButton } from "../../components/DropdownToggleButton";
 import { InternalLink } from "../../components/InternalLink";
@@ -26,6 +33,82 @@ function phaseProgress(index: number) {
     step: index + 1,
     total: INITIAL_LOAD_PHASES.length,
   };
+}
+
+type ModeSetter<T extends string> = Dispatch<SetStateAction<T>>;
+
+function nextMode<T extends string>(current: T, next: T): T {
+  return current === next ? ("none" as T) : next;
+}
+
+function userToolbarButtons(
+  mode: UsersMode,
+  setMode: ModeSetter<UsersMode>,
+  selectedId: string | null,
+  authId: string,
+): ToolbarButtonConfig[] {
+  return [
+    {
+      key: "create",
+      icon: "bi-plus-lg",
+      label: "Create",
+      onClick: () => setMode(nextMode(mode, "create")),
+    },
+    {
+      key: "edit",
+      icon: "bi-pencil",
+      label: "Edit",
+      disabled: selectedId === null,
+      onClick: () => setMode(nextMode(mode, "edit")),
+    },
+    {
+      key: "delete",
+      icon: "bi-trash",
+      label: "Delete",
+      variant: "danger",
+      disabled: selectedId === null || selectedId === authId,
+      onClick: () => setMode(nextMode(mode, "delete")),
+    },
+  ];
+}
+
+function bookToolbarButtons(
+  mode: BooksMode,
+  setMode: ModeSetter<BooksMode>,
+  selectedId: string | null,
+): ToolbarButtonConfig[] {
+  return [
+    {
+      key: "edit",
+      icon: "bi-pencil",
+      label: "Edit",
+      disabled: selectedId === null,
+      onClick: () => setMode(nextMode(mode, "edit")),
+    },
+  ];
+}
+
+function shareToolbarButtons(
+  mode: SharesMode,
+  setMode: ModeSetter<SharesMode>,
+  selectedId: string | null,
+): ToolbarButtonConfig[] {
+  return [
+    {
+      key: "create",
+      icon: "bi-plus-lg",
+      label: "Create",
+      onClick: () => setMode(nextMode(mode, "create")),
+    },
+    {
+      key: "delete",
+      icon: "bi-trash",
+      label: "Delete",
+      variant: "danger",
+      disabled: selectedId === null,
+      onClick: () => setMode(nextMode(mode, "delete")),
+    },
+  ];
 }
 
 export function ManageScreen() {
@@ -124,63 +207,18 @@ export function ManageScreen() {
       : progress;
   const toolbarButtons: ToolbarButtonConfig[] = (() => {
     if (section === "users") {
-      return [
-        {
-          key: "create",
-          icon: "bi-plus-lg",
-          label: "Create",
-          onClick: () =>
-            setUsersMode(usersMode === "create" ? "none" : "create"),
-        },
-        {
-          key: "edit",
-          icon: "bi-pencil",
-          label: "Edit",
-          disabled: usersSelectedId === null,
-          onClick: () => setUsersMode(usersMode === "edit" ? "none" : "edit"),
-        },
-        {
-          key: "delete",
-          icon: "bi-trash",
-          label: "Delete",
-          variant: "danger",
-          disabled:
-            usersSelectedId === null || usersSelectedId === session.authId,
-          onClick: () =>
-            setUsersMode(usersMode === "delete" ? "none" : "delete"),
-        },
-      ];
+      return userToolbarButtons(
+        usersMode,
+        setUsersMode,
+        usersSelectedId,
+        session.authId,
+      );
     }
     if (section === "books") {
-      return [
-        {
-          key: "edit",
-          icon: "bi-pencil",
-          label: "Edit",
-          disabled: booksSelectedId === null,
-          onClick: () => setBooksMode(booksMode === "edit" ? "none" : "edit"),
-        },
-      ];
+      return bookToolbarButtons(booksMode, setBooksMode, booksSelectedId);
     }
     if (section === "shares") {
-      return [
-        {
-          key: "create",
-          icon: "bi-plus-lg",
-          label: "Create",
-          onClick: () =>
-            setSharesMode(sharesMode === "create" ? "none" : "create"),
-        },
-        {
-          key: "delete",
-          icon: "bi-trash",
-          label: "Delete",
-          variant: "danger",
-          disabled: sharesSelectedId === null,
-          onClick: () =>
-            setSharesMode(sharesMode === "delete" ? "none" : "delete"),
-        },
-      ];
+      return shareToolbarButtons(sharesMode, setSharesMode, sharesSelectedId);
     }
     return [];
   })();
