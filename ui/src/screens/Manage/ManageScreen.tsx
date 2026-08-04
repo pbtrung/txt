@@ -8,7 +8,7 @@ import { listShares, type ShareEntry } from "../../data/adminShares";
 import { listUsersWithInfo, type UserSummary } from "../../data/adminUsers";
 import { useDropdown } from "../../hooks/useDropdown";
 import { useVault } from "../../state/VaultContext";
-import { BooksSection } from "./BooksSection";
+import { BooksSection, type BooksMode } from "./BooksSection";
 import { ManageNavContent, type Section } from "./ManageNav";
 import {
   ManageToolbar,
@@ -37,6 +37,7 @@ export function ManageScreen() {
   const [usersSelectedId, setUsersSelectedId] = useState<string | null>(null);
   const [usersMode, setUsersMode] = useState<UsersMode>("none");
   const [booksSelectedId, setBooksSelectedId] = useState<string | null>(null);
+  const [booksMode, setBooksMode] = useState<BooksMode>("none");
   const [sharesSelectedId, setSharesSelectedId] = useState<string | null>(null);
 
   const [users, setUsers] = useState<UserSummary[] | null>(null);
@@ -95,6 +96,7 @@ export function ManageScreen() {
     setUsersSelectedId(null);
     setUsersMode("none");
     setBooksSelectedId(null);
+    setBooksMode("none");
     setSharesSelectedId(null);
     nav.close();
   }
@@ -118,35 +120,48 @@ export function ManageScreen() {
     !refreshing && initialLoadStep !== null
       ? phaseProgress(initialLoadStep)
       : progress;
-  const toolbarButtons: ToolbarButtonConfig[] =
-    section === "users"
-      ? [
-          {
-            key: "create",
-            icon: "bi-plus-lg",
-            label: "Create",
-            onClick: () =>
-              setUsersMode(usersMode === "create" ? "none" : "create"),
-          },
-          {
-            key: "edit",
-            icon: "bi-pencil",
-            label: "Edit",
-            disabled: usersSelectedId === null,
-            onClick: () => setUsersMode(usersMode === "edit" ? "none" : "edit"),
-          },
-          {
-            key: "delete",
-            icon: "bi-trash",
-            label: "Delete",
-            variant: "danger",
-            disabled:
-              usersSelectedId === null || usersSelectedId === session.authId,
-            onClick: () =>
-              setUsersMode(usersMode === "delete" ? "none" : "delete"),
-          },
-        ]
-      : [];
+  const toolbarButtons: ToolbarButtonConfig[] = (() => {
+    if (section === "users") {
+      return [
+        {
+          key: "create",
+          icon: "bi-plus-lg",
+          label: "Create",
+          onClick: () =>
+            setUsersMode(usersMode === "create" ? "none" : "create"),
+        },
+        {
+          key: "edit",
+          icon: "bi-pencil",
+          label: "Edit",
+          disabled: usersSelectedId === null,
+          onClick: () => setUsersMode(usersMode === "edit" ? "none" : "edit"),
+        },
+        {
+          key: "delete",
+          icon: "bi-trash",
+          label: "Delete",
+          variant: "danger",
+          disabled:
+            usersSelectedId === null || usersSelectedId === session.authId,
+          onClick: () =>
+            setUsersMode(usersMode === "delete" ? "none" : "delete"),
+        },
+      ];
+    }
+    if (section === "books") {
+      return [
+        {
+          key: "edit",
+          icon: "bi-pencil",
+          label: "Edit",
+          disabled: booksSelectedId === null,
+          onClick: () => setBooksMode(booksMode === "edit" ? "none" : "edit"),
+        },
+      ];
+    }
+    return [];
+  })();
 
   return (
     <div className="shell-60 d-flex flex-column vh-100">
@@ -312,7 +327,9 @@ export function ManageScreen() {
                   <BooksSection
                     search={search}
                     selectedTxtId={booksSelectedId}
+                    mode={booksMode}
                     onSelectRow={setBooksSelectedId}
+                    onSetMode={setBooksMode}
                   />
                 )}
                 {section === "shares" && (

@@ -35,6 +35,7 @@ import {
   type AccessMap,
   type ReadPosition,
 } from "../data/access";
+import { saveBookMetadata, type BookMetadataEdits } from "../data/adminBooks";
 import {
   addBookmark,
   encodeBookmarksContent,
@@ -129,6 +130,11 @@ export interface VaultContextValue {
     preview: string,
   ) => Promise<void>;
   removeBookmarkEntry: (txtId: string, bookmarkId: string) => Promise<void>;
+  updateBookMetadata: (
+    txtId: string,
+    edits: BookMetadataEdits,
+    onProgress?: (label: string) => void,
+  ) => Promise<void>;
 }
 
 const VaultContext = createContext<VaultContextValue | null>(null);
@@ -363,6 +369,30 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     [session, bookmarksMap, bookmarksQueue],
   );
 
+  const updateBookMetadata = useCallback(
+    async (
+      txtId: string,
+      edits: BookMetadataEdits,
+      onProgress?: (label: string) => void,
+    ) => {
+      if (!session) throw new Error("vault is locked");
+      const info = await saveBookMetadata(
+        session.instantDb,
+        session,
+        txtId,
+        edits,
+        onProgress,
+      );
+      setSession((prev) => {
+        if (!prev) return prev;
+        const metadataById = new Map(prev.metadataById);
+        metadataById.set(txtId, info);
+        return { ...prev, metadataById };
+      });
+    },
+    [session],
+  );
+
   const value = useMemo<VaultContextValue>(
     () => ({
       status,
@@ -379,6 +409,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       removeAccessEntry,
       addBookmarkEntry,
       removeBookmarkEntry,
+      updateBookMetadata,
     }),
     [
       status,
@@ -395,6 +426,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       removeAccessEntry,
       addBookmarkEntry,
       removeBookmarkEntry,
+      updateBookMetadata,
     ],
   );
 

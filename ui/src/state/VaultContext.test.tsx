@@ -23,9 +23,10 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { bytesToBase64, randomBytes } from "../crypto/bytes";
-import type { Session } from "../data/session";
 import type { LibrarySnapshot } from "../data/library";
+import type { Session } from "../data/session";
 
+vi.mock("../data/adminBooks", () => ({ saveBookMetadata: vi.fn() }));
 vi.mock("../data/firebaseAuth", () => ({ signIn: vi.fn() }));
 vi.mock("../data/instantClient", () => ({ createInstantClient: vi.fn() }));
 vi.mock("../data/session", () => ({
@@ -38,6 +39,7 @@ vi.mock("../crypto/blob", () => ({
   decrypt: vi.fn(async (_ikm: Uint8Array, payload: Uint8Array) => payload),
 }));
 
+import { saveBookMetadata } from "../data/adminBooks";
 import * as firebaseAuth from "../data/firebaseAuth";
 import { createInstantClient } from "../data/instantClient";
 import { loadLibrary } from "../data/library";
@@ -335,5 +337,30 @@ describe("VaultProvider", () => {
       lastAccessedMs: 1,
     });
     expect(result.current.refreshing).toBe(false);
+  });
+
+  it("updateBookMetadata saves metadata and updates the session map", async () => {
+    const { result, instantDb } = await unlockWith();
+    vi.mocked(saveBookMetadata).mockResolvedValue(
+      fakeBookInfo("txt-1", "Renamed Book"),
+    );
+
+    await act(async () => {
+      await result.current.updateBookMetadata("txt-1", {
+        title: "Renamed Book",
+        subjects: [],
+      });
+    });
+
+    expect(saveBookMetadata).toHaveBeenCalledWith(
+      instantDb,
+      expect.objectContaining({ authId: "auth-1" }),
+      "txt-1",
+      { title: "Renamed Book", subjects: [] },
+      undefined,
+    );
+    expect(result.current.session?.metadataById.get("txt-1")?.title).toBe(
+      "Renamed Book",
+    );
   });
 });

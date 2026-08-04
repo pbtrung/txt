@@ -60,6 +60,7 @@ const metadataById = new Map<string, BookInfo>([
 
 const lock = vi.fn();
 const refresh = vi.fn().mockResolvedValue(undefined);
+const updateBookMetadata = vi.fn().mockResolvedValue(undefined);
 
 function setup(refreshing = false) {
   vi.mocked(VaultContextModule.useVault).mockReturnValue({
@@ -94,6 +95,7 @@ function setup(refreshing = false) {
     removeAccessEntry: vi.fn(),
     addBookmarkEntry: vi.fn(),
     removeBookmarkEntry: vi.fn(),
+    updateBookMetadata,
   });
   return render(
     <MemoryRouter>
@@ -142,6 +144,7 @@ beforeEach(() => {
   });
   vi.mocked(updateUserCreds).mockResolvedValue(undefined);
   vi.mocked(deleteUser).mockResolvedValue(undefined);
+  updateBookMetadata.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -174,7 +177,7 @@ describe("ManageScreen", () => {
     );
   });
 
-  it("switches between Users, Books, and Shares read-only lists", async () => {
+  it("switches between Users, Books, and Shares lists", async () => {
     setup();
     await waitFor(() => expect(screen.getByText("Bob")).toBeInTheDocument());
 
@@ -186,6 +189,40 @@ describe("ManageScreen", () => {
     expect(screen.getByLabelText(/search shares/i)).toBeInTheDocument();
     expect(screen.getByText("Book One")).toBeInTheDocument();
     expect(screen.getByText("Shared with Bob (user-2)")).toBeInTheDocument();
+  });
+
+  it("edits book metadata from the Books toolbar", async () => {
+    setup();
+    await waitFor(() => expect(screen.getByText("Bob")).toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole("button", { name: /^Books/ }));
+    await userEvent.click(screen.getByRole("button", { name: /^Book One/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Edit" }));
+
+    expect(
+      screen.getByRole("dialog", { name: "Edit Book One" }),
+    ).toBeInTheDocument();
+    const title = screen.getByLabelText("Title");
+    await userEvent.clear(title);
+    await userEvent.type(title, "Book Uno");
+    const subjects = screen.getByLabelText("Subjects (comma-separated)");
+    await userEvent.clear(subjects);
+    await userEvent.type(subjects, "A, Edited");
+    await userEvent.type(screen.getByLabelText("Publisher"), "Press");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(updateBookMetadata).toHaveBeenCalledOnce());
+    expect(updateBookMetadata).toHaveBeenCalledWith(
+      "txt-1",
+      {
+        title: "Book Uno",
+        author: "Author One",
+        publisher: "Press",
+        subjects: ["A", "Edited"],
+        description: undefined,
+      },
+      expect.any(Function),
+    );
   });
 
   it("filters the active section with the top search field", async () => {

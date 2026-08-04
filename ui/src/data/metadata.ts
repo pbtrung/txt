@@ -40,7 +40,8 @@ export interface BookInfo {
 
 // opf.py's parse_opf_metadata shape: a plain string, or {text, ...attrs} if
 // the source element had attributes, or a list of either for repeated tags.
-type OpfValue = string | { text: string; [attr: string]: string } | OpfValue[];
+export type OpfValue =
+  string | { text: string; [attr: string]: string } | OpfValue[];
 export type OpfMetadata = Record<string, OpfValue>;
 
 function textOf(value: OpfValue | undefined): string | undefined {

@@ -105,6 +105,7 @@ function mockVault(
     removeAccessEntry: vi.fn(),
     addBookmarkEntry,
     removeBookmarkEntry,
+    updateBookMetadata: vi.fn(),
   });
   return session;
 }
