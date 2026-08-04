@@ -84,15 +84,15 @@ const rules = {
     },
   },
   // Per-account Kyber/X448 keypair (docs/data_model.md's keyStore entity).
-  // view/update let an owner read/rotate their own row; create/delete are
-  // admin-only, since provisioning a keypair (or removing one) is a
-  // provisioning action, never a regular user self-service write.
+  // view lets an owner read their own row; create/update/delete are all
+  // admin-only, since provisioning or rotating a keypair is a provisioning
+  // action, never a regular user self-service write.
   keyStore: {
     bind: [...ADMIN_BIND, ...OWNER_BIND],
     allow: {
       view: "isAdmin || isOwner",
       create: "isAdmin",
-      update: "isAdmin || isOwner",
+      update: "isAdmin",
       delete: "isAdmin",
     },
   },
@@ -100,15 +100,16 @@ const rules = {
   // entity). isOwner is whoever's umk encrypts a given row's content -- the
   // admin can hold several rows this way (credStoreOwner's reverse link is
   // has: "many", instant.schema.ts), all still satisfying isOwner the same
-  // way. Same view/create/update/delete shape as keyStore above: create is
-  // admin-only (provisioning a new row is a provisioning action), update
-  // lets an owner rewrite their own r2_config/display_name.
+  // way. Same view/create/update/delete shape as keyStore above: view lets
+  // an owner read their own row, but create/update/delete are all
+  // admin-only -- rotating r2_config/display_name is a provisioning action,
+  // never a regular user self-service write.
   credStore: {
     bind: [...ADMIN_BIND, ...OWNER_BIND],
     allow: {
       view: "isAdmin || isOwner",
       create: "isAdmin",
-      update: "isAdmin || isOwner",
+      update: "isAdmin",
       delete: "isAdmin",
     },
   },

@@ -20,7 +20,7 @@ There's no app-level profile entity in this design — `$users` (InstantDB's own
 
 - **`$users`** — one row per Firebase-authenticated identity, keyed by email. Carries two custom attributes beyond the built-in ones:
   - **`umk`** — base64, 128 random bytes, generated once per account and wrapped (`crypto.md`'s Blob format) under `user_root_key` — an external secret supplied by `creds.json`, never stored in InstantDB. `umk` is the encryption key for this account's `keyStore.keyStoreKey` and `credStore.credStoreKey` (below) — the intermediate keys that in turn protect `keyStore.privKey` and `credStore.content`, not those fields directly.
-  - **`type`** — `'admin' | 'user'`. `'admin'` can create/update/delete any `txt`/`txtMetadata`/`txtParts`/`txtShares` row and act on any account's data, full stop; `'user'` can only view/create/update their own `keyStore`/`credStore`/`txtAccess`/`txtBookmarks` rows and read (never write) a `txt`/`txtMetadata`/`txtParts` row they have a `txtShares` grant for — see "Permission rules" below for the exact rule per entity. Only ever writable via `instant.perms.ts`'s `$users.update: "isAdmin"` — there's no `isSelf` branch, so a plain user can never touch their own `type` (or anything else on their own `$users` row) through the normal write path, let alone self-promote to admin.
+  - **`type`** — `'admin' | 'user'`. `'admin'` can create/update/delete any `txt`/`txtMetadata`/`txtParts`/`txtShares` row and act on any account's data, full stop; `'user'` can only view its own `keyStore`/`credStore` rows (create/update/delete on those are admin-only — provisioning or rotating key material is a provisioning action, never a regular user self-service write), can view/create/update/delete its own `txtAccess`/`txtBookmarks` rows freely, and can read (never write) a `txt`/`txtMetadata`/`txtParts` row they have a `txtShares` grant for — see "Permission rules" below for the exact rule per entity. Only ever writable via `instant.perms.ts`'s `$users.update: "isAdmin"` — there's no `isSelf` branch, so a plain user can never touch their own `type` (or anything else on their own `$users` row) through the normal write path, let alone self-promote to admin.
 
   **Unverified — confirm before relying on this:** whether `auth.ref('$user.type')` (`instant.perms.ts`'s `isAdmin` check) resolves a plain, non-linked attribute on the current session's own `$users` row the same way `auth.ref`/`data.ref` resolve an attribute reached across a real link.
 
@@ -91,8 +91,8 @@ Three predicates, all evaluated in `instant.perms.ts`:
 
 | Entity         | read                                            | create                 | update                 | delete                 |
 | -------------- | ----------------------------------------------- | ---------------------- | ---------------------- | ---------------------- |
-| `keyStore`     | `isAdmin \|\| isOwner`                          | `isAdmin`              | `isAdmin \|\| isOwner` | `isAdmin`              |
-| `credStore`    | `isAdmin \|\| isOwner`                          | `isAdmin`              | `isAdmin \|\| isOwner` | `isAdmin`              |
+| `keyStore`     | `isAdmin \|\| isOwner`                          | `isAdmin`              | `isAdmin`              | `isAdmin`              |
+| `credStore`    | `isAdmin \|\| isOwner`                          | `isAdmin`              | `isAdmin`              | `isAdmin`              |
 | `txt`          | `isAdmin \|\| isOwner \|\| isSharedReader`      | `isAdmin`              | `isAdmin`              | `isAdmin`              |
 | `txtMetadata`  | `isAdmin \|\| isOwner \|\| isSharedReader`      | `isAdmin`              | `isAdmin`              | `isAdmin`              |
 | `txtParts`     | `isAdmin \|\| isOwner \|\| isSharedReader`      | `isAdmin`              | `isAdmin`              | `isAdmin`              |
