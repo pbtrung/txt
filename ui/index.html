@@ -10,13 +10,11 @@
       change (e.g. widening its allowed tags). script-src/object-src/base-uri
       are the load-bearing directives: same-origin scripts only (plus
       wasm-unsafe-eval, which leancrypto's Emscripten/WASM build needs to
-      instantiate, and blob:, which data/wasmLoader.ts's own fetch+verify+
-      blob-import of sqlcipher.js needs -- see that file's header comment;
+      instantiate, and blob:, which data/leancrypto.ts's own fetch+verify+
+      blob-import of leancrypto.js needs -- see that file's header comment;
       this is a real HTTP response header too (dist/_headers,
-      build-integrity.mjs), not just this meta tag, specifically so it's
-      inherited by data/dbWorker.ts's Worker, where that import actually
-      happens -- a meta-tag CSP alone is never inherited by a Worker), no
-      <object>/<embed>, no <base> tag hijacking relative URLs. connect-src is
+      build-integrity.mjs), not just this meta tag), no <object>/<embed>,
+      no <base> tag hijacking relative URLs. connect-src is
       intentionally unrestricted here -- R2's endpoint is a per-account value
       from the user's own creds file (data/creds.ts), not a fixed host this
       policy could otherwise pin down (InstantDB/Firebase Auth's own hosts

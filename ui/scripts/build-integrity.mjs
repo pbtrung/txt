@@ -29,14 +29,10 @@
 //      origin (confirmed the hard way -- see git history). Safe to allow
 //      broadly: these are public, non-secret build outputs whose integrity
 //      local_index.html itself checks via SLH-DSA/SHA-512, not via keeping
-//      them cross-origin-unreadable; and
-//      sets Cross-Origin-Opener-Policy/Cross-Origin-Embedder-Policy, which
-//      is what makes SharedArrayBuffer available at all for
-//      data/dbWorker.ts's Worker+Atomics bridge -- there's no separate
-//      server config to set these on Cloudflare Pages, only this file. A
-//      deploy-time config file, never itself served as a fetchable path,
-//      so it's written after buildManifest() runs, not before -- same
-//      reason manifest.json/manifest.sig are, below.
+//      them cross-origin-unreadable. A deploy-time config file, never
+//      itself served as a fetchable path, so it's written after
+//      buildManifest() runs, not before -- same reason manifest.json/
+//      manifest.sig are, below.
 //   4. Loads (or, only if absent, generates) an SLH-DSA-SHA2-256f keypair
 //      (@noble/post-quantum) from --build-creds's slhdsa_256f_priv_key,
 //      signs manifest.json's literal bytes with it, and writes the raw
@@ -176,9 +172,9 @@ function buildManifest() {
 // Mirrors dist/index.html's own <meta> CSP (see that file's comment for why
 // every other directive is what it is -- script-src's blob: matters
 // especially here: this is a real HTTP response header, unlike the meta
-// tag, so it's the one that actually gets inherited by data/dbWorker.ts's
-// Worker, where data/wasmLoader.ts's blob-URL import() of sqlcipher.js runs)
-// except connect-src, narrowed here from that meta tag's deliberately-open
+// tag, so it's the one that actually governs data/leancrypto.ts's own
+// blob-URL import() of leancrypto.js) except connect-src, narrowed here
+// from that meta tag's deliberately-open
 // '*' down to 'self' plus the fixed hosts the app actually talks to:
 // InstantDB's API/websocket host, Firebase Auth's Identity Toolkit/
 // token-refresh hosts, and R2's standard custom-domain pattern -- all fixed,
@@ -209,17 +205,11 @@ function distCsp() {
 }
 
 // See this file's own header comment for what each header is for.
-// `credentialless` (not the stricter `require-corp`) for COEP: `require-corp`
-// would also block the app's own cross-origin fetches to InstantDB and to
-// R2, since neither service necessarily sends back a
-// Cross-Origin-Resource-Policy header of its own.
 function writeHeadersFile() {
   const headers =
     `/*\n` +
     `  Content-Security-Policy: ${distCsp()}\n` +
-    `  Access-Control-Allow-Origin: null\n` +
-    `  Cross-Origin-Opener-Policy: same-origin\n` +
-    `  Cross-Origin-Embedder-Policy: credentialless\n`;
+    `  Access-Control-Allow-Origin: null\n`;
   writeFileSync(join(DIST_DIR, "_headers"), headers, "utf8");
 }
 

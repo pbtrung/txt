@@ -17,10 +17,11 @@
 // when that's false and later crashing deep inside signInWithIdToken() with
 // "Cannot read properties of undefined (reading 'updateInPlace')" -- the
 // exact failure this project already hit once running the Reactor under
-// Node (see instantSignIn.ts's header comment). dbWorker.ts and
-// remotePageWorker.ts both call createInstantClient() from inside a real
-// dedicated Worker (global scope is `self`, no `window`), so they hit the
-// same gate for the same reason, even though everything the Reactor
+// Node (see instantSignIn.ts's header comment). This app has no Worker of
+// its own right now, but the shim stays in place in case one is ever
+// reintroduced -- a Worker's global scope is `self`, no `window`, so
+// createInstantClient() called from inside one would hit the exact same
+// gate for the exact same reason, even though everything the Reactor
 // actually *uses* -- WebSocket, IndexedDB, BroadcastChannel,
 // navigator.onLine, addEventListener -- is genuinely available in a
 // dedicated Worker. Confirmed by reading @instantdb/core's own source that

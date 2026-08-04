@@ -60,12 +60,6 @@ export interface ProgressUI {
   advance(step: ProgressStepId): void;
   /** Stops the spinner and shows `message` in an alert-danger-styled box. */
   fail(message: string): void;
-  /** Stops the spinner and shows an alert-success-styled box linking to
-   * `assetBaseUrl` -- used when verification succeeds but this page can't
-   * safely boot the real app itself (window.crossOriginIsolated is false,
-   * e.g. opened via file://content://, see boot.ts). Unlike fail(), this
-   * isn't followed by remove() -- it's the final state for this page. */
-  showVerifiedFallback(assetBaseUrl: string): void;
   /** Removes the whole overlay once the real app has taken over. */
   remove(): void;
 }
@@ -183,39 +177,12 @@ export function mountProgressUI(
     "font-size: 0.875rem; white-space: pre-wrap; text-align: left;";
   error.hidden = true;
 
-  // Matches `alert alert-success mt-4` exactly (Bootstrap's own
-  // alert-success palette/padding/border-radius) -- shown instead of
-  // mounting the real app when verification passes but
-  // window.crossOriginIsolated is false (boot.ts), since there's no
-  // SharedArrayBuffer for dbWorker.ts's Worker bridge to use here. Built
-  // with real DOM elements (not innerHTML string interpolation) even
-  // though assetBaseUrl is a build-time-trusted value, not attacker input.
-  const success = document.createElement("div");
-  success.setAttribute("role", "status");
-  success.style.cssText =
-    "margin-top: 1.5rem; padding: 0.75rem 1.25rem; border-radius: 0.375rem; " +
-    "background-color: #d1e7dd; border: 1px solid #a3cfbb; color: #0f5132; " +
-    "font-size: 0.875rem; text-align: left;";
-  success.hidden = true;
-  const successText = document.createElement("p");
-  successText.style.cssText = "margin: 0 0 0.5rem;";
-  successText.textContent =
-    "Verified successfully. This page can't open the app directly here -- " +
-    "there's no cross-origin isolation available this way (e.g. file:// or content://).";
-  const successLink = document.createElement("a");
-  successLink.style.cssText = `color: ${BRASS}; font-weight: 600;`;
-  successLink.target = "_blank";
-  successLink.rel = "noopener noreferrer";
-  successLink.textContent = "Open the app in a browser";
-  success.append(successText, successLink);
-
-  // trailingSpacer comes after error/success, not before them -- their
-  // whole point is invisible reserved height for centering purposes, and
-  // sitting in between would show up as a large, real gap above whichever
-  // one is shown (both have no layout height at all while hidden, so
-  // trailingSpacer's own position doesn't affect the loading-state total
-  // either way).
-  inner.append(wordmarkWrap, styles, progress, error, success, trailingSpacer);
+  // trailingSpacer comes after error, not before it -- its whole point is
+  // invisible reserved height for centering purposes, and sitting in
+  // between would show up as a large, real gap above it when shown (it has
+  // no layout height at all while hidden, so trailingSpacer's own position
+  // doesn't affect the loading-state total either way).
+  inner.append(wordmarkWrap, styles, progress, error, trailingSpacer);
   root.appendChild(inner);
   container.appendChild(root);
 
@@ -229,11 +196,6 @@ export function mountProgressUI(
       spinner.style.display = "none";
       error.hidden = false;
       error.textContent = message;
-    },
-    showVerifiedFallback(assetBaseUrl) {
-      spinner.style.display = "none";
-      successLink.href = assetBaseUrl;
-      success.hidden = false;
     },
     remove() {
       root.remove();

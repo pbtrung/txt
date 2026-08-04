@@ -1,7 +1,7 @@
 // Verbose diagnostic logging, on by default -- the Unlock screen is where
-// the vault's own log-in steps and every page fetch get logged
-// (state/VaultContext.tsx, data/dbWorker.ts, data/remotePageWorker.ts),
-// useful for debugging a stuck/slow unlock without having to opt in first.
+// the vault's own log-in/library-load steps get logged (state/
+// VaultContext.tsx), useful for debugging a stuck/slow unlock without
+// having to opt in first.
 // Load the app with `?verbose=0` to turn it off for that page load instead.
 //
 // The flag lives in memory only, read once from the URL when this module

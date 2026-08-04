@@ -53,25 +53,6 @@ export default defineConfig({
   define: {
     __LEANCRYPTO_JS_INTEGRITY__: JSON.stringify(leancryptoJsIntegrity()),
   },
-  // remotePageClient.ts's Worker+Atomics bridge needs SharedArrayBuffer,
-  // which browsers only expose to a cross-origin-isolated page (COOP/COEP
-  // response headers). build-integrity.mjs bakes the same pair into
-  // dist/_headers for the real Cloudflare Pages deployment; without this,
-  // `vite dev`/`vite preview` never send them at all and unlock() fails
-  // with "SharedArrayBuffer is not defined" the moment dbWorker.ts's open()
-  // spawns the page worker.
-  server: {
-    headers: {
-      "Cross-Origin-Opener-Policy": "same-origin",
-      "Cross-Origin-Embedder-Policy": "credentialless",
-    },
-  },
-  preview: {
-    headers: {
-      "Cross-Origin-Opener-Policy": "same-origin",
-      "Cross-Origin-Embedder-Policy": "credentialless",
-    },
-  },
   build: {
     outDir: DIST_DIR,
     // outDir resolves outside `root` (repo root vs. ui/) -- Vite's own

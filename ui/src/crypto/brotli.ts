@@ -36,13 +36,13 @@ interface BrotliApi {
 }
 
 async function loadBrotli(): Promise<BrotliApi> {
-  // isWeb(), not isBrowser(): this module is also reached from inside
-  // dbWorker.ts's Worker (library.ts -> metadata.ts -> here), where there's
-  // no `window`/`document` at all, so isBrowser() would wrongly report
-  // false and fall through to the Node-only createRequire()/require()
-  // branch below -- which doesn't exist in a real browser Worker either,
-  // surfacing as "createRequire is not a function" the moment unlock()
-  // first needs to decompress a metadata blob.
+  // isWeb(), not isBrowser(): if this module is ever reached from inside a
+  // Worker again (this app has none right now), there's no `window`/
+  // `document` at all there, so isBrowser() would wrongly report false and
+  // fall through to the Node-only createRequire()/require() branch below --
+  // which doesn't exist in a real browser Worker either, surfacing as
+  // "createRequire is not a function" the moment unlock() first needs to
+  // decompress a metadata blob.
   if (isWeb()) {
     // The browser build's default export is itself a Promise (see
     // node_modules/brotli-wasm/index.d.ts) -- await it, not just the
