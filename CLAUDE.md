@@ -8,7 +8,7 @@ A personal document-storage system. The design (`docs/data_model.md`) stores eve
 
 This repo has three parts: the **TypeScript CLI** (`txt.ts`) for administering an account, the **React viewer** (`ui/`) end users actually unlock/read/write through, and a **Cloudflare Worker** (`worker/`, deployed alongside `ui/`'s static build as one Worker-with-static-assets resource) that's the one server component the whole design needs — it verifies a Firebase ID token and mints a short-lived, prefix-scoped R2 credential for it, so no browser session, admin included, ever holds a static R2 key. `--migrate` imports documents from an external SQLite snapshot with its own schema (see `txt/owner.ts`) into an already-`--init-admin`-provisioned InstantDB account, through the same page-by-page R2 transport `--init-admin` itself uses.
 
-Read `docs/data_model.md` (entities, key hierarchy, commit/read protocols, GC) and `docs/crypto.md` (the AEAD/KDF blob format) before making any design-level change — they're the source of truth, not this file.
+Read `docs/data_model.md` (entities, permission rules), `docs/key_hierarchy.md` (how the encryption keys nest), `docs/protocols.md` (ingest/read/share/GC flows), `docs/r2_credentials.md` (R2 credential broker, account provisioning), `docs/auth.md` (sign-in flow), and `docs/crypto.md` (the AEAD/KDF/KEM blob format) before making any design-level change — they're the source of truth, not this file.
 
 ## Commands
 

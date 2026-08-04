@@ -8,9 +8,11 @@ Every column that holds user content, a wrapped key, or anything else sensitive 
 
 Exact InstantDB API names below (`i.entity`, `unique()`, `.ref()`, permission rule shape) come from InstantDB's own docs (`instantdb.com/docs/modeling-data`, `/docs/permissions`, `/docs/auth/firebase`) — verify against a real `npx instant-cli@latest push schema` before treating any of this as final.
 
+This file covers the entities themselves and who can touch them. See [key_hierarchy.md](key_hierarchy.md) for how their encryption keys nest, [protocols.md](protocols.md) for the read/write/share/garbage-collection flows, [r2_credentials.md](r2_credentials.md) for how R2 access is brokered (and how new accounts are provisioned), [auth.md](auth.md) for the sign-in flow, and [crypto.md](crypto.md) for the underlying AEAD/KDF/KEM primitives.
+
 ## Operating model: admin owns content, users only ever read shared documents
 
-Only an `admin`-typed account ever creates a `txt` row (a document) or its `txtParts` — a `user`-typed account has no ingest path of its own. A `user` account gets read access to a specific document exclusively through a `txtShares` row the admin creates for them (see "Sharing protocol" below); everything else about a `user` account (their own `txtAccess`/`txtBookmarks` rows, their own `keyStore` keypair) exists to support reading documents shared to them, not to own any of their own. This is a real behavioral asymmetry between the two roles, not just a permission-rule detail — worth keeping in mind when reading every entity below.
+Only an `admin`-typed account ever creates a `txt` row (a document) or its `txtParts` — a `user`-typed account has no ingest path of its own. A `user` account gets read access to a specific document exclusively through a `txtShares` row the admin creates for them (see [protocols.md](protocols.md)'s Sharing protocol); everything else about a `user` account (their own `txtAccess`/`txtBookmarks` rows, their own `keyStore` keypair) exists to support reading documents shared to them, not to own any of their own. This is a real behavioral asymmetry between the two roles, not just a permission-rule detail — worth keeping in mind when reading every entity below.
 
 ## Entities
 
@@ -56,9 +58,9 @@ There's no app-level profile entity in this design — `$users` (InstantDB's own
   }
   ```
 
-  A `user`-role row's `r2_config` carries no access keys at all, since a `user` session never holds a static R2 credential of any kind, only a short-lived, prefix-scoped, read-only temporary one minted on demand (see "Temporary, prefix-scoped R2 credentials" below) — a `user` account never writes to R2, and the Worker never grants it a credential that could. The admin's row carries the real, permanent R2 keys — used by CLI tooling (`--migrate`, `--clean-bucket`, `--collect-garbage`), document ingest, and the planned admin-session frontend GC counterpart (see "Garbage collection" below), which deliberately use the admin's real credential directly rather than a temporary one.
+  A `user`-role row's `r2_config` carries no access keys at all, since a `user` session never holds a static R2 credential of any kind, only a short-lived, prefix-scoped, read-only temporary one minted on demand (see [r2_credentials.md](r2_credentials.md)) — a `user` account never writes to R2, and the Worker never grants it a credential that could. The admin's row carries the real, permanent R2 keys — used by CLI tooling (`--migrate`, `--clean-bucket`, `--collect-garbage`), document ingest, and the planned admin-session frontend GC counterpart (see [protocols.md](protocols.md)'s Garbage collection), which deliberately use the admin's real credential directly rather than a temporary one.
 
-- **`txt`** — one row per document. Fields: `owner` (link to `$users` — always the admin account today, per the operating model above), `txtKey` (128 random bytes, wrapped under `owner`'s `umk`), and `prefix` — this document's own R2 prefix: a Crockford-base32-lowercase encoding of 32 random bytes, generated once when the document is created and wrapped under this row's own `txtKey`. `prefix` is what actually addresses this document's content in R2 (see `txtParts` below and "Temporary, prefix-scoped R2 credentials"): unlike a value derived from `auth.id`, it's random and only ever recoverable by decrypting it under `txtKey` — so knowing which account owns a document, or even that account's `auth.id`, gives an attacker no way to compute where that document's parts live in the bucket. `txt` itself carries no name/metadata/read-position — see `txtMetadata` and `txtAccess` below.
+- **`txt`** — one row per document. Fields: `owner` (link to `$users` — always the admin account today, per the operating model above), `txtKey` (128 random bytes, wrapped under `owner`'s `umk`), and `prefix` — this document's own R2 prefix: a Crockford-base32-lowercase encoding of 32 random bytes, generated once when the document is created and wrapped under this row's own `txtKey`. `prefix` is what actually addresses this document's content in R2 (see `txtParts` below and [r2_credentials.md](r2_credentials.md)): unlike a value derived from `auth.id`, it's random and only ever recoverable by decrypting it under `txtKey` — so knowing which account owns a document, or even that account's `auth.id`, gives an attacker no way to compute where that document's parts live in the bucket. `txt` itself carries no name/metadata/read-position — see `txtMetadata` and `txtAccess` below.
 
 - **`txtMetadata`** — one row per document (`txt`, unique link to `txt`). Fields: `owner` (link to `$users`, same account as `txt.owner` — kept as its own single-hop link for permission rules rather than traversing `txt.owner`), and `content` — a single encrypted JSON blob (wrapped directly under this document's own `txtKey`, brotli-compressed):
 
@@ -73,7 +75,7 @@ There's no app-level profile entity in this design — `$users` (InstantDB's own
 
 - **`txtParts`** — a document's content, chunked into ordered parts. Fields: `txt` (link to `txt`), `partNum`, `txtPartKey` (128 random bytes, wrapped under this document's own `txtKey`), `path` — wrapped under this row's own `txtPartKey`, not `txtKey` directly — Crockford-base32-lowercase encoding of 32 random bytes, and a synthetic `partKey = "${txtId}:${partNum}"` (`unique().indexed()` — see "The composite-uniqueness problem" below). The actual part content is **not** in InstantDB: `path`, once decrypted, is a fresh random key `raw_key`, and the real R2 object lives at `raw_path = "${prefix}/${raw_key}"`, where `prefix` is this document's own `txt` row's `prefix` field, decrypted directly under `txtKey` (unaffected by any one part's own `txtPartKey`). The R2 object body is `Blob.encrypt(txtPartKey, brotli(cleaned part text))` — the same `txtPartKey` that wraps `path`, a second independent application of it. Giving every part its own key (rather than reusing the document's `txtKey` directly for `path`/the object body) means a single part's `txtPartKey` being compromised exposes only that one part — never another part of the same document, and never the document-level `prefix`, both of which stay under `txtKey` alone.
 
-- **`txtShares`** — one row per (document, recipient) share grant. Fields: `txt` (link to `txt`), `fromUser` (link to `$users` — always the admin, since only the admin can share), `toUser` (link to `$users`, the recipient), `saltKemCt` (`salt` (64 random bytes) `|| lc_kyber_1024_x448` KEM ciphertext (1624 bytes), raw/public), `txtKey` (the same `txt.txtKey` bytes, rewrapped for this recipient via `HKDF-SHA3-512(IKM=ss, salt) -> 128-byte OKM` — see `crypto.md`'s Encapsulate/Decapsulate — where `ss` is the raw, uncombined shared secret from `lc_kyber_1024_x448_enc`/`_dec`, never itself stored), and a synthetic `shareKey = "${txtId}:${fromUserId}:${toUserId}"` (`unique().indexed()`). A recipient's read access to a `txt`/`txtMetadata`/`txtParts` row is gated on the existence of a `txtShares` row with `toUser.id == auth.id` for that `txt` — see "Permission rules" and "Sharing protocol" below for the exact predicate and the actual Encapsulate/Decapsulate flow, respectively.
+- **`txtShares`** — one row per (document, recipient) share grant. Fields: `txt` (link to `txt`), `fromUser` (link to `$users` — always the admin, since only the admin can share), `toUser` (link to `$users`, the recipient), `saltKemCt` (`salt` (64 random bytes) `|| lc_kyber_1024_x448` KEM ciphertext (1624 bytes), raw/public), `txtKey` (the same `txt.txtKey` bytes, rewrapped for this recipient via `HKDF-SHA3-512(IKM=ss, salt) -> 128-byte OKM` — see `crypto.md`'s Encapsulate/Decapsulate — where `ss` is the raw, uncombined shared secret from `lc_kyber_1024_x448_enc`/`_dec`, never itself stored), and a synthetic `shareKey = "${txtId}:${fromUserId}:${toUserId}"` (`unique().indexed()`). A recipient's read access to a `txt`/`txtMetadata`/`txtParts` row is gated on the existence of a `txtShares` row with `toUser.id == auth.id` for that `txt` — see "Permission rules" below for the exact predicate and [protocols.md](protocols.md)'s Sharing protocol for the actual Encapsulate/Decapsulate flow.
 
 - **`txtAccess`** — one row per user (`owner`, unique link to `$users`), holding that user's read position across every document they've opened — owner or share recipient alike. `txtAccessKey` (128 random bytes, wrapped under `owner`'s `umk`) protects `content`, a single encrypted JSON blob keyed by `txt_id`: `{"<txt_id>": {"last_part_num": int, "last_accessed": int}, ...}`, capped at 10 `txt_id` entries (client evicts the entry with the oldest `last_accessed` before exceeding the cap — no DB-level enforcement).
 
@@ -102,6 +104,11 @@ The asymmetry this table encodes is the whole point of the operating model: once
 
 `txtShares.read` deliberately includes the recipient (`auth.id in data.ref('toUser.id')`) — without it, a recipient could never discover which documents have been shared to them, or fetch the `saltKemCt`/`txtKey` blob they need to Decapsulate. Every write on `txtShares` stays admin-only, matching "only the admin can share" above.
 
+### Design notes
+
+- **Isolation depends entirely on permission rules, not physical separation** — a rules bug is a cross-user data leak across the whole app, not contained to a single account.
+- **Reading a document and tracking your own progress through it are deliberately two different permissions.** A share recipient's `isSharedReader` grant covers `txt`/`txtMetadata`/`txtParts` read-only, full stop — but their `txtAccess`/`txtBookmarks` rows are gated on `isOwner` (of that row, not the document), so they can freely record their own read position and bookmarks for a shared document without ever needing write access to the document itself.
+
 ## The composite-uniqueness problem (guarded insert)
 
 InstantDB's `unique()` constraint is per-attribute, whole-namespace — it cannot express "unique per (a, b, c)" directly. Two entities above need a composite key for exactly this reason, and each follows the same fix: compute a synthetic key client-side and mark it `unique().indexed()`, so a concurrent duplicate insert fails outright rather than needing a hand-rolled existence check first.
@@ -112,130 +119,3 @@ InstantDB's `unique()` constraint is per-attribute, whole-namespace — it canno
 | `txtShares` | `shareKey = "${txtId}:${fromUserId}:${toUserId}"` | double-sharing the same document to the same recipient |
 
 Every synthetic key is deterministic and plaintext by design (it only needs to be unique and computable, never secret) — unlike the values it helps guard (`txtParts.path`, `txtShares.txtKey`/`saltKemCt`), which are wrapped precisely because they're either a real R2 address or real key material. `txtMetadata` and `txtAccess` don't need one: `txtMetadata` is one row per `txt` (a plain unique link), and `txtAccess` is one row per user (`unique()` on the link to `$users` alone).
-
-## Key hierarchy
-
-```
-user_root_key
-    (per-account config secret, >=256 random bytes, base64; not
-    stored in InstantDB)
-    |  IKM for HKDF, wraps/unwraps --
-    v
-$users.umk
-    (128 random bytes, generated once per account)
-    |  used directly as IKM for HKDF, wraps/unwraps --
-    +--> keyStore.keyStoreKey   (per user, 128 random bytes)
-    |        |  used directly as IKM --
-    |        +--> keyStore.privKey
-    |                 (lc_kyber_1024_x448 composite private key, 3224
-    |                 raw bytes -- pubKey stored raw/public, not wrapped)
-    |
-    +--> credStore.credStoreKey   (128 random bytes; one per user-role
-    |        |                     account, but shared across every
-    |        |                     row the admin owns)
-    |        |  used directly as IKM --
-    |        +--> credStore.content   (r2_config + display_name, per row)
-    |
-    +--> txt.txtKey            (per document, 128 random bytes, owner-only)
-    |        |  used directly as IKM --
-    |        +--> txt.prefix           (this document's own R2 prefix)
-    |        +--> txtMetadata.content  (name/opf metadata, no intermediate key)
-    |        |
-    |        +--> txtParts.txtPartKey   (per part, 128 random bytes)
-    |                 |  used directly as IKM --
-    |                 +--> txtParts.path        (wraps the R2 raw_key)
-    |                 +--> txtParts R2 object body (independent second wrap)
-    |
-    +--> txtAccess.txtAccessKey   (per user, 128 random bytes)
-    |        |  used directly as IKM --
-    |        +--> txtAccess.content   (read position, keyed by txt_id)
-    |
-    +--> txtBookmarks.txtBookmarkKey   (per user, 128 random bytes)
-             |  used directly as IKM --
-             +--> txtBookmarks.content   (bookmarks, keyed by txt_id)
-
-txt.txtKey, in parallel, is also wrapped a second way -- not under
-umk -- once per share recipient:
-
-    admin Encapsulates (crypto.md) against recipient's keyStore.pubKey
-        |
-        v
-    txtShares.{saltKemCt, txtKey}
-        (txtKey here is the same bytes as txt.txtKey, wrapped via
-        HKDF-SHA3-512(IKM=ss, salt) -> 128-byte OKM instead of umk)
-        |
-        |  recipient Decapsulates using their own keyStore.privKey
-        v
-    (recipient now holds txt.txtKey, unwrapped, without ever
-    learning the admin's umk)
-```
-
-Every wrapped-key and content blob uses the blob format, AEAD, and KDF mechanics from [crypto.md](crypto.md) uniformly. `txtShares.txtKey` is the one value in this hierarchy wrapped via Encapsulate/Decapsulate (asymmetric) instead of a plain Encrypt/Decrypt under a key both sides already hold.
-
-## Ingest / write path
-
-There is no MVCC/version CAS: a `txtParts` row is written exactly once and never revised in place, so there's no concurrent-writer conflict to resolve on write.
-
-1. (Admin only.) Clean and split the source text into ordered parts (target size per `constants.PART_TARGET`). For a brand-new document, generate its `txtKey` and its `prefix = crockford_base32_lowercase(32 random bytes)` at this point too — both are generated once per document and reused for every part/update. For each part, also generate a fresh `txtPartKey` (128 random bytes).
-2. For each part: brotli-compress the cleaned text, encrypt it under that part's own `txtPartKey` (`crypto.md`'s Encrypt), and `PUT` the resulting ciphertext to R2 at `"${prefix}/${raw_key}"` for a freshly generated `raw_key = crockford_base32_lowercase(32 random bytes)`, using the admin's own real, static read-write R2 credential (from the admin's own `credStore` row) — never a Worker-minted temporary one, since `worker/r2Creds.ts` only ever mints read-only credentials (see "Temporary, prefix-scoped R2 credentials" below).
-3. Encrypt `raw_key` alone under that same `txtPartKey` and base64-encode the result — this becomes the new `txtParts` row's `path` value.
-4. `db.transact([...])`: for a brand-new document, create the `txt` row (`prefix` from step 1, wrapped under `txtKey`) and its `txtMetadata` row (`content` — name plus any OPF sidecar fields — wrapped directly under `txtKey`) in the same transaction; either way, create the new `txtParts` row (`partKey` from the table above, `txtPartKey` from step 1 wrapped under `txtKey`, `path` from step 3, linked to `txt`).
-
-**The one failure mode:** step 2 (the R2 `PUT`) and step 4 (the InstantDB `transact`) are two separate operations. A crash between them leaves a real R2 object with no `txtParts` row pointing at it. Garbage collection's orphan sweep (below) cleans this up.
-
-## Read path
-
-Query `txtParts` for `txt = target, partNum = N` (or a range) — the result already includes `txtPartKey` and `path`. Decrypt the target `txt` row's `prefix` directly under `txtKey`, decrypt this part's `txtPartKey` under that same `txtKey`, then decrypt `path` under that `txtPartKey` to recover `raw_key`; reassemble `raw_path = "${prefix}/${raw_key}"`, `GET` that object from R2, then decrypt the object body under the same `txtPartKey` and brotli-decompress. Two hops: one InstantDB query, one R2 fetch — same shape whether the reader owns the document or is reading it via a `txtShares` grant; only how they obtained `txtKey` (the root of this part's own key chain) differs (own `umk` vs. Decapsulate).
-
-## Sharing protocol
-
-Only the admin ever grants a share (`fromUser` is always the admin's own `$users` row):
-
-1. Admin looks up the recipient's `keyStore.pubKey` (raw, not sensitive).
-2. Admin generates a random 64-byte `salt` and Encapsulates against that `pubKey` (`crypto.md`'s Encapsulate) — this yields a KEM ciphertext `ct` and a shared secret `ss`, and wraps the document's already-unwrapped `txtKey` using `HKDF-SHA3-512(IKM=ss, salt)` reusing that same `salt`, producing a standard blob.
-3. Admin writes the new `txtShares` row: `shareKey`, `txt` (link), `fromUser` = admin, `toUser` = recipient, `saltKemCt = salt || ct`, `txtKey` = the blob from step 2.
-4. The recipient's own read path (above) tries their own-owned `txt` lookup first and falls back to Decapsulating a `txtShares` row scoped by `toUser.id == auth.id` when the document isn't their own — same pattern as the admin's own lookup, scoped by `owner.id` instead.
-
-Revoking a share is a straight delete of the `txtShares` row; nothing else needs to change. `txtAccess`/`txtBookmarks` entries are never wrapped under `txtKey` (they're wrapped under the reading account's own `txtAccessKey`/`txtBookmarkKey`, unaffected by the revoke either way), so any entry they hold for that `txt_id` simply becomes a reference to a document that account can no longer actually open — nothing to scrub. Permission rules (below) are what actually stop the read access, immediately, on delete.
-
-## Temporary, prefix-scoped R2 credentials
-
-This endpoint is for the frontend (`ui/`) only, and it never mints a write-capable credential for anyone — the admin included. No account gets a static R2 access key in the browser: the admin's own `read_write_access_key_id`/`secret` is the only permanent R2 credential in this design, and it lives only as a Cloudflare Worker secret (`worker/r2Creds.ts`'s `env.READ_WRITE_ACCESS_KEY_ID`/`SECRET`), never in any client session. Every frontend read goes through a short-lived, prefix-scoped, **read-only** temporary credential instead — writing (ingest, above) uses the admin's own real, static credential directly, never this Worker.
-
-Every document's `raw_path` values live under its own `txt.prefix` — random, wrapped under that document's `txtKey`, and recoverable only by whoever can unwrap `txtKey` (the owner, or a share recipient via Decapsulate). This means a temporary credential can be scoped to exactly one document at a time, not to everything a given account can see: a `user` reading a shared document only ever needs (and only ever requests) a credential scoped to that one document's own `prefix`.
-
-1. The client calls Firebase's `getIdToken()` and sends `{idToken, prefix, bucket, endpoint}` to the Worker's `POST /api/r2-creds`, where `prefix` is a document's own decrypted `txt.prefix`.
-2. The Worker verifies the token itself — RS256 signature against Firebase's own public JWKS via `jose`, issuer/audience pinned to a Worker-configured Firebase project ID never accepted from the request itself.
-3. **The Worker mints `scope: "object-read"` unconditionally** — for any verified identity (admin or `user`-role alike), on any requested `prefix`. It does not cross-check the requested `prefix` against the token's own subject either; a `prefix` is trusted as given once the token itself is proven real, the same way the client already trusts its own decrypted `txt.prefix`. That's a much smaller concession than it would be for a write-capable credential: the worst a forged `prefix` buys a verified caller is read access to some other document's content, never the ability to modify or delete it.
-4. The Worker mints the temporary credential via R2's Temporary Credentials local-signing path (see the current `worker/r2Creds.ts` implementation notes for the exact JWT claim shapes) using that read-only `scope`, and returns `{accessKeyId, secretAccessKey, sessionToken, expiresAtMs}`.
-5. The client re-requests a fresh temporary credential before `expiresAtMs`; no long-lived secret is ever cached client-side.
-
-This is the one place this design needs a server component — every other unlock/read/write path is a direct client-to-InstantDB or client-to-R2 call (ingest included: the admin's own real credential, used directly, not brokered through this Worker). The Worker only ever verifies identity and brokers scoped, time-limited, read-only credentials; it never sees page content or any account's `umk`/`txtKey`, and it never grants write access to anyone.
-
-**Planned exception:** a frontend counterpart to `txt.ts --collect-garbage` is intended to use the admin's real, decrypted `r2_config` directly in an admin-logged-in browser session, not a temporary credential — the admin's own `r2_config` is already recoverable client-side regardless (decrypt `umk` -> the admin's own `credStore` row), so this doesn't expose anything not already reachable.
-
-### Provisioning a `user` account
-
-Creating a `user` account is an admin-side action: the admin generates that user's `user_root_key` (delivered to them out-of-band via their own `creds.json`), generates their `umk` and wraps it under that `user_root_key`, generates their `keyStore` keypair (`keyStoreKey` wrapped under their `umk`, `privKey` wrapped under `keyStoreKey`), and writes their `credStore` row (`credStoreKey` wrapped under their `umk`, `r2_config` with no access keys plus `display_name` wrapped under `credStoreKey`). There is no per-user database to initialize and no initial page upload — a fresh `user` account owns no documents at all until the admin shares one with them. From that point on, the user reads shared documents entirely through the temporary-credential flow above; the admin never needs to touch their account again for ordinary use.
-
-## Garbage collection
-
-Only the admin ever writes to R2, but there is no single admin-wide prefix to sweep anymore — every document has its own `prefix`, so both sweeps below iterate over every `txt` row (the admin can enumerate all of them; a `user` account never needs to run GC at all, since it never writes) rather than listing one shared namespace.
-
-1. **Document/part deletion.** Deleting a `txt` row must delete every R2 object its `txtParts` rows point at — but InstantDB's own cascade-delete (`onDelete: "cascade"` on the `txt` link) will remove those `txtParts` rows the moment the `txt` row itself is deleted, which would destroy the only record of which `raw_key`s need deleting. Order matters: first decrypt the document's own `prefix` directly under `txtKey`, then each `txtParts` row's own `txtPartKey` (under that same `txtKey`) and its `path` (under that row's `txtPartKey`) to recover every `raw_key`, delete those R2 objects, and only then delete the `txt` row (letting cascade clean up `txtParts`/`txtMetadata`/`txtShares` for free). A crash between the R2 deletes and the `txt` row delete leaves a real document with dangling, already-gone R2 objects — recoverable by re-running the same delete (idempotent: deleting an already-gone R2 object is a no-op).
-2. **Orphan sweep**, for the ingest path's one failure mode (above): for each `txt` row, decrypt its `prefix`, list every R2 object under that one prefix, diff against that document's own `txtParts` rows' decrypted `raw_key`s (each recovered via that row's own `txtPartKey`, unwrapped under `txtKey`), and delete whatever's left over after a grace period long enough to outlast any in-flight ingest's PUT-to-transact gap. Structurally the same shape as `txt.ts --clean-bucket`, just per-document instead of over one flat namespace.
-
-`txt.ts --migrate` implements a version of sweep 2 scoped to its own target account, run at the start of every invocation (no grace period needed, since it's the same operator re-running the same command, not a background job racing an in-flight ingest): for each document already migrated, decrypt its `prefix`, list R2 objects under it, diff against that document's `txtParts` rows' decrypted `raw_key`s (via each row's own `txtPartKey`, as above), and delete leftovers from a previous crashed run. This is what makes `--migrate` resumable without duplicating documents: each migrated document keeps its source `txt_id` as its target `txt_id`, so a re-run only needs `SELECT id FROM txt` (source-side schema, see `txt/owner.ts`) against the target to know which source documents already made it across.
-
-**Planned: a frontend counterpart.** The same two sweeps, triggerable from an admin-logged-in browser session instead of the CLI tool, using the real client SDK and the admin's own decrypted `r2_config` directly rather than a Worker-minted temporary credential (see "Temporary, prefix-scoped R2 credentials" above). Not yet implemented.
-
-## Auth
-
-Every unlock requires a live Firebase sign-in (`getIdToken()` -> `db.auth.signInWithIdToken()`), since InstantDB resolves identity from the token's email claim at session-creation time, not from a long-lived static credential. After sign-in, the client reads its own `$users.umk`, unwraps it under `user_root_key`, then reads its own `keyStore`/`credStore`/`txtAccess`/`txtBookmarks` rows as needed. A `user`-role session additionally depends on the temporary-credential intermediary (above) for any R2 access at all — always read-only, since it never owns content and the Worker never grants it anything more.
-
-## Design Notes
-
-- **Isolation depends entirely on permission rules, not physical separation** — a rules bug is a cross-user data leak across the whole app, not contained to a single account.
-- **Two independent boundaries limit what a compromised or malicious `user` session can do, not just one.** `worker/r2Creds.ts` never mints write-capable credentials for anyone, so a share recipient can't overwrite or delete a document's parts no matter which `prefix` it names. Per-document R2 prefixes are the second, narrower boundary on top of that: even the _read_ access a temporary credential grants is scoped to one document's own `prefix`, never the admin's whole corpus.
-- **Every part's own `txtPartKey`, layered under the document's `txtKey`, bounds a compromised part to that one part.** `txt.prefix` (document-level) is wrapped directly under `txtKey`; a part's `path` and its R2 object body are both wrapped under that row's own `txtPartKey` instead — two independent applications of `txtPartKey`, one protecting the R2 _address_, one the part's _content_. Compromising a single part's `txtPartKey` never exposes another part of the same document, nor the document-level `prefix`, both of which stay under `txtKey` alone. Compromising R2 list/read access alone (without any `txtPartKey`) yields neither the mapping from part to object nor the ability to decrypt any object it did manage to guess.
-- **Reading a document and tracking your own progress through it are deliberately two different permissions.** A share recipient's `isSharedReader` grant covers `txt`/`txtMetadata`/`txtParts` read-only, full stop — but their `txtAccess`/`txtBookmarks` rows are gated on `isOwner` (of that row, not the document), so they can freely record their own read position and bookmarks for a shared document without ever needing write access to the document itself.

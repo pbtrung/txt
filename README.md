@@ -2,7 +2,7 @@
 
 A personal document-storage system: an encrypted, per-user SQLite (SQLCipher) database, paged remotely into Cloudflare R2 a page at a time, with [InstantDB](https://instantdb.com) holding only identity ([Firebase Auth](https://firebase.google.com/docs/auth)) and opaque, client-encrypted page pointers — never plaintext content or unwrapped keys. This repo has three parts: the TypeScript admin CLI (`txt.ts`) for provisioning and maintaining an account, the React viewer (`ui/`) end users actually unlock/read/write through, and a Cloudflare Worker (`worker/`) that mints short-lived R2 credentials so no browser session — admin included — ever holds a static R2 key.
 
-See [`docs/data_model.md`](docs/data_model.md) for the full design (entities, key hierarchy, commit/read protocols, garbage collection) and [`docs/crypto.md`](docs/crypto.md) for the encryption format.
+See [`docs/data_model.md`](docs/data_model.md) for the entities and permission rules, [`docs/key_hierarchy.md`](docs/key_hierarchy.md) for how the encryption keys nest, [`docs/protocols.md`](docs/protocols.md) for the ingest/read/share/garbage-collection flows, [`docs/r2_credentials.md`](docs/r2_credentials.md) for the R2 credential broker and account provisioning, [`docs/auth.md`](docs/auth.md) for the sign-in flow, and [`docs/crypto.md`](docs/crypto.md) for the encryption format.
 
 ## Main features
 
