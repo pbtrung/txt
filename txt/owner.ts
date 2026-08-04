@@ -140,8 +140,8 @@ export class TxtOwner {
   // (this tool's --migrate) never needs to decompress it itself. Fetches
   // R2_BATCH_CONCURRENCY parts at a time rather than one at a time (slow for
   // a document with many parts) or all at once (risks exhausting
-  // connections/rate limits) -- same bounded-parallelism pattern as
-  // RemotePageStore's own R2 round-trips. Promise.all preserves each batch's
+  // connections/rate limits) -- same bounded-parallelism pattern migrate.ts's
+  // own uploadChunk uses for the target side. Promise.all preserves each batch's
   // input order, so the result stays in part_num order despite completing
   // out of order. fromPartNum (1-based, inclusive) lets a caller resume a
   // partially-migrated document without re-fetching/re-decrypting parts it

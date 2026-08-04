@@ -1,9 +1,5 @@
 export interface Logger {
-  // Whether debug() actually prints anything -- lazyPageClient.ts's
-  // startLazyPageWorker reads this to tell its own worker_threads Worker
-  // (which can't share this Logger object across threads, only
-  // structured-cloneable data) whether to build its own verbose or quiet
-  // ConsoleLogger.
+  // Whether debug() actually prints anything.
   readonly verbose: boolean;
   debug(msg: string): void;
   info(msg: string): void;
