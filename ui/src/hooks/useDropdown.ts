@@ -7,7 +7,7 @@
 // having their owning screen call one's `close()` from the other's toggle,
 // not by sharing state here.
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export interface DropdownControls {
   open: boolean;
@@ -18,32 +18,52 @@ export interface DropdownControls {
   ref: React.RefObject<HTMLDivElement | null>;
 }
 
+function onDocument<K extends keyof DocumentEventMap>(
+  type: K,
+  handler: (event: DocumentEventMap[K]) => void,
+): () => void {
+  document.addEventListener(type, handler);
+  return () => document.removeEventListener(type, handler);
+}
+
+function containsTarget(
+  ref: React.RefObject<HTMLDivElement | null>,
+  target: EventTarget | null,
+): boolean {
+  return target instanceof Node && Boolean(ref.current?.contains(target));
+}
+
+function useDropdownDismissal(
+  open: boolean,
+  ref: React.RefObject<HTMLDivElement | null>,
+  close: () => void,
+): void {
+  useEffect(() => {
+    if (!open) return;
+    const offPointer = onDocument("mousedown", (event) => {
+      if (!containsTarget(ref, event.target)) close();
+    });
+    const offKey = onDocument("keydown", (event) => {
+      if (event.key === "Escape") close();
+    });
+    return () => {
+      offPointer();
+      offKey();
+    };
+  }, [open, ref, close]);
+}
+
 export function useDropdown(): DropdownControls {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    function handlePointerDown(event: MouseEvent) {
-      if (ref.current && !ref.current.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    }
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") setOpen(false);
-    }
-    document.addEventListener("mousedown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [open]);
+  const close = useCallback(() => setOpen(false), []);
+  const toggle = useCallback(() => setOpen((o) => !o), []);
+  useDropdownDismissal(open, ref, close);
 
   return {
     open,
-    toggle: () => setOpen((o) => !o),
-    close: () => setOpen(false),
+    toggle,
+    close,
     ref,
   };
 }
