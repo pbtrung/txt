@@ -1,0 +1,3 @@
+# Auth
+
+Every unlock requires a live Firebase sign-in (`getIdToken()` -> `db.auth.signInWithIdToken()`), since InstantDB resolves identity from the token's email claim at session-creation time, not from a long-lived static credential. After sign-in, the client reads its own `$users.umk`, unwraps it under `user_root_key`, then reads its own `keyStore`/`credStore`/`txtAccess`/`txtBookmarks` rows (see [data_model.md](data_model.md)) as needed. A `user`-role session additionally depends on the temporary-credential intermediary (see [r2_credentials.md](r2_credentials.md)) for any R2 access at all — always read-only, since it never owns content and the Worker never grants it anything more.

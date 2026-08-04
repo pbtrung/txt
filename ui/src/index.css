@@ -1,0 +1,239 @@
+html,
+body,
+#root {
+  height: 100%;
+}
+
+/* Reader screen's reading column (title + body text): Literata, a serif
+   typeface designed for long-form reading, in place of the default
+   sans-serif system-font stack used everywhere else in the app. */
+.reader-font {
+  font-family: "Literata", serif;
+}
+
+/* Reader screen: a line's bookmark toggle only appears on hover/focus of
+   that line, unless the line is already bookmarked (then it stays visible
+   as a status indicator, not just a hover affordance). font-size: inherit
+   overrides .btn-sm's own --bs-btn-font-size (a fixed 0.875rem, relative to
+   the root font size, not this line's) so the icon glyph -- sized like any
+   text glyph, off the button's font-size -- scales with the font-size
+   dropdown instead of staying a constant size regardless of it. */
+.reader-line .bookmark-toggle {
+  opacity: 0;
+  transition: opacity 0.1s ease-in-out;
+  font-size: inherit;
+}
+.reader-line:hover .bookmark-toggle,
+.reader-line .bookmark-toggle:focus-visible,
+.reader-line .bookmark-toggle.is-bookmarked {
+  opacity: 1;
+}
+
+/* Library and Reader screens: full width up through lg, capped to 60% (and
+   centered) on larger screens so content doesn't stretch edge-to-edge on a
+   wide monitor -- but stays full-bleed on mobile/tablet, where every pixel
+   of a narrow viewport matters more than reading-width comfort. */
+.shell-60 {
+  width: 100%;
+}
+@media (min-width: 992px) {
+  .shell-60 {
+    max-width: 60%;
+    margin-inline: auto;
+  }
+}
+
+/* Library screen's left nav: only ever rendered at lg+ (below that, its
+   content instead shows inside the wordmark's dropdown -- see
+   .app-dropdown-menu below), where it's the fixed-width sidebar beside the
+   book list. display:flex itself comes from the d-lg-flex utility on the
+   element (needs Bootstrap's !important to win over d-none below lg, which
+   a plain rule here couldn't); flex-direction still needs to be supplied,
+   since no Bootstrap utility sets both at once. Together they let
+   LibraryNavContent's own account-footer (display name + Lock) stick to
+   the bottom via flex-grow-1 on the nav-items list above it. */
+.library-nav {
+  width: 16rem;
+  flex-shrink: 0;
+  flex-direction: column;
+}
+
+/* Dropdowns anchored to a button (Reader's Info/Bookmarks, Library's
+   wordmark-as-drawer-toggle below lg): Bootstrap's .dropdown-menu ships with
+   `position: absolute` unconditionally, but its actual placement (`top:
+   100%`, and `right: 0` for .dropdown-menu-end) only applies via a
+   `[data-bs-popper]` attribute that its JS/Popper sets at runtime -- this
+   project loads only Bootstrap's CSS, never its JS, so that attribute is
+   never present and those rules never fire, leaving the menu with no real
+   offset at all (effectively stuck at its in-flow position instead of
+   floating below the button). This supplies that placement by hand. */
+.app-dropdown-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 0.5rem;
+}
+
+/* Reader's Bookmarks dropdown lives in the bottom bar (anchored near the
+   bottom of the screen), so it opens upward instead -- same idea as
+   Bootstrap's own .dropup, which is equally inert here without its JS. */
+.app-dropdown-menu-up {
+  top: auto;
+  bottom: 100%;
+  margin-top: 0;
+  margin-bottom: 0.5rem;
+}
+
+/* Library's wordmark-as-drawer-toggle sits at the *left* edge of the top
+   bar, unlike Reader's Info/Bookmarks buttons (right edge) that
+   .app-dropdown-menu's default right:0 was written for -- anchoring a 16rem
+   menu's right edge to a button that's already at the left edge pushes most
+   of it off-screen to the left. This flips it to grow rightward instead,
+   staying inside the viewport. */
+.app-dropdown-menu-start {
+  right: auto;
+  left: 0;
+}
+
+/* Library top bar's search field: full width of its cell below lg (no
+   persistent sidebar there to leave room for). At lg+ it's capped to half
+   the cell's width, but only once the viewport is wide enough for that
+   half to comfortably fit the "Search library" placeholder (taken as
+   >=13rem) -- below that it stays full width instead, rather than
+   cramping the placeholder into a box too narrow to show it. The
+   threshold is a fixed viewport width rather than a percentage because,
+   at lg+, the cell's own width is a fixed function of the viewport: shell-60
+   caps the shell to 60% of the viewport, minus the 16rem sidebar and this
+   cell's own px-3 (2rem total) padding. Solving
+   0.5 * (0.6*VW - 16rem - 2rem) >= 13rem for VW gives ~1173px (at the
+   standard 16px root font size); rounded up a little for margin. */
+.search-bar-width {
+  width: 100%;
+}
+@media (min-width: 1180px) {
+  .search-bar-width {
+    width: 50%;
+  }
+}
+
+/* Any .form-control/.form-select that should match the brass theme instead
+   of Bootstrap's default gray/blue -- Library's search input, Reader's
+   font-size <select> and part-number <input>. Same border-color and
+   border-width as a bordered button (DropdownToggleButton's
+   `border-primary`/var(--bs-primary), --bs-border-width, 1px) at rest --
+   consistent with every other bordered control in the app -- then brighter
+   still on focus (see .themed-control:focus below) so focusing one is
+   clearly distinguishable from just sitting beside a button. */
+.themed-control {
+  border-width: var(--bs-border-width);
+  border-color: var(--bs-primary);
+}
+
+/* Bootstrap's .form-control:focus/.form-select:focus both hardcode the same
+   blue border-color and glow (border-color: #86b7fe; box-shadow: 0 0 0
+   0.25rem rgba(13,110,253,.25)) -- neither reads var(--bs-primary), so
+   focusing one of these would otherwise flip it to stock blue regardless of
+   the brass theme. Overridden to a brighter brass than the resting border
+   (--brass-focus, not --bs-primary -- see theme.css) with a matching glow,
+   narrower than Bootstrap's default (0.15rem, not 0.25rem) so it doesn't
+   read as a thick border the way the default does. */
+.themed-control:focus {
+  border-color: var(--brass-focus);
+  box-shadow: 0 0 0 0.15rem rgba(var(--brass-focus-rgb), 0.25);
+}
+
+/* Bootstrap's .form-control:disabled only mutes the background
+   (background-color: var(--bs-secondary-bg)) and explicitly pins
+   opacity: 1 -- so this border-color (var(--bs-primary), full-strength)
+   would otherwise stay just as bold as an enabled control right beside a
+   dimmed, disabled button (e.g. Library's search box next to its disabled
+   drawer toggle while refreshing). 0.65 matches --bs-btn-disabled-opacity
+   exactly (Bootstrap's own disabled-button dimming) -- can't reference
+   that variable directly here, since Bootstrap declares it scoped to
+   .btn itself rather than :root, so it isn't inherited onto a plain
+   .form-control that never sits inside a button. */
+.themed-control:disabled {
+  opacity: 0.65;
+}
+
+/* Every bordered icon button tints its icon brass via .text-primary at rest
+   (Refresh/Lock, the toolbar's Create/Edit, DropdownToggleButton's closed
+   state, the Create User modal's Copy button, ...) -- but Bootstrap's own
+   :hover/:focus-visible fill the button's background solid without
+   touching a child element's already-!important .text-primary, leaving a
+   brass icon on a similarly-toned fill nearly invisible (bootstrap.css's
+   .btn:hover/.btn:focus-visible both set the same --bs-btn-hover-color,
+   confirmed by inspecting node_modules/bootstrap/dist/css/bootstrap.css
+   directly -- so a keyboard-focused button has the exact same problem as a
+   hovered one, not just the one the request named). Matches the icon's
+   color to that same --bs-btn-hover-color instead (the same white its own
+   text already turns to, read off whichever .btn-* variant is actually in
+   play) -- specific enough to beat .text-primary's own !important. The
+   already-solid-brass-fill "open" state (DropdownToggleButton) sidesteps
+   this a different way -- it just omits .text-primary entirely so the icon
+   inherits .btn-primary's own (already-legible) color -- so this only ever
+   needs to cover the outline/bordered resting state's hover/focus. */
+.btn:hover .text-primary,
+.btn:focus-visible .text-primary {
+  color: var(--bs-btn-hover-color) !important;
+}
+
+/* Bootstrap's .vr uses align-self: stretch, which only fills the flex
+   line's own content height -- inside the bottom bar's py-2 padding, that
+   leaves visible gaps above/below before actually reaching the bar's top
+   border and bottom edge. A negative block margin equal to that padding
+   (0.5rem) extends the divider through it, so it touches both ends of the
+   bar itself rather than just spanning its siblings' height. */
+.bottom-bar-vr {
+  margin-block: -0.5rem;
+}
+
+/* Reader's font-size <select>: Bootstrap's default .form-select reserves
+   2.25rem of right padding for its dropdown arrow (positioned 0.75rem from
+   the right edge) -- generous for a full-width select, but in this narrow,
+   fixed-width box it leaves a noticeably large gap between short text like
+   "16px" and the arrow. Both tightened down. */
+.font-size-select {
+  padding-right: 1.25rem;
+  background-position: right 0.35rem center;
+}
+
+.link-reset {
+  display: inline;
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--bs-link-color);
+  cursor: pointer;
+}
+.link-reset:hover {
+  color: var(--bs-link-hover-color);
+}
+
+@keyframes modal-backdrop-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes modal-dialog-rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.75rem) scale(0.97);
+  }
+}
+.modal-backdrop-anim {
+  animation: modal-backdrop-fade-in 0.15s ease-out;
+}
+.modal-dialog-anim {
+  animation: modal-dialog-rise-in 0.18s ease-out;
+}
+
+/* A smaller variant of Bootstrap's .btn-sm, for row-level delete buttons
+   (Library's BookRow/BookmarkRow, Reader's bookmark list) that shouldn't
+   compete visually with the row's own primary click target. */
+.btn-xs {
+  --bs-btn-padding-y: 0.1rem;
+  --bs-btn-padding-x: 0.35rem;
+  --bs-btn-font-size: 0.7rem;
+}
