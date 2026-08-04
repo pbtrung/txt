@@ -19,7 +19,7 @@ vi.mock("../../state/VaultContext", async () => {
 vi.mock("./useLibraryBooks", () => ({ useLibraryBooks: vi.fn() }));
 
 function book(
-  overrides: Partial<LibraryBook> & { txtId: number },
+  overrides: Partial<LibraryBook> & { txtId: string },
 ): LibraryBook {
   return {
     info: {
@@ -37,9 +37,9 @@ function book(
 
 const books: LibraryBook[] = [
   book({
-    txtId: 1,
+    txtId: "txt-1",
     info: {
-      txtId: 1,
+      txtId: "txt-1",
       name: "n1",
       title: "The White Order",
       author: "L. E. Modesitt, Jr.",
@@ -51,9 +51,9 @@ const books: LibraryBook[] = [
     lastAccessedMs: 2000,
   }),
   book({
-    txtId: 2,
+    txtId: "txt-2",
     info: {
-      txtId: 2,
+      txtId: "txt-2",
       name: "n2",
       title: "21 Lessons for the 21st Century",
       author: "Yuval Noah Harari",
@@ -64,9 +64,9 @@ const books: LibraryBook[] = [
     lastAccessedMs: 3000,
   }),
   book({
-    txtId: 3,
+    txtId: "txt-3",
     info: {
-      txtId: 3,
+      txtId: "txt-3",
       name: "n3",
       title: "Never Opened Yet",
       subjects: [],
@@ -75,12 +75,12 @@ const books: LibraryBook[] = [
   }),
 ];
 
-// Both are real async functions on VaultContextValue (Promise<void>/
-// Promise<BookmarksMap>) -- mockResolvedValue, not a bare vi.fn(), so
-// LibraryScreen.tsx's own .catch() on their return value has a real Promise
-// to call it on, matching the real implementation's contract.
+// Both are real async functions on VaultContextValue (Promise<void>) --
+// mockResolvedValue, not a bare vi.fn(), so LibraryScreen.tsx's own .catch()
+// on their return value has a real Promise to call it on, matching the real
+// implementation's contract.
 const removeAccessEntry = vi.fn().mockResolvedValue(undefined);
-const removeBookmarkEntry = vi.fn().mockResolvedValue(new Map());
+const removeBookmarkEntry = vi.fn().mockResolvedValue(undefined);
 const lock = vi.fn();
 const refresh = vi.fn();
 
@@ -104,7 +104,7 @@ function setVaultMock(
     status: "unlocked",
     session: { displayName } as VaultContextModule.VaultSession,
     error: null,
-    accessMap: new Map(),
+    accessMap: {},
     bookmarksMap,
     refreshing,
     progress,
@@ -130,7 +130,7 @@ function libraryTree() {
 }
 
 function renderLibrary(
-  bookmarksMap: BookmarksMap = new Map(),
+  bookmarksMap: BookmarksMap = {},
   refreshing = false,
   progress: VaultContextModule.VaultProgress | null = null,
   displayName?: string,
@@ -215,7 +215,7 @@ describe("LibraryScreen", () => {
     renderLibrary();
     await userEvent.click(screen.getByText("The White Order"));
     await waitFor(() =>
-      expect(screen.getByText(/Reader for \/read\/1/)).toBeInTheDocument(),
+      expect(screen.getByText(/Reader for \/read\/txt-1/)).toBeInTheDocument(),
     );
   });
 
@@ -227,12 +227,12 @@ describe("LibraryScreen", () => {
     await userEvent.click(
       within(row).getByRole("button", { name: /remove.*from recent/i }),
     );
-    expect(removeAccessEntry).toHaveBeenCalledWith(1);
+    expect(removeAccessEntry).toHaveBeenCalledWith("txt-1");
   });
 
   describe("virtualization", () => {
     function renderLibraryWithBooks(manyBooks: LibraryBook[]) {
-      setVaultMock(new Map(), false);
+      setVaultMock({}, false);
       vi.mocked(useLibraryBooksModule.useLibraryBooks).mockReturnValue({
         books: manyBooks,
         loading: false,
@@ -242,25 +242,25 @@ describe("LibraryScreen", () => {
 
     it("renders only a bounded window of rows for a large 'All books' list, not all of them", async () => {
       const manyBooks = Array.from({ length: 500 }, (_, i) =>
-        book({ txtId: i + 1 }),
+        book({ txtId: `txt-${i + 1}` }),
       );
       renderLibraryWithBooks(manyBooks);
 
       await userEvent.click(screen.getByRole("button", { name: /All books/ }));
       expect(screen.getByText("500 books")).toBeInTheDocument();
 
-      const rows = screen.getAllByRole("button", { name: /^Title \d+$/ });
+      const rows = screen.getAllByRole("button", { name: /^Title txt-\d+$/ });
       expect(rows.length).toBeGreaterThan(0);
       expect(rows.length).toBeLessThan(100); // well under the full 500 -- proves the window is bounded
     });
 
     it("renders only a bounded window of rows for a large Continue Reading list, not all of them", () => {
       const manyBooks = Array.from({ length: 500 }, (_, i) =>
-        book({ txtId: i + 1, lastPartNum: 1, lastAccessedMs: i }),
+        book({ txtId: `txt-${i + 1}`, lastPartNum: 1, lastAccessedMs: i }),
       );
       renderLibraryWithBooks(manyBooks);
 
-      const rows = screen.getAllByRole("button", { name: /^Title \d+$/ });
+      const rows = screen.getAllByRole("button", { name: /^Title txt-\d+$/ });
       expect(rows.length).toBeGreaterThan(0);
       expect(rows.length).toBeLessThan(100);
     });
@@ -268,9 +268,9 @@ describe("LibraryScreen", () => {
     it("renders only a bounded window of rows for a large Authors browse-entry list, not all of them", async () => {
       const manyBooks = Array.from({ length: 500 }, (_, i) =>
         book({
-          txtId: i + 1,
+          txtId: `txt-${i + 1}`,
           info: {
-            txtId: i + 1,
+            txtId: `txt-${i + 1}`,
             name: `n${i + 1}`,
             title: `Title ${i + 1}`,
             author: `Author ${i + 1}`,
@@ -289,22 +289,18 @@ describe("LibraryScreen", () => {
     });
 
     it("renders only a bounded window of rows for a large Recent Bookmarks list, not all of them", () => {
-      const manyBookmarks: BookmarksMap = new Map([
-        [
-          1,
-          Array.from({ length: 500 }, (_, i) => ({
-            id: i,
-            txtId: 1,
-            partNum: 1,
-            line: i + 1,
-            preview: `Preview line ${i}`,
-            createdAt: i,
-          })),
-        ],
-      ]);
+      const manyBookmarks: BookmarksMap = {
+        "txt-1": Array.from({ length: 500 }, (_, i) => ({
+          id: `bookmark-${i}`,
+          partNum: 1,
+          line: i + 1,
+          preview: `Preview line ${i}`,
+          createdAt: i,
+        })),
+      };
       setVaultMock(manyBookmarks, false);
       vi.mocked(useLibraryBooksModule.useLibraryBooks).mockReturnValue({
-        books: [books[0]],
+        books: [books[0]!],
         loading: false,
       });
       render(libraryTree());
@@ -341,7 +337,7 @@ describe("LibraryScreen", () => {
       const allBooksButtons = screen.getAllByRole("button", {
         name: /All books/,
       });
-      await userEvent.click(allBooksButtons[0]); // the drawer's copy -- renders before the sidebar's in DOM order
+      await userEvent.click(allBooksButtons[0]!); // the drawer's copy -- renders before the sidebar's in DOM order
       expect(screen.getAllByRole("button", { name: /All books/ })).toHaveLength(
         1,
       );
@@ -382,7 +378,7 @@ describe("LibraryScreen", () => {
       );
       const menu = screen
         .getAllByRole("button", { name: /All books/ })[0]
-        .closest(".dropdown-menu");
+        ?.closest(".dropdown-menu");
       expect(menu).toHaveClass("app-dropdown-menu-start");
     });
 
@@ -405,7 +401,7 @@ describe("LibraryScreen", () => {
     });
 
     it("shows the creds file's display_name next to the person icon, when present", () => {
-      renderLibrary(new Map(), false, null, "Trung");
+      renderLibrary({}, false, null, "Trung");
       expect(screen.getAllByText("Trung").length).toBeGreaterThan(0);
     });
 
@@ -462,7 +458,7 @@ describe("LibraryScreen", () => {
       const refreshButtons = screen.getAllByRole("button", {
         name: /refresh library/i,
       });
-      await userEvent.click(refreshButtons[0]); // the drawer's copy -- renders before the sidebar's in DOM order
+      await userEvent.click(refreshButtons[0]!); // the drawer's copy -- renders before the sidebar's in DOM order
       expect(
         screen.getAllByRole("button", { name: /refresh library/i }),
       ).toHaveLength(1);
@@ -472,7 +468,7 @@ describe("LibraryScreen", () => {
       // Opened *before* refreshing starts -- the toggle disables once
       // refreshing does, so a real user couldn't open it mid-refresh; this
       // covers the dropdown staying open (and usable) if it already was.
-      const { rerender } = renderLibrary(new Map(), false);
+      const { rerender } = renderLibrary({}, false);
       await userEvent.click(
         screen.getByRole("button", { name: /library menu/i }),
       );
@@ -483,7 +479,7 @@ describe("LibraryScreen", () => {
         screen.getAllByRole("button", { name: /refresh library/i })[0],
       ).toBeInTheDocument();
 
-      setVaultMock(new Map(), true);
+      setVaultMock({}, true);
       rerender(libraryTree());
 
       expect(
@@ -498,19 +494,19 @@ describe("LibraryScreen", () => {
     });
 
     it("disables the small-screen drawer toggle while refreshing, so it can't be opened mid-refresh", () => {
-      renderLibrary(new Map(), true);
+      renderLibrary({}, true);
       expect(
         screen.getByRole("button", { name: /library menu/i }),
       ).toBeDisabled();
     });
 
     it("disables the search box while refreshing", () => {
-      renderLibrary(new Map(), true);
+      renderLibrary({}, true);
       expect(screen.getByLabelText(/search library/i)).toBeDisabled();
     });
 
     it("replaces the whole left pane and content pane with one spinner while refreshing, keeping just the top bar", () => {
-      renderLibrary(new Map(), true);
+      renderLibrary({}, true);
       // The heading/book-list content pane is gone...
       expect(
         screen.queryByRole("heading", { name: "Recent" }),
@@ -533,7 +529,7 @@ describe("LibraryScreen", () => {
     });
 
     it("shows the current phase and a step counter under that spinner once progress is set", () => {
-      renderLibrary(new Map(), true, {
+      renderLibrary({}, true, {
         label: "Loading your bookmarks",
         step: 3,
         total: 3,
@@ -552,21 +548,17 @@ describe("LibraryScreen", () => {
   });
 
   describe("Recent Bookmarks", () => {
-    const bookmarksMap: BookmarksMap = new Map([
-      [
-        1,
-        [
-          {
-            id: 42,
-            txtId: 1,
-            partNum: 14,
-            line: 1,
-            preview: "Powerful white mages killed",
-            createdAt: 1000,
-          },
-        ],
+    const bookmarksMap: BookmarksMap = {
+      "txt-1": [
+        {
+          id: "bookmark-42",
+          partNum: 14,
+          line: 1,
+          preview: "Powerful white mages killed",
+          createdAt: 1000,
+        },
       ],
-    ]);
+    };
 
     it("shows a bookmark row with the book title, part/line, and preview", () => {
       renderLibrary(bookmarksMap);
@@ -582,7 +574,7 @@ describe("LibraryScreen", () => {
       await userEvent.click(screen.getByText(/Powerful white mages killed/));
       await waitFor(() =>
         expect(
-          screen.getByText(/Reader for \/read\/1\?part=14&line=1/),
+          screen.getByText(/Reader for \/read\/txt-1\?part=14&line=1/),
         ).toBeInTheDocument(),
       );
     });
@@ -595,7 +587,7 @@ describe("LibraryScreen", () => {
       await userEvent.click(
         within(row).getByRole("button", { name: /remove this bookmark/i }),
       );
-      expect(removeBookmarkEntry).toHaveBeenCalledWith(42);
+      expect(removeBookmarkEntry).toHaveBeenCalledWith("txt-1", "bookmark-42");
     });
   });
 });

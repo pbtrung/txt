@@ -505,7 +505,7 @@ export function LibraryScreen() {
                           txtPreview={item.txtPreview}
                           onClick={() => openBookmark(item)}
                           onDelete={() =>
-                            removeBookmarkEntry(item.id).catch(
+                            removeBookmarkEntry(item.txtId, item.id).catch(
                               (err: unknown) => {
                                 verbose(
                                   "LibraryScreen: removeBookmarkEntry failed",

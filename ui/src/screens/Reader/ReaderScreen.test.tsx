@@ -17,7 +17,7 @@ function baseResult(
     loading: false,
     error: null,
     info: {
-      txtId: 1,
+      txtId: "txt-1",
       name: "white-order.epub.txt",
       title: "The White Order",
       author: "L. E. Modesitt, Jr.",
@@ -39,16 +39,14 @@ function baseResult(
     partTextLoading: false,
     bookmarks: [
       {
-        id: 1,
-        txtId: 1,
+        id: "bookmark-1",
         partNum: 14,
         line: 1,
         preview: "First paragraph of part 14.",
         createdAt: 3000,
       },
       {
-        id: 2,
-        txtId: 1,
+        id: "bookmark-2",
         partNum: 8,
         line: 2,
         preview: "Some earlier line preview",
@@ -423,7 +421,7 @@ describe("ReaderScreen", () => {
       await userEvent.click(
         within(row).getByRole("button", { name: /remove this bookmark/i }),
       );
-      expect(removeBookmark).toHaveBeenCalledWith(2);
+      expect(removeBookmark).toHaveBeenCalledWith("bookmark-2");
       expect(goToBookmark).not.toHaveBeenCalled();
     });
   });

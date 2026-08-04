@@ -3,6 +3,7 @@ import { renderHook } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { vi } from "vitest";
 
+import type { AccessMap } from "../../data/access";
 import type { BookInfo } from "../../data/metadata";
 import * as VaultContextModule from "../../state/VaultContext";
 import { useLibraryBooks } from "./useLibraryBooks";
@@ -16,14 +17,14 @@ vi.mock("../../state/VaultContext", async () => {
 
 function mockVault(
   session: VaultContextModule.VaultSession | null,
-  accessMap = new Map(),
+  accessMap: AccessMap = {},
 ) {
   vi.mocked(VaultContextModule.useVault).mockReturnValue({
     status: session ? "unlocked" : "locked",
     session,
     error: null,
     accessMap,
-    bookmarksMap: new Map(),
+    bookmarksMap: {},
     refreshing: false,
     progress: null,
     unlock: vi.fn(),
@@ -36,43 +37,60 @@ function mockVault(
   });
 }
 
-const metadataById = new Map<number, BookInfo>([
+const metadataById = new Map<string, BookInfo>([
   [
-    1,
-    { txtId: 1, name: "n1", title: "Title 1", subjects: [], rawMetadata: [] },
+    "txt-1",
+    {
+      txtId: "txt-1",
+      name: "n1",
+      title: "Title 1",
+      subjects: [],
+      rawMetadata: [],
+    },
   ],
   [
-    2,
-    { txtId: 2, name: "n2", title: "Title 2", subjects: [], rawMetadata: [] },
+    "txt-2",
+    {
+      txtId: "txt-2",
+      name: "n2",
+      title: "Title 2",
+      subjects: [],
+      rawMetadata: [],
+    },
   ],
 ]);
 
-const session: VaultContextModule.VaultSession = {
+const session = {
   displayName: undefined,
-  client: {} as never,
+  instantDb: {},
+  auth: {},
+  authId: "auth-1",
+  umk: new Uint8Array(),
+  keyStorePrivKey: new Uint8Array(),
+  r2Config: { endpoint: "", region: "", bucket: "" },
   metadataById,
-};
+  docKeys: new Map(),
+  txtAccess: { id: null, key: new Uint8Array() },
+  txtBookmarks: { id: null, key: new Uint8Array() },
+} as unknown as VaultContextModule.VaultSession;
 
 describe("useLibraryBooks", () => {
   it("derives the book list from the session's metadata/access maps, no DB calls", () => {
-    mockVault(
-      session,
-      new Map([[1, { lastPartNum: 14, lastAccessedMs: 1000 }]]),
-    );
+    mockVault(session, { "txt-1": { lastPartNum: 14, lastAccessedMs: 1000 } });
 
     const { result } = renderHook(() => useLibraryBooks());
 
     expect(result.current.loading).toBe(false);
     expect(result.current.books).toEqual([
       {
-        txtId: 1,
-        info: metadataById.get(1),
+        txtId: "txt-1",
+        info: metadataById.get("txt-1"),
         lastPartNum: 14,
         lastAccessedMs: 1000,
       },
       {
-        txtId: 2,
-        info: metadataById.get(2),
+        txtId: "txt-2",
+        info: metadataById.get("txt-2"),
         lastPartNum: null,
         lastAccessedMs: null,
       },

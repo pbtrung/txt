@@ -15,7 +15,7 @@ import type { BookmarksMap } from "../../data/bookmarks";
 import type { BookInfo } from "../../data/metadata";
 
 export interface LibraryBook {
-  txtId: number;
+  txtId: string;
   info: BookInfo;
   lastPartNum: number | null;
   lastAccessedMs: number | null;
@@ -31,11 +31,11 @@ export function bookStatus(book: LibraryBook): BookStatus {
  * (if any) -- both already loaded once, in full, during unlock (see
  * VaultContext), so this is a synchronous, in-memory combine, not a fetch. */
 export function buildLibraryBooks(
-  metadataById: Map<number, BookInfo>,
+  metadataById: Map<string, BookInfo>,
   accessMap: AccessMap,
 ): LibraryBook[] {
   return Array.from(metadataById.entries()).map(([txtId, info]) => {
-    const position = accessMap.get(txtId);
+    const position = accessMap[txtId];
     return {
       txtId,
       info,
@@ -114,8 +114,8 @@ export function booksForDimensionValue(
 }
 
 export interface RecentBookmarkItem {
-  id: number;
-  txtId: number;
+  id: string;
+  txtId: string;
   info: BookInfo;
   partNum: number;
   line: number;
@@ -126,10 +126,10 @@ export interface RecentBookmarkItem {
 /** Every bookmark across every book, flattened and most-recently-created first. */
 export function recentBookmarks(
   bookmarksMap: BookmarksMap,
-  metadataById: Map<number, BookInfo>,
+  metadataById: Map<string, BookInfo>,
 ): RecentBookmarkItem[] {
   const items: RecentBookmarkItem[] = [];
-  for (const [txtId, entries] of bookmarksMap) {
+  for (const [txtId, entries] of Object.entries(bookmarksMap)) {
     const info = metadataById.get(txtId) ?? {
       txtId,
       name: `txt_${txtId}`,

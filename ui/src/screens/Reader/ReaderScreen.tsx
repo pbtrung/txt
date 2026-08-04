@@ -57,9 +57,8 @@ function defaultFontSizePx(): number {
 }
 
 export function ReaderScreen() {
-  const { txtId } = useParams();
+  const { txtId = "" } = useParams();
   const navigate = useNavigate();
-  const numericTxtId = Number(txtId);
   const infoMenu = useDropdown();
   const bookmarksMenu = useDropdown();
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
@@ -93,7 +92,7 @@ export function ReaderScreen() {
     previous,
     bookmarkLine,
     removeBookmark,
-  } = useReaderBook(numericTxtId);
+  } = useReaderBook(txtId);
 
   // The bottom bar's editable part-number box: a local, freely-typeable
   // string kept in sync with currentPartNum whenever *that* changes (paging,
@@ -112,12 +111,12 @@ export function ReaderScreen() {
   }
 
   // A fresh book starts with its description collapsed again.
-  useEffect(() => setDescriptionExpanded(false), [numericTxtId]);
+  useEffect(() => setDescriptionExpanded(false), [txtId]);
 
   // A fresh book or part lands at the top of the reading pane (a new
   // scrollable element, scrollTop 0) -- so the bar shouldn't stay hidden
   // from wherever the *previous* one had scrolled to.
-  useEffect(() => setBottomBarHidden(false), [numericTxtId, currentPartNum]);
+  useEffect(() => setBottomBarHidden(false), [txtId, currentPartNum]);
 
   const SCROLL_HIDE_THRESHOLD_PX = 10;
   function handleReadingPaneScroll(event: UIEvent<HTMLDivElement>) {
@@ -248,9 +247,7 @@ export function ReaderScreen() {
         </button>
         <div className="flex-grow-1 text-truncate">
           <div className="text-truncate">
-            <span className="fw-semibold">
-              {info?.title ?? `txt_${numericTxtId}`}
-            </span>
+            <span className="fw-semibold">{info?.title ?? `txt_${txtId}`}</span>
             {info?.author && (
               <span className="text-body-secondary d-none d-sm-inline">
                 {" "}
@@ -285,9 +282,7 @@ export function ReaderScreen() {
                 overflowY: "auto",
               }}
             >
-              <div className="fw-semibold">
-                {info?.title ?? `txt_${numericTxtId}`}
-              </div>
+              <div className="fw-semibold">{info?.title ?? `txt_${txtId}`}</div>
               {info?.author && <div>{info.author}</div>}
               {seriesLabel && (
                 <div className="text-body-secondary small">{seriesLabel}</div>
