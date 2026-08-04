@@ -1,11 +1,11 @@
 // Calls this deployment's own Worker (worker/r2Creds.ts, same origin --
 // it serves this app's static assets too, so no base URL/CORS setup is
-// needed) to mint a short-lived, prefix-scoped R2 credential for the
-// current session's own r2Prefix. This is the *only* way this app ever
-// gets R2 access, for every account, admin included -- see
-// docs/data_model.md's "Temporary, prefix-scoped R2 credentials" section.
+// needed) to mint a short-lived, read-only R2 credential scoped to one
+// document's own prefix (docs/data_model.md's txt.prefix -- random,
+// wrapped under that document's own txtKey, unrelated to authId). This is
+// the *only* way this app ever gets R2 access, for every account, admin
+// included -- see docs/r2_credentials.md.
 import { AwsClient } from "aws4fetch";
-import { computeR2Prefix } from "./pagePointer";
 import type { R2Config } from "./r2Config";
 
 export interface TempR2Credential {
@@ -21,13 +21,17 @@ interface R2CredsResponse {
 }
 
 /** idToken is the same Firebase ID token already used for this session's
- * own signInWithIdToken call -- see this session's OpenParams.idToken.
- * Like that call, this one has no built-in retry for an idToken that's
- * gone stale since the session started; a 401 here surfaces as an
- * ordinary thrown error, same as any other stale-idToken failure. */
+ * own signInWithIdToken call. This one has no built-in retry for an idToken
+ * that's gone stale since the session started; a 401 here surfaces as an
+ * ordinary thrown error, same as any other stale-idToken failure.
+ *
+ * prefix is a document's own already-decrypted txt.prefix, not derived from
+ * authId -- a temporary credential scopes to exactly one document at a
+ * time (docs/r2_credentials.md), so a caller reading N different documents
+ * calls this N times, once per document, rather than once per session. */
 export async function fetchTempR2Credential(
   idToken: string,
-  authId: string,
+  prefix: string,
   r2Config: R2Config,
 ): Promise<TempR2Credential> {
   const resp = await fetch("/api/r2-creds", {
@@ -35,7 +39,7 @@ export async function fetchTempR2Credential(
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       idToken,
-      prefix: computeR2Prefix(authId),
+      prefix,
       bucket: r2Config.bucket,
       endpoint: r2Config.endpoint,
     }),

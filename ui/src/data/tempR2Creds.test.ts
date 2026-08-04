@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { computeR2Prefix } from "./pagePointer";
 import { fetchTempR2Credential } from "./tempR2Creds";
 import type { R2Config } from "./r2Config";
 
@@ -20,7 +19,7 @@ describe("fetchTempR2Credential", () => {
       expect(url).toBe("/api/r2-creds");
       expect(JSON.parse(init.body as string)).toEqual({
         idToken: "id-token-1",
-        prefix: computeR2Prefix("auth-1"),
+        prefix: "doc-prefix-1",
         bucket: "my-bucket",
         endpoint: "https://acct.r2.cloudflarestorage.com",
       });
@@ -36,7 +35,11 @@ describe("fetchTempR2Credential", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const cred = await fetchTempR2Credential("id-token-1", "auth-1", r2Config);
+    const cred = await fetchTempR2Credential(
+      "id-token-1",
+      "doc-prefix-1",
+      r2Config,
+    );
 
     expect(cred.expiresAtMs).toBe(12345);
     expect(cred.client.accessKeyId).toBe("temp-id");
@@ -57,7 +60,7 @@ describe("fetchTempR2Credential", () => {
     );
 
     await expect(
-      fetchTempR2Credential("id-token-1", "auth-1", r2Config),
+      fetchTempR2Credential("id-token-1", "doc-prefix-1", r2Config),
     ).rejects.toThrow("HTTP 403: prefix mismatch");
   });
 
@@ -68,7 +71,7 @@ describe("fetchTempR2Credential", () => {
     );
 
     await expect(
-      fetchTempR2Credential("id-token-1", "auth-1", r2Config),
+      fetchTempR2Credential("id-token-1", "doc-prefix-1", r2Config),
     ).rejects.toThrow("HTTP 500");
   });
 });
