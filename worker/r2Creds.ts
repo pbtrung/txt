@@ -6,7 +6,7 @@
 // credential, held only as a Worker secret -- never sent to any client).
 //
 // This endpoint is for the frontend (ui/) only, and every credential it
-// mints is read-only ("object-read"), regardless of whether the verified
+// mints is read-only ("object-read-only"), regardless of whether the verified
 // identity is the admin or a `user`-role account -- the frontend never
 // writes to R2 through this Worker. Writing (ingesting a new document's
 // txtParts) is an admin-tooling operation that uses the admin's own real,
@@ -152,8 +152,8 @@ async function verifyFirebaseIdToken(
 // digest of the signed JWT; the sessionToken is plain base64("jwt/" +
 // <signed JWT>) (confirmed against the runnable example -- not base64url,
 // despite an earlier guess to the contrary). `scope` is always
-// "object-read" -- this Worker never mints a write-capable credential for
-// any identity; see this file's top comment for why.
+// "object-read-only" -- this Worker never mints a write-capable credential
+// for any identity; see this file's top comment for why.
 async function mintTemporaryCredential(
   env: Env,
   bucket: string,
@@ -163,7 +163,7 @@ async function mintTemporaryCredential(
   const accountId = new URL(endpoint).hostname.split(".")[0];
   const jwt = await new SignJWT({
     bucket,
-    scope: "object-read",
+    scope: "object-read-only",
     paths: { prefixPaths: [`${prefix}/`] },
   })
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
