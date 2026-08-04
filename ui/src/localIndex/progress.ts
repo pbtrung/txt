@@ -64,63 +64,60 @@ export interface ProgressUI {
   remove(): void;
 }
 
-/** Builds the wordmark/spinner/progress DOM and mounts it into `container`
- * (defaults to document.body). Returns handles to drive it as verify.ts/
- * render.ts progress. */
-export function mountProgressUI(
-  container: HTMLElement = document.body,
-): ProgressUI {
-  // Matches UnlockScreen.tsx's outer `d-flex align-items-center
-  // justify-content-center vh-100` -- fixed rather than relying on
-  // vh-100/body height, so it centers correctly regardless of the host
-  // document's own margin/height (this file can't assume index.css's reset
-  // is present, unlike the real app).
-  const root = document.createElement("div");
-  root.id = "boot-status";
-  root.style.cssText =
+function styled<K extends keyof HTMLElementTagNameMap>(
+  tag: K,
+  cssText: string,
+): HTMLElementTagNameMap[K] {
+  const el = document.createElement(tag);
+  el.style.cssText = cssText;
+  return el;
+}
+
+function createRoot(): HTMLDivElement {
+  const root = styled(
+    "div",
     "position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; " +
-    `font-family: system-ui, -apple-system, sans-serif; color: ${BODY_COLOR};`;
+      `font-family: system-ui, -apple-system, sans-serif; color: ${BODY_COLOR};`,
+  );
+  root.id = "boot-status";
+  return root;
+}
 
-  // Matches UnlockScreen.tsx's inner `text-center` box, `style={{ maxWidth: "24rem" }}`.
-  const inner = document.createElement("div");
-  inner.style.cssText =
-    "max-width: 24rem; width: 100%; padding: 0 1.5rem; text-align: center; box-sizing: border-box;";
+function createInner(): HTMLDivElement {
+  return styled(
+    "div",
+    "max-width: 24rem; width: 100%; padding: 0 1.5rem; text-align: center; box-sizing: border-box;",
+  );
+}
 
-  // Matches Wordmark size="lg" (`d-inline-flex align-items-center gap-2
-  // fs-2`) inside UnlockScreen.tsx's `<div className="mb-4">`. Bootstrap's
-  // own .fs-2 isn't just the calc() below -- it's overridden to a flat 2rem
-  // at its xl breakpoint (min-width: 1200px, bootstrap.css) -- so a plain
-  // inline style (which can't express a media query) would keep growing
-  // past that width instead of capping the way the real Wordmark does; the
-  // class+<style> rule below carries both halves of that same rule.
-  const wordmarkWrap = document.createElement("div");
-  wordmarkWrap.style.cssText = "margin-bottom: 1.5rem;";
-  const wordmark = document.createElement("div");
-  wordmark.className = "boot-wordmark";
-  wordmark.style.cssText =
+function createWordmark(): HTMLDivElement {
+  const wrap = styled("div", "margin-bottom: 1.5rem;");
+  const wordmark = styled(
+    "div",
     "display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; " +
-    "font-weight: 600; line-height: 1;";
+      "font-weight: 600; line-height: 1;",
+  );
+  wordmark.className = "boot-wordmark";
   wordmark.innerHTML =
     `<svg width="1em" height="1em" viewBox="0 0 16 16" fill="${BRASS}" aria-hidden="true">` +
     `<path d="${BOOK_ICON_PATH}"/></svg>` +
     `<span>Skypiea</span>`;
-  wordmarkWrap.appendChild(wordmark);
+  wrap.appendChild(wordmark);
+  return wrap;
+}
 
-  // Matches `spinner-border spinner-border-sm text-primary mb-1` exactly:
-  // 1rem square, 0.2em border, the trailing edge transparent (Bootstrap's
-  // actual technique for the spin, not a plain two-tone ring), 0.75s linear.
-  // Sits directly under the wordmark -- the same slot Unlock's own button
-  // occupies -- rather than further down past an empty reservation for
-  // that button's height (see trailingSpacer below for where that
-  // reservation actually goes instead): there's nothing to click while
-  // verifying, so the spinner may as well sit where the button would.
-  const spinner = document.createElement("div");
+function createSpinner(): HTMLDivElement {
+  const spinner = styled(
+    "div",
+    "display: inline-block; width: 1rem; height: 1rem; margin-bottom: 0.25rem; border-radius: 50%; " +
+      `border: 0.2em solid ${BRASS}; border-right-color: transparent; animation: boot-spin 0.75s linear infinite;`,
+  );
   spinner.setAttribute("role", "status");
   spinner.setAttribute("aria-label", "Verifying");
-  spinner.style.cssText =
-    "display: inline-block; width: 1rem; height: 1rem; margin-bottom: 0.25rem; border-radius: 50%; " +
-    `border: 0.2em solid ${BRASS}; border-right-color: transparent; animation: boot-spin 0.75s linear infinite;`;
+  return spinner;
+}
 
+function createStyleTag(): HTMLStyleElement {
   const styles = document.createElement("style");
   styles.textContent =
     "@keyframes boot-spin { to { transform: rotate(360deg); } } " +
@@ -129,63 +126,48 @@ export function mountProgressUI(
     // breakpoint up, not still growing with vw past that width.
     ".boot-wordmark { font-size: calc(1.325rem + 0.9vw); } " +
     "@media (min-width: 1200px) { .boot-wordmark { font-size: 2rem; } }";
+  return styles;
+}
 
-  // Matches UnlockScreen.tsx's `d-flex flex-column align-items-center
-  // gap-1` progress block exactly -- spinner immediately followed by its
-  // step counter/label, same 0.25rem gap-1 (plus the spinner's own
-  // mb-1 above) Unlock itself uses, not a wider one.
-  const progress = document.createElement("div");
-  progress.style.cssText =
-    "display: flex; flex-direction: column; align-items: center; gap: 0.25rem;";
+function createStepText(): HTMLDivElement {
+  return styled("div", `font-size: 0.875rem; color: ${SECONDARY_COLOR};`);
+}
 
-  // Matches `small text-body-secondary` (0.875rem, Bootstrap's secondary text color).
-  const stepCounter = document.createElement("div");
-  stepCounter.style.cssText = `font-size: 0.875rem; color: ${SECONDARY_COLOR};`;
+function createProgressBlock(spinner: HTMLElement) {
+  const progress = styled(
+    "div",
+    "display: flex; flex-direction: column; align-items: center; gap: 0.25rem;",
+  );
+  const stepCounter = createStepText();
   stepCounter.textContent = " "; // holds the line's height before the first advance(), same as Unlock's own fallback
-
-  const stepLabel = document.createElement("div");
-  stepLabel.style.cssText = `font-size: 0.875rem; color: ${SECONDARY_COLOR};`;
-
+  const stepLabel = createStepText();
   progress.append(spinner, stepCounter, stepLabel);
+  return { progress, stepCounter, stepLabel };
+}
 
-  // UnlockScreen.tsx's button (px-3 py-2, containing a fs-5 icon beside a
-  // two-line lh-sm text block) plus its status block's own mt-3 have no
-  // equivalent here -- there's nothing to click while verifying, and the
-  // spinner already stands in for the button above -- but they still
-  // occupy real layout height on Unlock, which this file used to just
-  // skip. Since both screens center their box vertically as a whole,
-  // skipping it made this box shorter than the real one, which shifted
-  // the wordmark down from where it sits on Unlock (a real, empirically-
-  // confirmed few-dozen-px gap, not a rounding error). This invisible,
-  // trailing spacer reserves that same height (button: 0.5rem + 0.5rem
-  // padding + 2 * 0.875rem * 1.25 lh-sm content = 3.1875rem; status
-  // block's own mt-3 = 1rem; total 4.1875rem) after the visible content
-  // instead of wedged in the middle of it, so the spinner/text keep
-  // their natural tight spacing and the wordmark still ends up at the
-  // same position as Unlock's.
-  const trailingSpacer = document.createElement("div");
-  trailingSpacer.style.cssText = "height: 4.1875rem;";
+function createTrailingSpacer(): HTMLDivElement {
+  return styled("div", "height: 4.1875rem;");
+}
 
-  // Matches `alert alert-danger mt-4` exactly (Bootstrap's own alert-danger
-  // palette/padding/border-radius), shown in place of the progress block on
-  // failure -- not just plain red text.
-  const error = document.createElement("p");
-  error.setAttribute("role", "alert");
-  error.style.cssText =
+function createErrorMessage(): HTMLParagraphElement {
+  const error = styled(
+    "p",
     "margin-top: 1.5rem; padding: 0.75rem 1.25rem; border-radius: 0.375rem; " +
-    "background-color: #f8d7da; border: 1px solid #f5c2c7; color: #842029; " +
-    "font-size: 0.875rem; white-space: pre-wrap; text-align: left;";
+      "background-color: #f8d7da; border: 1px solid #f5c2c7; color: #842029; " +
+      "font-size: 0.875rem; white-space: pre-wrap; text-align: left;",
+  );
+  error.setAttribute("role", "alert");
   error.hidden = true;
+  return error;
+}
 
-  // trailingSpacer comes after error, not before it -- its whole point is
-  // invisible reserved height for centering purposes, and sitting in
-  // between would show up as a large, real gap above it when shown (it has
-  // no layout height at all while hidden, so trailingSpacer's own position
-  // doesn't affect the loading-state total either way).
-  inner.append(wordmarkWrap, styles, progress, error, trailingSpacer);
-  root.appendChild(inner);
-  container.appendChild(root);
-
+function progressControls(
+  root: HTMLElement,
+  spinner: HTMLElement,
+  stepCounter: HTMLElement,
+  stepLabel: HTMLElement,
+  error: HTMLElement,
+): ProgressUI {
   return {
     advance(step) {
       const index = STEPS.findIndex((s) => s.id === step);
@@ -201,4 +183,27 @@ export function mountProgressUI(
       root.remove();
     },
   };
+}
+
+/** Builds the wordmark/spinner/progress DOM and mounts it into `container`
+ * (defaults to document.body). Returns handles to drive it as verify.ts/
+ * render.ts progress. */
+export function mountProgressUI(
+  container: HTMLElement = document.body,
+): ProgressUI {
+  const root = createRoot();
+  const inner = createInner();
+  const spinner = createSpinner();
+  const { progress, stepCounter, stepLabel } = createProgressBlock(spinner);
+  const error = createErrorMessage();
+  inner.append(
+    createWordmark(),
+    createStyleTag(),
+    progress,
+    error,
+    createTrailingSpacer(),
+  );
+  root.appendChild(inner);
+  container.appendChild(root);
+  return progressControls(root, spinner, stepCounter, stepLabel, error);
 }
