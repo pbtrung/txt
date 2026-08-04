@@ -1,14 +1,13 @@
-// R2 (S3-compatible) object access, mirrors txt/r2.ts's R2Client -- signed
+// R2 (S3-compatible) object GET, mirrors txt/r2.ts's own R2Client -- signed
 // with aws4fetch (built for exactly this Workers/browser + R2 use case, no
-// Node polyfills needed) instead of the AWS SDK. Unlike the CLI, nothing
-// here ever builds a client from a static key: every AwsClient this app
-// uses comes from tempR2Creds.ts's short-lived, prefix-scoped temporary
-// credential instead (docs/data_model.md's "Temporary, prefix-scoped R2
-// credentials" section, which now applies to every account, admin
-// included). putObject exists because page content itself lives in R2 in
-// this design (instantPageStore.ts's commitPages) -- unlike the old
-// rqlite-backed version, where committing a page was a database write, not
-// an R2 write, so a write path never needed one here before.
+// Node polyfills needed) instead of the AWS SDK. Nothing here ever builds a
+// client from a static key: every AwsClient this app uses comes from
+// tempR2Creds.ts's short-lived, prefix-scoped temporary credential instead
+// (docs/r2_credentials.md), for every account, admin included. GET-only:
+// only the CLI (txt.ts --migrate) ever writes a txtParts object to R2, using
+// the admin's own real, static credential directly, never through this
+// module or the Worker-brokered temporary credential this file's own
+// getObject always uses -- see docs/protocols.md's Ingest/write path.
 
 import type { AwsClient } from "aws4fetch";
 
@@ -20,12 +19,12 @@ import type { R2Config } from "./r2Config";
 const RETRY_DELAYS_MS = [2000, 4000, 8000];
 const MAX_ATTEMPTS = 1 + RETRY_DELAYS_MS.length;
 
-// Every page-object key is "${r2Prefix}/${rawKey}" (pagePointer.ts) --
-// encodeURIComponent on the whole string would turn that internal "/" into
-// "%2F", which R2 (like S3) treats as part of a single path segment rather
-// than the key's own real path separator, producing a 400 for what looks
-// like a well-formed request otherwise. Each segment gets encoded on its
-// own instead, joined back with literal "/"s.
+// Every part object's real key is "${prefix}/${rawKey}" (docs/protocols.md's
+// Read path) -- encodeURIComponent on the whole string would turn that
+// internal "/" into "%2F", which R2 (like S3) treats as part of a single
+// path segment rather than the key's own real path separator, producing a
+// 400 for what looks like a well-formed request otherwise. Each segment gets
+// encoded on its own instead, joined back with literal "/"s.
 function encodeObjectKey(key: string): string {
   return key.split("/").map(encodeURIComponent).join("/");
 }
@@ -86,23 +85,4 @@ export async function getObject(
     client.fetch(objectUrl(config, key)),
   );
   return new Uint8Array(await response.arrayBuffer());
-}
-
-/** Uploads one R2 object, retrying with backoff before giving up. Requires
- * a write-capable temporary credential (tempR2Creds.ts always requests
- * object-read-write scope) -- a read-only client's signed PUT is simply
- * rejected by R2 itself, surfaced here as an ordinary HTTP-status failure
- * like any other. */
-export async function putObject(
-  client: AwsClient,
-  config: R2Config,
-  key: string,
-  body: Uint8Array,
-): Promise<void> {
-  await withRetries(`R2 PUT ${key}`, () =>
-    client.fetch(objectUrl(config, key), {
-      method: "PUT",
-      body: body as BodyInit,
-    }),
-  );
 }

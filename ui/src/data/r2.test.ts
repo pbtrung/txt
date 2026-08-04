@@ -1,7 +1,7 @@
 import type { AwsClient } from "aws4fetch";
 import { describe, expect, it, vi } from "vitest";
 
-import { getObject, putObject } from "./r2";
+import { getObject } from "./r2";
 import type { R2Config } from "./r2Config";
 
 const config: R2Config = {
@@ -29,11 +29,11 @@ describe("getObject", () => {
     expect(Array.from(result)).toEqual([1, 2, 3, 4]);
   });
 
-  it("keeps a real page-key's own '/' as a literal path separator, not %2F", async () => {
-    // Every page-object key is "${r2Prefix}/${rawKey}" (pagePointer.ts) --
-    // encoding the whole key as one unit would turn that into %2F, which R2
-    // (like S3) treats as part of a single path segment, not the key's own
-    // real separator.
+  it("keeps a real part-key's own '/' as a literal path separator, not %2F", async () => {
+    // Every part object's real key is "${prefix}/${rawKey}"
+    // (docs/protocols.md's Read path) -- encoding the whole key as one unit
+    // would turn that into %2F, which R2 (like S3) treats as part of a
+    // single path segment, not the key's own real separator.
     const client = fakeAwsClient(async (url) => {
       expect(url).toBe(
         "https://acct.r2.cloudflarestorage.com/my-bucket/abc123/xyz456",
@@ -107,58 +107,6 @@ describe("getObject", () => {
     await expectation;
 
     vi.unstubAllGlobals();
-    vi.useRealTimers();
-  });
-});
-
-describe("putObject", () => {
-  it("signs and PUTs the object body", async () => {
-    const body = new Uint8Array([5, 6, 7, 8]);
-    const client = fakeAwsClient(async (url, init) => {
-      expect(url).toBe(
-        "https://acct.r2.cloudflarestorage.com/my-bucket/some-key",
-      );
-      expect(init?.method).toBe("PUT");
-      expect(init?.body).toBe(body);
-      return new Response(null, { status: 200 });
-    });
-    await putObject(client, config, "some-key", body);
-  });
-
-  it("retries on failure and succeeds once the PUT goes through", async () => {
-    vi.useFakeTimers();
-    let attempts = 0;
-    const client = fakeAwsClient(async () => {
-      attempts++;
-      if (attempts < 3) throw new Error("network blip");
-      return new Response(null, { status: 200 });
-    });
-
-    const promise = putObject(client, config, "flaky-key", new Uint8Array([1]));
-    await vi.runAllTimersAsync();
-    await promise;
-
-    expect(attempts).toBe(3);
-    vi.useRealTimers();
-  });
-
-  it("throws after exhausting all retries", async () => {
-    vi.useFakeTimers();
-    const client = fakeAwsClient(
-      async () => new Response("nope", { status: 403 }),
-    );
-
-    const promise = putObject(
-      client,
-      config,
-      "forbidden-key",
-      new Uint8Array([1]),
-    );
-    const expectation = expect(promise).rejects.toThrow(
-      "failed after 4 attempt(s)",
-    );
-    await vi.runAllTimersAsync();
-    await expectation;
     vi.useRealTimers();
   });
 });
