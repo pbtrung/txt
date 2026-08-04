@@ -336,7 +336,7 @@ export async function listUsersWithInfo(
     return {
       id: row.id,
       email: row.email,
-      displayName: stored?.displayName || row.email,
+      displayName: stored?.displayName || row.email || row.id,
       isAdmin: row.type === "admin",
     };
   });

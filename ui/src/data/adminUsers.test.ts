@@ -96,6 +96,7 @@ describe("adminUsers", () => {
         $users: [
           { id: "admin-1", email: "admin@example.com", type: "admin" },
           { id: "user-2", email: "bob@example.com", type: "user" },
+          { id: "user-3", type: "user" },
         ],
       };
     });
@@ -111,6 +112,12 @@ describe("adminUsers", () => {
         id: "user-2",
         email: "bob@example.com",
         displayName: "Bob",
+        isAdmin: false,
+      },
+      {
+        id: "user-3",
+        email: undefined,
+        displayName: "user-3",
         isAdmin: false,
       },
     ]);

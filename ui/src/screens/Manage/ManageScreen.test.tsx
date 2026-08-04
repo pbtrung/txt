@@ -184,6 +184,22 @@ describe("ManageScreen", () => {
     );
   });
 
+  it("uses a concrete fallback instead of an unnamed user label", async () => {
+    vi.mocked(listUsersWithInfo).mockResolvedValue([
+      { id: "user-without-name", isAdmin: false },
+    ]);
+    vi.mocked(listShares).mockResolvedValue([]);
+
+    setup();
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /^user-without-name/ }),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.queryByText("Unnamed user")).toBeNull();
+  });
+
   it("switches between Users, Books, and Shares lists", async () => {
     setup();
     await waitFor(() => expect(screen.getByText("Bob")).toBeInTheDocument());
