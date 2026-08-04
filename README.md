@@ -1,18 +1,20 @@
 # txt
 
-A personal document-storage system: an encrypted, per-user SQLite (SQLCipher) database, paged remotely into Cloudflare R2 a page at a time, with [InstantDB](https://instantdb.com) holding only identity ([Firebase Auth](https://firebase.google.com/docs/auth)) and opaque, client-encrypted page pointers — never plaintext content or unwrapped keys. This repo has three parts: the TypeScript admin CLI (`txt.ts`) for provisioning and maintaining an account, the React viewer (`ui/`) end users actually unlock/read/write through, and a Cloudflare Worker (`worker/`) that mints short-lived R2 credentials so no browser session — admin included — ever holds a static R2 key.
+A personal document-storage system built on a single [InstantDB](https://instantdb.com) app (identity via [Firebase Auth](https://firebase.google.com/docs/auth)) plus Cloudflare R2 for content, encrypted end-to-end — InstantDB and R2 both only ever see ciphertext, never plaintext content, real object addresses, or unwrapped keys. This repo has three parts: the TypeScript admin CLI (`txt.ts`) for provisioning an account and importing documents, the React viewer (`ui/`) end users actually unlock/read/write through, and a Cloudflare Worker (`worker/`) that mints short-lived R2 credentials so no browser session — admin included — ever holds a static R2 key.
+
+**The CLI and `ui/`/`worker/` currently implement two different data models.** `txt.ts` stores each document as its own set of InstantDB entities (`txt`/`txtMetadata`/`txtParts`, plus a Kyber/X448 keypair per account for sharing) with per-part R2 objects — see the `docs/` files below. `ui/` and `worker/` haven't been ported to that design yet and still implement an earlier one (one SQLCipher-encrypted SQLite database per user, paged into R2).
 
 See [`docs/data_model.md`](docs/data_model.md) for the entities and permission rules, [`docs/key_hierarchy.md`](docs/key_hierarchy.md) for how the encryption keys nest, [`docs/protocols.md`](docs/protocols.md) for the ingest/read/share/garbage-collection flows, [`docs/r2_credentials.md`](docs/r2_credentials.md) for the R2 credential broker and account provisioning, [`docs/auth.md`](docs/auth.md) for the sign-in flow, and [`docs/crypto.md`](docs/crypto.md) for the encryption format.
 
 ## Main features
 
-- **`--init-admin`** — provisions the admin account end to end: signs into Firebase, resolves an InstantDB identity for it, generates its key hierarchy, builds its initial encrypted per-user SQLite database, and uploads it page-by-page to R2.
+- **`--init-admin`** — provisions the admin account end to end: signs into Firebase, resolves an InstantDB identity for it, generates its key hierarchy (a `keyStore` Kyber/X448 keypair and a `credStore` row holding its real R2 credentials), and writes both in one transaction. No per-user database or initial upload needed.
 - **`--clean-bucket`** — sweeps an R2 bucket for objects no longer referenced by a (legacy, pre-InstantDB) account snapshot, with a dry-run mode and a confirmation prompt before deleting anything.
-- **`--migrate`** — imports every document from a legacy account's database into an already-provisioned InstantDB account's own SQLCipher database, through the same page-by-page R2 transport `--init-admin` uses. Fetches documents in parallel batches, commits to R2/InstantDB in small part-sized chunks (so one huge document can't blow up a single commit), and resumes an interrupted run at the exact part it left off on, not just the last fully-migrated document.
-- **`--collect-garbage`** — the same two garbage-collection sweeps `--migrate` already does for its own target account (delete superseded page-store versions, sweep untracked R2 objects), run app-wide across every provisioned account instead, one account at a time.
+- **`--migrate`** — imports every document from a legacy account snapshot, re-encrypting each part under the current key hierarchy as it goes and writing it directly as `txt`/`txtMetadata`/`txtParts` InstantDB entities plus per-part R2 objects. Fetches documents in parallel batches, writes each one's parts in small chunks (so one huge document can't blow up a single transaction), and resumes an interrupted run at the exact part it left off on, not just the last fully-migrated document.
+- **`--collect-garbage`** — sweeps every document the admin account owns for R2 objects a crashed `--migrate` run left behind (a part's own R2 upload and its InstantDB row are two separate steps).
 - **`ui/`** — the React viewer: unlock a vault with a creds.json file, browse/read documents, bookmark, and write back read-position/bookmark updates, all client-side against InstantDB + R2 directly.
 - **`worker/`** — the one server component the design needs: verifies a Firebase ID token and mints a short-lived, prefix-scoped R2 credential for it, so `ui/` never needs a static R2 key.
-- **End-to-end encryption throughout**: page content is SQLCipher-encrypted; R2 object addresses and the pointers to them are separately wrapped (Ascon-Keccak AEAD + HKDF-SHA3-512) so neither InstantDB nor R2 ever see plaintext content, real object addresses, or unwrapped keys.
+- **End-to-end encryption throughout**: the CLI wraps every document/part/key in the AEAD blob format (Ascon-Keccak + HKDF-SHA3-512) and uses a Kyber/X448 KEM to share a document with another account — see `docs/crypto.md`.
 
 ## Install
 
@@ -39,7 +41,7 @@ node txt.ts --collect-garbage --creds <creds.json> [-v|--verbose] [--dry-run] [-
 
 ### Credentials
 
-`--init-admin` and `--migrate --to-creds` take a live-account credentials file:
+`--init-admin` and `--migrate --to-creds` take a live-account credentials file. This is also the one file `npm run deploy` needs (see "Build + deploy" below) — `slhdsa_256f_priv_key`/`asset_base_url` are ignored by `--init-admin`/`--migrate`/`--collect-garbage`, carried through purely so one creds.json can serve both purposes instead of two separate files:
 
 ```json
 {
@@ -52,13 +54,15 @@ node txt.ts --collect-garbage --creds <creds.json> [-v|--verbose] [--dry-run] [-
   "display_name": "",
   "r2_config": {
     "endpoint": "",
-    "region": "",
-    "bucket": "",
     "read_only_access_key_id": "",
     "read_only_secret_access_key": "",
     "read_write_access_key_id": "",
-    "read_write_secret_access_key": ""
+    "read_write_secret_access_key": "",
+    "region": "",
+    "bucket": ""
   },
+  "slhdsa_256f_priv_key": "",
+  "asset_base_url": "",
   "user_root_key": ""
 }
 ```
@@ -111,7 +115,7 @@ On that Worker's dashboard, under **Variables and secrets**, set:
 WORKER_NAME=<your-worker's-name> npm run deploy -- <build-creds.json>
 ```
 
-`WORKER_NAME` must match the Worker resource's actual name (`npm run deploy` refuses to run without it, rather than risk deploying to the wrong place). `build-creds.json` (defaults to `ui/build-creds.json` if omitted) is a small, separate operator config — distinct from the CLI's own creds.json above, and never committed:
+`WORKER_NAME` must match the Worker resource's actual name (`npm run deploy` refuses to run without it, rather than risk deploying to the wrong place). `build-creds.json` (defaults to `ui/build-creds.json` if omitted) only needs `asset_base_url`/`slhdsa_256f_priv_key` filled in — pass the same creds.json used for `--init-admin` above (its other fields are ignored here), or a separate, smaller file if you'd rather keep them apart. Never commit either:
 
 ```json
 {
