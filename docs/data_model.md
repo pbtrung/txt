@@ -2,23 +2,31 @@
 
 This project stores data in a single InstantDB app — isolation between users is enforced entirely by InstantDB's permission rules (CEL expressions), not by physical separation into per-user databases. Identity comes from Firebase Auth; InstantDB maps a verified Firebase ID token to an InstantDB user by its email claim.
 
-InstantDB itself holds only three things: `$users` (identity plus a per-account `umk`), `credStore` (encrypted key-material blobs), and a page-store (`dbMeta`/`pages`/`activeReaders`) for **one SQLCipher-encrypted SQLite database per user**, paged remotely into R2. The actual application schema — documents, their content, bookmarks — lives entirely _inside_ that per-user SQLCipher database (see "Per-user SQLCipher database schema" below) and is never visible to InstantDB as rows at all: InstantDB only ever sees an opaque, client-encrypted object key per page.
+Documents, their content, shares, read-position, and bookmarks are all literal InstantDB entities — there is no per-user SQLCipher database and no page store in this design. Only one thing is stored outside InstantDB: a document part's actual text, which lives as a single encrypted object in Cloudflare R2, addressed by a random key that only an encrypted `txt_parts.path` value (below) points to.
 
-Exact InstantDB API names below (`i.entity`, `unique()`, `.ref()`, permission rule shape) come from InstantDB's own docs (`instantdb.com/docs/modeling-data`, `/docs/permissions`, `/docs/auth/firebase`) — verify against a real `npx instant-cli@latest push schema` before treating any of this as final. Two items below are explicitly flagged as unverified and worth confirming empirically before this design is trustworthy enough to build on.
+Every column that holds user content, a wrapped key, or anything else sensitive stores an opaque encrypted blob in the wire format defined in [crypto.md](crypto.md) — `magic || version || salt || ciphertext || tag`. InstantDB and R2 both only ever see ciphertext; all encryption/decryption and key unwrapping happens in the client (or admin tooling), never in the database.
+
+Exact InstantDB API names below (`i.entity`, `unique()`, `.ref()`, permission rule shape) come from InstantDB's own docs (`instantdb.com/docs/modeling-data`, `/docs/permissions`, `/docs/auth/firebase`) — verify against a real `npx instant-cli@latest push schema` before treating any of this as final.
+
+## Operating model: admin owns content, users only ever read shared documents
+
+Only an `admin`-typed account ever creates a `txt` row (a document) or its `txtParts` — a `user`-typed account has no ingest path of its own. A `user` account gets read access to a specific document exclusively through a `txtShares` row the admin creates for them (see "Sharing protocol" below); everything else about a `user` account (their own `txtAccess`/`txtBookmarks` rows, their own `keyStore` keypair) exists to support reading documents shared to them, not to own any of their own. This is a real behavioral asymmetry between the two roles, not just a permission-rule detail — worth keeping in mind when reading every entity below.
 
 ## Entities
 
 There's no app-level profile entity in this design — `$users` (InstantDB's own built-in auth entity) is the only account-identity entity, and every other entity's `owner`/`user` link points directly at it. `auth.id` already equals a `$users` row's own id, so ownership checks below are always a single-hop `data.ref('owner.id')`, never a two-hop traversal through an intermediate row.
 
 - **`$users`** — one row per Firebase-authenticated identity, keyed by email. Carries two custom attributes beyond the built-in ones:
-  - **`umk`** — base64, 128 random bytes, generated once per account and wrapped (`crypto.md`'s Blob format) under `user_root_key` — an external secret supplied by `creds.json`, never stored in InstantDB. `umk` is the encryption key for this account's `credStore` rows (below) — nothing else about this account's key hierarchy lives on `$users` itself.
-  - **`type`** — `'admin' | 'user'`, the permission system's role switch: a `'user'` can only view/create/update their own `dbMeta`/`pages`/`activeReaders`/`credStore` rows (every rule on those is `isAdmin || isOwner`), an `'admin'` can act on any user's data, full stop — including operations (updating/deleting `pages` rows) an ordinary owner is never allowed, since those violate the page store's append-only MVCC invariant and are meant only as a deliberate support/repair escape hatch. Only ever writable via `instant.perms.ts`'s `$users.update: "isAdmin"` — there's no `isSelf` branch on that rule at all, so a plain user can never touch their own `type` (or anything else on their own `$users` row) through the normal write path, let alone self-promote to admin.
+  - **`umk`** — base64, 128 random bytes, generated once per account and wrapped (`crypto.md`'s Blob format) under `user_root_key` — an external secret supplied by `creds.json`, never stored in InstantDB. `umk` is the encryption key for this account's `keyStore.privKey` and `credStore.config` rows (below).
+  - **`type`** — `'admin' | 'user'`. `'admin'` can create/update/delete any `txt`/`txtParts`/`txtShares` row and act on any account's data, full stop; `'user'` can only view/create/update their own `keyStore`/`credStore`/`txtAccess`/`txtBookmarks` rows (every rule on those is `isAdmin || isOwner`) and read (never write) a `txt`/`txtParts` row they have a `txtShares` grant for. Only ever writable via `instant.perms.ts`'s `$users.update: "isAdmin"` — there's no `isSelf` branch, so a plain user can never touch their own `type` (or anything else on their own `$users` row) through the normal write path, let alone self-promote to admin.
 
-  **Unverified — confirm before relying on this:** whether `auth.ref('$user.type')` (`instant.perms.ts`'s `isAdmin` check) resolves a plain, non-linked attribute on the current session's own `$users` row the same way `auth.ref`/`data.ref` resolve an attribute reached across a real link. This project's prior design routed `type` through a separate profile entity specifically so this question never had to be answered; collapsing that entity away means it now does.
+  **Unverified — confirm before relying on this:** whether `auth.ref('$user.type')` (`instant.perms.ts`'s `isAdmin` check) resolves a plain, non-linked attribute on the current session's own `$users` row the same way `auth.ref`/`data.ref` resolve an attribute reached across a real link.
 
-- **`credStore`** — the encrypted key-material store. One row per (owner, subject) pair; a single `owner` can hold multiple rows. Fields: `owner` (link to `$users`, whoever's `umk` encrypts this row's `content`), `user` (link to `$users`, optional — which account's key material this row actually describes; left empty when a row describes its own owner), and `content` (a string: JSON, wrapped whole via `crypto.md`'s Blob format under `owner`'s `$users.umk`).
+- **`keyStore`** — one row per user (`owner`, unique link to `$users`), holding that account's `lc_kyber_1024_x448` composite keypair (see `crypto.md`'s Composite KEM Key Sizes). `pubKey` is stored raw (1624 bytes, not sensitive); `privKey` is wrapped under the owner's `umk`. This keypair exists purely so the admin can share a document with this account without ever needing that account's `umk` — see `txtShares` below. Provisioned for every account, admin included (the admin needs a `keyStore` row too, in case anyone ever needs to share _to_ the admin, though in practice the admin is always the sharer, never the recipient, today).
 
-  For a `user`-role account's own row (`owner` = that user, `user` link empty):
+- **`credStore`** — one row per user (`owner`, unique link to `$users`): `config`, a single encrypted JSON blob (wrapped under `owner`'s `umk`) holding that account's R2 connection info plus a display label. Unlike the SQLCipher-page-store design this one replaces, there is no `path_key`/`db_key` here at all — the only thing this account-scoped R2 config is used for is reading (and, for the admin, writing) `txtParts` objects directly, addressed by `txtParts.path` itself (below).
+
+  For a `user`-role account:
 
   ```json
   {
@@ -27,13 +35,11 @@ There's no app-level profile entity in this design — `$users` (InstantDB's own
       "region": "",
       "bucket": ""
     },
-    "display_name": "",
-    "path_key": "<base64, 128 random bytes>",
-    "db_key": "<base64, 256 random bytes>"
+    "display_name": ""
   }
   ```
 
-  For the admin's own row (`owner` = admin, `user` = admin):
+  For the admin's own row:
 
   ```json
   {
@@ -46,164 +52,166 @@ There's no app-level profile entity in this design — `$users` (InstantDB's own
       "region": "",
       "bucket": ""
     },
-    "display_name": "",
-    "path_key": "<base64, 128 random bytes>",
-    "db_key": "<base64, 256 random bytes>"
+    "display_name": ""
   }
   ```
 
-  `path_key` wraps each page's `raw_key` (see `pages` below) before it's written into `pages.path`. `db_key` is the raw SQLCipher key for the described account's own database — **must be ≥256 raw bytes**: the leancrypto cipher provider (`sqlcipher/sqlcipher.js`, this repo's vendored WASM build) rejects anything shorter (`sqlcipher_cipher_ctx_key_derive: key must be supplied as a raw key blob x'...' of at least 256 bytes`, confirmed against the real WASM module) — unlike `umk`/`path_key`, which are just HKDF input keying material and have no such hard minimum. `r2_config` is the connection info needed to read/write the described account's page objects — for the admin, this also includes the actual R2 access keys; a `user`-role row's `r2_config` carries no access keys at all, since a `user` session never holds a static R2 credential of any kind, only a short-lived, prefix-scoped temporary one minted on demand (see "Temporary, prefix-scoped R2 credentials" below). `display_name` is a human-readable label for the described account (e.g. for an account picker) — plaintext-adjacent (protected by the same `content` wrapping as everything else here, but not itself security-sensitive), sourced from `creds.json`'s own `display_name` field at provisioning time.
+  A `user`-role row's `r2_config` carries no access keys at all, since a `user` session never holds a static R2 credential of any kind, only a short-lived, prefix-scoped temporary one minted on demand (see "Temporary, prefix-scoped R2 credentials" below) — and, per the operating model above, that temporary credential is always scoped **read-only**, since a `user` account never writes to R2. The admin's row carries the real, permanent R2 keys — used by CLI tooling (`--migrate`, `--clean-bucket`, `--collect-garbage`) and the planned admin-session frontend GC counterpart (see "Garbage collection" below), which deliberately use the admin's real credential directly rather than a temporary one.
 
-  A third row shape — `owner` = admin, `user` = some other user, `content` wrapped under the admin's own `umk` (not that other user's):
+- **`txt`** — one row per document. Fields: `owner` (link to `$users` — always the admin account today, per the operating model above), `txtKey` (128 random bytes, wrapped under `owner`'s `umk`), and `content` — a single encrypted JSON blob (wrapped under this row's own unwrapped `txtKey`, brotli-compressed) replacing what used to be a separate per-account `txt_metadata` table:
 
   ```json
   {
-    "user_root_key": "<base64, that user's own external secret>"
+    "name": "original filename",
+    "metadata": { "...": "opf sidecar fields, when present" },
+    "last_part_num": 3,
+    "last_accessed": 1738368000000,
+    "created_at": 1738368000000
   }
   ```
 
-  This is the admin's own copy of that user's `user_root_key` — the one thing every other secret in this whole hierarchy is ultimately wrapped under, and the one thing the admin has no other way to recover (unlike `path_key`/`db_key`, which the admin generated in the first place at provisioning time but doesn't otherwise persist its own copy of). It's what lets cross-account maintenance tooling (`txt.ts --collect-garbage`) unwrap any account's own `umk` → own credStore row → `path_key`, without that account's own session ever being involved: decrypt this row under the admin's `umk` to get the target account's `user_root_key`, use it to decrypt that account's own `$users.umk`, then use that to decrypt that account's own credStore self-row (the first shape above) as normal.
+  Putting a document's own name/metadata/read-position directly on its own `txt` row (rather than a separate table keyed by `txt_id`) is what "no need for a `txt_metadata` table" means here: since each `txt` row already carries its own `txtKey`, there's no reason to wrap this JSON under anything else, and no reason to fan it out across a second entity. `last_part_num`/`last_accessed` are the _owning_ account's own read position for this document — a share recipient's read position for the same document lives in their own `txtAccess` row instead (below), not here.
 
-- **`dbMeta`** — one row per user (one-to-one link to `$users`): `currentVersion`, `pageCount`, `pageSize`, `needsGc` — the table of contents for that user's SQLCipher database's page store. `pageSize` matches that database's own page size (`PRAGMA page_size`, set to `32768` — see the schema's `PRAGMA` block below); SQLCipher's own `cipher_page_size` follows the same value.
-- **`pages`** — one row per (owner, page_no, version) triple of the SQLCipher database above: `pageNo`, `version`, a synthetic `pageKey` (see below), linked to `$users` (owner), and `path` — this page-version's real R2 object key, encrypted and stored directly as base64: `path = base64(Blob(raw_key; IKM = path_key))`, where `raw_key` is a fresh Crockford-base32-lowercase encoding of 32 random bytes and the object's real address is `raw_path = "${r2Prefix}/${raw_key}"` (`r2Prefix = base32_lowercase(sha3-256(auth.id))`, a pure function of the owning account's `auth.id`, never itself encrypted or stored — cheap to recompute at the point of the actual R2 GET/PUT, so leaving it out of every encrypted `path` is pure savings, not a missing piece). A "page" here is a literal SQLite/SQLCipher page, not an arbitrary document chunk.
-- **`activeReaders`** — one row per open read session: `snapshotVersion` (the version that session pinned at open) and `leaseExpiresAt`, linked to `$users`. Lets garbage collection compute the oldest version still in use by any live reader.
+- **`txtParts`** — a document's content, chunked into ordered parts. Fields: `txt` (link to `txt`), `partNum`, `path` — wrapped (under this document's `txtKey`) Crockford-base32-lowercase encoding of 32 random bytes, and a synthetic `partKey = "${txtId}:${partNum}"` (`unique().indexed()` — see "The composite-uniqueness problem" below). The actual part content is **not** in InstantDB: `path`, once decrypted, is a fresh random key `raw_key`, and the real R2 object lives at `raw_path = "${r2Prefix}/${raw_key}"` (`r2Prefix` — see "Temporary, prefix-scoped R2 credentials" below — is a pure function of the owning `txt.owner`'s `auth.id`, in practice always the admin's). The R2 object body is `Blob.encrypt(txtKey, brotli(cleaned part text))` — the same `txtKey` that wraps `path` itself, just a second, independent application of it. This is the one place two layers of encryption protect the same content for two different reasons: `path` hides which random R2 key belongs to which part/document; the object body's own wrap hides the actual text from anyone who only has R2 access (a temporary credential holder) but not `txtKey`.
+
+- **`txtShares`** — one row per (document, recipient) share grant. Fields: `txt` (link to `txt`), `fromUser` (link to `$users` — always the admin, since only the admin can share), `toUser` (link to `$users`, the recipient), `saltKemCt` (`salt` (64 random bytes) `|| lc_kyber_1024_x448` KEM ciphertext (1624 bytes), raw/public), `txtKey` (the same `txt.txtKey` bytes, rewrapped for this recipient via `HKDF-SHA3-512(IKM=ss, salt) -> 128-byte OKM` — see `crypto.md`'s Encapsulate/Decapsulate — where `ss` is the raw, uncombined shared secret from `lc_kyber_1024_x448_enc`/`_dec`, never itself stored), and a synthetic `shareKey = "${txtId}:${fromUserId}:${toUserId}"` (`unique().indexed()`). A recipient's read access to a `txt`/`txtParts` row is gated on the existence of a `txtShares` row with `toUser.id == auth.id` for that `txt` — see "Sharing protocol" below for the actual Encapsulate/Decapsulate flow.
+
+- **`txtAccess`** — one row per (user, document) pair the user has ever opened, owner or share recipient alike. Fields: `owner` (link to `$users` — the reading account, not necessarily the document's own `owner`), `txt` (link to `txt`), `txtAccessKey` (128 random bytes, wrapped under `owner`'s `umk`, generated fresh per row), `content` — a small encrypted JSON blob (wrapped under this row's own `txtAccessKey`) `{"last_part_num": int, "last_accessed": int}`, and a synthetic `accessKey = "${userId}:${txtId}"` (`unique().indexed()`). This is a deliberate change from a single per-user JSON blob keyed by `txt_id` (the shape `txtBookmarks` below still uses): one real row per document lets the "capped at 10 documents" eviction rule become "count this user's `txtAccess` rows, delete the one with the oldest `last_accessed` before inserting an 11th" — ordinary row operations, no client-side JSON surgery needed. Still enforced client-side only, same as before — no DB-level cap.
+
+- **`txtBookmarks`** — one row per user (`owner`, unique link to `$users`), holding that user's bookmarks across every document they've opened — owner or share recipient alike. Unlike `txtAccess` above, this table keeps the original one-row-per-user shape: `txtBookmarkKey` (128 random bytes, wrapped under `owner`'s `umk`) protects `content`, a single encrypted JSON blob keyed by `txt_id`: `{"<txt_id>": [{"part_num": int, "line": int, "txt_preview": str, "created_at": int (unix ms)}, ...], ...}`, each `txt_id`'s list capped at 20 entries (client evicts the oldest `created_at` before exceeding the cap — no DB-level enforcement).
 
 ## The composite-uniqueness problem (guarded insert)
 
-InstantDB's `unique()` constraint is per-attribute, whole-namespace — it cannot express "unique per (owner, page_no, version)" directly, since every user's page store independently starts at page 1, version 1, and those would collide across users on a bare `pageNo`/`version` attribute. Fix: compute a synthetic `pageKey = "${ownerId}:${pageNo}:${version}"` client-side and mark _that_ attribute `unique().indexed()`. Attempting to write a `pages` row whose `pageKey` already exists then fails outright — the guarded-insert guarantee for concurrent writers, enforced by the constraint itself, no hand-rolled SQL needed. `pageKey` is deterministic and plaintext by design (it only needs to be unique and computable, never secret) — unlike `raw_key` (wrapped into `pages.path`), which is random and encrypted precisely because it's half of a real R2 object address (the other half, `r2Prefix`, is deterministic and never encrypted at all — see `pages` above).
+InstantDB's `unique()` constraint is per-attribute, whole-namespace — it cannot express "unique per (a, b, c)" directly. Three entities above need a composite key for exactly this reason, and each follows the same fix: compute a synthetic key client-side and mark it `unique().indexed()`, so a concurrent duplicate insert fails outright rather than needing a hand-rolled existence check first.
 
-## Commit protocol (MVCC write path)
+| Entity      | Synthetic key                                     | Guards against                                                            |
+| ----------- | ------------------------------------------------- | ------------------------------------------------------------------------- |
+| `txtParts`  | `partKey = "${txtId}:${partNum}"`                 | two concurrent ingests writing the same part twice                        |
+| `txtShares` | `shareKey = "${txtId}:${fromUserId}:${toUserId}"` | double-sharing the same document to the same recipient                    |
+| `txtAccess` | `accessKey = "${userId}:${txtId}"`                | two concurrent opens of the same document creating two read-position rows |
 
-1. Client stages dirty pages of its local SQLCipher database (via the vendored `sqlcipher.wasm` + `js-vfs.mjs` remote-page VFS) in memory.
-2. On commit, for each dirty page: the SQLCipher layer has already produced that page's ciphertext (encrypted under `db_key`, Ascon-Keccak at the SQLite page level) — this _is_ the R2 object body; no separate app-level wrapping of page content is needed.
-3. Generate a fresh `raw_key = crockford_base32_lowercase(32 random bytes)` for this page-version, and `PUT` the page ciphertext to the user's own R2 bucket at `"${r2Prefix}/${raw_key}"` (`r2Prefix = base32_lowercase(sha3-256(auth.id))`) — via the admin's static read-write credentials for an admin session, or a freshly-minted temporary credential scoped to `${r2Prefix}/*` for a `user` session (see "Temporary, prefix-scoped R2 credentials" below).
-4. Encrypt `raw_key` alone (`crypto.md`'s Blob format, IKM = `path_key`) and base64-encode the result — this becomes the new `pages` row's `path` value directly; no separate upload call is needed to produce it.
-5. One `db.transact([...])`: create the new `pages` row (`pageKey = "${auth.id}:${pageNo}:${version}"`, `path` from step 4, linked to `owner`) and CAS-bump `dbMeta.currentVersion` — all in the same atomic transaction. The CAS is enforced by a permission rule on `dbMeta`'s `update`: `newData.currentVersion == data.currentVersion + 1` — since the rule evaluates against the record's state at commit time inside the same transaction, a concurrent writer that already advanced the version makes the whole transaction fail.
+Every synthetic key is deterministic and plaintext by design (it only needs to be unique and computable, never secret) — unlike the values it helps guard (`txtParts.path`, `txtShares.txtKey`/`saltKemCt`, `txtAccess.content`), which are wrapped precisely because they're either a real R2 address or real key material.
 
-   **The one failure mode:** step 3 (the R2 `PUT`) and step 5 (the InstantDB `transact`) are two separate operations, not one atomic unit. A crash between them leaves a real R2 object with no `pages` row pointing at it — since `path` is written directly by the same `transact()` that creates the row, there's no second, separately-created metadata step in between to fail on its own. Garbage collection sweeps for this one case (see below).
+## Key hierarchy
 
-   **Unverified — confirm before relying on this:** whether `transact()` is truly serializable per-record, or just "check rules against a possibly-stale read, then apply." This is the one piece of this design load-bearing enough to need real verification.
+```
+user_root_key
+    (per-account config secret, >=256 random bytes, base64; not
+    stored in InstantDB)
+    |  IKM for HKDF, wraps/unwraps --
+    v
+$users.umk
+    (128 random bytes, generated once per account)
+    |  used directly as IKM for HKDF, wraps/unwraps --
+    +--> keyStore.privKey
+    |        (lc_kyber_1024_x448 composite private key, 3224 raw
+    |        bytes -- pubKey stored raw/public, not wrapped)
+    |
+    +--> credStore.config
+    |        (r2_config + display_name; used directly as IKM, no
+    |        intermediate key)
+    |
+    +--> txt.txtKey            (per document, 128 random bytes, owner-only)
+    |        |  used directly as IKM --
+    |        +--> txt.content       (name/metadata/read-position)
+    |        +--> txtParts.path     (per part, wraps the R2 raw_key)
+    |        +--> txtParts R2 object body (independent second wrap)
+    |
+    +--> txtAccess.txtAccessKey   (per (user, document) row, 128 random bytes)
+    |        |  used directly as IKM --
+    |        +--> txtAccess.content   (that row's own read position)
+    |
+    +--> txtBookmarks.txtBookmarkKey   (per user, 128 random bytes)
+             |  used directly as IKM --
+             +--> txtBookmarks.content   (bookmarks, keyed by txt_id)
 
-## Read protocol
+txt.txtKey, in parallel, is also wrapped a second way -- not under
+umk -- once per share recipient:
 
-Query `pages` for `owner = self, pageNo = N, version <= target`, ordered by version descending, limit 1 (indexed `version` column enables the comparison/ordering) — the result already includes `path`, so no second query or download is needed to reach it. Decrypt `path` with `path_key` to recover `raw_key`, reassemble `raw_path = "${r2Prefix}/${raw_key}"` (`r2Prefix` re-derived from `auth.id`, already known at this point), then `GET` that key from R2 — the real (SQLCipher-encrypted) page bytes, handed to the local SQLite/SQLCipher engine, which decrypts them with `db_key` as the page is loaded. Two hops: one InstantDB query, one R2 fetch.
+    admin Encapsulates (crypto.md) against recipient's keyStore.pubKey
+        |
+        v
+    txtShares.{saltKemCt, txtKey}
+        (txtKey here is the same bytes as txt.txtKey, wrapped via
+        HKDF-SHA3-512(IKM=ss, salt) -> 128-byte OKM instead of umk)
+        |
+        |  recipient Decapsulates using their own keyStore.privKey
+        v
+    (recipient now holds txt.txtKey, unwrapped, without ever
+    learning the admin's umk)
+```
+
+Every wrapped-key and content blob uses the blob format, AEAD, and KDF mechanics from [crypto.md](crypto.md) uniformly. `txtShares.txtKey` is the one value in this hierarchy wrapped via Encapsulate/Decapsulate (asymmetric) instead of a plain Encrypt/Decrypt under a key both sides already hold.
+
+## Ingest / write path
+
+There is no MVCC/version CAS in this design — unlike a page store, a `txtParts` row is written exactly once and never revised in place, so there's no concurrent-writer conflict to resolve on write.
+
+1. (Admin only.) Clean and split the source text into ordered parts (target size per `constants.PART_TARGET`).
+2. For each part: brotli-compress the cleaned text, encrypt it under the document's `txtKey` (`crypto.md`'s Encrypt), and `PUT` the resulting ciphertext to the admin's own R2 bucket at `"${r2Prefix}/${raw_key}"` for a freshly generated `raw_key = crockford_base32_lowercase(32 random bytes)`.
+3. Encrypt `raw_key` alone under `txtKey` and base64-encode the result — this becomes the new `txtParts` row's `path` value.
+4. `db.transact([...])`: create the `txt` row (first part of a new document) or the new `txtParts` row (`partKey` from the table above, `path` from step 3, linked to `txt`).
+
+**The one failure mode:** step 2 (the R2 `PUT`) and step 4 (the InstantDB `transact`) are two separate operations. A crash between them leaves a real R2 object with no `txtParts` row pointing at it. Garbage collection's orphan sweep (below) cleans this up.
+
+## Read path
+
+Query `txtParts` for `txt = target, partNum = N` (or a range) — the result already includes `path`. Decrypt `path` with the document's `txtKey` to recover `raw_key`, reassemble `raw_path = "${r2Prefix}/${raw_key}"` (`r2Prefix` derived from the _document owner's_ `auth.id` — always the admin's today, regardless of who's reading), `GET` that object from R2, then decrypt the object body under the same `txtKey` and brotli-decompress. Two hops: one InstantDB query, one R2 fetch — same shape whether the reader owns the document or is reading it via a `txtShares` grant; only how they obtained `txtKey` differs (own `umk` vs. Decapsulate).
+
+## Sharing protocol
+
+Only the admin ever grants a share (`fromUser` is always the admin's own `$users` row):
+
+1. Admin looks up the recipient's `keyStore.pubKey` (raw, not sensitive).
+2. Admin generates a random 64-byte `salt` and Encapsulates against that `pubKey` (`crypto.md`'s Encapsulate) — this yields a KEM ciphertext `ct` and a shared secret `ss`, and wraps the document's already-unwrapped `txtKey` using `HKDF-SHA3-512(IKM=ss, salt)` reusing that same `salt`, producing a standard blob.
+3. Admin writes the new `txtShares` row: `shareKey`, `txt` (link), `fromUser` = admin, `toUser` = recipient, `saltKemCt = salt || ct`, `txtKey` = the blob from step 2.
+4. The recipient's own read path (above) tries their own-owned `txt` lookup first and falls back to Decapsulating a `txtShares` row scoped by `toUser.id == auth.id` when the document isn't their own — same pattern as the admin's own lookup, scoped by `owner.id` instead.
+
+Revoking a share is a straight delete of the `txtShares` row; nothing else needs to change, since the recipient's own `txtAccess`/`txtBookmarks` rows for that document simply become unreadable (no path to `txtKey` survives) rather than needing to be scrubbed themselves.
 
 ## Temporary, prefix-scoped R2 credentials
 
 No account holds a static R2 access key in the browser, admin included — the admin's own `read_write_access_key_id`/`secret` is the only permanent R2 credential in this design, and it lives only as a Cloudflare Worker secret (`worker/r2Creds.ts`'s `env.READ_WRITE_ACCESS_KEY_ID`/`SECRET`), never in any client session. Every read/write goes through a short-lived, prefix-scoped temporary credential instead.
 
-**Planned exception:** a frontend counterpart to `txt.ts --collect-garbage` (see "Garbage collection" below) is intended to use the admin's real, decrypted `r2_config` directly in an admin-logged-in browser session, not a temporary credential — a deliberate, accepted departure from the rule above, not an oversight. The admin's own `r2_config` is already recoverable client-side regardless (decrypt `umk` → the admin's own `credStore` row), so this doesn't expose anything not already reachable; what it changes is that the real key gets materialized in a browser session at all, for as long as that session is open, rather than never. Every delete this feature issues still targets one account's own `r2Prefix` at a time (never a whole-bucket operation, same scoping `--collect-garbage` already has server-side) — bounding what a compromised admin session could do relative to holding the real key with no such scoping.
+Every account's `raw_path` values live under `r2Prefix = base32_lowercase(sha3-256(auth.id))` — deterministic, computable by anyone who knows that `auth.id`. Since only the admin's account ever owns content today, `r2Prefix` in practice always resolves to the admin's own prefix, whether the requester is the admin reading/writing their own documents or a `user` account reading one shared to them.
+
+1. The client calls Firebase's `getIdToken()` and sends `{idToken, prefix, bucket, endpoint}` to the Worker's `POST /api/r2-creds`.
+2. The Worker verifies the token itself — RS256 signature against Firebase's own public JWKS via `jose`, issuer/audience pinned to a Worker-configured Firebase project ID never accepted from the request itself.
+3. **The scope decision is no longer a given, unlike the design this one replaces.** Because a `user` account's temporary credential may now legitimately target a prefix that is _not_ their own (the admin's, for a shared document), the Worker must derive `scope` from the relationship between the verified identity and the requested prefix, not just hand back whatever the client asks for:
+   - `computeR2Prefix(token.subject) == requested prefix` (the caller is requesting their own prefix — always true for the admin's own session): `scope: "object-read-write"`.
+   - Otherwise (a `user` session requesting the admin's prefix for a shared read): `scope: "object-read"`, regardless of what the client's request asked for.
+
+   **This is a real, load-bearing change from a design where every account's prefix held only that account's own data** — there, skipping this check just meant a forged prefix parameter could only ever redirect a caller to a prefix holding data no more sensitive than their own. Here, every prefix worth reading holds the admin's _entire_ corpus, so failing to clamp scope for a non-owning caller would let a compromised or malicious `user` session write into (or delete from) documents it was only ever granted read access to. **Unverified — confirm before relying on this:** this scope-clamping logic is a design requirement for this data model, not yet implemented in `worker/r2Creds.ts`.
+
+4. The Worker mints the temporary credential via R2's Temporary Credentials local-signing path (see the current `worker/r2Creds.ts` implementation notes for the exact JWT claim shapes) using whichever `scope` step 3 decided, and returns `{accessKeyId, secretAccessKey, sessionToken, expiresAtMs}`.
+5. The client re-requests a fresh temporary credential before `expiresAtMs`; no long-lived secret is ever cached client-side.
+
+This is the one place this design needs a server component — every other unlock/read/write path is a direct client-to-InstantDB or client-to-R2 call. The Worker only ever verifies identity and brokers scoped, time-limited credentials; it never sees page content or any account's `umk`/`txtKey`.
+
+**Planned exception:** a frontend counterpart to `txt.ts --collect-garbage` is intended to use the admin's real, decrypted `r2_config` directly in an admin-logged-in browser session, not a temporary credential — the admin's own `r2_config` is already recoverable client-side regardless (decrypt `umk` -> the admin's own `credStore` row), so this doesn't expose anything not already reachable.
 
 ### Provisioning a `user` account
 
-Creating a `user` account is an admin-side action: the admin sets that new `$users` row's `type: "user"`, generates that user's `path_key`/`db_key`, initializes their SQLCipher database (schema, `PRAGMA`s — see below — and an empty `dbMeta`), uploads its initial pages to R2 under that user's `r2Prefix` using the admin's own credentials, and writes the resulting `credStore` row (`owner` = that user, `user` link empty, `content` wrapped under that user's own `umk`) plus `dbMeta`/`pages` rows. From that point on, the user reads and writes their own database entirely through the temporary-credential flow below, the same one the admin's own session also uses — the admin never needs to touch it again for ordinary use.
-
-### The credential flow
-
-Every account's `raw_path` values live under `r2Prefix = base32_lowercase(sha3-256(auth.id))` (see `pages` above) — deterministic, computable by anyone who knows `auth.id`. R2 access for any account is restricted to exactly that slice, via a Cloudflare Worker (`worker/r2Creds.ts`, deployed alongside the app's own static build as one Worker-with-static-assets resource, not a separate platform):
-
-1. The client calls Firebase's `getIdToken()` (not a cached raw token string — see below) and sends `{idToken, prefix: computeR2Prefix(auth.id), bucket, endpoint}` to the Worker's `POST /api/r2-creds`.
-2. The Worker verifies the token itself — RS256 signature against Firebase's own public JWKS via `jose` (Workers-compatible), issuer/audience pinned to a Worker-configured Firebase project ID that's never accepted from the request itself (accepting it from the client would let a caller point verification at a different Firebase project they control). It does **not** independently re-derive or cross-check the requested prefix against the token's own subject — the prefix is trusted as given once the token itself is proven real, a deliberate simplification for a small, admin-curated user base.
-3. The Worker mints a temporary credential via R2's Temporary Credentials **local signing** path (the runnable reference is at [developers.cloudflare.com/r2/examples/authenticate-r2-temp-credentials](https://developers.cloudflare.com/r2/examples/authenticate-r2-temp-credentials/); the prose-only page at `.../api/s3/temporary-credentials/` is incomplete on its own and got several details wrong the first time this was built from it) — no outbound call to Cloudflare's own API needed: sign a JWT (HS256, via `jose`'s `SignJWT`) with the admin's parent R2 secret access key (held only as a Worker secret), with claims `{bucket, scope: "object-read-write", paths: {prefixPaths: ["${prefix}/"]}}` plus the standard registered claims `sub` (the R2 account ID, parsed from `endpoint`), `iss` (the parent access key ID — this, not the request's own `accessKeyId`, is what R2 uses server-side to look up which parent secret to re-verify the signature against), `aud` (the R2 endpoint's own host), and `iat`/`exp` (via `setIssuedAt()`/`setExpirationTime()` — there is no separate `ttlSeconds` claim). The temporary `secretAccessKey` is the SHA-256 hex digest of the signed JWT; the `sessionToken` is plain `base64("jwt/" + <signed JWT>)` (not base64url); the parent access key ID is reused as-is for the temporary `accessKeyId`.
-4. The Worker returns `{accessKeyId, secretAccessKey, sessionToken, expiresAtMs}` to the client, which builds a normal S3 client from them (`aws4fetch`'s `AwsClient` in this app, or `@aws-sdk/client-s3` with `sessionToken` set elsewhere).
-5. The client re-requests a fresh temporary credential before `expiresAtMs` — scheduled off that real, server-returned value rather than a hardcoded assumption about the credential's own lifetime; no long-lived secret is ever cached client-side.
-
-**Re-requesting doesn't mean re-login.** Firebase ID tokens are short-lived (~1 hour by default) independent of this design's own credential lifetime, but that's invisible in the normal case: `getIdToken()` transparently mints a fresh ID token from the SDK's own longer-lived refresh token whenever the cached one is stale, with no interactive step. An actual re-login is only forced when the _refresh token_ itself stops being valid — the admin calls `revokeRefreshTokens()` for that account, the password changes, the account is disabled, or local app storage holding the refresh token was cleared/signed out — not merely because time has passed since the last unlock.
-
-This is the one place this design needs a server component — every other unlock/read/write path is a direct client-to-InstantDB or client-to-R2 call. The Worker only ever verifies identity and brokers scoped, time-limited credentials; it never sees page content (already SQLCipher-encrypted before it would ever reach R2) or any account's `umk`/`path_key`/`db_key`.
+Creating a `user` account is an admin-side action: the admin generates that user's `user_root_key` (delivered to them out-of-band via their own `creds.json`), generates their `umk` and wraps it under that `user_root_key`, generates their `keyStore` keypair (`privKey` wrapped under their `umk`), and writes their `credStore` row (`r2_config` with no access keys, plus `display_name`). Unlike the SQLCipher-page-store design this replaces, there is no per-user database to initialize and no initial page upload — a fresh `user` account owns no documents at all until the admin shares one with them. From that point on, the user reads shared documents entirely through the temporary-credential flow above; the admin never needs to touch their account again for ordinary use.
 
 ## Garbage collection
 
-Two sweeps:
+Since only the admin's `r2Prefix` is ever written to, GC is scoped to that one prefix — no per-account iteration needed, unlike a design where every account owns its own page store.
 
-1. Once no `activeReaders` row still needs a superseded page version, delete the `pages` row, then delete the R2 object its `path` (decrypted via `path_key`, combined with the owning account's own re-derived `r2Prefix`) resolves to — in that order, so a crash mid-GC never leaves a `pages` row pointing at something already deleted.
-2. An orphan sweep for the commit protocol's one failure mode above, needing a full R2 bucket listing diffed against everything currently reachable — structurally the same shape as the existing `txt.ts --clean-bucket` tool, just decrypting via `path_key` instead of that tool's `txt_key`/`txt_metadata_key` chain: real R2 objects with no `pages` row whose decrypted `path` resolves to them (the step-3 `PUT` succeeded, but the step-5 `transact` never completed) — after some grace period (long enough to outlast any in-flight commit's step-3-to-step-5 gap), delete them directly.
+1. **Document/part deletion.** Deleting a `txt` row must delete every R2 object its `txtParts` rows point at — but InstantDB's own cascade-delete (`onDelete: "cascade"` on the `txt` link) will remove those `txtParts` rows the moment the `txt` row itself is deleted, which would destroy the only record of which `raw_key`s need deleting. Order matters, and it's the reverse of a page-store's GC order: first read and decrypt every `txtParts.path` for the document (recovering every `raw_key`), delete those R2 objects, and only then delete the `txt` row (letting cascade clean up `txtParts`/`txtShares` for free). A crash between the R2 deletes and the `txt` row delete leaves a real document with dangling, already-gone R2 objects — recoverable by re-running the same delete (idempotent: deleting an already-gone R2 object is a no-op).
+2. **Orphan sweep**, for the ingest path's one failure mode (above): list every R2 object under the admin's `r2Prefix`, diff against every `txtParts` row's own decrypted `raw_key` (across every document), and delete whatever's left over after a grace period long enough to outlast any in-flight ingest's PUT-to-transact gap. Structurally the same shape as `txt.ts --clean-bucket`, just against this design's `txtParts`/`txtKey` instead of that tool's own chain.
 
-`txt.ts --migrate` implements a version of this sweep scoped to its own target account, run at the start of every invocation (no grace period needed there, since it's the same operator re-running the same command, not a background job racing an in-flight commit): list R2 objects under the target account's own `r2Prefix`, diff against every `pages` row's own decrypted `raw_key` (any version, not just the current one — a superseded-but-not-yet-GC'd page's object is still legitimately known), and delete whatever's left over from a previous run that crashed between `RemotePageStore.commitPages`' own R2-upload step and its final `transact`. This is what makes `--migrate` resumable without duplicating documents: each migrated document keeps its source `txt_id` as its target `txt_id`, so a re-run only needs `SELECT id FROM txt` against the target to know which source documents already made it across.
+`txt.ts --migrate` implements a version of sweep 2 scoped to its own target account, run at the start of every invocation (no grace period needed, since it's the same operator re-running the same command, not a background job racing an in-flight ingest): list R2 objects under the target's `r2Prefix`, diff against every `txtParts` row's decrypted `raw_key`, and delete leftovers from a previous crashed run. This is what makes `--migrate` resumable without duplicating documents: each migrated document keeps its source `txt_id` as its target `txt_id`, so a re-run only needs `SELECT id FROM txt` (source-side schema, see `txt/owner.ts`) against the target to know which source documents already made it across.
 
-Cross-user GC visibility doesn't strictly require the Admin SDK's rule-bypassing — `instant.perms.ts`'s `isAdmin` branch already grants a real, authenticated `admin`-typed client session (not just the Admin SDK) full read/write across every account's `$users`/`dbMeta`/`pages`/`credStore` rows, same as any other entity in this design. `txt.ts --collect-garbage` uses the Admin SDK anyway, since it's a standalone server-side tool with no live admin session to authenticate as; a frontend counterpart (below) can instead do the same querying/deleting through a real admin-logged-in session and the ordinary client SDK.
-
-`txt.ts --collect-garbage` implements both sweeps above, app-wide, one account at a time: for every account with a `dbMeta` row, "current version" is evaluated **per page number**, not as one flat cutoff against `dbMeta.currentVersion` — most page numbers were never touched in whatever commit last bumped that value, so their only row legitimately carries some earlier version and is still current, not stale. The rule: for each `pageNo`, find its own highest version among that account's rows, then delete every row for that `pageNo` that isn't the one at that highest version, **or** whose `pageNo` is beyond that account's own `dbMeta.pageCount` (plus the R2 object each deleted row's decrypted `path` resolves to) — the latter reclaims a page number a local file's own shrinkage (autovacuum truncating freed trailing pages) already dropped, which otherwise sits there forever: nothing in the commit path ever explicitly deletes a `pages` row for a page number a truncate removed, only ever writes dirty/new ones. A deliberate simplification of sweep 1's full `activeReaders`-aware condition, since this is a manually-run maintenance operation, not a background job expected to race live readers — then, for that same account, sweep 2's untracked-object pass. After sweep 1, the remaining distinct page numbers should be exactly `1..dbMeta.pageCount`, none missing and none beyond it; `--collect-garbage` checks this itself and warns about any still missing (a real gap, e.g. a commit whose remote write never landed) separately from any beyond `pageCount` (expected before a first reclaim, not itself a sign of a problem). Recovering a non-admin account's `path_key` (needed to decrypt its own `pages.path` values) goes through `credStore`'s third row shape above: the admin's own held copy of that account's `user_root_key`, unwrapped under the admin's own `umk`.
-
-**Planned: a frontend counterpart.** The same two sweeps, triggerable from an admin-logged-in browser session instead of this CLI tool — same account enumeration, same `credStore`-third-row-shape path_key recovery, same per-`r2Prefix` scoping for every delete — but using the real client SDK (permission-rule-respecting, per the note above) and the admin's own decrypted `r2_config` directly rather than a Worker-minted temporary credential. See "Temporary, prefix-scoped R2 credentials" above for the deliberate exception this represents. Not yet implemented.
+**Planned: a frontend counterpart.** The same two sweeps, triggerable from an admin-logged-in browser session instead of the CLI tool, using the real client SDK and the admin's own decrypted `r2_config` directly rather than a Worker-minted temporary credential (see "Temporary, prefix-scoped R2 credentials" above). Not yet implemented.
 
 ## Auth
 
-Every unlock requires a live Firebase sign-in (`getIdToken()` → `db.auth.signInWithIdToken()`), since InstantDB resolves identity from the token's email claim at session-creation time, not from a long-lived static credential. A non-interactive, file-based unlock flow would need Firebase custom tokens minted from a small backend instead. After sign-in, the client reads its own `$users.umk`, unwraps it under `user_root_key`, then reads its own `credStore` row (`owner = self`) and decrypts its `content` under `umk` to recover `path_key`/`db_key`/`r2_config`, and uses `db_key` to open (or create) its own per-user SQLCipher database via the vendored `sqlcipher.wasm` + `js-vfs.mjs` remote-page VFS, backed by the `dbMeta`/`pages` page store above. A `user`-role session additionally depends on the temporary-credential intermediary (above) for its R2 access — the only server component this design needs.
-
-## Per-user SQLCipher database schema
-
-Entirely opaque to InstantDB — these tables live inside the per-user SQLCipher-encrypted SQLite file itself (paged into R2 via the page store above), never as InstantDB rows. Because SQLCipher already encrypts every page of this file under `db_key`, individual columns don't need their own app-level `Blob`-wrapping — the whole file is ciphertext at rest, InstantDB and R2 both included.
-
-```sql
-PRAGMA cipher_default_page_size = 32768;
-PRAGMA page_size = 32768;
-PRAGMA auto_vacuum = INCREMENTAL;
-
-CREATE TABLE txt (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    name          TEXT    NOT NULL,  -- original filename
-    metadata      BLOB,              -- brotli(JSON)
-    last_part_num INTEGER,           -- this document's own read position; NULL until first opened
-    last_accessed INTEGER,           -- unix ms; NULL until first opened
-    created_at    INTEGER NOT NULL,  -- unix ms
-    FOREIGN KEY (id, last_part_num) REFERENCES txt_parts(txt_id, part_num)
-);
-
-CREATE INDEX idx_txt_last_accessed ON txt(last_accessed DESC);
-
-CREATE TABLE txt_parts (
-    id       INTEGER PRIMARY KEY AUTOINCREMENT,
-    txt_id   INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
-    part_num INTEGER NOT NULL,
-    content     BLOB    NOT NULL UNIQUE, -- brotli(raw text)
-    UNIQUE (txt_id, part_num)
-);
-
-CREATE TABLE txt_bookmarks (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    txt_id     INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
-    part_num   INTEGER NOT NULL,
-    line       INTEGER NOT NULL,
-    preview    TEXT    NOT NULL CHECK (length(preview) <= 60),
-    created_at INTEGER NOT NULL,  -- unix ms
-    UNIQUE (txt_id, part_num, line)
-);
-
-CREATE INDEX idx_txt_bookmarks_txt_id_created_at ON txt_bookmarks(txt_id, created_at);
-
--- Enforces the per-document bookmark cap in the database instead of relying
--- on every caller to evict before inserting: after each insert, keep only
--- the 20 most recent rows (by created_at, id as tiebreak) for that txt_id
--- and delete the rest.
-CREATE TRIGGER trg_txt_bookmarks_cap
-AFTER INSERT ON txt_bookmarks
-BEGIN
-  DELETE FROM txt_bookmarks
-  WHERE txt_id = NEW.txt_id
-    AND id NOT IN (
-      SELECT id FROM txt_bookmarks
-      WHERE txt_id = NEW.txt_id
-      ORDER BY created_at DESC, id DESC
-      LIMIT 20
-    );
-END;
-```
-
-### Pragmas
-
-- **`page_size = 32768`** — must be set before any table is created (SQLite only honors a `page_size` change on an empty database, or via a subsequent `VACUUM`); this is what `dbMeta.pageSize`/`pages` above are keyed to. A larger-than-default page size means fewer, bigger R2 objects per database for a given document size — fewer round-trips to page a large document in, at the cost of moving more bytes than strictly needed when only a small part of a page actually changed.
-- **`auto_vacuum = INCREMENTAL`** — also only settable before any table exists. Lets freed pages (e.g. after deleting a document) be reclaimed via an explicit `PRAGMA incremental_vacuum` sweep without rewriting the whole file, unlike a full `VACUUM` — important here since every reclaimed page is also a page-store entry (`pages`) and an R2 object to garbage-collect, not just local disk space.
-
-### Tables
-
-- **`txt`** — one row per document: `name` and `metadata` (an OPF sidecar's parsed fields, when present) live directly on the document's own row. `last_part_num`/`last_accessed` are this document's own read position — since each user has their own database, a document's read position is just two columns on its own row, no separate cross-document table needed.
-- **`txt_parts`** — a document's content, chunked into ordered parts: `content` (brotli-compressed raw text) is stored directly in this table, protected by SQLCipher's own page-level encryption — reading a part is a local (decrypted-on-the-fly-by-SQLCipher) row read once the relevant pages are paged in, no per-part AEAD wrap or R2 round-trip. `UNIQUE(txt_id, part_num)` supports fetching a specific part or range in order; the `UNIQUE` constraint on `content` itself is a dedup safety net.
-- **`txt_bookmarks`** — per-document bookmarks. `trg_txt_bookmarks_cap` enforces a cap of 20 directly in the database after every insert — SQLite itself guarantees the cap, not application code, so nothing (a buggy or malicious caller included) can exceed it.
-- The composite `FOREIGN KEY (id, last_part_num) REFERENCES txt_parts(txt_id, part_num)` on `txt` enforces, at the SQLite level, that a document's read position always points at a part that actually exists.
+Every unlock requires a live Firebase sign-in (`getIdToken()` -> `db.auth.signInWithIdToken()`), since InstantDB resolves identity from the token's email claim at session-creation time, not from a long-lived static credential. After sign-in, the client reads its own `$users.umk`, unwraps it under `user_root_key`, then reads its own `keyStore`/`credStore`/`txtAccess`/`txtBookmarks` rows as needed. A `user`-role session additionally depends on the temporary-credential intermediary (above), always read-only, for any R2 access at all — it never writes to R2, since it never owns content.
 
 ## Design Notes
 
-- **Isolation depends entirely on permission rules, not physical separation** — a rules bug is a cross-user data leak across the whole app, not contained to a single account. Worth weighing deliberately, not as an afterthought.
-- **Two independent layers of encryption protect a page, deliberately**: SQLCipher's own page-level encryption (`db_key`) protects page _content_; `path_key` separately protects the R2 _address_ a page lives at. Compromising one without the other isn't enough to read page content (no `db_key`) or to locate which R2 objects belong to which user/page (no `path_key`) — genuine defense-in-depth, not two copies of the same protection.
-- **The temporary-credential intermediary is a real trust boundary, not a formality** — it holds the admin's R2 credential and, on a compromised or buggy Firebase ID token check, could mint an over-scoped or long-lived credential for the wrong prefix. Its blast radius is bounded (never sees `umk`/`path_key`/`db_key`/plaintext page content, only brokers scoped R2 tokens), but it's the one component in this design whose compromise directly threatens R2-level isolation between accounts, rather than just one account's own data.
+- **Isolation depends entirely on permission rules, not physical separation** — a rules bug is a cross-user data leak across the whole app, not contained to a single account.
+- **The admin-owns-everything model concentrates blast radius differently than a per-account page store would.** Every document lives under one prefix, so the R2-credential scope-clamping logic in "Temporary, prefix-scoped R2 credentials" above is now doing real security work, not just convenience scoping — a bug there is a much bigger deal here than it would be if every account's own data lived under its own prefix.
+- **Two independent layers of encryption protect a part, deliberately**: `txtParts.path` protects the R2 _address_ a part lives at; the R2 object body's own independent wrap (same `txtKey`, applied a second time) protects the part's _content_. Compromising R2 list/read access alone (without `txtKey`) yields neither the mapping from part to object nor the ability to decrypt any object it did manage to guess.
+- **`txtAccess`'s per-row shape vs. `txtBookmarks`'s per-user shape is a deliberate asymmetry, not an oversight** — `txtAccess` moved to one row per (user, document) specifically so its "capped at 10" eviction rule could become a plain row-count-and-delete-oldest operation; `txtBookmarks` kept its original one-row-per-user JSON-blob shape since nothing about this change required touching it.
