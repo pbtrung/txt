@@ -28,40 +28,44 @@ export const TXT_METADATA_LEGACY_THRESHOLD = 200;
 export const USERNAME_LOOKUP_KEY_MIN_LEN = 32;
 export const USER_ROOT_KEY_MIN_LEN = 256;
 
-// docs/data_model.md's per-user SQLCipher database. Must be set via
-// `PRAGMA cipher_default_page_size` before keying on every open (create or
-// reopen) -- this codec has no plaintext header for SQLite to sniff the
-// actual page size from otherwise, unlike an unencrypted database.
-export const SQLCIPHER_PAGE_SIZE = 32768;
+// docs/key_hierarchy.md: every symmetric wrapping/content key in the current
+// design (umk, keyStore.keyStoreKey, credStore.credStoreKey, txt.txtKey,
+// txtParts.txtPartKey, txtAccess.txtAccessKey, txtBookmarks.txtBookmarkKey)
+// is 128 random bytes -- one shared constant rather than a same-valued one
+// per entity.
+export const RANDOM_KEY_LEN = 128;
+
+// docs/data_model.md's txt.prefix / txtParts.path: both are a
+// Crockford-base32-lowercase encoding of this many random bytes.
+export const RAW_TOKEN_LEN = 32;
 
 export const ORPHAN_PREVIEW_LIMIT = 50;
 export const S3_DELETE_BATCH_SIZE = 1000; // AWS DeleteObjects hard limit
 export const RETRY_DELAYS_MS = [2000, 4000, 8000]; // matches txt/r2.py's _RETRY_DELAYS
 
-// Bounded concurrency for per-page R2/InstantDB round-trips (RemotePageStore's
-// upload, R2Vfs's prefetch) -- pages are prepared up front (pure, no I/O),
-// then issued this many at a time rather than one giant unbounded Promise.all
+// Bounded concurrency for per-part R2 round-trips (uploading/downloading a
+// document's txtParts) -- parts are prepared up front (pure, no I/O), then
+// issued this many at a time rather than one giant unbounded Promise.all
 // (risks exhausting connections/hitting rate limits) or a fully serial loop
-// (slow for anything beyond a handful of pages).
+// (slow for anything beyond a handful of parts).
 export const R2_BATCH_CONCURRENCY = 15;
 
-// migrate.ts's collectKnownRawPaths pages through an account's own `pages`
-// rows (tens of thousands for a large vault) rather than one unpaginated
-// query -- InstantDB enforces its own query timeout, and a single query
-// over that many rows risks exceeding it.
-export const PAGES_QUERY_PAGE_SIZE = 500;
+// migrate.ts/collectGarbage.ts page through `txt`/`txtParts` rows (tens of
+// thousands for a large corpus) rather than one unpaginated query --
+// InstantDB enforces its own query timeout, and a single query over that
+// many rows risks exceeding it.
+export const INSTAQL_QUERY_PAGE_SIZE = 500;
 
 // migrate.ts fetches/decrypts/inserts this many source documents at a time
 // (each document's own parts fetched in parallel too, R2_BATCH_CONCURRENCY
 // at once) instead of downloading every remaining document's content into
 // memory before inserting any of it -- bounds peak memory for a large
-// backlog and gets useful local-DB progress sooner.
+// backlog and gets useful progress sooner.
 export const MIGRATE_BATCH_SIZE = 10;
 
-// migrate.ts commits at most this many txt_parts rows (and whatever pages
-// they end up touching) per R2/InstantDB commit -- one commit per whole
-// txt_id blew up a real document with many parts into a single db.transact()
-// with too many pages ("The query took too long to complete", confirmed
-// against a real InstantDB app). A document with more parts than this gets
-// multiple commits instead of one.
+// migrate.ts transacts at most this many new txtParts rows at once -- one
+// transact() per whole document risks blowing up a document with many parts
+// into a single db.transact() with too many rows ("The query took too long
+// to complete", confirmed against a real InstantDB app). A document with
+// more parts than this gets multiple transacts instead of one.
 export const MIGRATE_PARTS_PER_COMMIT = 20;
