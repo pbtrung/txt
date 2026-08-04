@@ -39,11 +39,12 @@ const FIREBASE_JWKS = createRemoteJWKSet(
   ),
 );
 
-// Comfortably covers one unlock session's worth of page fetches/commits
-// (docs/data_model.md's read/commit protocols) -- short enough that a
-// leaked credential stops working quickly, long enough that a normal
-// session never needs more than one. dbWorkerClient.ts re-requests a fresh
-// credential once this one expires; nothing caches it beyond that.
+// Comfortably covers reading one document's worth of parts (docs/protocols.md's
+// Read path) -- short enough that a leaked credential stops working quickly,
+// long enough that a normal reading session never needs more than one per
+// document. ui/src/screens/Reader/useReaderBook.ts (via tempR2Creds.ts)
+// requests a fresh one once this one is close to expiring; nothing caches
+// it beyond that.
 const TTL_SECONDS = 900;
 
 interface R2CredsRequestBody {
