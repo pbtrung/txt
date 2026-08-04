@@ -3,9 +3,9 @@ dist/
 build/
 package-lock.json
 
-# Vendored WASM build output + its own test scripts -- not this project's
-# hand-authored code, built by an external tool/build-wasm.sh step.
-sqlcipher/
+# Vendored WASM build output -- not this project's hand-authored code, built
+# by an external tool/build-wasm.sh step. Shared by txt/ and ui/.
+leancrypto/
 
 creds/
 txt_*/
