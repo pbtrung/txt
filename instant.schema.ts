@@ -76,6 +76,17 @@ const _schema = i.schema({
       // derived from auth.id, so it's only ever recoverable by whoever can
       // unwrap txtKey (docs/r2_credentials.md).
       prefix: i.string(),
+      // Plaintext, present only on a migrated document: the source
+      // snapshot's own integer txt_id (txt/owner.ts's legacy schema).
+      // InstantDB rows have no integer primary key to reuse the way the
+      // legacy design reused txt_id directly as its own target row id
+      // (docs/protocols.md's Ingest/write path), so this is what
+      // txt.ts --migrate queries by instead to make a re-run resumable:
+      // whether a given source document has already landed, and (via a
+      // COUNT of its txtParts) how many of its parts have. Not sensitive
+      // (a document's original position in an already-admin-only-readable
+      // source snapshot), same category as partKey/shareKey below.
+      sourceTxtId: i.number().indexed().optional(),
     }),
     // One row per document (docs/data_model.md's txtMetadata entity) --
     // name/OPF-sidecar metadata, wrapped directly under the document's own

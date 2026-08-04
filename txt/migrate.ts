@@ -1,50 +1,43 @@
-// Orchestrates --migrate: imports every document from a legacy Turso/rqlite
-// account (docs/data_model.md as of commit
-// 1ed39d433365c39a6973303c171c7bb5510d7e3e -- the schema txt/owner.ts reads)
-// across into an already-`--init-admin`-provisioned InstantDB account's own
-// per-user SQLCipher database -- there's no separate "migration" write path,
-// just more rows in the same database, committed via the same RemotePageStore
-// --init-admin itself uses. The *read* side differs from --init-admin's own
-// R2Vfs (which prefetches every one of a fresh database's current pages up
-// front -- fine when pageCount starts at 0): reopening an existing, possibly
-// large target uses lazyVfs.ts/lazyPageClient.ts's on-demand VFS instead, so
-// resuming a long-lived account doesn't mean downloading its entire database
-// just to compute a resume plan or insert a few more documents.
+// Orchestrates --migrate: imports every document from a legacy account
+// snapshot (the schema txt/owner.ts reads) into an already-`--init-admin`-
+// provisioned InstantDB account, re-encrypting every part under this
+// design's current key hierarchy (docs/key_hierarchy.md) as it goes --
+// there's no separate "migration" write path beyond that: a migrated
+// document's txt/txtMetadata/txtParts rows and R2 objects are
+// indistinguishable from ones any other ingest path would produce, aside
+// from carrying `txt.sourceTxtId` (docs/data_model.md's txt entity) for
+// resumability.
 //
 // Resumable at the *part* level, not just per-document: each migrated
-// document keeps its *source* txt_id as its target txt_id, and a re-run
-// compares each txt_id's target part count (COUNT(*) against the reopened
-// target's own txt_parts) to its source part count to find not just which
-// documents are fully done, but how far into a partially-committed one to
-// resume from -- no separate tracking table needed either way. This exists
-// because commits themselves are chunked at MIGRATE_PARTS_PER_COMMIT parts,
-// not one commit per whole document (a document with many parts blew up a
-// single commit into "too many pages," confirmed against a real InstantDB
+// document's target `txt` row carries the source snapshot's own `txt_id` as
+// `sourceTxtId`, so a re-run can find, for every source document, whether a
+// target row already exists for it and (via that row's own linked
+// `txtParts`) how many of its parts already landed -- no separate tracking
+// table needed either way. This exists because writes themselves are
+// chunked at MIGRATE_PARTS_PER_COMMIT parts, not one transact() per whole
+// document (a document with many parts risks blowing up a single
+// db.transact() into "too many rows," confirmed against a real InstantDB
 // app) -- so a crash can leave a document with some but not all of its
-// parts committed. Before doing any new work, also sweeps the account's own
-// R2 prefix for objects left behind by a previous run that crashed between
-// RemotePageStore.commitPages' own R2-upload step and its final InstantDB
-// transact (docs/data_model.md's "Untracked R2 objects" GC sweep, scoped to
-// this one account rather than a whole-bucket sweep).
+// parts committed. Before doing any new work, also sweeps every
+// already-migrated document's own R2 prefix for objects left behind by a
+// previous run that crashed between a part's own R2 PUT and its txtParts
+// transact (docs/protocols.md's Ingest/write path failure mode), scoped per
+// document rather than one flat account-wide sweep, since every document
+// now has its own random prefix (docs/data_model.md's txt entity).
 import type { DatabaseSync } from "node:sqlite";
-import { brotliCompressSync } from "node:zlib";
-import { init } from "@instantdb/admin";
+import { randomBytes } from "node:crypto";
+import { id, init, tx } from "@instantdb/admin";
 import * as C from "./constants.ts";
 import { type Creds, loadR2Config, type R2ConfigResolved } from "./creds.ts";
 import { CryptoEngine } from "./crypto.ts";
 import { collectAllPages } from "./instaqlPagination.ts";
 import type { InitAdminCreds } from "./initAdminCreds.ts";
 import { signInToInstant } from "./instantSignIn.ts";
-import { startLazyPageWorker } from "./lazyPageClient.ts";
-import { registerLazyVfs } from "./lazyVfs.ts";
 import type { Logger } from "./logger.ts";
+import { type OrphanSweepTarget, sweepOrphanObjects } from "./orphanSweep.ts";
 import { TxtOwner, type TxtMetadataEntry } from "./owner.ts";
-import { computeR2Prefix, decodePagePointerContent } from "./pagePointer.ts";
+import { generateRandomToken, unwrapToken, wrapToken } from "./randomToken.ts";
 import { R2Client } from "./r2.ts";
-import { RemotePageStore } from "./remotePageStore.ts";
-import { SqlCipherBuilder } from "./sqlcipherBuilder.ts";
-
-const DB_FILE_NAME = "/migrate-target.db";
 
 export interface MigrateOptions {
   dryRun: boolean;
@@ -65,39 +58,48 @@ export interface MigrateResult {
   migrated: MigratedDoc[];
   alreadyMigratedCount: number;
   staleObjectsDeleted: number;
-  newVersion: number | null;
-  pageCount: number | null;
+}
+
+interface TargetAdmin {
+  authId: string;
+  umk: Buffer;
+  r2Config: R2ConfigResolved;
+}
+
+// One already-migrated document's target-side state, fully resolved (every
+// part's own raw_key decrypted) up front -- used both to compute how far a
+// resume should pick up from and, before that, to sweep that document's own
+// R2 prefix for crash leftovers.
+interface ExistingTarget {
+  txtId: string; // target `txt` row id
+  txtKey: Buffer;
+  prefix: string; // decrypted, not the wrapped blob
+  parts: { partNum: number; rawKey: string }[];
 }
 
 // What's left to do for one document, computed once up front against the
-// reopened target's own txt_parts counts -- fromPartNum > 1 means this
-// document already has some parts committed from an earlier, interrupted
-// run, and only needs the rest.
+// already-resolved target state -- existing !== null means this document
+// already has some parts committed from an earlier, interrupted run, and
+// only needs the rest.
 interface ResumePlan {
   oldTxtId: number;
   name: string;
-  metadata: unknown; // this document's txt_metadata entry, if any -- only used when needsTxtRow
-  needsTxtRow: boolean;
+  metadata: unknown; // this document's txt_metadata entry, if any -- only used when existing === null
+  existing: ExistingTarget | null;
   fromPartNum: number; // 1-based
   totalParts: number; // this document's total part count in the source
 }
 
 interface PreparedDoc {
   oldTxtId: number;
+  txtId: string; // target row id -- existing, or freshly generated for a new document
+  isNew: boolean;
+  txtKey: Buffer;
+  prefix: string;
   name: string;
-  metadataBrotli: Buffer | null;
-  needsTxtRow: boolean;
+  metadata: unknown;
   fromPartNum: number; // 1-based -- parts[0]'s real part_num
   parts: Buffer[]; // brotli(raw text) each, part_num order, from fromPartNum on
-}
-
-interface TargetAccount {
-  dbMetaId: string;
-  currentVersion: number;
-  pageCount: number;
-  pageSize: number;
-  umkBlob: string;
-  contentBlob: string;
 }
 
 export class Migrator {
@@ -125,230 +127,242 @@ export class Migrator {
       appId: this.toCreds.instantAppId,
       adminToken: this.toCreds.instantAdminToken,
     });
-    const target = await this.resolveTarget(db, authId);
-    const keys = this.unwrapTargetKeys(crypto, target);
-    const r2 = new R2Client(keys.r2Config, false, this.log);
+    const admin = await this.resolveTargetAdmin(db, crypto, authId);
+    const r2 = new R2Client(admin.r2Config, false, this.log);
 
-    const staleObjectsDeleted = await this.sweepStaleR2Objects(
+    const existingByOldTxtId = await this.resolveExistingTargets(
       db,
-      r2,
       crypto,
-      keys.pathKey,
-      authId,
+      admin,
+    );
+    const staleObjectsDeleted = await this.sweepStaleR2Objects(
+      r2,
+      existingByOldTxtId,
     );
 
-    const builder = await SqlCipherBuilder.create();
-    const store = this.buildStore(db, r2, crypto, authId, keys.pathKey);
-    // lazyVfs.ts/lazyPageClient.ts, not R2Vfs: the nested worker_threads
-    // Worker this spawns prefetches every one of the target's current pages
-    // up front too (lazyPageWorker.ts's own prefetchAllPages), but via a
-    // bounded number of batched InstantDB queries (pageNo: {$in: [...]})
-    // instead of R2Vfs's one-query-per-page model (bounded concurrency, but
-    // still one InstantDB round trip per page) -- far fewer queries against
-    // a large, long-lived account's page count, not fewer bytes downloaded.
-    // Any page number that didn't exist at construction (i.e. one this run
-    // allocates itself) is filled in afterward instead, straight from each
-    // commit's own dirty pages (pageWorker.updateCommittedPages below), so
-    // it's never re-fetched from InstantDB/R2 at all. The nested Worker
-    // needs its own cleanup -- see the finally block.
-    const pageWorker = await startLazyPageWorker(
-      {
-        instantAppId: this.toCreds.instantAppId,
-        instantAdminToken: this.toCreds.instantAdminToken,
-        r2Config: keys.r2Config,
-        pathKey: keys.pathKey,
-        authId,
-        snapshot: target.currentVersion,
-        pageCount: target.pageCount,
-        pageSize: target.pageSize,
-        verbose: this.log.verbose,
-      },
-      this.log,
+    const owner = new TxtOwner(this.fromDb, crypto, this.log);
+    const sourceUserId = owner.resolveUserId(this.fromCreds);
+    const sourceUmk = owner.resolveUmk(this.fromCreds, sourceUserId);
+    const fromR2 = new R2Client(this.fromCreds.r2Config, true, this.log);
+    const allTxtIds = owner.listTxtIds(sourceUserId);
+    const metadataDoc = await owner.resolveTxtMetadataDocument(
+      sourceUserId,
+      sourceUmk,
+      fromR2,
     );
-    const vfs = registerLazyVfs(builder.module, {
-      pageSize: target.pageSize,
-      pageCount: target.pageCount,
-      dbFileName: DB_FILE_NAME,
-      fetchPage: pageWorker.fetchPage,
-    });
-    const dbHandle = builder.open(DB_FILE_NAME, vfs.name, keys.dbKey);
-    try {
-      const owner = new TxtOwner(this.fromDb, crypto, this.log);
-      const userId = owner.resolveUserId(this.fromCreds);
-      const umk = owner.resolveUmk(this.fromCreds, userId);
-      const fromR2 = new R2Client(this.fromCreds.r2Config, true, this.log);
-      const allTxtIds = owner.listTxtIds(userId);
-      const metadataDoc = await owner.resolveTxtMetadataDocument(
-        userId,
-        umk,
-        fromR2,
-      );
-      // Cheap (local counts only, no R2 download) -- dry-run/confirm can
-      // report exactly what a live run would migrate without having to
-      // download any document's actual content first. Also where resume
-      // happens: a document already fully committed (target part count >=
-      // source total) is skipped entirely; one partially committed only
-      // gets its remaining parts planned.
-      const plans = this.computeResumePlans(
-        builder,
-        dbHandle,
-        owner,
-        metadataDoc,
-        allTxtIds,
-      );
-      const alreadyMigratedCount = allTxtIds.length - plans.length;
-      this.log.info(
-        `${allTxtIds.length} txt_id(s) total, ${alreadyMigratedCount} already migrated, ` +
-          `${plans.length} remaining: ${plans.map((p) => p.oldTxtId).join(", ")}`,
-      );
-      const summaries = plans.map((p) => ({
-        oldTxtId: p.oldTxtId,
-        name: p.name,
-        partCount: p.totalParts - p.fromPartNum + 1,
-      }));
-      if (plans.length === 0 || opts.dryRun) {
-        return emptyResult(
-          summaries,
-          alreadyMigratedCount,
-          staleObjectsDeleted,
-        );
-      }
-      // console.log calls made from inside the pageWorker's worker_threads
-      // Worker aren't written to the terminal directly -- they relay back to
-      // this thread over an internal message channel first, with real
-      // latency. computeResumePlans above has already fully finished (and
-      // every one of its own page fetches has genuinely completed) by this
-      // point, but some of that relay's queued output can still land on the
-      // terminal after the confirm prompt below has already printed,
-      // visually breaking up the prompt and confusing readline's own cursor
-      // tracking enough to look like it swallowed the answer. A short pause
-      // here lets that queue drain before the prompt appears.
-      await new Promise((resolve) => setTimeout(resolve, 250));
-      await this.confirmOrAbort(summaries, alreadyMigratedCount, opts.confirm);
 
-      // MIGRATE_BATCH_SIZE documents fetched/decrypted at a time -- each
-      // document's own remaining parts also fetched in parallel (TxtOwner.
-      // fetchTxtParts) -- but committed to R2/InstantDB
-      // MIGRATE_PARTS_PER_COMMIT parts at a time, immediately after their
-      // own local insert: a crash mid-run then only ever loses the one
-      // in-flight chunk, not a whole document (let alone a whole batch or
-      // run), and no batch has to wait for its slowest document's commits
-      // before starting the next batch's downloads. Commits must stay
-      // strictly sequential (never run two in parallel): each one CAS-bumps
-      // dbMeta.currentVersion off the previous commit's returned version,
-      // and RemotePageStore's admin-SDK transacts bypass instant.perms.ts
-      // entirely (no real CAS enforcement to fall back on if two raced).
-      let currentVersion = target.currentVersion;
-      let pageCount = target.pageCount;
-      let totalPartsCommitted = 0;
-      let totalPagesCommitted = 0;
-      for (let i = 0; i < plans.length; i += C.MIGRATE_BATCH_SIZE) {
-        const batchPlans = plans.slice(i, i + C.MIGRATE_BATCH_SIZE);
-        const batchDocs = await Promise.all(
-          batchPlans.map((plan) =>
-            this.prepareOneDoc(owner, umk, fromR2, plan),
-          ),
-        );
-        for (const doc of batchDocs) {
-          const chunkCount = Math.max(
-            1,
-            Math.ceil(doc.parts.length / C.MIGRATE_PARTS_PER_COMMIT),
-          );
-          for (let c = 0; c < chunkCount; c++) {
-            const start = c * C.MIGRATE_PARTS_PER_COMMIT;
-            const chunk = doc.parts.slice(
-              start,
-              start + C.MIGRATE_PARTS_PER_COMMIT,
-            );
-            if (c === 0 && doc.needsTxtRow) {
-              this.insertTxtRow(builder, dbHandle, doc);
-            }
-            if (chunk.length > 0) {
-              this.insertPartsChunk(
-                builder,
-                dbHandle,
-                doc.oldTxtId,
-                chunk,
-                doc.fromPartNum + start,
-              );
-            }
-            const dirtyPages = vfs.diffDirtyPages();
-            const committed = await this.commit(
-              store,
-              target.dbMetaId,
-              currentVersion,
-              target.pageSize,
-              dirtyPages,
-              vfs.currentPageCount,
-            );
-            vfs.markCommitted(dirtyPages);
-            pageWorker.updateCommittedPages(dirtyPages);
-            currentVersion = committed.newVersion;
-            pageCount = vfs.currentPageCount;
-            totalPartsCommitted += chunk.length;
-            totalPagesCommitted += dirtyPages.size;
-            const avgPagesPerPart =
-              totalPartsCommitted > 0
-                ? (totalPagesCommitted / totalPartsCommitted).toFixed(1)
-                : "0.0";
-            this.log.info(
-              `txt_id=${doc.oldTxtId}: committed ${chunk.length} part(s), ` +
-                `${dirtyPages.size} page(s) new/overwritten, version=${currentVersion} ` +
-                `-- running total ${totalPartsCommitted} part(s)/${totalPagesCommitted} page(s), ` +
-                `avg ${avgPagesPerPart} page(s)/part`,
-            );
-          }
-        }
-      }
-
-      return {
-        committed: true,
-        authId,
-        migrated: summaries,
-        alreadyMigratedCount,
-        staleObjectsDeleted,
-        newVersion: currentVersion,
-        pageCount,
-      };
-    } finally {
-      builder.close(dbHandle);
-      await pageWorker.terminate();
+    // Cheap (local count only, no R2 download) -- dry-run/confirm can report
+    // exactly what a live run would migrate without having to download any
+    // document's actual content first. Also where resume happens: a
+    // document already fully committed (target part count >= source total)
+    // is skipped entirely; one partially committed only gets its remaining
+    // parts planned.
+    const plans = this.computeResumePlans(
+      owner,
+      metadataDoc,
+      allTxtIds,
+      existingByOldTxtId,
+    );
+    const alreadyMigratedCount = allTxtIds.length - plans.length;
+    this.log.info(
+      `${allTxtIds.length} txt_id(s) total, ${alreadyMigratedCount} already migrated, ` +
+        `${plans.length} remaining: ${plans.map((p) => p.oldTxtId).join(", ")}`,
+    );
+    const summaries = plans.map((p) => ({
+      oldTxtId: p.oldTxtId,
+      name: p.name,
+      partCount: p.totalParts - p.fromPartNum + 1,
+    }));
+    if (plans.length === 0 || opts.dryRun) {
+      return emptyResult(summaries, alreadyMigratedCount, staleObjectsDeleted);
     }
+    await this.confirmOrAbort(summaries, alreadyMigratedCount, opts.confirm);
+
+    // MIGRATE_BATCH_SIZE documents fetched/decrypted at a time -- each
+    // document's own remaining parts also fetched in parallel (TxtOwner.
+    // fetchTxtParts) -- but transacted MIGRATE_PARTS_PER_COMMIT parts at a
+    // time, immediately after their own R2 upload: a crash mid-run then
+    // only ever loses the one in-flight chunk, not a whole document (let
+    // alone a whole batch or run), and no batch has to wait for its
+    // slowest document's transacts before starting the next batch's
+    // downloads.
+    let totalPartsCommitted = 0;
+    for (let i = 0; i < plans.length; i += C.MIGRATE_BATCH_SIZE) {
+      const batchPlans = plans.slice(i, i + C.MIGRATE_BATCH_SIZE);
+      const batchDocs = await Promise.all(
+        batchPlans.map((plan) =>
+          this.prepareOneDoc(owner, sourceUmk, fromR2, plan),
+        ),
+      );
+      for (const doc of batchDocs) {
+        totalPartsCommitted += await this.commitDoc(db, r2, crypto, admin, doc);
+      }
+    }
+
+    return {
+      committed: true,
+      authId,
+      migrated: summaries,
+      alreadyMigratedCount,
+      staleObjectsDeleted,
+    };
   }
 
-  // No R2/decrypt work at all -- just this doc's name (from the already-
-  // resolved metadata document) and cheap local COUNT(*)s (source total via
-  // TxtOwner.countParts, target-so-far via the reopened target db's own
-  // txt_parts). A document is skipped entirely once its target row exists
-  // and its target part count is already >= its source total; otherwise it
-  // gets a plan resuming from (target part count + 1).
+  private async resolveTargetAdmin(
+    db: any,
+    crypto: CryptoEngine,
+    authId: string,
+  ): Promise<TargetAdmin> {
+    const result = await db.query({
+      $users: { $: { where: { id: authId } } },
+      credStore: { $: { where: { "owner.id": authId } } },
+    });
+    const authRow = result.$users?.[0];
+    if (!authRow?.umk) {
+      throw new Error(
+        `$users row for auth.id=${authId} is missing umk -- run --init-admin first to provision this account`,
+      );
+    }
+    const umk = crypto.blobDecrypt(
+      this.toCreds.userRootKey,
+      Buffer.from(authRow.umk, "base64"),
+      false,
+    );
+    // The admin's owner link on credStore isn't unique (docs/data_model.md's
+    // credStore entity) -- any one of its rows unwraps to the same real
+    // r2_config, since they all share one credStoreKey.
+    const credStoreRow = result.credStore?.[0];
+    if (!credStoreRow)
+      throw new Error(`auth.id=${authId} has no credStore row`);
+    const credStoreKey = crypto.blobDecrypt(
+      umk,
+      Buffer.from(credStoreRow.credStoreKey, "base64"),
+      false,
+    );
+    const payload = JSON.parse(
+      crypto
+        .blobDecrypt(
+          credStoreKey,
+          Buffer.from(credStoreRow.content, "base64"),
+          true,
+        )
+        .toString("utf8"),
+    );
+    return { authId, umk, r2Config: loadR2Config(payload) };
+  }
+
+  // Every document this admin has already migrated, keyed by its source
+  // txt_id, with every one of its own parts' raw_key already decrypted --
+  // needed both for the stale-object sweep below and for computing each
+  // document's own resume point. Paginated (order by sourceTxtId -- an
+  // entity's own built-in `id` is NOT usable in an InstaQL `order` clause,
+  // confirmed against a real InstantDB app: "The `txt.id` attribute is not
+  // indexed"/"not typed. Only indexed and typed attributes can be used to
+  // order by." sourceTxtId is indexed and, today, set on every txt row this
+  // method sees -- only --migrate ever creates one) rather than one
+  // unpaginated query, same reasoning as collectGarbage.ts's own paged
+  // queries: a large corpus risks exceeding InstantDB's own query timeout
+  // otherwise.
+  private async resolveExistingTargets(
+    db: any,
+    crypto: CryptoEngine,
+    admin: TargetAdmin,
+  ): Promise<Map<number, ExistingTarget>> {
+    const rows = await collectAllPages<{
+      id: string;
+      sourceTxtId?: number;
+      txtKey: string;
+      prefix: string;
+      txtParts: { partNum: number; txtPartKey: string; path: string }[];
+    }>(async (after) => {
+      const offset = (after as number | undefined) ?? 0;
+      const result = await db.query({
+        txt: {
+          $: {
+            where: { "owner.id": admin.authId },
+            order: { sourceTxtId: "asc" },
+            limit: C.INSTAQL_QUERY_PAGE_SIZE,
+            offset,
+          },
+          txtParts: {},
+        },
+      });
+      const page = result.txt ?? [];
+      return {
+        rows: page,
+        hasNextPage: page.length === C.INSTAQL_QUERY_PAGE_SIZE,
+        endCursor: offset + page.length,
+      };
+    });
+    const map = new Map<number, ExistingTarget>();
+    for (const row of rows) {
+      if (typeof row.sourceTxtId !== "number") continue; // not a migrated document
+      const txtKey = crypto.blobDecrypt(
+        admin.umk,
+        Buffer.from(row.txtKey, "base64"),
+        false,
+      );
+      const prefix = unwrapToken(crypto, txtKey, row.prefix);
+      const parts = (row.txtParts ?? [])
+        .map((p) => {
+          const txtPartKey = crypto.blobDecrypt(
+            txtKey,
+            Buffer.from(p.txtPartKey, "base64"),
+            false,
+          );
+          return {
+            partNum: p.partNum,
+            rawKey: unwrapToken(crypto, txtPartKey, p.path),
+          };
+        })
+        .sort((a, b) => a.partNum - b.partNum);
+      map.set(row.sourceTxtId, { txtId: row.id, txtKey, prefix, parts });
+    }
+    return map;
+  }
+
+  // For every already-migrated document, sweep its own R2 prefix for
+  // objects its own known raw_keys don't account for (orphanSweep.ts --
+  // shared with collectGarbage.ts, which does the same thing for every
+  // txt row this admin owns, not just ones this particular run touches).
+  private async sweepStaleR2Objects(
+    r2: R2Client,
+    existing: Map<number, ExistingTarget>,
+  ): Promise<number> {
+    const targets: OrphanSweepTarget[] = [...existing.entries()].map(
+      ([oldTxtId, target]) => ({
+        label: `txt_id=${oldTxtId}`,
+        prefix: target.prefix,
+        knownRawKeys: new Set(target.parts.map((p) => p.rawKey)),
+      }),
+    );
+    const totalDeleted = await sweepOrphanObjects(r2, targets, this.log, false);
+    if (totalDeleted === 0) {
+      this.log.info(
+        "No stale R2 object(s) found across any already-migrated document",
+      );
+    }
+    return totalDeleted;
+  }
+
   private computeResumePlans(
-    builder: SqlCipherBuilder,
-    dbHandle: number,
     owner: TxtOwner,
     metadataDoc: Record<string, TxtMetadataEntry> | null,
     allTxtIds: number[],
+    existing: Map<number, ExistingTarget>,
   ): ResumePlan[] {
-    const existingTxtIds = new Set(
-      builder.selectInts(dbHandle, "SELECT id FROM txt").map(Number),
-    );
-    const targetPartCounts = new Map<number, number>();
-    for (const txtId of builder
-      .selectInts(dbHandle, "SELECT txt_id FROM txt_parts")
-      .map(Number)) {
-      targetPartCounts.set(txtId, (targetPartCounts.get(txtId) ?? 0) + 1);
-    }
     const plans: ResumePlan[] = [];
     for (const txtId of allTxtIds) {
       const totalParts = owner.countParts(txtId);
-      const already = targetPartCounts.get(txtId) ?? 0;
-      if (existingTxtIds.has(txtId) && already >= totalParts) continue;
+      const target = existing.get(txtId) ?? null;
+      const already = target?.parts.length ?? 0;
+      if (target && already >= totalParts) continue;
       const entry = metadataDoc?.[String(txtId)];
       plans.push({
         oldTxtId: txtId,
         name: entry?.name ?? this.fallbackName(txtId),
         metadata: entry?.metadata,
-        needsTxtRow: !existingTxtIds.has(txtId),
+        existing: target,
         fromPartNum: already + 1,
         totalParts,
       });
@@ -363,41 +377,45 @@ export class Migrator {
 
   private async prepareOneDoc(
     owner: TxtOwner,
-    umk: Buffer,
+    sourceUmk: Buffer,
     fromR2: R2Client,
     plan: ResumePlan,
   ): Promise<PreparedDoc> {
-    // Logged before, not just after, fetchTxtParts: prepareOneDoc runs for a
-    // whole MIGRATE_BATCH_SIZE-wide batch concurrently (Promise.all below),
-    // and the loop can't move on to inserting/committing any of them until
-    // every one resolves -- without this, a document that finishes fast logs
-    // its own completion while up to MIGRATE_BATCH_SIZE-1 siblings could
-    // still be silently fetching (small ones especially: fetchTxtParts' own
-    // progress log only fires past R2_BATCH_CONCURRENCY parts), making the
-    // whole batch look stalled even though it's making real progress.
     const remaining = plan.totalParts - plan.fromPartNum + 1;
     this.log.debug(
       `txt_id=${plan.oldTxtId}: name=${JSON.stringify(plan.name)}, fetching ${remaining} part(s)`,
     );
-    const txtKey = owner.resolveTxtKey(plan.oldTxtId, umk);
+    const sourceTxtKey = owner.resolveTxtKey(plan.oldTxtId, sourceUmk);
     const parts = await owner.fetchTxtParts(
       plan.oldTxtId,
-      txtKey,
+      sourceTxtKey,
       fromR2,
       plan.fromPartNum,
     );
-    const metadataBrotli =
-      plan.needsTxtRow && plan.metadata
-        ? brotliCompressSync(Buffer.from(JSON.stringify(plan.metadata), "utf8"))
-        : null;
     this.log.debug(
       `txt_id=${plan.oldTxtId}: fetched all ${parts.length} part(s)`,
     );
+    if (plan.existing) {
+      return {
+        oldTxtId: plan.oldTxtId,
+        txtId: plan.existing.txtId,
+        isNew: false,
+        txtKey: plan.existing.txtKey,
+        prefix: plan.existing.prefix,
+        name: plan.name,
+        metadata: plan.metadata,
+        fromPartNum: plan.fromPartNum,
+        parts,
+      };
+    }
     return {
       oldTxtId: plan.oldTxtId,
+      txtId: id(),
+      isNew: true,
+      txtKey: randomBytes(C.RANDOM_KEY_LEN),
+      prefix: generateRandomToken(),
       name: plan.name,
-      metadataBrotli,
-      needsTxtRow: plan.needsTxtRow,
+      metadata: plan.metadata,
       fromPartNum: plan.fromPartNum,
       parts,
     };
@@ -422,244 +440,121 @@ export class Migrator {
         : "";
     const message =
       `Migrate ${docs.length} document(s) (${totalParts} part(s) total)${skipNote} into the ` +
-      `target InstantDB account's SQLCipher database? This appends new pages/rows and cannot be easily undone.`;
+      `target InstantDB account? This creates new txt/txtMetadata/txtParts rows and R2 objects and cannot be easily undone.`;
     if (!(await confirm(message))) throw new Error("Aborted.");
   }
 
-  // $users/dbMeta/credStore all link directly to $users now (no separate
-  // `users` profile entity -- docs/data_model.md) -- so every piece of the
-  // target account's own state is a single-hop "owner.id"/"id" lookup by
-  // authId, not a two-hop traversal through an intermediate profile row.
-  private async resolveTarget(db: any, authId: string): Promise<TargetAccount> {
-    const result = await db.query({
-      $users: { $: { where: { id: authId } } },
-      dbMeta: { $: { where: { "owner.id": authId } } },
-      credStore: {
-        $: { where: { "owner.id": authId, "user.id": authId } },
-      },
-    });
-    const authRow = result.$users?.[0];
-    if (!authRow?.umk) {
-      throw new Error(
-        `$users row for auth.id=${authId} is missing umk -- run --init-admin first to provision this account`,
-      );
-    }
-    const dbMetaRow = result.dbMeta?.[0];
-    if (!dbMetaRow) {
-      throw new Error(`auth.id=${authId} has no linked dbMeta row`);
-    }
-    const credStoreRow = result.credStore?.[0];
-    if (!credStoreRow) {
-      throw new Error(`auth.id=${authId} has no own credStore row`);
-    }
-    return {
-      dbMetaId: dbMetaRow.id,
-      currentVersion: dbMetaRow.currentVersion,
-      pageCount: dbMetaRow.pageCount,
-      pageSize: dbMetaRow.pageSize,
-      umkBlob: authRow.umk,
-      contentBlob: credStoreRow.content,
-    };
-  }
-
-  // r2Config comes from the target's own credStore content, not
-  // this.toCreds.r2Config -- the live credStore row (written by --init-admin)
-  // is this account's actual R2 connection info, and a local to-creds.json
-  // could drift from it (rotated keys, a stale file, etc.). to-creds.json's
-  // own r2Config is only ever used for --init-admin's initial bootstrap,
-  // before any credStore row exists to read it from.
-  private unwrapTargetKeys(
-    crypto: CryptoEngine,
-    target: TargetAccount,
-  ): { pathKey: Buffer; dbKey: Buffer; r2Config: R2ConfigResolved } {
-    const umk = crypto.blobDecrypt(
-      this.toCreds.userRootKey,
-      Buffer.from(target.umkBlob, "base64"),
-      false,
-    );
-    const payload = JSON.parse(
-      crypto
-        .blobDecrypt(umk, Buffer.from(target.contentBlob, "base64"), true)
-        .toString("utf8"),
-    );
-    return {
-      pathKey: Buffer.from(payload.path_key, "base64"),
-      dbKey: Buffer.from(payload.db_key, "base64"),
-      r2Config: loadR2Config(payload),
-    };
-  }
-
-  private buildStore(
+  // Uploads one document's remaining parts in MIGRATE_PARTS_PER_COMMIT-sized
+  // chunks, transacting each chunk (plus, for the first chunk of a brand-new
+  // document, its txt/txtMetadata rows) immediately after that chunk's own
+  // R2 PUTs land. Returns the total number of parts committed.
+  private async commitDoc(
     db: any,
     r2: R2Client,
     crypto: CryptoEngine,
-    authId: string,
-    pathKey: Buffer,
-  ): RemotePageStore {
-    return new RemotePageStore({
-      db,
-      r2,
-      crypto,
-      pathKey,
-      authId,
-    });
-  }
-
-  // Reuses the source's own txt_id as the target's txt_id -- what makes a
-  // re-run resumable (see this file's header comment) without any separate
-  // tracking table: comparing the target's own txt/txt_parts counts against
-  // the source's is enough to know what's already there (computeResumePlans).
-  // Split from the parts insert below since a document's parts now commit in
-  // MIGRATE_PARTS_PER_COMMIT-sized chunks -- the txt row itself is only ever
-  // inserted once, alongside that document's first chunk.
-  private insertTxtRow(
-    builder: SqlCipherBuilder,
-    db: number,
+    admin: TargetAdmin,
     doc: PreparedDoc,
-  ): void {
-    builder.insert(
-      db,
-      "INSERT INTO txt (id, name, metadata, last_part_num, last_accessed, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-      [doc.oldTxtId, doc.name, doc.metadataBrotli, null, null, Date.now()],
+  ): Promise<number> {
+    const chunkCount = Math.max(
+      1,
+      Math.ceil(doc.parts.length / C.MIGRATE_PARTS_PER_COMMIT),
     );
-    this.log.debug(
-      `txt_id=${doc.oldTxtId}: inserted txt row, name=${JSON.stringify(doc.name)}`,
-    );
+    let committed = 0;
+    for (let c = 0; c < chunkCount; c++) {
+      const start = c * C.MIGRATE_PARTS_PER_COMMIT;
+      const chunk = doc.parts.slice(start, start + C.MIGRATE_PARTS_PER_COMMIT);
+      if (chunk.length === 0) continue;
+      const startPartNum = doc.fromPartNum + start;
+      const uploaded = await this.uploadChunk(
+        r2,
+        crypto,
+        doc.txtKey,
+        doc.prefix,
+        chunk,
+        startPartNum,
+      );
+      const txs = uploaded.map(({ partNum, path, txtPartKeyBlob }) =>
+        tx
+          .txtParts![id()]!.update({
+            partNum,
+            txtPartKey: txtPartKeyBlob,
+            path,
+            partKey: `${doc.txtId}:${partNum}`,
+          })
+          .link({ txt: doc.txtId, owner: admin.authId }),
+      );
+      if (c === 0 && doc.isNew) {
+        txs.push(
+          tx
+            .txt![doc.txtId]!.update({
+              txtKey: crypto
+                .blobEncrypt(admin.umk, doc.txtKey, false)
+                .toString("base64"),
+              prefix: wrapToken(crypto, doc.txtKey, doc.prefix),
+              sourceTxtId: doc.oldTxtId,
+            })
+            .link({ owner: admin.authId }),
+          tx
+            .txtMetadata![id()]!.update({
+              content: this.wrapMetadataContent(crypto, doc),
+            })
+            .link({ txt: doc.txtId, owner: admin.authId }),
+        );
+      }
+      await db.transact(txs);
+      committed += chunk.length;
+      this.log.info(
+        `txt_id=${doc.oldTxtId}: committed ${chunk.length} part(s) -- running total ${committed}/${doc.parts.length} for this document`,
+      );
+    }
+    return committed;
   }
 
-  private insertPartsChunk(
-    builder: SqlCipherBuilder,
-    db: number,
-    txtId: number,
+  private wrapMetadataContent(crypto: CryptoEngine, doc: PreparedDoc): string {
+    const payload: Record<string, unknown> = { name: doc.name };
+    if (doc.metadata !== undefined) payload.metadata = doc.metadata;
+    const plaintext = Buffer.from(JSON.stringify(payload), "utf8");
+    return crypto.blobEncrypt(doc.txtKey, plaintext, true).toString("base64");
+  }
+
+  // Pure prep (fresh txtPartKey/raw_key/ciphertext per part, no I/O) up
+  // front, then the real R2 PUTs R2_BATCH_CONCURRENCY at a time -- bounded
+  // parallelism instead of one part at a time (slow) or all of a chunk at
+  // once (risks exhausting connections/R2 rate limits for a bulk migrate).
+  private async uploadChunk(
+    r2: R2Client,
+    crypto: CryptoEngine,
+    txtKey: Buffer,
+    prefix: string,
     chunk: Buffer[],
     startPartNum: number,
-  ): void {
-    chunk.forEach((content, i) => {
-      builder.insert(
-        db,
-        "INSERT INTO txt_parts (txt_id, part_num, content) VALUES (?, ?, ?)",
-        [txtId, startPartNum + i, content],
-      );
+  ): Promise<{ partNum: number; path: string; txtPartKeyBlob: string }[]> {
+    const prepared = chunk.map((body, i) => {
+      const partNum = startPartNum + i;
+      const txtPartKey = randomBytes(C.RANDOM_KEY_LEN);
+      const rawKey = generateRandomToken();
+      const rawPath = `${prefix}/${rawKey}`;
+      // body is already brotli(raw text) as fetched from the source
+      // (owner.fetchTxtParts) -- compressed=false here means "don't
+      // brotli-compress again," not "this payload isn't compressed."
+      const ciphertext = crypto.blobEncrypt(txtPartKey, body, false);
+      const path = wrapToken(crypto, txtPartKey, rawKey);
+      const txtPartKeyBlob = crypto
+        .blobEncrypt(txtKey, txtPartKey, false)
+        .toString("base64");
+      return { partNum, rawPath, ciphertext, path, txtPartKeyBlob };
     });
-  }
-
-  private async commit(
-    store: RemotePageStore,
-    dbMetaId: string,
-    currentVersion: number,
-    pageSize: number,
-    dirtyPages: Map<number, Buffer>,
-    pageCount: number,
-  ): Promise<{ newVersion: number }> {
-    if (dirtyPages.size === 0) {
-      this.log.debug("no dirty pages produced -- nothing to commit");
-      return { newVersion: currentVersion };
-    }
-    const { newVersion } = await store.commitPages(
-      dirtyPages,
-      dbMetaId,
-      currentVersion,
-      pageCount,
-      pageSize,
-    );
-    this.log.debug(
-      `Committed ${dirtyPages.size} page(s) as version=${newVersion}`,
-    );
-    return { newVersion };
-  }
-
-  // Deletes R2 objects under this account's own r2Prefix that no known
-  // `pages` row (any version -- a superseded-but-not-yet-GC'd page's object
-  // is still legitimately known, not stale) resolves to. The only way a
-  // legitimately-created object ends up here is a previous run that crashed
-  // between RemotePageStore.commitPages' own R2 upload step and its final
-  // InstantDB transact (docs/data_model.md's commit-protocol failure modes),
-  // leaving a real object with no `pages` row ever created for it.
-  private async sweepStaleR2Objects(
-    db: any,
-    r2: R2Client,
-    crypto: CryptoEngine,
-    pathKey: Buffer,
-    authId: string,
-  ): Promise<number> {
-    const r2Prefix = computeR2Prefix(authId);
-    const [objects, known] = await Promise.all([
-      r2.listAllObjects(`${r2Prefix}/`),
-      this.collectKnownRawPaths(db, crypto, pathKey, r2Prefix, authId),
-    ]);
-    const stale = objects.filter((o) => !known.has(o.key));
-    if (stale.length === 0) {
-      this.log.info(`No stale R2 object(s) found under prefix=${r2Prefix}/`);
-      return 0;
-    }
-    this.log.warn(
-      `Found ${stale.length} stale R2 object(s) under prefix=${r2Prefix}/ ` +
-        `(left by a previous incomplete run) -- deleting`,
-    );
-    const result = await r2.deleteObjects(stale.map((o) => o.key));
-    for (const err of result.errors) {
-      this.log.warn(`Failed to delete stale object ${err.key}: ${err.message}`);
-    }
-    this.log.info(
-      `Deleted ${result.deletedKeys.size}/${stale.length} stale object(s)`,
-    );
-    return result.deletedKeys.size;
-  }
-
-  // Every raw_path this account's committed pages resolve to. path lives
-  // directly on each pages row now (base64, docs/data_model.md's pages
-  // entity) -- no separate pointer row to download per page, just a decrypt
-  // once the rows themselves are in hand. Pages through `pages` (tens of
-  // thousands of rows for a large, long-lived vault) PAGES_QUERY_PAGE_SIZE
-  // at a time via InstaQL's offset-based pagination (order by pageKey --
-  // unique+indexed, so a stable sort with no ties, required for offset
-  // pagination to be safe at all -- and `offset` incremented by however many
-  // rows actually came back) rather than one unpaginated query, which risks
-  // exceeding InstantDB's own query timeout at that scale. Not cursor-based
-  // (after/pageInfo): confirmed the Admin SDK's query() never returns
-  // pageInfo at all (see txt/instaqlPagination.ts's own header comment) --
-  // an earlier version of this method assumed it did and silently stopped
-  // after the first page every time.
-  private async collectKnownRawPaths(
-    db: any,
-    crypto: CryptoEngine,
-    pathKey: Buffer,
-    r2Prefix: string,
-    authId: string,
-  ): Promise<Set<string>> {
-    const rows = await collectAllPages<{ path: string }>(async (after) => {
-      const offset = (after as number | undefined) ?? 0;
-      const result = await db.query({
-        pages: {
-          $: {
-            where: { "owner.id": authId },
-            order: { pageKey: "asc" },
-            limit: C.PAGES_QUERY_PAGE_SIZE,
-            offset,
-          },
-        },
-      });
-      const page = result.pages ?? [];
-      this.log.debug(
-        `collectKnownRawPaths: fetched ${page.length} page row(s) at offset=${offset}` +
-          (page.length === C.PAGES_QUERY_PAGE_SIZE ? ", continuing..." : ""),
+    for (let i = 0; i < prepared.length; i += C.R2_BATCH_CONCURRENCY) {
+      const batch = prepared.slice(i, i + C.R2_BATCH_CONCURRENCY);
+      await Promise.all(
+        batch.map((p) => r2.putObject(p.rawPath, p.ciphertext)),
       );
-      return {
-        rows: page,
-        hasNextPage: page.length === C.PAGES_QUERY_PAGE_SIZE,
-        endCursor: offset + page.length,
-      };
-    });
-    const known = new Set<string>();
-    for (const row of rows) {
-      const rawKey = decodePagePointerContent(
-        crypto,
-        pathKey,
-        Buffer.from(row.path, "base64"),
-      );
-      known.add(`${r2Prefix}/${rawKey}`);
     }
-    return known;
+    return prepared.map(({ partNum, path, txtPartKeyBlob }) => ({
+      partNum,
+      path,
+      txtPartKeyBlob,
+    }));
   }
 }
 
@@ -674,7 +569,5 @@ function emptyResult(
     migrated,
     alreadyMigratedCount,
     staleObjectsDeleted,
-    newVersion: null,
-    pageCount: null,
   };
 }
