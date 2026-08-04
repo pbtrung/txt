@@ -1,9 +1,22 @@
+import { id, tx } from "@instantdb/react";
+
+import * as blob from "../crypto/blob";
+import { base64ToBytes, bytesToBase64, concatBytes } from "../crypto/bytes";
+import { HEADER_LEN, SALT_LEN } from "../crypto/constants";
 import { collectAllPages } from "./instaqlPagination";
+import { kemEncapsulate } from "./leancrypto";
 
 const PAGE_SIZE = 500;
 
+export class AdminSharesError extends Error {}
+
 interface LinkedId {
   id: string;
+}
+
+interface KeyStoreRow {
+  id: string;
+  pubKey?: string;
 }
 
 interface ShareRow {
@@ -18,6 +31,11 @@ export interface ShareEntry {
   txtId: string;
   fromUserId: string;
   toUserId: string;
+}
+
+export interface AdminSharesSession {
+  authId: string;
+  docKeys: Map<string, Uint8Array>;
 }
 
 export async function listShares(db: any): Promise<ShareEntry[]> {
@@ -50,4 +68,52 @@ export async function listShares(db: any): Promise<ShareEntry[]> {
     if (!txtId || !fromUserId || !toUserId) return [];
     return [{ id: row.id, txtId, fromUserId, toUserId }];
   });
+}
+
+async function recipientPubKey(db: any, userId: string): Promise<Uint8Array> {
+  const result = await db.queryOnce({
+    keyStore: {
+      $: { where: { "owner.id": userId } },
+    },
+  });
+  const row: KeyStoreRow | undefined = result.data.keyStore?.[0];
+  if (!row?.pubKey) {
+    throw new AdminSharesError(`no keyStore row for user ${userId}`);
+  }
+  return base64ToBytes(row.pubKey);
+}
+
+export async function grantShare(
+  db: any,
+  session: AdminSharesSession,
+  txtId: string,
+  toUserId: string,
+): Promise<void> {
+  if (toUserId === session.authId) {
+    throw new AdminSharesError("an admin cannot grant a share to themselves");
+  }
+  const txtKey = session.docKeys.get(txtId);
+  if (!txtKey) {
+    throw new AdminSharesError(`missing document key for txt ${txtId}`);
+  }
+
+  const pubKey = await recipientPubKey(db, toUserId);
+  const { ct, ss } = await kemEncapsulate(pubKey);
+  const wrappedTxtKey = await blob.encrypt(ss, txtKey);
+  const salt = wrappedTxtKey.slice(HEADER_LEN, HEADER_LEN + SALT_LEN);
+  const shareId = id();
+
+  await db.transact([
+    tx
+      .txtShares![shareId]!.update({
+        shareKey: `${txtId}:${session.authId}:${toUserId}`,
+        saltKemCt: bytesToBase64(concatBytes(salt, ct)),
+        txtKey: bytesToBase64(wrappedTxtKey),
+      })
+      .link({ txt: txtId, fromUser: session.authId, toUser: toUserId }),
+  ]);
+}
+
+export async function revokeShare(db: any, shareId: string): Promise<void> {
+  await db.transact([tx.txtShares![shareId]!.delete()]);
 }

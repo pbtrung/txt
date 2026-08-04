@@ -32,10 +32,15 @@ vi.mock("../../data/adminShares", async () => {
   const actual = await vi.importActual<typeof import("../../data/adminShares")>(
     "../../data/adminShares",
   );
-  return { ...actual, listShares: vi.fn() };
+  return {
+    ...actual,
+    grantShare: vi.fn(),
+    listShares: vi.fn(),
+    revokeShare: vi.fn(),
+  };
 });
 
-import { listShares } from "../../data/adminShares";
+import { grantShare, listShares, revokeShare } from "../../data/adminShares";
 import {
   createUser,
   deleteUser,
@@ -144,6 +149,8 @@ beforeEach(() => {
   });
   vi.mocked(updateUserCreds).mockResolvedValue(undefined);
   vi.mocked(deleteUser).mockResolvedValue(undefined);
+  vi.mocked(grantShare).mockResolvedValue(undefined);
+  vi.mocked(revokeShare).mockResolvedValue(undefined);
   updateBookMetadata.mockResolvedValue(undefined);
 });
 
@@ -353,6 +360,51 @@ describe("ManageScreen", () => {
       expect.objectContaining({ authId: "auth-1" }),
       "user-2",
     );
+    await waitFor(() =>
+      expect(vi.mocked(listShares).mock.calls.length).toBeGreaterThan(
+        shareCallsBefore,
+      ),
+    );
+  });
+
+  it("grants a share from the Shares toolbar", async () => {
+    vi.mocked(listShares).mockResolvedValue([]);
+    setup();
+    await waitFor(() => expect(screen.getByText("Bob")).toBeInTheDocument());
+    const shareCallsBefore = vi.mocked(listShares).mock.calls.length;
+
+    await userEvent.click(screen.getByRole("button", { name: /^Shares/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Create" }));
+    await userEvent.selectOptions(screen.getByLabelText("Book"), "txt-1");
+    await userEvent.selectOptions(screen.getByLabelText("Recipient"), "user-2");
+    await userEvent.click(screen.getByRole("button", { name: "Grant share" }));
+
+    await waitFor(() => expect(grantShare).toHaveBeenCalledOnce());
+    expect(grantShare).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ authId: "auth-1" }),
+      "txt-1",
+      "user-2",
+    );
+    await waitFor(() =>
+      expect(vi.mocked(listShares).mock.calls.length).toBeGreaterThan(
+        shareCallsBefore,
+      ),
+    );
+  });
+
+  it("revokes a selected share from the Shares toolbar", async () => {
+    setup();
+    await waitFor(() => expect(screen.getByText("Bob")).toBeInTheDocument());
+    const shareCallsBefore = vi.mocked(listShares).mock.calls.length;
+
+    await userEvent.click(screen.getByRole("button", { name: /^Shares/ }));
+    await userEvent.click(screen.getByRole("button", { name: /^Book One/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await userEvent.click(screen.getByRole("button", { name: "Revoke share" }));
+
+    await waitFor(() => expect(revokeShare).toHaveBeenCalledOnce());
+    expect(revokeShare).toHaveBeenCalledWith(expect.anything(), "share-1");
     await waitFor(() =>
       expect(vi.mocked(listShares).mock.calls.length).toBeGreaterThan(
         shareCallsBefore,

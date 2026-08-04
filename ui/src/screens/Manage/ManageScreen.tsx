@@ -15,7 +15,7 @@ import {
   errorMessage,
   type ToolbarButtonConfig,
 } from "./manageShared";
-import { SharesSection } from "./SharesSection";
+import { SharesSection, type SharesMode } from "./SharesSection";
 import { UsersSection, type UsersMode } from "./UsersSection";
 
 const INITIAL_LOAD_PHASES = ["Loading users", "Loading shares"] as const;
@@ -39,6 +39,7 @@ export function ManageScreen() {
   const [booksSelectedId, setBooksSelectedId] = useState<string | null>(null);
   const [booksMode, setBooksMode] = useState<BooksMode>("none");
   const [sharesSelectedId, setSharesSelectedId] = useState<string | null>(null);
+  const [sharesMode, setSharesMode] = useState<SharesMode>("none");
 
   const [users, setUsers] = useState<UserSummary[] | null>(null);
   const [shares, setShares] = useState<ShareEntry[] | null>(null);
@@ -98,6 +99,7 @@ export function ManageScreen() {
     setBooksSelectedId(null);
     setBooksMode("none");
     setSharesSelectedId(null);
+    setSharesMode("none");
     nav.close();
   }
 
@@ -157,6 +159,26 @@ export function ManageScreen() {
           label: "Edit",
           disabled: booksSelectedId === null,
           onClick: () => setBooksMode(booksMode === "edit" ? "none" : "edit"),
+        },
+      ];
+    }
+    if (section === "shares") {
+      return [
+        {
+          key: "create",
+          icon: "bi-plus-lg",
+          label: "Create",
+          onClick: () =>
+            setSharesMode(sharesMode === "create" ? "none" : "create"),
+        },
+        {
+          key: "delete",
+          icon: "bi-trash",
+          label: "Delete",
+          variant: "danger",
+          disabled: sharesSelectedId === null,
+          onClick: () =>
+            setSharesMode(sharesMode === "delete" ? "none" : "delete"),
         },
       ];
     }
@@ -334,12 +356,16 @@ export function ManageScreen() {
                 )}
                 {section === "shares" && (
                   <SharesSection
+                    session={session}
                     booksById={booksById}
                     users={users ?? []}
                     shares={shares ?? []}
                     search={search}
                     selectedShareId={sharesSelectedId}
+                    mode={sharesMode}
                     onSelectRow={setSharesSelectedId}
+                    onSetMode={setSharesMode}
+                    onChanged={() => void loadShares()}
                   />
                 )}
               </div>
