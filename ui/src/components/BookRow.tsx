@@ -22,6 +22,7 @@ interface BookRowProps {
   book: LibraryBook;
   onClick: () => void;
   onDelete?: () => void;
+  selected?: boolean;
   hidePartNum?: boolean;
   style?: CSSProperties;
 }
@@ -30,6 +31,7 @@ export function BookRow({
   book,
   onClick,
   onDelete,
+  selected,
   hidePartNum,
   style,
 }: BookRowProps) {
@@ -46,7 +48,7 @@ export function BookRow({
     <ClickableRow
       onClick={onClick}
       style={style}
-      className="list-group-item list-group-item-action d-flex justify-content-between align-items-center gap-3 py-3"
+      className={`list-group-item list-group-item-action d-flex justify-content-between align-items-center gap-3 py-3 ${selected ? "active" : ""}`}
     >
       {/* minWidth:0 lets a long title/subtitle actually truncate instead of
           forcing this flex item (and its siblings, e.g. the Library's left
@@ -57,14 +59,18 @@ export function BookRow({
           {book.info.title}
         </span>
         {subtitle && (
-          <span className="d-block small text-truncate text-body-secondary">
+          <span
+            className={`d-block small text-truncate ${selected ? "" : "text-body-secondary"}`}
+          >
             {subtitle}
           </span>
         )}
       </span>
       <span className="d-flex align-items-center gap-2 flex-shrink-0">
         {status === "in-progress" && !hidePartNum && (
-          <span className="small text-nowrap text-body-secondary">
+          <span
+            className={`small text-nowrap ${selected ? "" : "text-body-secondary"}`}
+          >
             Part {book.lastPartNum}
           </span>
         )}

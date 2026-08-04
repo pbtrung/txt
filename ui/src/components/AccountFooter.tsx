@@ -4,18 +4,22 @@
 // button group (adjoining borders, no gap between them) rather than two
 // separately-spaced buttons.
 
+import { InternalLink } from "./InternalLink";
+
 export function AccountFooter({
   onRefresh,
   onLock,
   refreshing,
   refreshAriaLabel,
   displayName,
+  manageTo,
 }: {
   onRefresh: () => void;
   onLock: () => void;
   refreshing: boolean;
   refreshAriaLabel: string;
   displayName?: string;
+  manageTo?: string;
 }) {
   return (
     <div className="border-top pt-2 mt-2 d-flex align-items-center justify-content-between gap-2">
@@ -24,7 +28,18 @@ export function AccountFooter({
           className="bi bi-person-circle text-body-secondary flex-shrink-0"
           aria-hidden="true"
         />
-        {displayName && <span className="text-truncate">{displayName}</span>}
+        {displayName &&
+          (manageTo ? (
+            <InternalLink
+              to={manageTo}
+              className="text-truncate text-decoration-none"
+              title="Manage"
+            >
+              {displayName}
+            </InternalLink>
+          ) : (
+            <span className="text-truncate">{displayName}</span>
+          ))}
       </span>
       <div
         className="btn-group flex-shrink-0"

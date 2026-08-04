@@ -99,10 +99,11 @@ function setVaultMock(
   refreshing: boolean,
   progress: VaultContextModule.VaultProgress | null = null,
   displayName?: string,
+  isAdmin = false,
 ) {
   vi.mocked(VaultContextModule.useVault).mockReturnValue({
     status: "unlocked",
-    session: { displayName } as VaultContextModule.VaultSession,
+    session: { displayName, isAdmin } as VaultContextModule.VaultSession,
     error: null,
     accessMap: {},
     bookmarksMap,
@@ -134,8 +135,9 @@ function renderLibrary(
   refreshing = false,
   progress: VaultContextModule.VaultProgress | null = null,
   displayName?: string,
+  isAdmin = false,
 ) {
-  setVaultMock(bookmarksMap, refreshing, progress, displayName);
+  setVaultMock(bookmarksMap, refreshing, progress, displayName, isAdmin);
   vi.mocked(useLibraryBooksModule.useLibraryBooks).mockReturnValue({
     books,
     loading: false,
@@ -403,6 +405,14 @@ describe("LibraryScreen", () => {
     it("shows the creds file's display_name next to the person icon, when present", () => {
       renderLibrary({}, false, null, "Trung");
       expect(screen.getAllByText("Trung").length).toBeGreaterThan(0);
+    });
+
+    it("links the display name to Manage for admin sessions", () => {
+      renderLibrary({}, false, null, "Trung", true);
+      expect(screen.getAllByRole("link", { name: "Trung" })[0]).toHaveAttribute(
+        "href",
+        "/manage",
+      );
     });
 
     it("shows nothing next to the person icon when display_name is absent", () => {

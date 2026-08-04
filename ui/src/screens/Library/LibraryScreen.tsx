@@ -70,6 +70,7 @@ function LibraryNavContent({
   onRefresh,
   refreshing,
   displayName,
+  manageTo,
 }: {
   view: View;
   selectView: (next: View) => void;
@@ -82,6 +83,7 @@ function LibraryNavContent({
   onRefresh: () => void;
   refreshing: boolean;
   displayName?: string;
+  manageTo?: string;
 }) {
   return (
     <>
@@ -136,6 +138,7 @@ function LibraryNavContent({
         refreshing={refreshing}
         refreshAriaLabel="Refresh library"
         displayName={displayName}
+        manageTo={manageTo}
       />
     </>
   );
@@ -334,6 +337,7 @@ export function LibraryScreen() {
                 onRefresh={() => void handleRefresh()}
                 refreshing={refreshing}
                 displayName={session?.displayName ?? undefined}
+                manageTo={session?.isAdmin ? "/manage" : undefined}
               />
             </div>
           )}
@@ -427,6 +431,7 @@ export function LibraryScreen() {
                 onRefresh={() => void handleRefresh()}
                 refreshing={refreshing}
                 displayName={session?.displayName ?? undefined}
+                manageTo={session?.isAdmin ? "/manage" : undefined}
               />
             </div>
 

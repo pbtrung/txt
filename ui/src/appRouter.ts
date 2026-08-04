@@ -60,6 +60,10 @@ function historyApiUsable(): boolean {
 // local_index.html's opaque-origin bootstrap: the address bar won't
 // reflect in-app navigation, and browser back/forward won't move between
 // screens.
+export function isMemoryRouterActive(): boolean {
+  return !historyApiUsable();
+}
+
 export function pickRouterComponent(): ComponentType<{ children?: ReactNode }> {
-  return historyApiUsable() ? BrowserRouter : MemoryRouter;
+  return isMemoryRouterActive() ? MemoryRouter : BrowserRouter;
 }
