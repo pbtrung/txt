@@ -1,7 +1,7 @@
 // Crockford's human-readable Base32 (excludes i, l, o, u -- visually
 // ambiguous with 1/1/0/v; no padding). Mirrors txt/base32.ts's
-// crockfordBase32Lowercase exactly, used the same way: pagePointer.ts's
-// r2Prefix/raw_path generation for this account's page objects in R2.
+// crockfordBase32Lowercase exactly, used the same way: randomToken.ts's
+// prefix/raw_key generation (docs/data_model.md's txt.prefix/txtParts.path).
 
 const ALPHABET = "0123456789abcdefghjkmnpqrstvwxyz";
 
