@@ -7,7 +7,7 @@
 import * as c from "./constants";
 import { concatBytes, randomBytes } from "./bytes";
 import * as brotli from "./brotli";
-import { aeadDecrypt, aeadEncrypt, hkdf } from "../data/wasmLoader";
+import { aeadDecrypt, aeadEncrypt, hkdf } from "../data/leancrypto";
 
 async function derive(
   ikm: Uint8Array,

@@ -1,18 +1,16 @@
 import { describe, expect, it } from "vitest";
 
-import { aeadDecrypt, aeadEncrypt, hkdf } from "./wasmLoader";
+import { aeadDecrypt, aeadEncrypt, hkdf } from "./leancrypto";
 import { bytesToHex, hexToBytes } from "../crypto/testUtil";
 
-// Same known-good vectors as the old crypto/leancryptoLoader.test.ts
+// Same known-good vectors as txt/crypto.ts's own test vectors
 // (cross-checked by hand against the real native leancrypto library) --
-// HKDF-SHA3-512 and Ascon-Keccak AEAD
-// are the same underlying primitive regardless of which C API wraps them
-// (sqlcipher.js's simpler lc_wasm_hkdf_sha3_512/lc_wasm_aead_* wrapper
-// functions here, vs. the old leancrypto.js's raw lc_hkdf/lc_ak_alloc_taglen
-// context API), so identical inputs must still produce identical output --
-// this doubles as a cross-check that the two wasm builds agree.
+// HKDF-SHA3-512 and Ascon-Keccak AEAD are the same underlying primitive
+// regardless of which caller drives leancrypto.js's raw lc_hkdf/
+// lc_ak_alloc_taglen context API, so identical inputs must still produce
+// identical output.
 
-describe("wasmLoader", () => {
+describe("leancrypto", () => {
   it("HKDF-SHA3-512 matches the native leancrypto output", async () => {
     const ikm = Uint8Array.from({ length: 64 }, (_, i) => i);
     const salt = Uint8Array.from({ length: 64 }, (_, i) => i + 64);

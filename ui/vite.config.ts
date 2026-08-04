@@ -9,38 +9,32 @@ import react from "@vitejs/plugin-react";
 
 const UI_DIR = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(UI_DIR, "..");
-const SQLCIPHER_DIR = join(REPO_ROOT, "sqlcipher");
+const LEANCRYPTO_DIR = join(REPO_ROOT, "leancrypto");
 // Built at the repo root (../dist from here), not ui/dist -- kept out of
 // ui/ itself so it never looks like a source directory. Absolute, not
 // relative to `root` (Vite's own default for build.outDir): Vite resolves
 // a relative outDir against `root`, which would put it back under ui/.
 const DIST_DIR = join(REPO_ROOT, "dist");
 
-// The repo-root sqlcipher/ bundle (see CLAUDE.md) already covers everything
-// ui/leancrypto/ used to vendor separately -- the same lc_wasm_* HKDF/AEAD
-// primitives crypto/blob.ts needs, plus real SQLCipher access, in one
-// Emscripten build confirmed to support both Node and browser environments
-// (its own glue code branches on ENVIRONMENT_IS_WEB/ENVIRONMENT_IS_WORKER).
-// publicDir serves it verbatim at build time; only sqlcipher.js/.wasm are
-// actually needed in dist/ -- everything else in that directory (the Node
-// .d.ts, package.json, the js-vfs.mjs full-preload VFS this project's own
-// lazy remoteVfs.ts doesn't use, its symbols/test files) is removed from
-// dist/ by the build script's post-`vite build` cleanup step.
+// The repo-root leancrypto/ bundle (see CLAUDE.md, shared with txt/crypto.ts)
+// is the one WASM module this app needs now that there's no SQLite/SQLCipher
+// component left (data/leancrypto.ts) -- an Emscripten build confirmed to
+// support both Node and browser environments (its own glue code branches on
+// ENVIRONMENT_IS_WEB/ENVIRONMENT_IS_WORKER). publicDir serves it verbatim at
+// build time; only leancrypto.js/.wasm are actually needed in dist/ --
+// everything else in that directory (the Node .d.ts, package.json) is
+// removed from dist/ by the build script's post-`vite build` cleanup step.
 
-// sqlcipher.js is loaded via data/wasmLoader.ts's own fetch()+verify+
-// blob-import (needed so the exact same loading code works identically on
-// the main thread and inside dbWorker.ts's Worker, which has no <script>/
-// <link> tags to hang SRI off of) -- not a <script type=module>/<link> tag
-// in index.html, so it never goes through build-integrity.mjs's addSri(),
-// which only tags those. Its SHA-512 is computed here at config-load time
-// and baked into the app bundle via `define` (applied to every build Vite
-// produces from this config, including Worker bundles, not just the main
-// entry) -- the same technique build-integrity.mjs uses to bake the SLH-DSA
-// public key into the local_index.html verifier bundle. wasmLoader.ts
-// compares a freshly computed digest of the fetched bytes against this
-// value before ever executing them.
-function sqlcipherJsIntegrity(): string {
-  const bytes = readFileSync(join(SQLCIPHER_DIR, "sqlcipher.js"));
+// leancrypto.js is loaded via data/leancrypto.ts's own fetch()+verify+
+// blob-import -- not a <script type=module>/<link> tag in index.html, so it
+// never goes through build-integrity.mjs's addSri(), which only tags those.
+// Its SHA-512 is computed here at config-load time and baked into the app
+// bundle via `define` -- the same technique build-integrity.mjs uses to bake
+// the SLH-DSA public key into the local_index.html verifier bundle.
+// data/leancrypto.ts compares a freshly computed digest of the fetched bytes
+// against this value before ever executing them.
+function leancryptoJsIntegrity(): string {
+  const bytes = readFileSync(join(LEANCRYPTO_DIR, "leancrypto.js"));
   return `sha512-${createHash("sha512").update(bytes).digest("base64")}`;
 }
 
@@ -55,9 +49,9 @@ export default defineConfig({
   // the repo root instead of ui/.
   root: UI_DIR,
   plugins: [react()],
-  publicDir: SQLCIPHER_DIR,
+  publicDir: LEANCRYPTO_DIR,
   define: {
-    __SQLCIPHER_JS_INTEGRITY__: JSON.stringify(sqlcipherJsIntegrity()),
+    __LEANCRYPTO_JS_INTEGRITY__: JSON.stringify(leancryptoJsIntegrity()),
   },
   // remotePageClient.ts's Worker+Atomics bridge needs SharedArrayBuffer,
   // which browsers only expose to a cross-origin-isolated page (COOP/COEP
