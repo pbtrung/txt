@@ -1,16 +1,23 @@
 // Permission rules for the InstantDB + Firebase Auth + R2 design documented
-// in docs/data_model.md. Verify against a real InstantDB app via
+// across docs/data_model.md (entities, this file's own Permission rules
+// table), docs/key_hierarchy.md, docs/protocols.md, docs/r2_credentials.md,
+// and docs/auth.md. Verify against a real InstantDB app via
 // `npx instant-cli@latest push perms` before treating this as final.
 //
 // There's no separate app-level profile entity in this design -- type lives
-// directly on $users, and every other entity's owner/user link points at
-// $users directly. auth.id already equals a $users row's own id, so every
-// isOwner check below is a single-hop data.ref('owner.id'), not a two-hop
-// ref through an intermediate profile row.
+// directly on $users, and every other entity's owner/user/fromUser/toUser
+// link points at $users directly. auth.id already equals a $users row's own
+// id, so every isOwner check below is a single-hop data.ref('owner.id'), not
+// a two-hop ref through an intermediate profile row -- the one exception is
+// isSharedReader on txtParts/txtMetadata, a genuine two-hop
+// data.ref('txt.txtShares.toUser.id'), since a share grants access to a
+// document, not to its individual parts or metadata row (docs/data_model.md's
+// Permission rules).
 //
 // $users.type 'admin' can act on any user's data; 'user' can only read/write
-// its own -- every rule below is `isAdmin || isOwner` (or admin-only where
-// noted). isAdmin reads auth's own $users row's type directly via
+// its own (or, for txt/txtMetadata/txtParts, read-only what's been shared to
+// it) -- see docs/data_model.md's Permission rules table for the exact rule
+// per entity. isAdmin reads auth's own $users row's type directly via
 // auth.ref('$user.type') -- UNVERIFIED whether this resolves a plain,
 // non-linked attribute the same way auth.ref/data.ref resolve one reached
 // across a real link (a prior design routed type through a separate profile
@@ -25,8 +32,8 @@
 // shape).
 //
 // $users is InstantDB's own auth-managed entity, but it now carries two
-// custom attributes -- umk and type (docs/data_model.md's Key Hierarchy) --
-// alongside the system-managed ones -- see its own rules below.
+// custom attributes -- umk and type (docs/key_hierarchy.md) -- alongside the
+// system-managed ones -- see its own rules below.
 //
 // Also confirmed via push (2026-08-01): $users.allow.delete must be the
 // literal "false", not a CEL expression -- InstantDB's push API rejects
@@ -34,6 +41,7 @@
 // delete."
 
 const ADMIN_BIND = ["isAdmin", "'admin' in auth.ref('$user.type')"];
+const OWNER_BIND = ["isOwner", "auth.id in data.ref('owner.id')"];
 
 const rules = {
   $users: {
@@ -75,59 +83,130 @@ const rules = {
       delete: "false",
     },
   },
-  dbMeta: {
-    bind: [...ADMIN_BIND, "isOwner", "auth.id in data.ref('owner.id')"],
+  // Per-account Kyber/X448 keypair (docs/data_model.md's keyStore entity).
+  // view/update let an owner read/rotate their own row; create/delete are
+  // admin-only, since provisioning a keypair (or removing one) is a
+  // provisioning action, never a regular user self-service write.
+  keyStore: {
+    bind: [...ADMIN_BIND, ...OWNER_BIND],
     allow: {
       view: "isAdmin || isOwner",
-      create: "isAdmin || isOwner",
-      // The CAS: a concurrent writer that already advanced currentVersion
-      // makes this whole transact() fail, since the rule evaluates against
-      // the record's state at commit time (see data_model.md's commit
-      // protocol -- unverified whether transact() is truly serializable
-      // per-record, confirm before relying on this for real). Admin bypasses
-      // the version-match check entirely -- a deliberate escape hatch for
-      // manual repair, not something a normal commit path should ever need.
-      update:
-        "isAdmin || (isOwner && newData.currentVersion == data.currentVersion + 1)",
+      create: "isAdmin",
+      update: "isAdmin || isOwner",
       delete: "isAdmin",
     },
   },
-  pages: {
-    bind: [...ADMIN_BIND, "isOwner", "auth.id in data.ref('owner.id')"],
-    allow: {
-      view: "isAdmin || isOwner",
-      create: "isAdmin || isOwner",
-      // Append-only MVCC: an ordinary owner never updates/deletes a page row
-      // (new versions are new rows) -- isAdmin is a deliberate override of
-      // that invariant for support/repair, not part of the normal write path.
-      update: "isAdmin",
-      delete: "isAdmin",
-    },
-  },
+  // The encrypted R2-connection-info store (docs/data_model.md's credStore
+  // entity). isOwner is whoever's umk encrypts a given row's content -- the
+  // admin can hold several rows this way (credStoreOwner's reverse link is
+  // has: "many", instant.schema.ts), all still satisfying isOwner the same
+  // way. Same view/create/update/delete shape as keyStore above: create is
+  // admin-only (provisioning a new row is a provisioning action), update
+  // lets an owner rewrite their own r2_config/display_name.
   credStore: {
-    // isOwner here is whoever's umk encrypts this row's content (the owner
-    // link, docs/data_model.md's credStore entity) -- not the `user` link,
-    // which only says which account's key material the row describes and
-    // has no bearing on who can decrypt or should be allowed to view it.
-    // view lets an owner read and locally decrypt their own row(s); create/
-    // update/delete are admin-only, same rationale as $users.umk above --
-    // provisioning/rotating key material is a provisioning action, never a
-    // regular user self-service write.
-    bind: [...ADMIN_BIND, "isOwner", "auth.id in data.ref('owner.id')"],
+    bind: [...ADMIN_BIND, ...OWNER_BIND],
     allow: {
       view: "isAdmin || isOwner",
+      create: "isAdmin",
+      update: "isAdmin || isOwner",
+      delete: "isAdmin",
+    },
+  },
+  // One row per document (docs/data_model.md's txt entity). create/update/
+  // delete are admin-only (docs/data_model.md's Operating model: only the
+  // admin ever owns/writes documents) -- isSharedReader extends view only,
+  // never write, to whoever a txtShares row names as toUser.
+  txt: {
+    bind: [
+      ...ADMIN_BIND,
+      ...OWNER_BIND,
+      "isSharedReader",
+      "auth.id in data.ref('txtShares.toUser.id')",
+    ],
+    allow: {
+      view: "isAdmin || isOwner || isSharedReader",
       create: "isAdmin",
       update: "isAdmin",
       delete: "isAdmin",
     },
   },
-  activeReaders: {
-    bind: [...ADMIN_BIND, "isOwner", "auth.id in data.ref('owner.id')"],
+  // One row per document (docs/data_model.md's txtMetadata entity).
+  // isSharedReader here is the one genuine two-hop check in this file --
+  // txtMetadata links to txt, not directly to txtShares, so a share grants
+  // access by way of the document it names, not the metadata row itself.
+  txtMetadata: {
+    bind: [
+      ...ADMIN_BIND,
+      ...OWNER_BIND,
+      "isSharedReader",
+      "auth.id in data.ref('txt.txtShares.toUser.id')",
+    ],
+    allow: {
+      view: "isAdmin || isOwner || isSharedReader",
+      create: "isAdmin",
+      update: "isAdmin",
+      delete: "isAdmin",
+    },
+  },
+  // A document's content, chunked into ordered parts (docs/data_model.md's
+  // txtParts entity). Carries its own owner link (instant.schema.ts), so
+  // isOwner stays single-hop; isSharedReader is the two-hop check here, same
+  // reasoning as txtMetadata -- a share grants access to the parent txt, not
+  // to any one part directly.
+  txtParts: {
+    bind: [
+      ...ADMIN_BIND,
+      ...OWNER_BIND,
+      "isSharedReader",
+      "auth.id in data.ref('txt.txtShares.toUser.id')",
+    ],
+    allow: {
+      view: "isAdmin || isOwner || isSharedReader",
+      create: "isAdmin",
+      update: "isAdmin",
+      delete: "isAdmin",
+    },
+  },
+  // One row per (document, recipient) share grant (docs/data_model.md's
+  // txtShares entity). view deliberately includes the recipient
+  // (auth.id in data.ref('toUser.id')) -- without it, a recipient could
+  // never discover which documents have been shared to them, or fetch the
+  // saltKemCt/txtKey blob they need to Decapsulate. Every write stays
+  // admin-only: only the admin ever grants or revokes a share
+  // (docs/protocols.md's Sharing protocol).
+  txtShares: {
+    bind: [...ADMIN_BIND, "isRecipient", "auth.id in data.ref('toUser.id')"],
+    allow: {
+      view: "isAdmin || isRecipient",
+      create: "isAdmin",
+      update: "isAdmin",
+      delete: "isAdmin",
+    },
+  },
+  // One row per user (docs/data_model.md's txtAccess entity) -- a share
+  // recipient's own read position for a document they don't own is still
+  // gated on isOwner *of this row*, not of the document it references, so
+  // tracking your own progress through a shared document never requires
+  // write access to the document itself (docs/data_model.md's Design
+  // notes).
+  txtAccess: {
+    bind: [...ADMIN_BIND, ...OWNER_BIND],
     allow: {
       view: "isAdmin || isOwner",
       create: "isAdmin || isOwner",
-      update: "isAdmin || isOwner", // renewing the lease
-      delete: "isAdmin || isOwner", // clean close releases it early
+      update: "isAdmin || isOwner",
+      delete: "isAdmin || isOwner",
+    },
+  },
+  // One row per user (docs/data_model.md's txtBookmarks entity) -- same
+  // isOwner-of-this-row reasoning as txtAccess above.
+  txtBookmarks: {
+    bind: [...ADMIN_BIND, ...OWNER_BIND],
+    allow: {
+      view: "isAdmin || isOwner",
+      create: "isAdmin || isOwner",
+      update: "isAdmin || isOwner",
+      delete: "isAdmin || isOwner",
     },
   },
 };
