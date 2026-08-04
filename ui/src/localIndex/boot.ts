@@ -50,9 +50,9 @@ export async function boot(
     // file://-origin cross-origin fetch even against a server that sends
     // Access-Control-Allow-Origin: *, since file:// doesn't send a normal
     // Origin header for that to match against) -- but once verification
-    // succeeds, the real app itself needs nothing beyond that (no
-    // SQLite/VFS/Worker bridge left to require cross-origin isolation), so
-    // it always renders from here.
+    // succeeds, the real app itself needs nothing beyond that -- no
+    // browser-side database Worker requires cross-origin isolation -- so it
+    // always renders from here.
     ui.advance("loading-application");
     renderApp(assetBaseUrl, verified);
     await waitForRootMount();

@@ -6,15 +6,13 @@ export function isBrowser(): boolean {
   return typeof window !== "undefined" && typeof document !== "undefined";
 }
 
-// Also true inside a Worker, unlike isBrowser() (a Worker has no window/
-// document at all) -- this app has no Worker of its own anymore (there's no
-// SQLite/VFS bridge left to run inside one), but data/leancrypto.ts's
-// fetch+verify+blob-import loading path works identically on the main
-// thread and inside a Worker, unlike under Node, so this stays the more
-// correct check to gate that branch on. WorkerGlobalScope is a standard
-// global inside every Worker (classic or module) and is never defined by
-// Node, so this stays reliable even as Node adds more individual
-// web-platform globals (fetch, navigator, ...) over time.
+// Also true inside a browser Worker, unlike isBrowser() (a Worker has no
+// window/document at all). ui/ does not currently ship its own browser
+// Worker bundle, but data/leancrypto.ts's fetch+verify+blob-import loading
+// path works the same on the main thread and inside a Worker, unlike under
+// Node, so this stays the right gate for that branch. WorkerGlobalScope is a
+// standard Worker global and is never defined by Node, so this stays reliable
+// even as Node adds more web-platform globals over time.
 export function isWeb(): boolean {
   return (
     isBrowser() ||

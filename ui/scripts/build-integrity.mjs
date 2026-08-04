@@ -298,10 +298,8 @@ function extractTabIdentity(html) {
 }
 
 function buildLocalIndexHtml(bundleCode, title, faviconDataUri) {
-  // Escaping </script -- same reason as the old sign-assets.mjs's JSON
-  // injection: bundleCode is untrusted-shape text (could in principle
-  // contain a string literal with that sequence) that must not be able to
-  // close the surrounding <script> tag early.
+  // bundleCode is untrusted-shape text: it could contain a string literal
+  // with </script, so escape that sequence before embedding it inline.
   const safeCode = bundleCode.replace(/<\/script/gi, "<\\/script");
   const faviconTag = faviconDataUri
     ? `\n    <link rel="icon" href="${faviconDataUri}" />`

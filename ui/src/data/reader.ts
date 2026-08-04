@@ -1,8 +1,7 @@
-// On-demand part fetch (docs/protocols.md's Read path), replacing owner.ts/
-// parts.ts's SQLite-blob reads entirely: query txtParts for the target
-// document (already includes txtPartKey/path), decrypt the txt row's
-// prefix directly under docKey, decrypt each part's own txtPartKey under
-// that same docKey, then -- per part, on demand -- decrypt path under
+// On-demand part fetch (docs/protocols.md's Read path): query txtParts for
+// the target document (already includes txtPartKey/path), decrypt the txt
+// row's prefix directly under docKey, decrypt each part's own txtPartKey
+// under that same docKey, then -- per part, on demand -- decrypt path under
 // txtPartKey to recover raw_key, GET "${prefix}/${raw_key}" from R2, and
 // decrypt the object body under that same txtPartKey. Two hops (one
 // InstantDB query, one R2 fetch) regardless of whether the reader owns the

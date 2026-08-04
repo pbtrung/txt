@@ -11,15 +11,12 @@
 // project's own stated testing philosophy (real building blocks, not
 // mocks).
 //
-// Same two loading paths as the old wasmLoader.ts (see its own now-removed
-// header comment for the full rationale, still accurate here): a real
-// browser (or a Worker, if one is ever reintroduced) fetch()es the bytes,
-// verifies their SHA-512 against __LEANCRYPTO_JS_INTEGRITY__, then imports
-// the result as a real ES module from a blob: URL (leancrypto.js's own tail
-// leaves `leancrypto` as a plain top-level `var` -- see its own last lines --
-// appending an `export default` reference is what turns that into a valid ES
-// module); Node/Vitest uses a plain dynamic `import()`, which interoperates
-// with leancrypto.js's own module.exports directly.
+// Real browser-like runtimes fetch() the glue bytes, verify their SHA-512
+// against __LEANCRYPTO_JS_INTEGRITY__, then import the result as a real ES
+// module from a blob: URL. leancrypto.js's own tail leaves `leancrypto` as a
+// plain top-level `var`; appending an `export default` reference turns that
+// into a valid ES module. Node/Vitest uses a plain dynamic import(), which
+// interoperates with leancrypto.js's own module.exports directly.
 
 import { isWeb } from "../env";
 import { bytesToBase64 } from "../crypto/bytes";
@@ -134,8 +131,7 @@ async function loadNodeFactory(): Promise<LeanCryptoFactory> {
 
 let modulePromise: Promise<LeanCryptoModule> | null = null;
 
-/** Resolves once the wasm module is instantiated -- memoized per realm, same
- * as the old wasmLoader.ts's loadWasm(). */
+/** Resolves once the wasm module is instantiated, memoized per realm. */
 function loadLeanCrypto(): Promise<LeanCryptoModule> {
   if (!modulePromise) {
     modulePromise = (isWeb() ? loadWebFactory() : loadNodeFactory()).then(
@@ -183,9 +179,7 @@ function check(ret: number, what: string): void {
   if (ret !== 0) throw new LeanCryptoError(what, ret);
 }
 
-/** HKDF-SHA3-512(ikm, salt) -> length bytes of OKM. Same (ikm, salt, length)
- * signature as the old wasmLoader.ts's hkdf() -- a drop-in replacement for
- * crypto/blob.ts. */
+/** HKDF-SHA3-512(ikm, salt) -> length bytes of OKM for crypto/blob.ts. */
 export async function hkdf(
   ikm: Uint8Array,
   salt: Uint8Array,

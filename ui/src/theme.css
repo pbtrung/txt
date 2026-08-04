@@ -1,7 +1,6 @@
 /*
- * The one deliberate brand touch (docs/ui.md): a brass/gold primary accent,
- * lighter and more saturated in dark mode, darker and more muted in light
- * mode.
+ * The one deliberate brand touch: a brass/gold primary accent, lighter and
+ * more saturated in dark mode, darker and more muted in light mode.
  *
  * Overriding --bs-primary/--bs-primary-rgb alone is *not* enough: stock
  * Bootstrap's precompiled CSS bakes literal hex colors into most

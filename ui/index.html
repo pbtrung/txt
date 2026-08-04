@@ -19,8 +19,8 @@
       from the user's own creds file (data/creds.ts), not a fixed host this
       policy could otherwise pin down (InstantDB/Firebase Auth's own hosts
       are fixed, but this meta tag is account-agnostic; build-integrity.mjs's
-      real HTTP header narrows connect-src to the actual fixed+per-account
-      hosts for a direct CDN visit -- see that file's own comment).
+      real HTTP header narrows connect-src for a direct CDN visit -- see
+      that file's own comment).
       style-src allows 'unsafe-inline' for this app's own style={{...}}
       JSX props (developer-authored, not attacker-influenced -- DOMPurify's
       own attribute allowlist already excludes `style` from sanitized HTML).
