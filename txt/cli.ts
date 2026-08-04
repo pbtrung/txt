@@ -168,10 +168,9 @@ async function initAdmin(
   const creds = loadInitAdminCreds(args.credsPath);
   const result = await new AdminInitializer(creds, log).run();
   log.info("--- init-admin summary ---");
-  log.info(`auth.id:     ${result.authId}`);
-  log.info(`dbMeta:      ${result.dbMetaId}`);
-  log.info(`page count:  ${result.pageCount}`);
-  log.info(`version:     ${result.version}`);
+  log.info(`auth.id:    ${result.authId}`);
+  log.info(`keyStore:   ${result.keyStoreId}`);
+  log.info(`credStore:  ${result.credStoreId}`);
   return 0;
 }
 
@@ -185,7 +184,7 @@ async function migrate(
   // --dry-run flag.
   const fromCreds = loadCreds(args.fromCredsPath, true);
   // --migrate reads the target's R2 config from its own live credStore row
-  // (migrate.ts's unwrapTargetKeys), not from to-creds.json -- no local
+  // (migrate.ts's resolveTargetAdmin), not from to-creds.json -- no local
   // r2_config required here.
   const toCreds = loadInitAdminCreds(args.toCredsPath, { requireR2: false });
   const fromDb = new DatabaseSync(args.fromDb, { readOnly: true });
@@ -218,8 +217,6 @@ function printMigrateSummary(
   }
   if (result.committed) {
     log.info(`auth.id:           ${result.authId}`);
-    log.info(`new version:       ${result.newVersion}`);
-    log.info(`page count:        ${result.pageCount}`);
   }
 }
 
@@ -243,16 +240,10 @@ function printCollectGarbageSummary(
 ): void {
   log.info("--- collect-garbage summary ---");
   log.info(`mode:              ${result.dryRun ? "dry-run" : "live"}`);
-  log.info(`accounts:          ${result.accounts.length}`);
-  for (const a of result.accounts) {
-    if (a.skipped) {
-      log.info(`  auth.id=${a.authId} SKIPPED (${a.skipped})`);
-      continue;
-    }
-    log.info(
-      `  auth.id=${a.authId} old-pages=${a.oldPagesDeleted} stale-objects=${a.staleObjectsDeleted}`,
-    );
-  }
+  log.info(`documents:         ${result.documentCount}`);
+  log.info(
+    `stale R2 objects:  ${result.staleObjectsDeleted} ${result.dryRun ? "would be " : ""}deleted`,
+  );
 }
 
 async function dispatch(args: CliArgs, log: Logger): Promise<number> {

@@ -171,7 +171,10 @@ export class R2Client {
     maxAttempts: number,
     lastErr: unknown,
   ): Promise<void> {
-    const delay = C.RETRY_DELAYS_MS[attempt - 1];
+    // attempt is always in [1, maxAttempts - 1] here (the caller only calls
+    // backoff when attempt > 0), so attempt - 1 is always a valid index into
+    // RETRY_DELAYS_MS (length maxAttempts - 1).
+    const delay = C.RETRY_DELAYS_MS[attempt - 1]!;
     this.log.warn(
       `${what} failed (attempt ${attempt}/${maxAttempts}): ${lastErr} -- retrying in ${delay / 1000}s`,
     );
