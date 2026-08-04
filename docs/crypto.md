@@ -10,15 +10,15 @@
 
 ### Composite KEM Key Sizes
 
-Each `key_store` keypair is leancrypto's `lc_kyber_1024_x448` hybrid keypair — a single `lc_kyber_1024_x448_keypair` call, not something this codebase assembles by hand. Internally it combines an ML-KEM-1024 keypair with an X448 keypair:
+Each `keyStore` keypair is leancrypto's `lc_kyber_1024_x448` hybrid keypair — a single `lc_kyber_1024_x448_keypair` call, not something this codebase assembles by hand. Internally it combines an ML-KEM-1024 keypair with an X448 keypair:
 
-| Component     | pub_key        | priv_key       |
+| Component     | pubKey         | privKey        |
 | ------------- | -------------- | -------------- |
 | ML-KEM-1024   | 1568 bytes     | 3168 bytes     |
 | X448          | 56 bytes       | 56 bytes       |
 | **Composite** | **1624 bytes** | **3224 bytes** |
 
-`key_store.pub_key` stores the raw 1624-byte composite public key. `key_store.priv_key` wraps the raw 3224-byte composite private key using the standard Encrypt procedure below (IKM = owner's `umk`), so the stored blob is 3224 + 132 = 3356 bytes.
+`keyStore.pubKey` stores the raw 1624-byte composite public key. `keyStore.privKey` wraps the raw 3224-byte composite private key using the standard Encrypt procedure below (IKM = owner's `umk`), so the stored blob is 3224 + 132 = 3356 bytes.
 
 ## Blob Format
 
@@ -82,19 +82,19 @@ Given a blob and the same IKM used to encrypt it:
 
 ## Encapsulate / Decapsulate (Asymmetric Wrap)
 
-Used wherever key material must be wrapped under a _recipient's_ public key rather than a key the wrapper already holds (e.g. sharing a document's `txt_key` with another user via their `key_store.pub_key`) — the standard Encrypt/Decrypt above requires holding the same IKM on both ends, which doesn't work when the wrapper isn't the recipient.
+Used wherever key material must be wrapped under a _recipient's_ public key rather than a key the wrapper already holds (e.g. sharing a document's `txtKey` with another user via their `keyStore.pubKey`) — the standard Encrypt/Decrypt above requires holding the same IKM on both ends, which doesn't work when the wrapper isn't the recipient.
 
-**Encapsulate** (sender, holding the recipient's composite `pub_key`):
+**Encapsulate** (sender, holding the recipient's composite `pubKey`):
 
 1. Generate a random 64-byte `salt`.
-2. Run `lc_kyber_1024_x448_enc` against `pub_key`, producing a KEM ciphertext (`ct`, 1624 bytes) and an 88-byte shared secret (`ss`). Deliberately not `lc_kyber_1024_x448_enc_kdf`: the plain `_enc` call hands back `ss` as leancrypto's `lc_kyber_1024_x448_ss` struct, the raw concatenation of the 32-byte ML-KEM-1024 shared secret and the 56-byte X448 shared secret — uncombined. (`_enc_kdf` would instead run its own internal KMAC256-based combiner and return a caller-chosen-length already-combined secret; using it here would mean trusting/depending on a second KDF construction alongside HKDF-SHA3-512 for no benefit.)
+2. Run `lc_kyber_1024_x448_enc` against `pubKey`, producing a KEM ciphertext (`ct`, 1624 bytes) and an 88-byte shared secret (`ss`). Deliberately not `lc_kyber_1024_x448_enc_kdf`: the plain `_enc` call hands back `ss` as leancrypto's `lc_kyber_1024_x448_ss` struct, the raw concatenation of the 32-byte ML-KEM-1024 shared secret and the 56-byte X448 shared secret — uncombined. (`_enc_kdf` would instead run its own internal KMAC256-based combiner and return a caller-chosen-length already-combined secret; using it here would mean trusting/depending on a second KDF construction alongside HKDF-SHA3-512 for no benefit.)
 3. Run the standard Encrypt procedure using `ss` as its IKM to wrap the key material being shared, but reuse the `salt` from step 1 instead of generating a fresh one — the one exception to Encrypt's normal step 1. This still derives a 128-byte OKM via `HKDF-SHA3-512(ss, salt)` and produces a standard blob (`magic||version||salt||ciphertext||tag`), whose embedded `salt` is therefore identical to the `salt` from step 1. This HKDF call is also where the ML-KEM-1024/X448 combining actually happens (see below) — it isn't a separate step.
-4. Store `salt || ct` alongside the resulting blob — e.g. `txt_shares.salt_kem_ct`/`txt_shares.txt_key` in data_model.md. The recipient needs both to decapsulate and unwrap.
+4. Store `salt || ct` alongside the resulting blob — e.g. `txtShares.saltKemCt`/`txtShares.txtKey` in data_model.md. The recipient needs both to decapsulate and unwrap.
 
-**Decapsulate** (recipient, holding their composite `priv_key`):
+**Decapsulate** (recipient, holding their composite `privKey`):
 
 1. Split the stored value into `salt` and `ct`.
-2. Run `lc_kyber_1024_x448_dec` on `ct` using `priv_key`, recovering the same raw `ss`.
+2. Run `lc_kyber_1024_x448_dec` on `ct` using `privKey`, recovering the same raw `ss`.
 3. Run the standard Decrypt procedure on the blob using `ss` as its IKM — Decrypt parses `salt` back out of the blob header itself (matching the `salt` from step 1), so it isn't passed separately.
 
-The combiner is concatenate-then-HKDF: `ss` is `ML-KEM-1024-SS (32 bytes) || X448-SS (56 bytes)`, uncombined, and `HKDF-SHA3-512(ss, salt)` in step 3 above is what actually combines them — the same KDF this codebase already uses for every other Encrypt/Decrypt call, rather than a second, separate combiner. This is a standard robust construction: the derived key stays secure as long as at least one of ML-KEM-1024 or X448 remains unbroken. It does not bind `ct` or either party's public key into the derivation, only the two raw shared secrets and `salt`. Hybrid-KEM designs such as X-Wing additionally fold `ct` and the recipient's static X448 `pub_key` into the derivation (e.g. as HKDF `info`) for domain separation and cross-protocol safety — worth adopting the same refinement here.
+The combiner is concatenate-then-HKDF: `ss` is `ML-KEM-1024-SS (32 bytes) || X448-SS (56 bytes)`, uncombined, and `HKDF-SHA3-512(ss, salt)` in step 3 above is what actually combines them — the same KDF this codebase already uses for every other Encrypt/Decrypt call, rather than a second, separate combiner. This is a standard robust construction: the derived key stays secure as long as at least one of ML-KEM-1024 or X448 remains unbroken. It does not bind `ct` or either party's public key into the derivation, only the two raw shared secrets and `salt`. Hybrid-KEM designs such as X-Wing additionally fold `ct` and the recipient's static X448 `pubKey` into the derivation (e.g. as HKDF `info`) for domain separation and cross-protocol safety — worth adopting the same refinement here.

@@ -1,23 +1,31 @@
-// Mints a short-lived, prefix-scoped R2 credential (docs/data_model.md's
-// "Temporary, prefix-scoped R2 credentials" section) -- the only thing
-// standing between a Firebase-signed identity and R2 access, for every
-// account, admin included (env.READ_WRITE_ACCESS_KEY_ID/SECRET is the
-// admin's own static R2 credential, held only as a Worker secret -- never
-// sent to any client).
+// Mints a short-lived, prefix-scoped, READ-ONLY R2 credential
+// (docs/data_model.md's "Temporary, prefix-scoped R2 credentials"
+// section) -- the only thing standing between a Firebase-signed identity
+// and R2 access, for every account, admin included
+// (env.READ_WRITE_ACCESS_KEY_ID/SECRET is the admin's own static R2
+// credential, held only as a Worker secret -- never sent to any client).
+//
+// This endpoint is for the frontend (ui/) only, and every credential it
+// mints is read-only ("object-read"), regardless of whether the verified
+// identity is the admin or a `user`-role account -- the frontend never
+// writes to R2 through this Worker. Writing (ingesting a new document's
+// txtParts) is an admin-tooling operation that uses the admin's own real,
+// static R2 credential directly (recoverable from the admin's own
+// credStore row, docs/data_model.md's credStore entity), not a
+// Worker-minted temporary one.
 //
 // Request body: { idToken, prefix, bucket, endpoint }. This Worker's only
 // job is verifying that idToken is a genuine, non-expired Firebase ID token
 // for this app's own Firebase project (RS256 signature against Google's
 // public JWKS via jose -- no outbound call to InstantDB at all, unlike an
-// earlier draft of this file) and, if so, minting a credential scoped to
-// exactly the requested prefix. It does NOT cross-check that the token's
-// own subject actually owns that prefix -- prefix is trusted as given once
-// the token itself is proven real, same as the client already trusts its
-// own computeR2Prefix(authId) call. That means any Firebase-authenticated
-// user of this app (i.e. anyone the admin has created an account for) could
-// in principle request creds for a prefix that isn't their own; accepted
-// here as a deliberate simplification for a small, admin-curated user
-// base, not an oversight.
+// earlier draft of this file) and, if so, minting a read-only credential
+// scoped to exactly the requested prefix. It does NOT cross-check that the
+// token's own subject actually owns that prefix -- prefix is trusted as
+// given once the token itself is proven real, same as the client already
+// trusts its own decrypted txt.prefix. That's a much smaller concession
+// than it would be for a read-write credential: the worst a forged prefix
+// buys a verified caller is read access to some other document's content,
+// never the ability to modify or delete it.
 import { createRemoteJWKSet, jwtVerify, SignJWT } from "jose";
 
 // The fixed endpoint Firebase ID tokens are verified against -- distinct
@@ -142,7 +150,9 @@ async function verifyFirebaseIdToken(
 // temporary credential; the temporary secretAccessKey is the SHA-256 hex
 // digest of the signed JWT; the sessionToken is plain base64("jwt/" +
 // <signed JWT>) (confirmed against the runnable example -- not base64url,
-// despite an earlier guess to the contrary).
+// despite an earlier guess to the contrary). `scope` is always
+// "object-read" -- this Worker never mints a write-capable credential for
+// any identity; see this file's top comment for why.
 async function mintTemporaryCredential(
   env: Env,
   bucket: string,
@@ -152,7 +162,7 @@ async function mintTemporaryCredential(
   const accountId = new URL(endpoint).hostname.split(".")[0];
   const jwt = await new SignJWT({
     bucket,
-    scope: "object-read-write",
+    scope: "object-read",
     paths: { prefixPaths: [`${prefix}/`] },
   })
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
