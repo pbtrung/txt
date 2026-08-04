@@ -82,6 +82,47 @@ async function resolveKeyedContent<T>(
   return { id: row.id, key, content };
 }
 
+/** Re-fetches just this account's own txtAccess/txtBookmarks rows and
+ * re-decodes their content -- cheaper than a full resolveSession() (no
+ * userRootKey needed, since umk is already known) for VaultContext.tsx's
+ * refresh(), which only ever needs to pick up a change to these two rows
+ * (e.g. a bookmark added from another tab/device) or a newly-shared/ingested
+ * document, never a rotated umk/keyStore/credStore mid-session. */
+export async function reloadKeyedMaps(
+  db: any,
+  authId: string,
+  umk: Uint8Array,
+): Promise<{
+  txtAccess: KeyedContent<AccessMap>;
+  txtBookmarks: KeyedContent<BookmarksMap>;
+}> {
+  const result = await db.queryOnce({
+    $users: {
+      $: { where: { id: authId } },
+      txtAccess: {},
+      txtBookmarks: {},
+    },
+  });
+  const authRow = firstLinked(result.data.$users, "$users row");
+  const [txtAccess, txtBookmarks] = await Promise.all([
+    resolveKeyedContent(
+      umk,
+      authRow.txtAccess,
+      "txtAccessKey",
+      decodeAccessContent,
+      {},
+    ),
+    resolveKeyedContent(
+      umk,
+      authRow.txtBookmarks,
+      "txtBookmarkKey",
+      decodeBookmarksContent,
+      {},
+    ),
+  ]);
+  return { txtAccess, txtBookmarks };
+}
+
 /** Queries this account's $users/keyStore/credStore/txtAccess/txtBookmarks
  * rows in one shot (client SDK, subject to instant.perms.ts's rules) and
  * unwraps user_root_key -> umk -> {keyStore.privKey, credStore.content,

@@ -21,9 +21,19 @@ import { SALT_LEN } from "../crypto/constants";
 import { collectAllPages } from "./instaqlPagination";
 import { kemDecapsulate } from "./leancrypto";
 import { parseMetadataContent, toBookInfo, type BookInfo } from "./metadata";
-import type { Session } from "./session";
 
 const PAGE_SIZE = 500; // mirrors txt/constants.ts's INSTAQL_QUERY_PAGE_SIZE
+
+/** The only three fields of session.ts's own Session this module ever
+ * needs -- narrower than importing that whole type, so a caller (e.g.
+ * VaultContext.tsx's refresh(), which never re-derives r2Config/
+ * txtAccess/txtBookmarks) doesn't have to fake the rest of it just to call
+ * loadLibrary(). */
+export interface LibrarySession {
+  authId: string;
+  umk: Uint8Array;
+  keyStorePrivKey: Uint8Array;
+}
 
 export interface LibraryDoc {
   txtId: string;
@@ -72,7 +82,10 @@ async function toLibraryDoc(
   return { txtId, info: toBookInfo(txtId, content), docKey };
 }
 
-async function loadOwnedDocs(db: any, session: Session): Promise<LibraryDoc[]> {
+async function loadOwnedDocs(
+  db: any,
+  session: LibrarySession,
+): Promise<LibraryDoc[]> {
   const rows = await collectAllPages<OwnedTxtRow>(async (after) => {
     const offset = (after as number | undefined) ?? 0;
     const result = await db.queryOnce({
@@ -105,7 +118,7 @@ async function loadOwnedDocs(db: any, session: Session): Promise<LibraryDoc[]> {
 
 async function loadSharedDocs(
   db: any,
-  session: Session,
+  session: LibrarySession,
 ): Promise<LibraryDoc[]> {
   const rows = await collectAllPages<SharedTxtSharesRow>(async (after) => {
     const offset = (after as number | undefined) ?? 0;
@@ -147,7 +160,7 @@ async function loadSharedDocs(
 
 export async function loadLibrary(
   db: any,
-  session: Session,
+  session: LibrarySession,
 ): Promise<LibrarySnapshot> {
   const [owned, shared] = await Promise.all([
     loadOwnedDocs(db, session),

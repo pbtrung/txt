@@ -2,40 +2,54 @@
 // localStorage/sessionStorage -- for the lifetime of the page. A reload
 // always lands back on the Unlock screen.
 //
-// "Unlocked" means a real SQLCipher database is open against a lazy remote
-// VFS -- but that db/VFS/commit state all lives inside a dedicated Worker
-// (data/dbWorker.ts), not here: a real browser forbids Atomics.wait()
-// outside a Worker, which remoteVfs.ts's xRead needs to bridge SQLite's
-// synchronous WASM callback to a page fetch, so SQLite itself has to run
-// there instead of on the main thread. This file only ever talks to that
-// Worker through DbWorkerClient's small RPC surface.
+// "Unlocked" means an InstantDB session plus this account's own unwrapped
+// key hierarchy (session.ts's resolveSession) and its whole library
+// (library.ts's loadLibrary) -- there's no per-account database/VFS/Worker
+// to open anymore (see docs/data_model.md: every document is its own set of
+// InstantDB rows plus per-part R2 objects, read directly). Everything here
+// runs on the main thread.
 //
-// unlock() itself resolves the InstantDB session on the main thread
-// (firebaseAuth.signIn -> db.auth.signInWithIdToken -> session.ts's
-// resolveSession) before ever opening the Worker -- dbWorker.open() takes
-// the already-resolved coordinates (r2Config/pathKey/dbKey/dbMetaId/
-// currentVersion/pageCount/pageSize) directly, rather than re-deriving them
-// itself, since it needs its own independent InstantDB session anyway (a
-// Worker can't share this thread's live client object) and there's no
-// reason to redo the same queryOnce+unwrap chain twice.
+// unlock() resolves the InstantDB session (firebaseAuth.signIn ->
+// db.auth.signInWithIdToken -> session.ts's resolveSession), then loads the
+// whole library (library.ts's loadLibrary) before marking the vault
+// unlocked -- both steps use the same live instantDb client this context
+// keeps around afterward, for reader.ts's per-document reads and for
+// writing back read-position/bookmark updates.
 
+import { id, tx } from "@instantdb/react";
+import type { Auth } from "firebase/auth";
 import {
   createContext,
   useCallback,
   useContext,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
 
-import type { AccessMap, ReadPosition } from "../data/access";
-import type { BookmarksMap } from "../data/bookmarks";
+import {
+  clearReadPosition,
+  encodeAccessContent,
+  setReadPosition,
+  type AccessMap,
+  type ReadPosition,
+} from "../data/access";
+import {
+  addBookmark,
+  encodeBookmarksContent,
+  removeBookmark,
+  type BookmarksMap,
+} from "../data/bookmarks";
+import * as blob from "../crypto/blob";
+import { bytesToBase64 } from "../crypto/bytes";
 import { loadCredsFromFile } from "../data/creds";
-import { DbWorkerClient } from "../data/dbWorkerClient";
 import * as firebaseAuth from "../data/firebaseAuth";
 import { createInstantClient } from "../data/instantClient";
+import { loadLibrary } from "../data/library";
 import type { BookInfo } from "../data/metadata";
-import { resolveSession } from "../data/session";
+import type { R2Config } from "../data/r2Config";
+import { reloadKeyedMaps, resolveSession, type Session } from "../data/session";
 import { verbose } from "../log";
 
 export type VaultStatus = "locked" | "unlocking" | "unlocked";
@@ -52,19 +66,15 @@ export interface VaultProgress {
 
 const UNLOCK_PHASES = [
   "Connecting to your vault",
-  "Opening your database",
   "Loading your books",
 ] as const;
-const REFRESH_PHASES = [
-  "Loading your books",
-  "Loading your bookmarks",
-] as const;
+const REFRESH_PHASES = ["Loading your books"] as const;
 
 function phaseProgress(
   phases: readonly string[],
   index: number,
 ): VaultProgress {
-  return { label: phases[index], step: index + 1, total: phases.length };
+  return { label: phases[index]!, step: index + 1, total: phases.length };
 }
 
 export interface VaultSession {
@@ -74,8 +84,23 @@ export interface VaultSession {
    * which unlock file is used) if set, else the unlock file's own
    * display_name, else the signed-in Firebase account's own email. */
   displayName: string | null | undefined;
-  client: DbWorkerClient;
-  metadataById: Map<number, BookInfo>;
+  instantDb: any;
+  /** The real Firebase Auth instance (not just its ID token) -- every R2
+   * temp-credential request (tempR2Creds.ts, one per document opened) needs
+   * a fresh ID token, and auth.currentUser.getIdToken() transparently
+   * refreshes an expiring one; the original signIn()'s own token is only
+   * ever used once, for the initial signInWithIdToken() call above. */
+  auth: Auth;
+  authId: string;
+  umk: Uint8Array;
+  keyStorePrivKey: Uint8Array;
+  r2Config: R2Config;
+  metadataById: Map<string, BookInfo>;
+  /** This account's own unwrapped txtKey for every document it can read --
+   * reader.ts's only way to get one (see library.ts). */
+  docKeys: Map<string, Uint8Array>;
+  txtAccess: { id: string | null; key: Uint8Array };
+  txtBookmarks: { id: string | null; key: Uint8Array };
 }
 
 export interface VaultContextValue {
@@ -89,15 +114,15 @@ export interface VaultContextValue {
   unlock: (file: File) => Promise<void>;
   lock: () => void;
   refresh: () => Promise<void>;
-  recordReadPosition: (txtId: number, position: ReadPosition) => Promise<void>;
-  removeAccessEntry: (txtId: number) => Promise<void>;
+  recordReadPosition: (txtId: string, position: ReadPosition) => Promise<void>;
+  removeAccessEntry: (txtId: string) => Promise<void>;
   addBookmarkEntry: (
-    txtId: number,
+    txtId: string,
     partNum: number,
     line: number,
     preview: string,
   ) => Promise<void>;
-  removeBookmarkEntry: (bookmarkId: number) => Promise<void>;
+  removeBookmarkEntry: (txtId: string, bookmarkId: string) => Promise<void>;
 }
 
 const VaultContext = createContext<VaultContextValue | null>(null);
@@ -110,104 +135,109 @@ function elapsed(start: number): string {
   return `${(performance.now() - start).toFixed(1)}ms`;
 }
 
+/** Runs `task` after every previously queued task on this same queue has
+ * settled -- used to serialize txtAccess/txtBookmarks writes (each is a
+ * read-modify-write of one whole-account row, and the row's own id
+ * transitions from null to real on its first write) so two rapid calls
+ * (e.g. a page-turn's recordReadPosition firing again before the previous
+ * one's create-if-missing finished) can't race into creating two rows. */
+function useSerialQueue(): (task: () => Promise<void>) => Promise<void> {
+  const chain = useRef<Promise<void>>(Promise.resolve());
+  return useCallback((task: () => Promise<void>) => {
+    const next = chain.current.then(task, task);
+    chain.current = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    return next;
+  }, []);
+}
+
+async function resolveIdentity(file: File): Promise<{
+  instantDb: any;
+  auth: Auth;
+  authId: string;
+  keys: Session;
+  displayName: string | null | undefined;
+}> {
+  verbose("unlock: reading creds file", file.name);
+  const creds = await loadCredsFromFile(file);
+
+  verbose("unlock: signing in with Firebase");
+  const { auth, idToken } = await firebaseAuth.signIn(
+    {
+      apiKey: creds.firebaseApiKey,
+      authDomain: creds.firebaseAuthDomain,
+      projectId: creds.firebaseProjectId,
+    },
+    creds.firebaseEmail,
+    creds.firebasePassword,
+  );
+  const instantDb = createInstantClient(creds.instantAppId);
+  const authResult = await instantDb.auth.signInWithIdToken({
+    clientName: creds.instantClientName,
+    idToken,
+  });
+  const authId: string = authResult.user.id;
+
+  verbose("unlock: resolving session ($users/keyStore/credStore)");
+  const keys = await resolveSession(instantDb, authId, creds.userRootKey);
+
+  return {
+    instantDb,
+    auth,
+    authId,
+    keys,
+    displayName: keys.displayName ?? creds.displayName ?? authResult.user.email,
+  };
+}
+
 export function VaultProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<VaultStatus>("locked");
   const [session, setSession] = useState<VaultSession | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [accessMap, setAccessMap] = useState<AccessMap>(new Map());
-  const [bookmarksMap, setBookmarksMap] = useState<BookmarksMap>(new Map());
+  const [accessMap, setAccessMap] = useState<AccessMap>({});
+  const [bookmarksMap, setBookmarksMap] = useState<BookmarksMap>({});
   const [refreshing, setRefreshing] = useState(false);
   const [progress, setProgress] = useState<VaultProgress | null>(null);
+
+  const accessQueue = useSerialQueue();
+  const bookmarksQueue = useSerialQueue();
 
   const unlock = useCallback(async (file: File) => {
     setStatus("unlocking");
     setError(null);
     setProgress(phaseProgress(UNLOCK_PHASES, 0));
-    let client: DbWorkerClient | null = null;
     try {
-      verbose("unlock: reading creds file", file.name);
-      const creds = await loadCredsFromFile(file);
-
-      verbose("unlock: signing in with Firebase");
-      const { idToken } = await firebaseAuth.signIn(
-        {
-          apiKey: creds.firebaseApiKey,
-          authDomain: creds.firebaseAuthDomain,
-          projectId: creds.firebaseProjectId,
-        },
-        creds.firebaseEmail,
-        creds.firebasePassword,
-      );
-      const instantDb = createInstantClient(creds.instantAppId);
-      const authResult = await instantDb.auth.signInWithIdToken({
-        clientName: creds.instantClientName,
-        idToken,
-      });
-      const authId: string = authResult.user.id;
-
-      verbose("unlock: resolving session ($users/dbMeta/credStore)");
-      const sessionKeys = await resolveSession(
-        instantDb,
-        authId,
-        creds.userRootKey,
-      );
+      const { instantDb, auth, authId, keys, displayName } =
+        await resolveIdentity(file);
 
       setProgress(phaseProgress(UNLOCK_PHASES, 1));
-      verbose(
-        "unlock: opening vault against the lazy remote VFS (in a worker)",
-      );
-      client = new DbWorkerClient();
-      const openStart = performance.now();
-      await client.open({
-        instantAppId: creds.instantAppId,
-        instantClientName: creds.instantClientName,
-        idToken,
-        authId,
-        dbMetaId: sessionKeys.dbMetaId,
-        currentVersion: sessionKeys.currentVersion,
-        pageCount: sessionKeys.pageCount,
-        pageSize: sessionKeys.pageSize,
-        r2Config: sessionKeys.r2Config,
-        pathKey: sessionKeys.pathKey,
-        dbKey: sessionKeys.dbKey,
-      });
-      verbose(`unlock: open() done in ${elapsed(openStart)}`);
-
-      // Each of these can trigger a burst of individual page fetches
-      // (remotePageWorker.ts logs each one) if their rows/indexes aren't
-      // already resident in remoteVfs.ts's page cache -- timing them
-      // separately here shows which one actually dominates a slow unlock,
-      // rather than only seeing this whole phase's total.
-      setProgress(phaseProgress(UNLOCK_PHASES, 2));
       verbose("unlock: loading library");
       const libraryStart = performance.now();
-      const { metadataById, accessMap: initialAccessMap } =
-        await client.loadLibrary();
+      const { metadataById, docKeys } = await loadLibrary(instantDb, keys);
       verbose(`unlock: loadLibrary() done in ${elapsed(libraryStart)}`);
-      const bookmarksStart = performance.now();
-      const initialBookmarksMap = await client.loadBookmarksMap();
-      verbose(`unlock: loadBookmarksMap() done in ${elapsed(bookmarksStart)}`);
 
-      const vfsStats = await client.getVfsStats();
-      verbose(
-        `unlock: ${vfsStats.roundtrips.length} page fetch(es) beyond the prefetch, ` +
-          `${vfsStats.bytesFetched} byte(s)`,
-      );
-
-      setAccessMap(initialAccessMap);
-      setBookmarksMap(initialBookmarksMap);
+      setAccessMap(keys.txtAccess.content);
+      setBookmarksMap(keys.txtBookmarks.content);
       setSession({
-        displayName:
-          sessionKeys.displayName ?? creds.displayName ?? authResult.user.email,
-        client,
+        displayName,
+        instantDb,
+        auth,
+        authId,
+        umk: keys.umk,
+        keyStorePrivKey: keys.keyStorePrivKey,
+        r2Config: keys.r2Config,
         metadataById,
+        docKeys,
+        txtAccess: { id: keys.txtAccess.id, key: keys.txtAccess.key },
+        txtBookmarks: { id: keys.txtBookmarks.id, key: keys.txtBookmarks.key },
       });
       setStatus("unlocked");
       setProgress(null);
       verbose("unlock: done");
     } catch (err) {
       verbose("unlock: failed", err);
-      client?.terminate();
       setSession(null);
       setStatus("locked");
       setError(errorMessage(err) || "Failed to unlock your library.");
@@ -216,35 +246,48 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const lock = useCallback(() => {
-    session?.client.terminate();
     setSession(null);
-    setAccessMap(new Map());
-    setBookmarksMap(new Map());
+    setAccessMap({});
+    setBookmarksMap({});
     setStatus("locked");
     setError(null);
-  }, [session]);
+  }, []);
 
-  // Re-opens against a fresh VFS/nested page-fetch worker (dbWorker.ts's
-  // own refresh handler) so a document ingested elsewhere since unlock --
-  // more pages, a higher page_count -- is actually visible: this session's
-  // VFS pins the page_count/version it saw at open time, the same way any
-  // snapshot-based reader does (docs/data_model.md).
+  // Re-fetches the whole library (a document ingested/shared elsewhere since
+  // unlock) and this account's own txtAccess/txtBookmarks content (in case
+  // either changed from another tab/device) -- both only ever need the
+  // already-known umk/keyStorePrivKey, never the original creds.json's
+  // userRootKey (not retained after unlock), so this never re-derives the
+  // account's identity from scratch the way unlock() does.
   const refresh = useCallback(async () => {
     if (!session) throw new Error("vault is locked");
     setRefreshing(true);
     setProgress(phaseProgress(REFRESH_PHASES, 0));
     try {
-      verbose("refresh: re-opening vault");
-      await session.client.refresh();
-      verbose("refresh: loading library");
-      const { metadataById, accessMap: nextAccessMap } =
-        await session.client.loadLibrary();
-      setProgress(phaseProgress(REFRESH_PHASES, 1));
-      const nextBookmarksMap = await session.client.loadBookmarksMap();
+      verbose("refresh: reloading library");
+      const [{ metadataById, docKeys }, { txtAccess, txtBookmarks }] =
+        await Promise.all([
+          loadLibrary(session.instantDb, {
+            authId: session.authId,
+            umk: session.umk,
+            keyStorePrivKey: session.keyStorePrivKey,
+          }),
+          reloadKeyedMaps(session.instantDb, session.authId, session.umk),
+        ]);
 
-      setSession((prev) => (prev ? { ...prev, metadataById } : prev));
-      setAccessMap(nextAccessMap);
-      setBookmarksMap(nextBookmarksMap);
+      setSession((prev) =>
+        prev
+          ? {
+              ...prev,
+              metadataById,
+              docKeys,
+              txtAccess: { id: txtAccess.id, key: txtAccess.key },
+              txtBookmarks: { id: txtBookmarks.id, key: txtBookmarks.key },
+            }
+          : prev,
+      );
+      setAccessMap(txtAccess.content);
+      setBookmarksMap(txtBookmarks.content);
       verbose("refresh: done");
     } finally {
       setRefreshing(false);
@@ -253,49 +296,58 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   }, [session]);
 
   const recordReadPosition = useCallback(
-    async (txtId: number, position: ReadPosition) => {
+    async (txtId: string, position: ReadPosition) => {
       if (!session) throw new Error("vault is locked");
-      await session.client.recordReadPosition(txtId, position);
-      setAccessMap((prev) => new Map(prev).set(txtId, position));
+      await accessQueue(async () => {
+        const nextMap = setReadPosition(accessMap, txtId, position);
+        await persistAccessMap(session, setSession, nextMap);
+        setAccessMap(nextMap);
+      });
     },
-    [session],
+    [session, accessMap, accessQueue],
   );
 
   const removeAccessEntry = useCallback(
-    async (txtId: number) => {
+    async (txtId: string) => {
       if (!session) throw new Error("vault is locked");
-      await session.client.removeAccessEntry(txtId);
-      setAccessMap((prev) => {
-        const next = new Map(prev);
-        next.delete(txtId);
-        return next;
+      await accessQueue(async () => {
+        const nextMap = clearReadPosition(accessMap, txtId);
+        await persistAccessMap(session, setSession, nextMap);
+        setAccessMap(nextMap);
       });
     },
-    [session],
+    [session, accessMap, accessQueue],
   );
 
   const addBookmarkEntry = useCallback(
-    async (txtId: number, partNum: number, line: number, preview: string) => {
+    async (txtId: string, partNum: number, line: number, preview: string) => {
       if (!session) throw new Error("vault is locked");
-      setBookmarksMap(
-        await session.client.addBookmarkEntry(
+      await bookmarksQueue(async () => {
+        const nextMap = addBookmark(
+          bookmarksMap,
           txtId,
           partNum,
           line,
           preview,
           Date.now(),
-        ),
-      );
+        );
+        await persistBookmarksMap(session, setSession, nextMap);
+        setBookmarksMap(nextMap);
+      });
     },
-    [session],
+    [session, bookmarksMap, bookmarksQueue],
   );
 
   const removeBookmarkEntry = useCallback(
-    async (bookmarkId: number) => {
+    async (txtId: string, bookmarkId: string) => {
       if (!session) throw new Error("vault is locked");
-      setBookmarksMap(await session.client.removeBookmarkEntry(bookmarkId));
+      await bookmarksQueue(async () => {
+        const nextMap = removeBookmark(bookmarksMap, txtId, bookmarkId);
+        await persistBookmarksMap(session, setSession, nextMap);
+        setBookmarksMap(nextMap);
+      });
     },
-    [session],
+    [session, bookmarksMap, bookmarksQueue],
   );
 
   const value = useMemo<VaultContextValue>(
@@ -335,6 +387,80 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
   return (
     <VaultContext.Provider value={value}>{children}</VaultContext.Provider>
+  );
+}
+
+/** Re-encrypts the whole accessMap and writes it back to this account's own
+ * txtAccess row, creating it (with a freshly minted txtAccessKey) the first
+ * time this account ever records a read position. Mutates session.txtAccess
+ * in place via setSession once a fresh row id exists, so a later call in
+ * the same session updates instead of creating a second row. */
+async function persistAccessMap(
+  session: VaultSession,
+  setSession: (
+    updater: (prev: VaultSession | null) => VaultSession | null,
+  ) => void,
+  nextMap: AccessMap,
+): Promise<void> {
+  const payload = JSON.stringify(encodeAccessContent(nextMap));
+  const contentBlob = await blob.encrypt(
+    session.txtAccess.key,
+    new TextEncoder().encode(payload),
+    { compressed: true },
+  );
+  const content = bytesToBase64(contentBlob);
+  if (session.txtAccess.id) {
+    await session.instantDb.transact(
+      tx.txtAccess[session.txtAccess.id]!.update({ content }),
+    );
+    return;
+  }
+  const newId = id();
+  const keyBlob = await blob.encrypt(session.umk, session.txtAccess.key);
+  await session.instantDb.transact(
+    tx.txtAccess[newId]!.update({
+      txtAccessKey: bytesToBase64(keyBlob),
+      content,
+    }).link({ owner: session.authId }),
+  );
+  setSession((prev) =>
+    prev ? { ...prev, txtAccess: { ...prev.txtAccess, id: newId } } : prev,
+  );
+}
+
+/** Same shape as persistAccessMap, for this account's own txtBookmarks row. */
+async function persistBookmarksMap(
+  session: VaultSession,
+  setSession: (
+    updater: (prev: VaultSession | null) => VaultSession | null,
+  ) => void,
+  nextMap: BookmarksMap,
+): Promise<void> {
+  const payload = JSON.stringify(encodeBookmarksContent(nextMap));
+  const contentBlob = await blob.encrypt(
+    session.txtBookmarks.key,
+    new TextEncoder().encode(payload),
+    { compressed: true },
+  );
+  const content = bytesToBase64(contentBlob);
+  if (session.txtBookmarks.id) {
+    await session.instantDb.transact(
+      tx.txtBookmarks[session.txtBookmarks.id]!.update({ content }),
+    );
+    return;
+  }
+  const newId = id();
+  const keyBlob = await blob.encrypt(session.umk, session.txtBookmarks.key);
+  await session.instantDb.transact(
+    tx.txtBookmarks[newId]!.update({
+      txtBookmarkKey: bytesToBase64(keyBlob),
+      content,
+    }).link({ owner: session.authId }),
+  );
+  setSession((prev) =>
+    prev
+      ? { ...prev, txtBookmarks: { ...prev.txtBookmarks, id: newId } }
+      : prev,
   );
 }
 
