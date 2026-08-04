@@ -352,35 +352,63 @@ export class GarbageCollector {
       if (row.version > current)
         maxVersionByPageNo.set(row.pageNo, row.version);
     }
+    // A page number beyond the file's current page count is orphaned
+    // garbage regardless of its own version history: the local file shrank
+    // at some point (e.g. autovacuum truncating freed trailing pages, via
+    // lazyVfs.ts's/remoteVfs.ts's xTruncate dropping knownPageCount), and
+    // dbMeta.pageCount was correctly bumped down on that commit -- but
+    // nothing in the commit path ever explicitly deletes a pages row for a
+    // page number the truncate dropped (commits only ever write dirty/new
+    // pages, never prune ones that fell out of range), so its "current"
+    // (max-version) row for that now-nonexistent pageNo just sits there
+    // forever unless something explicitly reclaims it. This is that reclaim.
     const toDelete = rows.filter(
-      (row) => row.version !== maxVersionByPageNo.get(row.pageNo),
+      (row) =>
+        row.version !== maxVersionByPageNo.get(row.pageNo) ||
+        row.pageNo > account.pageCount,
     );
     // Cheap correctness cross-check: after this sweep, exactly one row per
-    // page number should remain (its own max version), so that count should
-    // equal dbMeta.pageCount -- a mismatch here means either this account's
-    // page store is missing rows for some page number(s), or this sweep's
-    // own selection logic is wrong, either way worth surfacing loudly rather
-    // than silently under- or over-deleting. Logs which page numbers are
-    // actually missing (not just the count) -- a contiguous range at the
-    // tail end (e.g. the last few hundred of a large pageCount) points at a
-    // commit whose R2/InstantDB write never actually landed even though
-    // dbMeta.pageCount was bumped to reflect the local file's grown size (a
-    // real failure mode: docs/data_model.md's commit protocol has no way to
-    // make the local page-count bump and the remote pages-row write atomic
-    // with each other); scattered gaps would mean something else entirely.
-    if (maxVersionByPageNo.size !== account.pageCount) {
-      const missing: number[] = [];
-      for (let pageNo = 1; pageNo <= account.pageCount; pageNo++) {
-        if (!maxVersionByPageNo.has(pageNo)) missing.push(pageNo);
-      }
+    // page number in [1, pageCount] should remain (its own max version), and
+    // none beyond it -- a mismatch here means this account's page store is
+    // either missing rows for some page number(s) in range, or (as above)
+    // just hadn't had its orphaned trailing rows reclaimed yet before this
+    // run, either way worth surfacing loudly rather than silently trusting
+    // it. Missing page numbers reported separately from orphaned ones (rows
+    // this sweep is about to delete, not a sign of anything wrong) --
+    // logging which are missing (not just the count): a contiguous range at
+    // the tail end (e.g. the last few hundred of a large pageCount) points
+    // at a commit whose R2/InstantDB write never actually landed even
+    // though dbMeta.pageCount was bumped to reflect the local file's grown
+    // size (a real failure mode: docs/data_model.md's commit protocol has
+    // no way to make the local page-count bump and the remote pages-row
+    // write atomic with each other); scattered gaps would mean something
+    // else entirely.
+    const missing: number[] = [];
+    for (let pageNo = 1; pageNo <= account.pageCount; pageNo++) {
+      if (!maxVersionByPageNo.has(pageNo)) missing.push(pageNo);
+    }
+    if (missing.length > 0) {
       const preview = missing.slice(0, C.ORPHAN_PREVIEW_LIMIT);
       this.log.warn(
-        `auth.id=${account.ownerId}: dbMeta.pageCount=${account.pageCount} but found ${maxVersionByPageNo.size} distinct page number(s) among current pages rows -- ` +
-          `${missing.length} missing page number(s): ${preview.join(", ")}` +
+        `auth.id=${account.ownerId}: dbMeta.pageCount=${account.pageCount} but ` +
+          `${missing.length} page number(s) in range have no current pages row: ${preview.join(", ")}` +
           (missing.length > preview.length
             ? ` ... (${missing.length - preview.length} more)`
             : "") +
           ` -- investigate before trusting this sweep's results`,
+      );
+    }
+    const orphaned = [...maxVersionByPageNo.keys()].filter(
+      (pageNo) => pageNo > account.pageCount,
+    );
+    if (orphaned.length > 0) {
+      const preview = orphaned.slice(0, C.ORPHAN_PREVIEW_LIMIT);
+      this.log.info(
+        `auth.id=${account.ownerId}: reclaiming ${orphaned.length} orphaned page number(s) beyond dbMeta.pageCount=${account.pageCount} ` +
+          `(a shrunk/truncated file's now-stale trailing pages): ${preview.join(", ")}` +
+          (orphaned.length > preview.length
+            ? ` ... (${orphaned.length - preview.length} more)`
+            : ""),
       );
     }
     if (toDelete.length === 0 || dryRun) return toDelete.length;

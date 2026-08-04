@@ -249,7 +249,9 @@ export async function open(params: OpenParams): Promise<void> {
     backedPath,
     fetchPage: pageWorker.fetchPage,
   });
-  verbose(`dbWorker: open() -- prefetching up to ${params.pageCount} page(s)`);
+  verbose(
+    `dbWorker: open() -- prefetching up to ${Math.min(params.pageCount, PREFETCH_PAGE_LIMIT)} of ${params.pageCount} page(s)`,
+  );
   const prefetched = await prefetchPages(
     pageStoreCfg,
     params.pageCount,

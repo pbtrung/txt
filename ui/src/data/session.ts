@@ -6,7 +6,7 @@
 
 import * as blob from "../crypto/blob";
 import { base64ToBytes } from "../crypto/bytes";
-import { requireObject, requireString } from "./jsonObject";
+import { optionalString, requireObject, requireString } from "./jsonObject";
 import { parseR2Config, type R2Config } from "./r2Config";
 
 export class SessionError extends Error {}
@@ -19,6 +19,11 @@ export interface Session {
   pathKey: Uint8Array;
   dbKey: Uint8Array;
   r2Config: R2Config;
+  /** This account's own display_name, as stored in credStore.content --
+   * sourced from creds.json's own display_name field at provisioning time
+   * (docs/data_model.md), so this follows the account itself rather than
+   * whichever unlock file happens to be used for a given sign-in. */
+  displayName?: string;
 }
 
 // InstaQL wraps every linked sub-entity as an array regardless of that
@@ -89,5 +94,6 @@ export async function resolveSession(
     pathKey: base64ToBytes(requireString(content, "path_key", SessionError)),
     dbKey: base64ToBytes(requireString(content, "db_key", SessionError)),
     r2Config: parseR2Config(content.r2_config),
+    displayName: optionalString(content, "display_name"),
   };
 }

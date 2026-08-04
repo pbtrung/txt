@@ -26,9 +26,11 @@ export interface Creds {
   instantAppId: string;
   instantClientName: string;
   userRootKey: Uint8Array;
-  /** Purely cosmetic -- shown in AccountFooter next to the person icon.
-   * Optional: falls back to the signed-in Firebase account's own email if
-   * absent (see VaultContext.tsx's unlock()). */
+  /** Purely cosmetic -- shown in AccountFooter next to the person icon, but
+   * only if this account's own credStore.content.display_name (the
+   * canonical source, see session.ts's Session.displayName) isn't set;
+   * falls back further to the signed-in Firebase account's own email if
+   * this is absent too (see VaultContext.tsx's unlock()). */
   displayName?: string;
 }
 

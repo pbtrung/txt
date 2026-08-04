@@ -69,8 +69,10 @@ function phaseProgress(
 
 export interface VaultSession {
   /** Purely cosmetic -- shown in AccountFooter next to the person icon.
-   * The creds file's own display_name if it set one, otherwise the
-   * signed-in Firebase account's own email. */
+   * This account's own credStore.content.display_name (the canonical one,
+   * set once at provisioning time and following the account regardless of
+   * which unlock file is used) if set, else the unlock file's own
+   * display_name, else the signed-in Firebase account's own email. */
   displayName: string | null | undefined;
   client: DbWorkerClient;
   metadataById: Map<number, BookInfo>;
@@ -195,7 +197,8 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       setAccessMap(initialAccessMap);
       setBookmarksMap(initialBookmarksMap);
       setSession({
-        displayName: creds.displayName ?? authResult.user.email,
+        displayName:
+          sessionKeys.displayName ?? creds.displayName ?? authResult.user.email,
         client,
         metadataById,
       });

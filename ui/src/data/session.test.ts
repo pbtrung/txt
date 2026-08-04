@@ -14,7 +14,7 @@ async function buildAuthRow() {
   return { umk: bytesToBase64(umkBlob) };
 }
 
-async function buildCredStoreRow() {
+async function buildCredStoreRow(overrides: Record<string, unknown> = {}) {
   const contentPayload = {
     r2_config: {
       endpoint: "https://acct.r2.cloudflarestorage.com",
@@ -27,6 +27,7 @@ async function buildCredStoreRow() {
     },
     path_key: bytesToBase64(pathKey),
     db_key: bytesToBase64(dbKey),
+    ...overrides,
   };
   // compressed:true -- matches txt/adminInit.ts's wrapCredStoreContent, the
   // real producer of this row's content (blobEncrypt(..., true)). Encrypting
@@ -82,6 +83,23 @@ describe("resolveSession", () => {
     // them -- see r2Config.ts's header comment.
     expect(session.r2Config).not.toHaveProperty("readWriteAccessKeyId");
     expect(session.r2Config).not.toHaveProperty("readOnlyAccessKeyId");
+    // No display_name in this content payload -- must come back undefined,
+    // not thrown, so VaultContext.tsx's unlock() can fall further back to
+    // the unlock file's own display_name/the signed-in email.
+    expect(session.displayName).toBeUndefined();
+  });
+
+  it("resolves displayName from credStore.content.display_name when set", async () => {
+    const authRow = await buildAuthRow();
+    const credStoreRow = await buildCredStoreRow({ display_name: "Trung" });
+    const db = fakeDb({
+      $users: [{ id: "auth-1", ...authRow, dbMeta: [{ id: "dbmeta-1" }] }],
+      credStore: [{ id: "credstore-1", ...credStoreRow }],
+    });
+
+    const session = await resolveSession(db, "auth-1", userRootKey);
+
+    expect(session.displayName).toBe("Trung");
   });
 
   it("treats $users.dbMeta as an array (InstaQL's array-wrapped links), not a plain object", async () => {

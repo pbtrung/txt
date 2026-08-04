@@ -77,7 +77,9 @@ function installFakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
   return client;
 }
 
-function installFakeAuth() {
+function installFakeAuth(
+  sessionOverrides: Partial<Awaited<ReturnType<typeof resolveSession>>> = {},
+) {
   vi.mocked(firebaseAuth.signIn).mockResolvedValue({
     auth: {} as never,
     idToken: "fake-id-token",
@@ -103,6 +105,7 @@ function installFakeAuth() {
       region: "auto",
       bucket: "txt-parts",
     },
+    ...sessionOverrides,
   });
   return { instantDb };
 }
@@ -185,6 +188,19 @@ describe("VaultProvider", () => {
     });
     await waitFor(() => expect(result.current.status).toBe("unlocked"));
     expect(result.current.session?.displayName).toBe("Trung");
+  });
+
+  it("prefers credStore.content's own display_name over the unlock file's", async () => {
+    installFakeAuth({ displayName: "Canonical Name" });
+    installFakeClient();
+    const { result } = renderVault();
+    await act(async () => {
+      await result.current.unlock(
+        fakeFile(fakeCredsJson({ display_name: "Local File Name" })),
+      );
+    });
+    await waitFor(() => expect(result.current.status).toBe("unlocked"));
+    expect(result.current.session?.displayName).toBe("Canonical Name");
   });
 
   it("reports an error, terminates the client, and stays locked when open() fails", async () => {
