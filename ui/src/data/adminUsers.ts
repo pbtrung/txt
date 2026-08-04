@@ -17,6 +17,7 @@ interface UserRow {
   email?: string;
   type?: string | null;
   umk?: string | null;
+  credStore?: CredStoreRow[];
 }
 
 interface EntityRow {
@@ -79,6 +80,12 @@ function validateUserRootKey(value: string): Uint8Array {
 
 function normalizeEmail(email: string | undefined): string | undefined {
   return email?.trim().toLowerCase();
+}
+
+function optionalDisplayName(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 function storedCredsFromJson(json: unknown): AdminStoredUserCreds | null {
@@ -228,6 +235,7 @@ async function queryUser(db: any, userId: string): Promise<UserRow | null> {
 async function queryUsers(db: any): Promise<UserRow[]> {
   return queryPagedRows<UserRow>(db, "$users", {
     $: { order: { email: "asc" } },
+    credStore: {},
   });
 }
 
@@ -280,17 +288,90 @@ async function queryAdminCredStores(
 async function readAdminStoredCreds(
   db: any,
   session: AdminUserSession,
+  users: UserRow[] = [],
 ): Promise<Map<string, { row: CredStoreRow; creds: AdminStoredUserCreds }>> {
   const rows = await queryAdminCredStores(db, session.authId);
+  const userIdByEmail = new Map<string, string>();
+  for (const user of users) {
+    const email = normalizeEmail(user.email);
+    if (email) userIdByEmail.set(email, user.id);
+  }
   const byUserId = new Map<
     string,
     { row: CredStoreRow; creds: AdminStoredUserCreds }
   >();
   for (const row of rows) {
     const creds = await decryptStoredCreds(session.credStoreKey, row);
-    if (creds?.userAuthId) byUserId.set(creds.userAuthId, { row, creds });
+    if (!creds) continue;
+    const userId =
+      creds.userAuthId ??
+      userIdByEmail.get(normalizeEmail(creds.firebaseEmail) ?? "");
+    if (userId)
+      byUserId.set(userId, { row, creds: { ...creds, userAuthId: userId } });
   }
   return byUserId;
+}
+
+async function decryptCredStoreContent(
+  credStoreKey: Uint8Array,
+  row: CredStoreRow,
+): Promise<Record<string, unknown> | null> {
+  if (!row.content) return null;
+  try {
+    const plaintext = await blob.decrypt(
+      credStoreKey,
+      base64ToBytes(row.content),
+      true,
+    );
+    const decoded = JSON.parse(new TextDecoder().decode(plaintext));
+    if (typeof decoded !== "object" || decoded === null) return null;
+    return decoded as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+async function displayNameFromOwnCredStore(
+  umk: Uint8Array,
+  rows: CredStoreRow[] | undefined,
+): Promise<string | undefined> {
+  if (!Array.isArray(rows)) return undefined;
+  for (const row of rows) {
+    if (!row.credStoreKey) continue;
+    try {
+      const credStoreKey = await blob.decrypt(
+        umk,
+        base64ToBytes(row.credStoreKey),
+      );
+      const content = await decryptCredStoreContent(credStoreKey, row);
+      if (!content || !("r2_config" in content)) continue;
+      const displayName = optionalDisplayName(content.display_name);
+      if (displayName) return displayName;
+    } catch {
+      continue;
+    }
+  }
+  return undefined;
+}
+
+async function displayNameForUser(
+  user: UserRow,
+  session: AdminUserSession,
+  stored: AdminStoredUserCreds | undefined,
+): Promise<string | undefined> {
+  if (user.id === session.authId) {
+    return displayNameFromOwnCredStore(session.umk, user.credStore);
+  }
+  if (!user.umk || !stored) return undefined;
+  try {
+    const userUmk = await blob.decrypt(
+      validateUserRootKey(stored.userRootKey),
+      base64ToBytes(user.umk),
+    );
+    return displayNameFromOwnCredStore(userUmk, user.credStore);
+  } catch {
+    return undefined;
+  }
 }
 
 async function findAdminStoredCreds(
@@ -326,20 +407,22 @@ export async function listUsersWithInfo(
   db: any,
   session: AdminUserSession,
 ): Promise<UserSummary[]> {
-  const [users, storedByUserId] = await Promise.all([
-    queryUsers(db),
-    readAdminStoredCreds(db, session),
-  ]);
+  const users = await queryUsers(db);
+  const storedByUserId = await readAdminStoredCreds(db, session, users);
 
-  return users.map((row) => {
-    const stored = storedByUserId.get(row.id)?.creds;
-    return {
-      id: row.id,
-      email: row.email,
-      displayName: stored?.displayName || row.email || row.id,
-      isAdmin: row.type === "admin",
-    };
-  });
+  return Promise.all(
+    users.map(async (row) => {
+      const stored = storedByUserId.get(row.id)?.creds;
+      const displayName =
+        (await displayNameForUser(row, session, stored)) ?? row.email;
+      return {
+        id: row.id,
+        email: row.email,
+        displayName,
+        isAdmin: row.type === "admin",
+      };
+    }),
+  );
 }
 
 export async function getUserCreds(

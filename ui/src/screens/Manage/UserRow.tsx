@@ -22,7 +22,7 @@ export function UserRow({
   onClick,
   style,
 }: UserRowProps) {
-  const displayName = user.displayName?.trim() || user.id;
+  const displayName = user.displayName?.trim() || user.email?.trim() || "User";
   return (
     <ClickableRow
       onClick={onClick}

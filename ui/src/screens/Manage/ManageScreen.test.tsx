@@ -184,9 +184,13 @@ describe("ManageScreen", () => {
     );
   });
 
-  it("uses a concrete fallback instead of an unnamed user label", async () => {
+  it("uses email fallback instead of an unnamed or auth-id label", async () => {
     vi.mocked(listUsersWithInfo).mockResolvedValue([
-      { id: "user-without-name", isAdmin: false },
+      {
+        id: "user-without-name",
+        email: "fallback@example.com",
+        isAdmin: false,
+      },
     ]);
     vi.mocked(listShares).mockResolvedValue([]);
 
@@ -194,10 +198,11 @@ describe("ManageScreen", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: /^user-without-name/ }),
+        screen.getByRole("button", { name: /^fallback@example.com/ }),
       ).toBeInTheDocument(),
     );
     expect(screen.queryByText("Unnamed user")).toBeNull();
+    expect(screen.queryByText("user-without-name")).toBeNull();
   });
 
   it("switches between Users, Books, and Shares lists", async () => {

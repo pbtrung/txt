@@ -73,30 +73,74 @@ function storedCreds(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function userCredStore(
+  id: string,
+  content: Record<string, unknown>,
+  keyByte = 12,
+) {
+  return {
+    id,
+    credStoreKey: bytesToBase64(new Uint8Array([keyByte])),
+    content: encodedJson({
+      r2_config: {
+        endpoint: "https://r2.example",
+        region: "auto",
+        bucket: "b",
+      },
+      ...content,
+    }),
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
 });
 
 describe("adminUsers", () => {
-  it("lists users with display names recovered from admin-owned credential rows", async () => {
+  it("lists users with display names recovered from their own credential rows", async () => {
+    const adminEscrow = {
+      id: "escrow-1",
+      credStoreKey: bytesToBase64(new Uint8Array([12])),
+      content: encodedJson(storedCreds({ display_name: "Admin escrow Bob" })),
+    };
+    const adminOwnCredStore = userCredStore("admin-cred-1", {
+      display_name: "Admin",
+    });
+    const userOwnCredStore = userCredStore("user-cred-1", {
+      display_name: "Robert",
+    });
     const db = fakeDb((query) => {
-      if (query.$users?.credStore) {
+      if (query.$users?.$?.where?.id === "admin-1") {
         return {
           $users: [
             {
               id: "admin-1",
-              credStore: [
-                { id: "escrow-1", content: encodedJson(storedCreds()) },
-              ],
+              credStore: [adminEscrow, adminOwnCredStore],
             },
           ],
         };
       }
       return {
         $users: [
-          { id: "admin-1", email: "admin@example.com", type: "admin" },
-          { id: "user-2", email: "bob@example.com", type: "user" },
-          { id: "user-3", type: "user" },
+          {
+            id: "admin-1",
+            email: "admin@example.com",
+            type: "admin",
+            credStore: [adminEscrow, adminOwnCredStore],
+          },
+          {
+            id: "user-2",
+            email: "bob@example.com",
+            type: "user",
+            umk: bytesToBase64(new Uint8Array([11])),
+            credStore: [userOwnCredStore],
+          },
+          {
+            id: "user-3",
+            email: "fallback@example.com",
+            type: "user",
+            credStore: [],
+          },
         ],
       };
     });
@@ -105,19 +149,19 @@ describe("adminUsers", () => {
       {
         id: "admin-1",
         email: "admin@example.com",
-        displayName: "admin@example.com",
+        displayName: "Admin",
         isAdmin: true,
       },
       {
         id: "user-2",
         email: "bob@example.com",
-        displayName: "Bob",
+        displayName: "Robert",
         isAdmin: false,
       },
       {
         id: "user-3",
-        email: undefined,
-        displayName: "user-3",
+        email: "fallback@example.com",
+        displayName: "fallback@example.com",
         isAdmin: false,
       },
     ]);
