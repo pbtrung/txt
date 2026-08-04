@@ -1,27 +1,36 @@
-// Data hook backing the Reader screen: resolves the part count once, then
-// fetches/caches one part's content and decoded text at a time as the
-// reader navigates (never every part up front), persisting read position
-// and bookmarks along the way.
+// Data hook backing the Reader screen: resolves the part count once (via
+// reader.ts's openDoc, using this document's own docKey already resolved by
+// library.ts at unlock time), then fetches/caches one part's content and
+// decoded text at a time as the reader navigates (never every part up
+// front), persisting read position and bookmarks along the way. Read
+// position and bookmarks themselves are no longer fetched here at all --
+// both already live in VaultContext (loaded once, in full, during unlock),
+// so this hook only reads/writes through the context's accessMap/
+// bookmarksMap and its recordReadPosition/addBookmarkEntry/
+// removeBookmarkEntry actions.
 //
-// partCount/partContent go through session.client (data/dbWorkerClient.ts)
-// now, not a direct data/owner.ts call against a SqliteDb -- the db itself
-// lives inside dbWorker.ts's Worker, not on the main thread (see that
-// file's header comment for why). No txt_key to resolve first anymore
-// either -- a part's content is a plain BLOB, protected only by SQLCipher's
-// own page-level encryption (see owner.ts/parts.ts). Read position and
-// bookmarks themselves are no longer fetched here at all -- both already
-// live in VaultContext (loaded once, in full, during unlock), so this hook
-// only reads/writes through the context's accessMap/bookmarksMap and its
-// recordReadPosition/addBookmarkEntry/removeBookmarkEntry actions.
+// Every part fetch needs an R2 temp credential scoped to this document's own
+// prefix (docs/r2_credentials.md) -- minted lazily on first use and reused
+// across parts of the same document until it's close to expiring, rather
+// than reminted per part-fetch.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
 import type { Bookmark } from "../../data/bookmarks";
 import type { BookInfo } from "../../data/metadata";
-import { decodePart } from "../../data/parts";
+import {
+  openDoc,
+  partContent as fetchPartContent,
+  partCount as countParts,
+  type OpenedDoc,
+} from "../../data/reader";
+import {
+  fetchTempR2Credential,
+  type TempR2Credential,
+} from "../../data/tempR2Creds";
 import { verbose } from "../../log";
-import { useVault } from "../../state/VaultContext";
+import { useVault, type VaultSession } from "../../state/VaultContext";
 import { clampPartNum } from "./readerModel";
 
 export interface UseReaderBookResult {
@@ -44,10 +53,28 @@ export interface UseReaderBookResult {
   next: () => void;
   previous: () => void;
   bookmarkLine: (line: number, txtPreview: string) => void;
-  removeBookmark: (bookmarkId: number) => void;
+  removeBookmark: (bookmarkId: string) => void;
 }
 
-export function useReaderBook(txtId: number): UseReaderBookResult {
+// A little under worker/r2Creds.ts's own 15-minute TTL_SECONDS, so a
+// credential is renewed before it actually expires rather than right after.
+const R2_CRED_REFRESH_BUFFER_MS = 60_000;
+
+async function ensureR2Credential(
+  session: VaultSession,
+  doc: OpenedDoc,
+  cached: TempR2Credential | null,
+): Promise<TempR2Credential> {
+  if (cached && Date.now() < cached.expiresAtMs - R2_CRED_REFRESH_BUFFER_MS) {
+    return cached;
+  }
+  const currentUser = session.auth.currentUser;
+  if (!currentUser) throw new Error("no signed-in Firebase user");
+  const idToken = await currentUser.getIdToken();
+  return fetchTempR2Credential(idToken, doc.prefix, session.r2Config);
+}
+
+export function useReaderBook(txtId: string): UseReaderBookResult {
   const {
     session,
     accessMap,
@@ -68,20 +95,22 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
   const [targetLine, setTargetLine] = useState<number | null>(null);
 
   const partTextCache = useRef(new Map<number, string>());
+  const docRef = useRef<OpenedDoc | null>(null);
+  const r2CredRef = useRef<TempR2Credential | null>(null);
 
-  const bookmarks = bookmarksMap.get(txtId) ?? [];
+  const bookmarks = bookmarksMap[txtId] ?? [];
   // Metadata for every book is already loaded in full during unlock (see
   // VaultContext) -- available instantly, unlike part count/content, which
   // are only ever fetched for whichever book is actually open.
   const info: BookInfo | null = session?.metadataById.get(txtId) ?? null;
 
-  // Load the part count once per (session, txtId) -- part content is
-  // resolved lazily, one at a time, by the part-fetch effect below
-  // (session.client.partContent); metadata itself needs no fetch here at
-  // all, see `info` above. accessMap/searchParams are read here only to seed
-  // the initial part -- deliberately not in the dep list below, since a
-  // read-position write (which updates accessMap) shouldn't re-trigger a
-  // full reload.
+  // Opens the document once per (session, txtId) -- resolves its prefix and
+  // every part's own txtPartKey (reader.ts's openDoc), then seeds the
+  // initial part number. Part *content* itself is resolved lazily, one at a
+  // time, by the part-fetch effect below. accessMap/searchParams are read
+  // here only to seed the initial part -- deliberately not in the dep list
+  // below, since a read-position write (which updates accessMap) shouldn't
+  // re-trigger a full reload.
   useEffect(() => {
     if (!session) return;
     let cancelled = false;
@@ -94,11 +123,18 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
     // targetLine scroll/highlight fire against stale content (see below).
     setPartText(null);
     partTextCache.current = new Map();
+    docRef.current = null;
+    r2CredRef.current = null;
 
     (async () => {
-      const count = await session.client.partCount(txtId);
+      const docKey = session.docKeys.get(txtId);
+      if (!docKey) {
+        throw new Error(`you don't have access to txtId=${txtId}`);
+      }
+      const doc = await openDoc(session.instantDb, txtId, docKey);
       if (cancelled) return;
-
+      docRef.current = doc;
+      const count = countParts(doc);
       setPartCount(count);
 
       // A Library "Recent Bookmarks" click carries ?part=N&line=M -- prefer
@@ -110,7 +146,7 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
       const initialPart =
         Number.isInteger(requestedPart) && requestedPart > 0
           ? requestedPart
-          : (accessMap.get(txtId)?.lastPartNum ?? 1);
+          : (accessMap[txtId]?.lastPartNum ?? 1);
       setCurrentPartNum(clampPartNum(initialPart, count));
       if (
         Number.isInteger(requestedPart) &&
@@ -139,13 +175,14 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
   // the read position.
   useEffect(() => {
     if (!session || loading) return;
+    const doc = docRef.current;
+    if (!doc) return;
 
     // Fire-and-forget on purpose (this shouldn't block showing the part
-    // text), but not silently: a real failure here (e.g. instantPageStore.ts's
-    // CAS retries exhausted because another session committed first) would
-    // otherwise be an entirely silent unhandled rejection with zero trace of
-    // what happened -- logged rather than surfaced as a blocking error, since
-    // a stale read position doesn't stop reading from working.
+    // text), but not silently: a real failure here would otherwise be an
+    // entirely silent unhandled rejection with zero trace of what
+    // happened -- logged rather than surfaced as a blocking error, since a
+    // stale read position doesn't stop reading from working.
     recordReadPosition(txtId, {
       lastPartNum: currentPartNum,
       lastAccessedMs: Date.now(),
@@ -162,12 +199,14 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
     let cancelled = false;
     setPartTextLoading(true);
     (async () => {
-      const content = await session.client.partContent(txtId, currentPartNum);
-      if (!content)
-        throw new Error(
-          `no txt_parts row for txt_id=${txtId}, part_num=${currentPartNum}`,
-        );
-      return decodePart(content);
+      const cred = await ensureR2Credential(session, doc, r2CredRef.current);
+      r2CredRef.current = cred;
+      return fetchPartContent(
+        doc,
+        cred.client,
+        session.r2Config,
+        currentPartNum,
+      );
     })()
       .then((text) => {
         if (cancelled) return;
@@ -236,7 +275,7 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
         (b) => b.partNum === currentPartNum && b.line === line,
       );
       if (existing) {
-        removeBookmarkEntry(existing.id).catch((err: unknown) => {
+        removeBookmarkEntry(txtId, existing.id).catch((err: unknown) => {
           verbose("useReaderBook: removeBookmarkEntry failed", err);
         });
       } else {
@@ -251,12 +290,12 @@ export function useReaderBook(txtId: number): UseReaderBookResult {
   );
 
   const removeBookmark = useCallback(
-    (bookmarkId: number) => {
-      removeBookmarkEntry(bookmarkId).catch((err: unknown) => {
+    (bookmarkId: string) => {
+      removeBookmarkEntry(txtId, bookmarkId).catch((err: unknown) => {
         verbose("useReaderBook: removeBookmarkEntry failed", err);
       });
     },
-    [removeBookmarkEntry],
+    [removeBookmarkEntry, txtId],
   );
 
   return {

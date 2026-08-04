@@ -6,11 +6,13 @@ import { describe, expect, it, vi } from "vitest";
 import type { AccessMap } from "../../data/access";
 import type { BookmarksMap } from "../../data/bookmarks";
 import type { BookInfo } from "../../data/metadata";
-import * as partsModule from "../../data/parts";
+import * as readerModule from "../../data/reader";
+import * as tempR2CredsModule from "../../data/tempR2Creds";
 import * as VaultContextModule from "../../state/VaultContext";
 import { useReaderBook } from "./useReaderBook";
 
-vi.mock("../../data/parts");
+vi.mock("../../data/reader");
+vi.mock("../../data/tempR2Creds");
 vi.mock("../../state/VaultContext", async () => {
   const actual = await vi.importActual<
     typeof import("../../state/VaultContext")
@@ -21,37 +23,73 @@ vi.mock("../../state/VaultContext", async () => {
 const recordReadPosition = vi.fn().mockResolvedValue(undefined);
 const addBookmarkEntry = vi.fn().mockResolvedValue(undefined);
 const removeBookmarkEntry = vi.fn().mockResolvedValue(undefined);
-// session.client's two SQLite-backed methods this hook calls -- the real db
-// now lives inside dbWorker.ts's Worker (see that file's header comment),
-// so these stand in for DbWorkerClient.partCount/partContent rather than a
-// direct data/owner.ts call the way this test used to mock it.
-const partCount = vi.fn();
-const partContent = vi.fn();
 
-/** useReaderBook resolves one part's content at a time (session.client.
+const openDoc = vi.mocked(readerModule.openDoc);
+const partCount = vi.mocked(readerModule.partCount);
+const partContent = vi.mocked(readerModule.partContent);
+const fetchTempR2Credential = vi.mocked(
+  tempR2CredsModule.fetchTempR2Credential,
+);
+
+const FAKE_DOC = {
+  txtId: "txt-1",
+  docKey: new Uint8Array(),
+  prefix: "prefix-1",
+  parts: [],
+};
+
+/** useReaderBook resolves one part's content at a time (reader.ts's
  * partContent) rather than every part up front -- this stands in for a
- * txt_parts table indexed 1-based by `contents`' own array position. */
+ * txtParts row indexed 1-based by `contents`' own array position. */
 function mockPartContent(contents: string[]) {
-  partContent.mockImplementation(async (_txtId: number, partNum: number) =>
-    contents[partNum - 1] !== undefined
-      ? new TextEncoder().encode(contents[partNum - 1])
-      : null,
-  );
+  partContent.mockImplementation(async (_doc, _client, _cfg, partNum) => {
+    const text = contents[partNum - 1];
+    if (text === undefined)
+      throw new Error(`no txtParts row for partNum=${partNum}`);
+    return text;
+  });
 }
 
 function mockVault(
-  accessMap: AccessMap = new Map(),
-  bookmarksMap: BookmarksMap = new Map(),
-  metadataById: Map<number, BookInfo> = new Map(),
+  accessMap: AccessMap = {},
+  bookmarksMap: BookmarksMap = {},
+  metadataById: Map<string, BookInfo> = new Map(),
 ) {
+  openDoc.mockResolvedValue(FAKE_DOC as never);
+  fetchTempR2Credential.mockResolvedValue({
+    client: {} as never,
+    expiresAtMs: Date.now() + 900_000,
+  });
+
   const session = {
     displayName: "admin@example.com",
-    client: {
-      partCount,
-      partContent,
-    } as unknown as VaultContextModule.VaultSession["client"],
+    instantDb: {},
+    auth: {
+      currentUser: { getIdToken: vi.fn().mockResolvedValue("id-token") },
+    },
+    authId: "auth-1",
+    umk: new Uint8Array(),
+    keyStorePrivKey: new Uint8Array(),
+    r2Config: {
+      endpoint: "https://acct.r2.cloudflarestorage.com",
+      region: "auto",
+      bucket: "my-bucket",
+    },
     metadataById,
-  };
+    docKeys: new Map(
+      Array.from(metadataById.keys()).map((k) => [k, new Uint8Array()]),
+    ),
+    txtAccess: { id: null, key: new Uint8Array() },
+    txtBookmarks: { id: null, key: new Uint8Array() },
+  } as unknown as VaultContextModule.VaultSession;
+
+  // Every test's txtId needs a docKey entry even when metadataById is empty.
+  session.docKeys.set("txt-1", new Uint8Array());
+  session.docKeys.set("txt-3", new Uint8Array());
+  session.docKeys.set("txt-5", new Uint8Array());
+  session.docKeys.set("txt-7", new Uint8Array());
+  session.docKeys.set("txt-9", new Uint8Array());
+
   vi.mocked(VaultContextModule.useVault).mockReturnValue({
     status: "unlocked",
     session,
@@ -71,7 +109,7 @@ function mockVault(
   return session;
 }
 
-function renderReaderBook(txtId: number, initialPath = "/") {
+function renderReaderBook(txtId: string, initialPath = "/") {
   return renderHook(() => useReaderBook(txtId), {
     wrapper: ({ children }) => (
       <MemoryRouter initialEntries={[initialPath]}>{children}</MemoryRouter>
@@ -82,13 +120,13 @@ function renderReaderBook(txtId: number, initialPath = "/") {
 describe("useReaderBook", () => {
   it("loads book data, starts at the saved read position, and fetches that part's text", async () => {
     mockVault(
-      new Map([[7, { lastPartNum: 14, lastAccessedMs: 1 }]]),
-      new Map(),
+      { "txt-7": { lastPartNum: 14, lastAccessedMs: 1 } },
+      {},
       new Map([
         [
-          7,
+          "txt-7",
           {
-            txtId: 7,
+            txtId: "txt-7",
             name: "n",
             title: "The White Order",
             subjects: [],
@@ -97,13 +135,10 @@ describe("useReaderBook", () => {
         ],
       ]),
     );
-    partCount.mockResolvedValue(41);
+    partCount.mockReturnValue(41);
     mockPartContent(Array.from({ length: 41 }, (_, i) => `part-${i + 1}`));
-    vi.mocked(partsModule.decodePart).mockResolvedValue(
-      "Part fourteen's text.",
-    );
 
-    const { result } = renderReaderBook(7);
+    const { result } = renderReaderBook("txt-7");
 
     // info comes straight from session.metadataById -- available immediately,
     // not gated behind `loading` (unlike part count/content).
@@ -112,51 +147,39 @@ describe("useReaderBook", () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.currentPartNum).toBe(14);
 
-    await waitFor(() =>
-      expect(result.current.partText).toBe("Part fourteen's text."),
-    );
-    expect(partsModule.decodePart).toHaveBeenCalledWith(
-      new TextEncoder().encode("part-14"),
-    );
+    await waitFor(() => expect(result.current.partText).toBe("part-14"));
     expect(recordReadPosition).toHaveBeenCalledWith(
-      7,
+      "txt-7",
       expect.objectContaining({ lastPartNum: 14 }),
     );
   });
 
   it("defaults to part 1 when there's no saved read position", async () => {
     mockVault();
-    partCount.mockResolvedValue(5);
+    partCount.mockReturnValue(5);
     mockPartContent(["p1", "p2", "p3", "p4", "p5"]);
-    vi.mocked(partsModule.decodePart).mockResolvedValue("part one");
 
-    const { result } = renderReaderBook(3);
+    const { result } = renderReaderBook("txt-3");
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.currentPartNum).toBe(1);
   });
 
   it("prefers a ?part= query param over the saved read position", async () => {
-    mockVault(new Map([[3, { lastPartNum: 1, lastAccessedMs: 1 }]]));
-    partCount.mockResolvedValue(5);
+    mockVault({ "txt-3": { lastPartNum: 1, lastAccessedMs: 1 } });
+    partCount.mockReturnValue(5);
     mockPartContent(["p1", "p2", "p3", "p4", "p5"]);
-    vi.mocked(partsModule.decodePart).mockImplementation(
-      async (content) => `text for ${new TextDecoder().decode(content)}`,
-    );
 
-    const { result } = renderReaderBook(3, "/?part=4");
+    const { result } = renderReaderBook("txt-3", "/?part=4");
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.currentPartNum).toBe(4);
   });
 
   it("prefers a ?part=&line= query param over the saved read position, and sets targetLine", async () => {
-    mockVault(new Map([[3, { lastPartNum: 1, lastAccessedMs: 1 }]]));
-    partCount.mockResolvedValue(5);
+    mockVault({ "txt-3": { lastPartNum: 1, lastAccessedMs: 1 } });
+    partCount.mockReturnValue(5);
     mockPartContent(["p1", "p2", "p3", "p4", "p5"]);
-    vi.mocked(partsModule.decodePart).mockImplementation(
-      async (content) => `text for ${new TextDecoder().decode(content)}`,
-    );
 
-    const { result } = renderReaderBook(3, "/?part=4&line=7");
+    const { result } = renderReaderBook("txt-3", "/?part=4&line=7");
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.currentPartNum).toBe(4);
     expect(result.current.targetLine).toBe(7);
@@ -164,13 +187,10 @@ describe("useReaderBook", () => {
 
   it("goToBookmark() moves to the given part and sets targetLine", async () => {
     mockVault();
-    partCount.mockResolvedValue(5);
+    partCount.mockReturnValue(5);
     mockPartContent(["p1", "p2", "p3", "p4", "p5"]);
-    vi.mocked(partsModule.decodePart).mockImplementation(
-      async (content) => `text for ${new TextDecoder().decode(content)}`,
-    );
 
-    const { result } = renderReaderBook(9);
+    const { result } = renderReaderBook("txt-9");
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     act(() => result.current.goToBookmark(3, 5));
@@ -184,17 +204,16 @@ describe("useReaderBook", () => {
 
   it("clears partText immediately when switching parts, before the new text arrives", async () => {
     mockVault();
-    partCount.mockResolvedValue(5);
-    mockPartContent(["p1", "p2", "p3", "p4", "p5"]);
+    partCount.mockReturnValue(5);
     let resolveFetch: (text: string) => void = () => {};
-    vi.mocked(partsModule.decodePart).mockImplementation(
+    partContent.mockImplementation(
       () =>
         new Promise((resolve) => {
           resolveFetch = resolve;
         }),
     );
 
-    const { result } = renderReaderBook(9);
+    const { result } = renderReaderBook("txt-9");
     await waitFor(() => expect(result.current.loading).toBe(false));
     resolveFetch("text for p1");
     await waitFor(() => expect(result.current.partText).toBe("text for p1"));
@@ -207,19 +226,16 @@ describe("useReaderBook", () => {
   });
 
   it("next()/previous() move within [1, partCount] and re-fetch the new part", async () => {
-    mockVault(new Map([[9, { lastPartNum: 1, lastAccessedMs: 1 }]]));
-    partCount.mockResolvedValue(3);
+    mockVault({ "txt-9": { lastPartNum: 1, lastAccessedMs: 1 } });
+    partCount.mockReturnValue(3);
     mockPartContent(["p1", "p2", "p3"]);
-    vi.mocked(partsModule.decodePart).mockImplementation(
-      async (content) => `text for ${new TextDecoder().decode(content)}`,
-    );
 
-    const { result } = renderReaderBook(9);
-    await waitFor(() => expect(result.current.partText).toBe("text for p1"));
+    const { result } = renderReaderBook("txt-9");
+    await waitFor(() => expect(result.current.partText).toBe("p1"));
 
     act(() => result.current.next());
     await waitFor(() => expect(result.current.currentPartNum).toBe(2));
-    await waitFor(() => expect(result.current.partText).toBe("text for p2"));
+    await waitFor(() => expect(result.current.partText).toBe("p2"));
 
     act(() => result.current.previous());
     act(() => result.current.previous());
@@ -228,77 +244,70 @@ describe("useReaderBook", () => {
 
   it("bookmarkLine() calls addBookmarkEntry for the current part/line/preview", async () => {
     mockVault();
-    partCount.mockResolvedValue(3);
+    partCount.mockReturnValue(3);
     mockPartContent(["p1", "p2", "p3"]);
-    vi.mocked(partsModule.decodePart).mockResolvedValue("text");
 
-    const { result } = renderReaderBook(5);
+    const { result } = renderReaderBook("txt-5");
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     act(() => result.current.bookmarkLine(2, "some preview text"));
 
-    expect(addBookmarkEntry).toHaveBeenCalledWith(5, 1, 2, "some preview text");
+    expect(addBookmarkEntry).toHaveBeenCalledWith(
+      "txt-5",
+      1,
+      2,
+      "some preview text",
+    );
   });
 
   it("bookmarkLine() removes the existing bookmark instead of adding a duplicate when the line is already bookmarked", async () => {
-    const bookmarksMap: BookmarksMap = new Map([
-      [
-        5,
-        [
-          {
-            id: 88,
-            txtId: 5,
-            partNum: 1,
-            line: 2,
-            preview: "some preview text",
-            createdAt: 1000,
-          },
-        ],
+    const bookmarksMap: BookmarksMap = {
+      "txt-5": [
+        {
+          id: "txt-5:1:2:1000",
+          partNum: 1,
+          line: 2,
+          preview: "some preview text",
+          createdAt: 1000,
+        },
       ],
-    ]);
-    mockVault(new Map(), bookmarksMap);
-    partCount.mockResolvedValue(3);
+    };
+    mockVault({}, bookmarksMap);
+    partCount.mockReturnValue(3);
     mockPartContent(["p1", "p2", "p3"]);
-    vi.mocked(partsModule.decodePart).mockResolvedValue("text");
 
-    const { result } = renderReaderBook(5);
+    const { result } = renderReaderBook("txt-5");
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     const addCallsBefore = addBookmarkEntry.mock.calls.length;
     act(() => result.current.bookmarkLine(2, "some preview text"));
 
-    expect(removeBookmarkEntry).toHaveBeenCalledWith(88);
+    expect(removeBookmarkEntry).toHaveBeenCalledWith("txt-5", "txt-5:1:2:1000");
     expect(addBookmarkEntry.mock.calls.length).toBe(addCallsBefore); // took the remove path, not add
   });
 
   it("exposes the current book's bookmarks straight from bookmarksMap", async () => {
-    const bookmarksMap: BookmarksMap = new Map([
-      [
-        5,
-        [
-          {
-            id: 88,
-            txtId: 5,
-            partNum: 1,
-            line: 2,
-            preview: "some preview text",
-            createdAt: 1000,
-          },
-        ],
+    const bookmarksMap: BookmarksMap = {
+      "txt-5": [
+        {
+          id: "txt-5:1:2:1000",
+          partNum: 1,
+          line: 2,
+          preview: "some preview text",
+          createdAt: 1000,
+        },
       ],
-    ]);
-    mockVault(new Map(), bookmarksMap);
-    partCount.mockResolvedValue(3);
+    };
+    mockVault({}, bookmarksMap);
+    partCount.mockReturnValue(3);
     mockPartContent(["p1", "p2", "p3"]);
-    vi.mocked(partsModule.decodePart).mockResolvedValue("text");
 
-    const { result } = renderReaderBook(5);
+    const { result } = renderReaderBook("txt-5");
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     expect(result.current.bookmarks).toEqual([
       {
-        id: 88,
-        txtId: 5,
+        id: "txt-5:1:2:1000",
         partNum: 1,
         line: 2,
         preview: "some preview text",
@@ -307,17 +316,16 @@ describe("useReaderBook", () => {
     ]);
   });
 
-  it("removeBookmark() calls removeBookmarkEntry with the given bookmark id", async () => {
+  it("removeBookmark() calls removeBookmarkEntry with this book's txtId and the given bookmark id", async () => {
     mockVault();
-    partCount.mockResolvedValue(3);
+    partCount.mockReturnValue(3);
     mockPartContent(["p1", "p2", "p3"]);
-    vi.mocked(partsModule.decodePart).mockResolvedValue("text");
 
-    const { result } = renderReaderBook(5);
+    const { result } = renderReaderBook("txt-5");
     await waitFor(() => expect(result.current.loading).toBe(false));
 
-    act(() => result.current.removeBookmark(1000));
+    act(() => result.current.removeBookmark("txt-5:0:1:1000"));
 
-    expect(removeBookmarkEntry).toHaveBeenCalledWith(1000);
+    expect(removeBookmarkEntry).toHaveBeenCalledWith("txt-5", "txt-5:0:1:1000");
   });
 });
