@@ -10,7 +10,7 @@ import type { R2Config } from "./r2Config";
 
 export class AdminUsersError extends Error {}
 
-const PAGE_SIZE = 500;
+const PAGE_SIZE = 1000;
 
 interface UserRow {
   id: string;

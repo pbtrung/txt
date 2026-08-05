@@ -95,10 +95,12 @@ const _schema = i.schema({
     // lightweight {name, authors, subjects, publishers} projection for
     // library loading. Both are wrapped directly under the document's own
     // txtKey (no intermediate key, unlike keyStore/credStore/txtAccess/
-    // txtBookmarks).
+    // txtBookmarks). catalog stays optional at the schema level so the
+    // additive schema push succeeds before existing rows are backfilled; new
+    // writes should always populate it.
     txtMetadata: i.entity({
       content: i.string(),
-      catalog: i.string(),
+      catalog: i.string().optional(),
     }),
     // A document's content, chunked into ordered parts (docs/data_model.md's
     // txtParts entity). Like txtMetadata, carries its own owner link (same

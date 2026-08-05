@@ -6,7 +6,7 @@ import { HEADER_LEN, SALT_LEN } from "../crypto/constants";
 import { collectAllPages } from "./instaqlPagination";
 import { kemEncapsulate } from "./leancrypto";
 
-const PAGE_SIZE = 500;
+const PAGE_SIZE = 1000;
 
 export class AdminSharesError extends Error {}
 

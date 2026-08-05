@@ -50,11 +50,11 @@ export const RETRY_DELAYS_MS = [2000, 4000, 8000]; // matches txt/r2.py's _RETRY
 // (slow for anything beyond a handful of parts).
 export const R2_BATCH_CONCURRENCY = 15;
 
-// migrate.ts/collectGarbage.ts page through `txt`/`txtParts` rows (tens of
-// thousands for a large corpus) rather than one unpaginated query --
-// InstantDB enforces its own query timeout, and a single query over that
-// many rows risks exceeding it.
-export const INSTAQL_QUERY_PAGE_SIZE = 500;
+// migrate.ts/collectGarbage.ts/updateDbCatalog.ts page through `txt`/
+// `txtParts` rows (tens of thousands for a large corpus) rather than one
+// unpaginated query -- InstantDB enforces its own query timeout, and a
+// single query over that many rows risks exceeding it.
+export const INSTAQL_QUERY_PAGE_SIZE = 1000;
 
 // migrate.ts fetches/decrypts/inserts this many source documents at a time
 // (each document's own parts fetched in parallel too, R2_BATCH_CONCURRENCY

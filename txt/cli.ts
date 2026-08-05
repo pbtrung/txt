@@ -16,6 +16,7 @@ import { Migrator } from "./migrate.ts";
 import { TxtOwner } from "./owner.ts";
 import { R2Client } from "./r2.ts";
 import { Reporter } from "./stats.ts";
+import { DbCatalogUpdater } from "./updateDbCatalog.ts";
 
 type CliArgs =
   | {
@@ -42,6 +43,12 @@ type CliArgs =
       verbose: boolean;
       dryRun: boolean;
       yes: boolean;
+    }
+  | {
+      command: "update-db-catalog";
+      credsPath: string;
+      verbose: boolean;
+      dryRun: boolean;
     };
 
 function printUsage(): void {
@@ -49,7 +56,8 @@ function printUsage(): void {
     "Usage: node txt.ts --clean-bucket <in.db> --creds <creds.json> [-v|--verbose] [--dry-run] [-y|--yes]\n" +
       "       node txt.ts --init-admin <creds.json> [-v|--verbose]\n" +
       "       node txt.ts --migrate --from <in.db> --from-creds <from_creds.json> --to-creds <to_creds.json> [-v|--verbose] [--dry-run] [-y|--yes]\n" +
-      "       node txt.ts --collect-garbage --creds <creds.json> [-v|--verbose] [--dry-run] [-y|--yes]",
+      "       node txt.ts --collect-garbage --creds <creds.json> [-v|--verbose] [--dry-run] [-y|--yes]\n" +
+      "       node txt.ts --update-db-catalog --creds <creds.json> [-v|--verbose] [--dry-run]",
   );
 }
 
@@ -61,6 +69,7 @@ function parseCliArgs(argv: string[]): CliArgs {
       "init-admin": { type: "string" },
       migrate: { type: "boolean", default: false },
       "collect-garbage": { type: "boolean", default: false },
+      "update-db-catalog": { type: "boolean", default: false },
       from: { type: "string" },
       "from-creds": { type: "string" },
       "to-creds": { type: "string" },
@@ -110,6 +119,14 @@ function parseCliArgs(argv: string[]): CliArgs {
       verbose: values.verbose!,
       dryRun: values["dry-run"]!,
       yes: values.yes!,
+    };
+  }
+  if (values["update-db-catalog"] && values.creds) {
+    return {
+      command: "update-db-catalog",
+      credsPath: values.creds,
+      verbose: values.verbose!,
+      dryRun: values["dry-run"]!,
     };
   }
   printUsage();
@@ -246,10 +263,37 @@ function printCollectGarbageSummary(
   );
 }
 
+async function updateDbCatalog(
+  args: Extract<CliArgs, { command: "update-db-catalog" }>,
+  log: Logger,
+): Promise<number> {
+  const creds = loadGcCreds(args.credsPath);
+  const updater = new DbCatalogUpdater(creds, log);
+  const result = await updater.run({ dryRun: args.dryRun });
+  printUpdateDbCatalogSummary(result, log);
+  return result.failed > 0 ? 1 : 0;
+}
+
+function printUpdateDbCatalogSummary(
+  result: Awaited<ReturnType<DbCatalogUpdater["run"]>>,
+  log: Logger,
+): void {
+  log.info("--- update-db-catalog summary ---");
+  log.info(`mode:              ${result.dryRun ? "dry-run" : "live"}`);
+  log.info(`documents:         ${result.documentCount}`);
+  log.info(`metadata rows:     ${result.metadataRows}`);
+  log.info(
+    `${result.dryRun ? "prepared" : "updated"}:          ${result.updated}`,
+  );
+  log.info(`skipped:           ${result.skipped}`);
+  log.info(`failed:            ${result.failed}`);
+}
+
 async function dispatch(args: CliArgs, log: Logger): Promise<number> {
   if (args.command === "init-admin") return initAdmin(args, log);
   if (args.command === "migrate") return migrate(args, log);
   if (args.command === "collect-garbage") return collectGarbage(args, log);
+  if (args.command === "update-db-catalog") return updateDbCatalog(args, log);
   return cleanBucket(args, log);
 }
 

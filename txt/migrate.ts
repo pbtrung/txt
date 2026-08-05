@@ -34,6 +34,11 @@ import { collectAllPages } from "./instaqlPagination.ts";
 import type { InitAdminCreds } from "./initAdminCreds.ts";
 import { signInToInstant } from "./instantSignIn.ts";
 import type { Logger } from "./logger.ts";
+import {
+  catalogFromMetadataContent,
+  wrapCatalogBlob,
+  type TxtMetadataContent,
+} from "./metadataCatalog.ts";
 import { type OrphanSweepTarget, sweepOrphanObjects } from "./orphanSweep.ts";
 import { TxtOwner, type TxtMetadataEntry } from "./owner.ts";
 import { generateRandomToken, unwrapToken, wrapToken } from "./randomToken.ts";
@@ -497,6 +502,7 @@ export class Migrator {
           tx
             .txtMetadata![id()]!.update({
               content: this.wrapMetadataContent(crypto, doc),
+              catalog: this.wrapMetadataCatalog(crypto, doc),
             })
             .link({ txt: doc.txtId, owner: admin.authId }),
         );
@@ -510,11 +516,24 @@ export class Migrator {
     return committed;
   }
 
-  private wrapMetadataContent(crypto: CryptoEngine, doc: PreparedDoc): string {
-    const payload: Record<string, unknown> = { name: doc.name };
+  private metadataContent(doc: PreparedDoc): TxtMetadataContent {
+    const payload: TxtMetadataContent = { name: doc.name };
     if (doc.metadata !== undefined) payload.metadata = doc.metadata;
+    return payload;
+  }
+
+  private wrapMetadataContent(crypto: CryptoEngine, doc: PreparedDoc): string {
+    const payload = this.metadataContent(doc);
     const plaintext = Buffer.from(JSON.stringify(payload), "utf8");
     return crypto.blobEncrypt(doc.txtKey, plaintext, true).toString("base64");
+  }
+
+  private wrapMetadataCatalog(crypto: CryptoEngine, doc: PreparedDoc): string {
+    return wrapCatalogBlob(
+      crypto,
+      doc.txtKey,
+      catalogFromMetadataContent(this.metadataContent(doc)),
+    );
   }
 
   // Pure prep (fresh txtPartKey/raw_key/ciphertext per part, no I/O) up
