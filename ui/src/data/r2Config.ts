@@ -5,14 +5,14 @@
 // credStore entity).
 //
 // Deliberately narrower than txt/creds.ts's R2Config (the CLI's own mirror
-// of this same JSON shape): this repo's browser code never holds a static
-// R2 access key of any kind, not even a read-only one -- every account,
-// admin included, gets its R2 access exclusively through worker/r2Creds.ts's
-// short-lived, prefix-scoped temporary credentials (see tempR2Creds.ts and
-// docs/r2_credentials.md).
+// of this same JSON shape): browser session state never retains a static R2
+// access key, and every account gets actual R2 access exclusively through
+// worker/r2Creds.ts's short-lived, prefix-scoped temporary credentials (see
+// tempR2Creds.ts and docs/r2_credentials.md).
 // The stored r2_config JSON may still carry read_only_access_key_id/
 // read_write_access_key_id/etc. (the CLI still writes them, for its own
-// Node-side use), but this parser simply never reads those fields.
+// Node-side use). Admin unlock decrypts that combined JSON payload before
+// this parser runs, but this parser discards the access-key fields.
 
 import { requireObject, requireString } from "./jsonObject";
 

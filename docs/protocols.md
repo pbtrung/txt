@@ -17,7 +17,7 @@ There is no MVCC/version CAS: a `txtParts` row is written exactly once and never
 
 Library loading should query the readable documents — owned `txt` rows plus incoming `txtShares` rows — with only the document key material needed to unwrap `txtKey` and `txtMetadata.catalog`. It should not fetch or decrypt full `txtMetadata.content` for the book list. After resolving each document's `txtKey` (owner decrypt under `umk`, share recipient Decapsulate via `txtShares`), decrypt `catalog` under that `txtKey` and render the list from that projection.
 
-Use 1000 rows per InstantDB page for these library/share queries and for other large admin/CLI scans unless a real InstantDB timeout forces lowering it consistently across callers. This is a throughput setting, not a schema invariant.
+Use 1500 rows per InstantDB page for the owned/shared library queries. Other large admin and CLI scans use 1000 rows per page. These are throughput settings, not schema invariants.
 
 ## Read path
 

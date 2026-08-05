@@ -18,7 +18,7 @@ Each `keyStore` keypair is leancrypto's `lc_kyber_1024_x448` hybrid keypair — 
 | X448          | 56 bytes       | 56 bytes       |
 | **Composite** | **1624 bytes** | **3224 bytes** |
 
-`keyStore.pubKey` stores the raw 1624-byte composite public key. `keyStore.privKey` wraps the raw 3224-byte composite private key using the standard Encrypt procedure below (IKM = owner's `umk`), so the stored blob is 3224 + 132 = 3356 bytes.
+`keyStore.pubKey` stores the raw 1624-byte composite public key. `keyStore.privKey` wraps the raw 3224-byte composite private key using the standard Encrypt procedure below (IKM = that row's unwrapped `keyStoreKey`), so the stored blob is 3224 + 132 = 3356 bytes. The owner's `umk` wraps `keyStoreKey`, not `privKey` directly.
 
 ## Blob Format
 

@@ -1,6 +1,6 @@
 # txt
 
-A personal document-storage system built on a single [InstantDB](https://instantdb.com) app (identity via [Firebase Auth](https://firebase.google.com/docs/auth)) plus Cloudflare R2 for content, encrypted end-to-end — InstantDB and R2 both only ever see ciphertext, never plaintext content, real object addresses, or unwrapped keys. This repo has three parts: the TypeScript admin CLI (`txt.ts`) for provisioning an account and importing documents, the React viewer (`ui/`) end users actually unlock/read/write through, and a Cloudflare Worker (`worker/`) that mints short-lived R2 credentials so no browser session — admin included — ever holds a static R2 key.
+A personal document-storage system built on a single [InstantDB](https://instantdb.com) app (identity via [Firebase Auth](https://firebase.google.com/docs/auth)) plus Cloudflare R2 for content, encrypted end-to-end — InstantDB and R2 both only ever see ciphertext, never plaintext content, real object addresses, or unwrapped keys. This repo has three parts: the TypeScript admin CLI (`txt.ts`) for provisioning an account and importing documents, the React viewer (`ui/`) end users actually unlock/read/write through, and a Cloudflare Worker (`worker/`) that mints short-lived R2 credentials so no frontend R2 client uses a static R2 key.
 
 `txt.ts`, `ui/`, and `worker/` all implement the same InstantDB entity design: each document is its own set of InstantDB entities (`txt`/`txtMetadata`/`txtParts`, plus a Kyber/X448 keypair per account for sharing) with per-part R2 objects — see the `docs/` files below.
 
@@ -12,6 +12,7 @@ See [`docs/data_model.md`](docs/data_model.md) for the entities and permission r
 - **`--clean-bucket`** — sweeps an R2 bucket for objects no longer referenced by a (legacy, pre-InstantDB) account snapshot, with a dry-run mode and a confirmation prompt before deleting anything.
 - **`--migrate`** — imports every document from a legacy account snapshot, re-encrypting each part under the current key hierarchy as it goes and writing it directly as `txt`/`txtMetadata`/`txtParts` InstantDB entities plus per-part R2 objects. Fetches documents in parallel batches, writes each one's parts in small chunks (so one huge document can't blow up a single transaction), and resumes an interrupted run at the exact part it left off on, not just the last fully-migrated document.
 - **`--collect-garbage`** — sweeps every document the admin account owns for R2 objects a crashed `--migrate` run left behind (a part's own R2 upload and its InstantDB row are two separate steps).
+- **`--update-db-catalog`** — rebuilds every admin-owned `txtMetadata.catalog` projection from full encrypted metadata, overwriting older projections so newly added fields are backfilled.
 - **`ui/`** — the React viewer: unlock a vault with a creds.json file, browse/read documents, bookmark, and write back read-position/bookmark updates, all client-side against InstantDB + R2 directly.
 - **`worker/`** — the one server component the design needs: verifies a Firebase ID token and mints a short-lived, prefix-scoped R2 credential for it, so `ui/` never needs a static R2 key.
 - **End-to-end encryption throughout**: the CLI wraps every document/part/key in the AEAD blob format (Ascon-Keccak + HKDF-SHA3-512) and uses a Kyber/X448 KEM to share a document with another account — see `docs/crypto.md`.
@@ -35,6 +36,8 @@ node txt.ts --migrate --from <in.db> --from-creds <from_creds.json> --to-creds <
   [-v|--verbose] [--dry-run] [-y|--yes]
 
 node txt.ts --collect-garbage --creds <creds.json> [-v|--verbose] [--dry-run] [-y|--yes]
+
+node txt.ts --update-db-catalog --creds <creds.json> [-v|--verbose] [--dry-run]
 ```
 
 `-v`/`--verbose` enables debug logging; `--dry-run` reports what would happen without writing anything; `-y`/`--yes` skips the confirmation prompt for a live (non-dry-run) run.
@@ -69,7 +72,7 @@ node txt.ts --collect-garbage --creds <creds.json> [-v|--verbose] [--dry-run] [-
 
 `--migrate --to-creds` doesn't actually need `r2_config` filled in — it reads that account's real R2 connection info from its own live `credStore` row instead (see `docs/data_model.md`), so only the rest of this shape matters there.
 
-`--collect-garbage` takes a much smaller file instead — it never signs into Firebase as any particular account (it enumerates every account directly via the InstantDB Admin SDK), so it only needs enough to find the admin identity and unwrap its own key material:
+`--collect-garbage` and `--update-db-catalog` take a much smaller file instead — neither signs into Firebase as any particular account (they enumerate through the InstantDB Admin SDK), so they only need enough to find the admin identity and unwrap its own key material:
 
 ```json
 {
@@ -105,6 +108,8 @@ On that Worker's dashboard, under **Variables and secrets**, set:
 | ------------------------------ | --------------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | `READ_WRITE_ACCESS_KEY_ID`     | Secret                | The admin's own R2 `read_write_access_key_id` (same value as the CLI's creds.json `r2_config.read_write_access_key_id`) |
 | `READ_WRITE_SECRET_ACCESS_KEY` | Secret                | The matching `read_write_secret_access_key`                                                                             |
+| `R2_BUCKET`                    | Variable (not secret) | The bucket containing encrypted document-part objects                                                                   |
+| `R2_ENDPOINT`                  | Variable (not secret) | The account endpoint, for example `https://<account-id>.r2.cloudflarestorage.com`                                       |
 | `FIREBASE_PROJECT_ID`          | Variable (not secret) | The Firebase project ID this account's users sign into                                                                  |
 
 (These can't be set until the Worker actually has a script attached — if the dashboard says "Variables cannot be added to a Worker that only has static assets", that's exactly the state a fresh `wrangler deploy` from this repo fixes, since `worker/index.ts` is that script.)

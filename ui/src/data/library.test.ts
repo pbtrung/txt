@@ -122,6 +122,7 @@ describe("loadLibrary", () => {
       "catalog",
     ]);
     expect(db.queryOnce.mock.calls[0]![0].txt.$.fields).toEqual(["txtKey"]);
+    expect(db.queryOnce.mock.calls[0]![0].txt.$.limit).toBe(1500);
   });
 
   it("falls back to name when there's no OPF title", async () => {
