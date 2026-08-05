@@ -36,7 +36,7 @@ export interface KeyedContent<T> {
 
 export interface Session {
   authId: string;
-  /** $users.appRole === 'admin' -- gates the Manage screen (RequireAdmin) and
+  /** $users.type === 'admin' -- gates the Manage screen (RequireAdmin) and
    * every admin-only write ui/'s data layer performs (adminUsers.ts/
    * adminBooks.ts/adminShares.ts). A 'user'-role session's own umk/
    * keyStorePrivKey are exactly as capable as an admin's own for reading
@@ -245,7 +245,7 @@ export async function resolveSession(
 
   return {
     authId,
-    isAdmin: authRow.appRole === "admin",
+    isAdmin: authRow.type === "admin",
     umk,
     keyStorePrivKey,
     credStoreKey,

@@ -32,10 +32,11 @@ const _schema = i.schema({
       // query result still can't be unwrapped without the external
       // user_root_key.
       umk: i.string().optional(),
-      // 'admin' means app admin; missing/anything else is user-level. Named
-      // appRole rather than type because $users.type is an InstantDB system
-      // column and cannot be written by app transactions.
-      appRole: i.string().optional(),
+      // 'admin' | 'user' -- the permission system's role switch. Only ever
+      // admin-writable (instant.perms.ts's $users.update: "isAdmin", no
+      // isSelf branch at all), so self-promotion isn't possible through the
+      // normal write path.
+      type: i.string().optional(),
     }),
     // Per-account lc_kyber_1024_x448 composite keypair (docs/data_model.md's
     // keyStore entity) -- lets the admin share a document with this account

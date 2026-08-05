@@ -15,7 +15,7 @@ const PAGE_SIZE = 1000;
 interface UserRow {
   id: string;
   email?: string;
-  appRole?: string | null;
+  type?: string | null;
   umk?: string | null;
   credStore?: CredStoreRow[];
 }
@@ -425,7 +425,7 @@ export async function listUsersWithInfo(
         id: row.id,
         email: row.email,
         displayName,
-        isAdmin: row.appRole === "admin",
+        isAdmin: row.type === "admin",
       };
     }),
   );

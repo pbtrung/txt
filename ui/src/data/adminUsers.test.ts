@@ -136,18 +136,20 @@ describe("adminUsers", () => {
           {
             id: "admin-1",
             email: "admin@example.com",
-            appRole: "admin",
+            type: "admin",
             credStore: [adminEscrow, adminOwnCredStore],
           },
           {
             id: "user-2",
             email: "bob@example.com",
+            type: "user",
             umk: bytesToBase64(new Uint8Array([11])),
             credStore: [userOwnCredStore],
           },
           {
             id: "user-3",
             email: "fallback@example.com",
+            type: "user",
             credStore: [],
           },
         ],
@@ -194,7 +196,6 @@ describe("adminUsers", () => {
     const chunks = db.transact.mock.calls[0]![0];
     expect(chunks).toHaveLength(4);
     expect(JSON.stringify(chunks)).not.toContain('"type"');
-    expect(JSON.stringify(chunks)).not.toContain('"appRole"');
     expect(
       chunks.flatMap((chunk: { __ops?: unknown[] }) => chunk.__ops ?? []),
     ).toEqual(
@@ -306,7 +307,6 @@ describe("adminUsers", () => {
     const chunks = db.transact.mock.calls[0]![0];
     expect(chunks).toHaveLength(3);
     expect(JSON.stringify(chunks)).not.toContain('"type"');
-    expect(JSON.stringify(chunks)).not.toContain('"appRole"');
     const ops: unknown[] = chunks.flatMap(
       (chunk: { __ops?: unknown[] }) => chunk.__ops ?? [],
     );
@@ -358,7 +358,6 @@ describe("adminUsers", () => {
     const chunks = db.transact.mock.calls[0]![0];
     expect(chunks).toHaveLength(8);
     expect(JSON.stringify(chunks)).not.toContain('"type"');
-    expect(JSON.stringify(chunks)).not.toContain('"appRole"');
     const ops: unknown[] = chunks.flatMap(
       (chunk: { __ops?: unknown[] }) => chunk.__ops ?? [],
     );

@@ -156,7 +156,7 @@ export class DbCatalogUpdater {
     crypto: CryptoEngine,
   ): Promise<AdminIdentity> {
     const result = await db.query({
-      $users: { $: { where: { appRole: "admin" } } },
+      $users: { $: { where: { type: "admin" } } },
     });
     const candidates = result.$users ?? [];
     for (const row of candidates) {

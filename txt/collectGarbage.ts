@@ -73,7 +73,7 @@ export class GarbageCollector {
     };
   }
 
-  // Finds the one $users row (appRole: "admin") whose umk actually decrypts
+  // Finds the one $users row (type: "admin") whose umk actually decrypts
   // under this creds.json's own user_root_key -- there's no other way to
   // know which admin row it belongs to without trying each candidate (AEAD
   // tag verification fails hard on a wrong key, so this is safe: exactly
@@ -85,7 +85,7 @@ export class GarbageCollector {
     crypto: CryptoEngine,
   ): Promise<AdminIdentity> {
     const result = await db.query({
-      $users: { $: { where: { appRole: "admin" } } },
+      $users: { $: { where: { type: "admin" } } },
     });
     const candidates = result.$users ?? [];
     for (const row of candidates) {

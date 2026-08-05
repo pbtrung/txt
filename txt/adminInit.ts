@@ -82,7 +82,7 @@ export class AdminInitializer {
     this.log.debug(`No existing keyStore row for auth.id=${authId}`);
   }
 
-  // Sets appRole/umk directly on $users (no separate profile row -- see
+  // Sets type/umk directly on $users (no separate profile row -- see
   // instant.schema.ts), generates this account's own lc_kyber_1024_x448
   // composite keypair and writes it as a keyStore row, and writes this
   // account's own credStore row (docs/data_model.md's keyStore/credStore
@@ -111,7 +111,7 @@ export class AdminInitializer {
     const keyStoreId = id();
     const credStoreId = id();
     await db.transact([
-      tx.$users![authId]!.update({ appRole: "admin", umk: umkBlob }),
+      tx.$users![authId]!.update({ type: "admin", umk: umkBlob }),
       tx
         .keyStore![keyStoreId]!.update({
           pubKey: pubKey.toString("base64"),
@@ -127,7 +127,7 @@ export class AdminInitializer {
         .link({ owner: authId, forUser: authId }),
     ]);
     this.log.info(
-      `Set $users.appRole=admin/umk, wrote keyStore row ${keyStoreId} and credStore row ${credStoreId}`,
+      `Set $users.type=admin/umk, wrote keyStore row ${keyStoreId} and credStore row ${credStoreId}`,
     );
     return { authId, keyStoreId, credStoreId };
   }
