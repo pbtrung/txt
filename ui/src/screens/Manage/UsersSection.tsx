@@ -92,9 +92,11 @@ async function copyText(text: string): Promise<void> {
 function CredentialFields({
   values,
   onChange,
+  showDisplayName = true,
 }: {
   values: UserCredentialFields;
   onChange: (values: UserCredentialFields) => void;
+  showDisplayName?: boolean;
 }) {
   const [passwordVisible, setPasswordVisible] = useState(false);
 
@@ -188,16 +190,18 @@ function CredentialFields({
           required
         />
       </FormField>
-      <FormField label="Display name" htmlFor="manage-user-display-name">
-        <input
-          id="manage-user-display-name"
-          type="text"
-          className="form-control form-control-sm themed-control"
-          value={values.displayName}
-          onChange={(e) => update("displayName", e.target.value)}
-          required
-        />
-      </FormField>
+      {showDisplayName && (
+        <FormField label="Display name" htmlFor="manage-user-display-name">
+          <input
+            id="manage-user-display-name"
+            type="text"
+            className="form-control form-control-sm themed-control"
+            value={values.displayName}
+            onChange={(e) => update("displayName", e.target.value)}
+            required
+          />
+        </FormField>
+      )}
       <FormField label="User root key" htmlFor="manage-user-root-key">
         <div className="input-group input-group-sm">
           <input
@@ -589,7 +593,11 @@ function EditUserPanel({
       {loading && <div className="text-body-secondary small">Loading...</div>}
       {!loading && values && (
         <form onSubmit={(e) => void handleSubmit(e)}>
-          <CredentialFields values={values} onChange={setValues} />
+          <CredentialFields
+            values={values}
+            onChange={setValues}
+            showDisplayName={false}
+          />
           <button
             type="submit"
             className="btn btn-sm btn-primary d-flex align-items-center gap-2"

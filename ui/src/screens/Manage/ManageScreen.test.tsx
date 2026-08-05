@@ -438,7 +438,7 @@ describe("ManageScreen", () => {
         "user-2",
       ),
     );
-    const displayName = screen.getByLabelText("Display name");
+    expect(screen.queryByLabelText("Display name")).not.toBeInTheDocument();
     const firstSave = screen.getByRole("button", { name: "Save" });
     expect(firstSave).toBeDisabled();
     const password = screen.getByLabelText(
@@ -449,8 +449,8 @@ describe("ManageScreen", () => {
       screen.getByRole("button", { name: "Show Firebase password" }),
     );
     expect(password.type).toBe("text");
-    await userEvent.clear(displayName);
-    await userEvent.type(displayName, "Bobby");
+    await userEvent.clear(password);
+    await userEvent.type(password, "pw2");
     expect(firstSave).toBeEnabled();
     await userEvent.click(firstSave);
 
@@ -466,7 +466,7 @@ describe("ManageScreen", () => {
       expect.anything(),
       expect.objectContaining({ authId: "auth-1" }),
       "user-2",
-      expect.objectContaining({ displayName: "Bobby" }),
+      expect.objectContaining({ firebasePassword: "pw2", displayName: "Bob" }),
     );
   });
 
