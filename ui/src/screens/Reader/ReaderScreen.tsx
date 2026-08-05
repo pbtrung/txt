@@ -166,13 +166,26 @@ export function ReaderScreen() {
   // and clear targetLine before the real text (and its line elements) ever
   // appears.
   useEffect(() => {
-    if (loading || partTextLoading || partText === null || targetLine === null)
+    if (
+      !initialReaderReady ||
+      loading ||
+      partTextLoading ||
+      partText === null ||
+      targetLine === null
+    )
       return;
-    document
-      .getElementById(lineElementId(targetLine))
-      ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    const target = document.getElementById(lineElementId(targetLine));
+    if (!target) return;
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
     clearTargetLine();
-  }, [loading, partTextLoading, partText, targetLine, clearTargetLine]);
+  }, [
+    initialReaderReady,
+    loading,
+    partTextLoading,
+    partText,
+    targetLine,
+    clearTargetLine,
+  ]);
   const bookmarkedLines = useMemo(
     () =>
       new Set(

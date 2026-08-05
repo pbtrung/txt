@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
@@ -473,6 +473,47 @@ describe("ReaderScreen", () => {
     const clearTargetLine = vi.fn();
     renderReader(baseResult({ targetLine: 1, clearTargetLine }));
     expect(clearTargetLine).toHaveBeenCalled();
+  });
+
+  it("does not clear a Library bookmark target before the first reader render mounts its lines", async () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    let result: UseReaderBookResult = baseResult({
+      loading: true,
+      partText: null,
+      targetLine: null,
+    });
+    const clearTargetLine = vi.fn(() => {
+      result = { ...result, targetLine: null };
+    });
+    result = { ...result, clearTargetLine };
+    vi.mocked(useReaderBookModule.useReaderBook).mockImplementation(
+      () => result,
+    );
+    const view = render(
+      <MemoryRouter initialEntries={["/read/1?part=14&line=2"]}>
+        <Routes>
+          <Route path="/read/:txtId" element={<ReaderScreen />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    result = baseResult({
+      partText: "First paragraph.\n\nSecond paragraph.",
+      targetLine: 2,
+      clearTargetLine,
+    });
+    view.rerender(
+      <MemoryRouter initialEntries={["/read/1?part=14&line=2"]}>
+        <Routes>
+          <Route path="/read/:txtId" element={<ReaderScreen />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await screen.findByText("Second paragraph.");
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
+    expect(clearTargetLine).toHaveBeenCalledTimes(1);
   });
 
   it("navigates back to /library", async () => {
