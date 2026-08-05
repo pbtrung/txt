@@ -289,7 +289,7 @@ export function ManageScreen() {
           className="flex-grow-1 d-flex align-items-center px-3 py-2"
           style={{ minWidth: 0 }}
         >
-          <div className="position-relative search-bar-width">
+          <div className="position-relative manage-search-bar-width">
             <i
               className="bi bi-search position-absolute top-50 start-0 translate-middle-y ms-2 text-body-secondary pe-none"
               style={{ zIndex: 6 }}

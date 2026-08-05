@@ -40,16 +40,17 @@ function ToolbarButton({
   return (
     <button
       type="button"
-      className={`btn btn-sm d-flex align-items-center gap-1 ${isDanger ? "btn-outline-danger" : "btn-outline-secondary border-primary"}`}
+      className={`btn btn-sm d-flex align-items-center gap-1 manage-toolbar-button ${isDanger ? "btn-outline-danger" : "btn-outline-secondary border-primary"}`}
       disabled={disabled}
       onClick={onClick}
+      aria-label={label}
       title={label}
     >
       <i
         className={`bi ${icon} ${isDanger ? "" : "text-primary"}`}
         aria-hidden="true"
       />
-      <span className="d-none d-sm-inline">{label}</span>
+      <span className="manage-toolbar-label">{label}</span>
     </button>
   );
 }

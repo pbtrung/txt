@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -322,6 +322,32 @@ describe("ManageScreen", () => {
     await userEvent.type(screen.getByLabelText("Display name"), "New User");
     await userEvent.click(screen.getByRole("button", { name: "Create user" }));
 
+    let review = screen.getByRole("dialog", {
+      name: "Review new user credentials",
+    });
+    const json = within(review).getByLabelText(
+      "Credentials JSON",
+    ) as HTMLTextAreaElement;
+    expect(json.value).toContain('"firebase_email": "new@example.com"');
+    expect(json.value).toContain('"user_root_key": "generated-root-key"');
+
+    await userEvent.click(within(review).getByRole("button", { name: "Edit" }));
+    expect(
+      screen.getByRole("dialog", { name: "Create user" }),
+    ).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Create user" }));
+
+    review = screen.getByRole("dialog", {
+      name: "Review new user credentials",
+    });
+    const create = within(review).getByRole("button", { name: "Create" });
+    expect(create).toBeDisabled();
+    await userEvent.click(
+      within(review).getByLabelText("I downloaded this JSON to a local file"),
+    );
+    expect(create).toBeEnabled();
+    await userEvent.click(create);
+
     await waitFor(() => expect(createUser).toHaveBeenCalledOnce());
     expect(createUser).toHaveBeenCalledWith(
       expect.anything(),
@@ -359,9 +385,27 @@ describe("ManageScreen", () => {
       ),
     );
     const displayName = screen.getByLabelText("Display name");
+    const firstSave = screen.getByRole("button", { name: "Save" });
+    expect(firstSave).toBeDisabled();
+    const password = screen.getByLabelText(
+      "Firebase password",
+    ) as HTMLInputElement;
+    expect(password.type).toBe("password");
+    await userEvent.click(
+      screen.getByRole("button", { name: "Show Firebase password" }),
+    );
+    expect(password.type).toBe("text");
     await userEvent.clear(displayName);
     await userEvent.type(displayName, "Bobby");
-    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(firstSave).toBeEnabled();
+    await userEvent.click(firstSave);
+
+    const review = screen.getByRole("dialog", { name: "Review Bob" });
+    const json = within(review).getByLabelText(
+      "Credentials JSON",
+    ) as HTMLTextAreaElement;
+    expect(json.value).toContain('"display_name": "Bobby"');
+    await userEvent.click(within(review).getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(updateUserCreds).toHaveBeenCalledOnce());
     expect(updateUserCreds).toHaveBeenCalledWith(
