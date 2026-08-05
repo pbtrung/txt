@@ -21,16 +21,17 @@ const _schema = i.schema({
     // $users is InstantDB's own built-in auth entity, but custom attributes
     // on it are allowed like any other -- there's no separate app-level
     // profile entity in this design, so $users is also the one thing every
-    // other entity's owner/user/fromUser/toUser link points at directly.
+    // other entity's owner/forUser/fromUser/toUser link points at directly.
     // Never readable/writable except by isSelf/isAdmin (instant.perms.ts).
     $users: i.entity({
       email: i.string().unique().indexed(),
       // base64, 128 random bytes, generated once per account and wrapped
       // (crypto.md's Blob format) under user_root_key (an external secret
       // from creds.json, never stored in InstantDB). Encrypts this
-      // account's own keyStore.keyStoreKey and credStore.credStoreKey --
-      // see docs/key_hierarchy.md. A leaked query result still can't be
-      // unwrapped without the external user_root_key.
+      // account's own keyStore.keyStoreKey and every credStore.credStoreKey
+      // on a row this account owns -- see docs/key_hierarchy.md. A leaked
+      // query result still can't be unwrapped without the external
+      // user_root_key.
       umk: i.string().optional(),
       // 'admin' | 'user' -- the permission system's role switch. Only ever
       // admin-writable (instant.perms.ts's $users.update: "isAdmin", no
@@ -52,15 +53,16 @@ const _schema = i.schema({
       // Wrapped composite private key (3224 raw bytes once decrypted).
       privKey: i.string(),
     }),
-    // The encrypted R2-connection-info store (docs/data_model.md's credStore
-    // entity). One row per user-role account, but the admin's own owner
-    // link is deliberately NOT unique -- the admin can hold several rows,
-    // all sharing the same credStoreKey. content is a Blob-wrapped
-    // (crypto.md format) JSON string.
+    // Encrypted credential rows (docs/data_model.md's credStore entity).
+    // owner is the account whose umk wraps this row's credStoreKey; forUser
+    // identifies the account this row is about. A user's self row has
+    // owner == forUser; an admin-managed recovery row has owner == admin and
+    // forUser == target user. content is a Blob-wrapped (crypto.md format)
+    // JSON string.
     credStore: i.entity({
-      // 128 random bytes, wrapped under owner's umk; generated once per
-      // account (not fresh per row for the admin's extra rows) and reused
-      // to protect every row's own content.
+      // 128 random bytes, freshly generated per row and wrapped under this
+      // row owner's umk. Two rows can intentionally hold the same plaintext
+      // credential payload, but never share a credStoreKey.
       credStoreKey: i.string(),
       content: i.string(),
     }),
@@ -88,12 +90,15 @@ const _schema = i.schema({
       // source snapshot), same category as partKey/shareKey below.
       sourceTxtId: i.number().indexed().optional(),
     }),
-    // One row per document (docs/data_model.md's txtMetadata entity) --
-    // name/OPF-sidecar metadata, wrapped directly under the document's own
+    // One row per document (docs/data_model.md's txtMetadata entity).
+    // content is the full name/OPF-sidecar metadata; catalog is the
+    // lightweight {name, authors, subjects, publishers} projection for
+    // library loading. Both are wrapped directly under the document's own
     // txtKey (no intermediate key, unlike keyStore/credStore/txtAccess/
     // txtBookmarks).
     txtMetadata: i.entity({
       content: i.string(),
+      catalog: i.string(),
     }),
     // A document's content, chunked into ordered parts (docs/data_model.md's
     // txtParts entity). Like txtMetadata, carries its own owner link (same
@@ -155,7 +160,7 @@ const _schema = i.schema({
     }),
   },
   links: {
-    // Every owner/user/fromUser/toUser link below targets $users directly
+    // Every owner/forUser/fromUser/toUser link below targets $users directly
     // -- auth.id already equals a $users row's own id, so
     // instant.perms.ts's isOwner checks are a single-hop
     // data.ref('owner.id'), never a two-hop traversal through an
@@ -178,9 +183,9 @@ const _schema = i.schema({
     credStoreOwner: {
       // reverse has: "many" (not "one") -- the admin's owner link is
       // deliberately not unique, so more than one credStore row can point
-      // back at the same $users row (docs/data_model.md's credStore
-      // entity). "Exactly one row" for a user-role account is a
-      // client-side/provisioning-time convention, not enforced here.
+      // back at the same $users row. "Exactly one self row per account" and
+      // "at most one admin-managed recovery row per user" are provisioning/UI
+      // invariants, not enforced here.
       forward: {
         on: "credStore",
         has: "one",
@@ -188,6 +193,18 @@ const _schema = i.schema({
         onDelete: "cascade",
       },
       reverse: { on: "$users", has: "many", label: "credStore" },
+    },
+    credStoreForUser: {
+      // Plaintext management index only: lets admin flows query the
+      // admin-owned recovery row for one target user directly. Permission
+      // rules still use owner/isAdmin; forUser is never an access grant.
+      forward: {
+        on: "credStore",
+        has: "one",
+        label: "forUser",
+        onDelete: "cascade",
+      },
+      reverse: { on: "$users", has: "many", label: "credStoreForUser" },
     },
     txtOwner: {
       forward: { on: "txt", has: "one", label: "owner", onDelete: "cascade" },

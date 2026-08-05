@@ -14,18 +14,19 @@
 // credStore row, docs/data_model.md's credStore entity), not a
 // Worker-minted temporary one.
 //
-// Request body: { idToken, prefix, bucket, endpoint }. This Worker's only
+// Request body: { idToken, prefix }. This Worker's only
 // job is verifying that idToken is a genuine, non-expired Firebase ID token
 // for this app's own Firebase project (RS256 signature against Google's
 // public JWKS via jose -- no outbound call to InstantDB at all, unlike an
 // earlier draft of this file) and, if so, minting a read-only credential
-// scoped to exactly the requested prefix. It does NOT cross-check that the
-// token's own subject actually owns that prefix -- prefix is trusted as
-// given once the token itself is proven real, same as the client already
-// trusts its own decrypted txt.prefix. That's a much smaller concession
-// than it would be for a read-write credential: the worst a forged prefix
-// buys a verified caller is read access to some other document's content,
-// never the ability to modify or delete it.
+// scoped to exactly the requested prefix in env.R2_BUCKET at env.R2_ENDPOINT.
+// It does NOT cross-check that the token's own subject actually owns that
+// prefix -- this Worker intentionally never talks to InstantDB. The simple
+// design treats possession of a decrypted txt.prefix as a bearer read
+// capability for R2 ciphertext access. A leaked prefix can let any verified
+// caller fetch encrypted objects under that prefix until the prefix is
+// rotated, but it does not grant write access and does not by itself decrypt
+// document text.
 import { createRemoteJWKSet, jwtVerify, SignJWT } from "jose";
 
 // The fixed endpoint Firebase ID tokens are verified against -- distinct
@@ -50,8 +51,6 @@ const TTL_SECONDS = 900;
 interface R2CredsRequestBody {
   idToken: string;
   prefix: string;
-  bucket: string;
-  endpoint: string; // this account's R2 endpoint, e.g. https://<accountId>.r2.cloudflarestorage.com
 }
 
 interface TemporaryCredential {
@@ -76,12 +75,7 @@ export async function handleR2Creds(
     return jsonError("idToken is not a valid Firebase ID token", 401);
   }
 
-  const cred = await mintTemporaryCredential(
-    env,
-    body.bucket,
-    body.prefix,
-    body.endpoint,
-  );
+  const cred = await mintTemporaryCredential(env, body.prefix);
   return new Response(JSON.stringify(cred), {
     status: 200,
     headers: { "content-type": "application/json" },
@@ -97,16 +91,11 @@ async function parseBody(request: Request): Promise<R2CredsRequestBody | null> {
   }
   if (typeof data !== "object" || data === null) return null;
   const d = data as Record<string, unknown>;
-  const { idToken, prefix, bucket, endpoint } = d;
-  if (
-    typeof idToken !== "string" ||
-    typeof prefix !== "string" ||
-    typeof bucket !== "string" ||
-    typeof endpoint !== "string"
-  ) {
+  const { idToken, prefix } = d;
+  if (typeof idToken !== "string" || typeof prefix !== "string") {
     return null;
   }
-  return { idToken, prefix, bucket, endpoint };
+  return { idToken, prefix };
 }
 
 // RS256 signature check against Firebase's own public JWKS, plus the
@@ -156,20 +145,19 @@ async function verifyFirebaseIdToken(
 // for any identity; see this file's top comment for why.
 async function mintTemporaryCredential(
   env: Env,
-  bucket: string,
   prefix: string,
-  endpoint: string,
 ): Promise<TemporaryCredential> {
-  const accountId = new URL(endpoint).hostname.split(".")[0];
+  const endpointUrl = new URL(env.R2_ENDPOINT);
+  const accountId = endpointUrl.hostname.split(".")[0];
   const jwt = await new SignJWT({
-    bucket,
+    bucket: env.R2_BUCKET,
     scope: "object-read-only",
     paths: { prefixPaths: [`${prefix}/`] },
   })
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setSubject(accountId)
     .setIssuer(env.READ_WRITE_ACCESS_KEY_ID)
-    .setAudience(new URL(endpoint).host)
+    .setAudience(endpointUrl.host)
     .setIssuedAt()
     .setExpirationTime(`${TTL_SECONDS}s`)
     .sign(new TextEncoder().encode(env.READ_WRITE_SECRET_ACCESS_KEY));

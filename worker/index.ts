@@ -1,13 +1,13 @@
-// The one server component this design needs (docs/data_model.md's
-// "Non-admin (user-role) accounts" section) -- everything else is a direct
-// client-to-InstantDB or client-to-R2 call. This Worker's only job is to
-// verify a Firebase-signed identity and, in return, mint a short-lived R2
-// credential scoped to exactly that identity's own r2Prefix slice of the
-// bucket. It never sees page content (already SQLCipher-encrypted before it
-// would ever reach R2) or any account's umk/path_key/db_key. Applies to
-// every account, admin included -- there is no reason for the admin's own
-// static read-write R2 key to ever reach a browser either, since this same
-// broker covers it just as well as a `user`-role account.
+// The one server component this design needs (docs/r2_credentials.md) --
+// everything else is a direct client-to-InstantDB or client-to-R2 call. This
+// Worker's only job is to verify a Firebase-signed identity and, in return,
+// mint a short-lived read-only R2 credential scoped to the requested
+// document prefix in the Worker-configured bucket. It never talks to
+// InstantDB, never sees plaintext page content, and never sees any account's
+// umk/txtKey/txtPartKey. Applies to every account, admin included -- there is
+// no reason for the admin's own static read-write R2 key to ever reach a
+// browser either, since this same broker covers it just as well as a
+// `user`-role account.
 //
 // Deployed as a real Worker script (wrangler.jsonc's `main`) alongside the
 // static site (wrangler.jsonc's `assets` binding) rather than as classic

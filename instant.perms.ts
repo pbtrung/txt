@@ -5,7 +5,7 @@
 // `npx instant-cli@latest push perms` before treating this as final.
 //
 // There's no separate app-level profile entity in this design -- type lives
-// directly on $users, and every other entity's owner/user/fromUser/toUser
+// directly on $users, and every other entity's owner/forUser/fromUser/toUser
 // link points at $users directly. auth.id already equals a $users row's own
 // id, so every isOwner check below is a single-hop data.ref('owner.id'), not
 // a two-hop ref through an intermediate profile row -- the one exception is
@@ -96,14 +96,13 @@ const rules = {
       delete: "isAdmin",
     },
   },
-  // The encrypted R2-connection-info store (docs/data_model.md's credStore
-  // entity). isOwner is whoever's umk encrypts a given row's content -- the
-  // admin can hold several rows this way (credStoreOwner's reverse link is
-  // has: "many", instant.schema.ts), all still satisfying isOwner the same
-  // way. Same view/create/update/delete shape as keyStore above: view lets
-  // an owner read their own row, but create/update/delete are all
-  // admin-only -- rotating r2_config/display_name is a provisioning action,
-  // never a regular user self-service write.
+  // Encrypted credential rows (docs/data_model.md's credStore entity).
+  // isOwner is whoever's umk wraps this row's credStoreKey. forUser may name
+  // a different account for admin-managed recovery rows, but it is only a
+  // lookup link and never an access grant. Same view/create/update/delete
+  // shape as keyStore above: view lets an owner read their own row, but
+  // create/update/delete are all admin-only -- rotating credential content is
+  // a provisioning action, never a regular user self-service write.
   credStore: {
     bind: [...ADMIN_BIND, ...OWNER_BIND],
     allow: {

@@ -40,8 +40,6 @@ export async function fetchTempR2Credential(
     body: JSON.stringify({
       idToken,
       prefix,
-      bucket: r2Config.bucket,
-      endpoint: r2Config.endpoint,
     }),
   });
   if (!resp.ok) {

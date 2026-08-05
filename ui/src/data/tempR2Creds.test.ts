@@ -14,14 +14,12 @@ afterEach(() => {
 });
 
 describe("fetchTempR2Credential", () => {
-  it("POSTs idToken/prefix/bucket/endpoint and builds an AwsClient from the response", async () => {
+  it("POSTs idToken/prefix and builds an AwsClient from the response", async () => {
     const fetchMock = vi.fn(async (url: string, init: RequestInit) => {
       expect(url).toBe("/api/r2-creds");
       expect(JSON.parse(init.body as string)).toEqual({
         idToken: "id-token-1",
         prefix: "doc-prefix-1",
-        bucket: "my-bucket",
-        endpoint: "https://acct.r2.cloudflarestorage.com",
       });
       return new Response(
         JSON.stringify({
