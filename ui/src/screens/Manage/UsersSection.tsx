@@ -520,11 +520,13 @@ function EditUserPanel({
       try {
         const stored = await getUserCreds(session.instantDb, session, user.id);
         if (!cancelled) {
-          const nextValues = stored ?? {
-            ...credentialDefaults(session),
-            firebaseEmail: user.email ?? "",
-            displayName: user.displayName ?? "",
-          };
+          const nextValues = stored
+            ? { ...stored, displayName: "" }
+            : {
+                ...credentialDefaults(session),
+                firebaseEmail: user.email ?? "",
+                displayName: "",
+              };
           setInitialValues(nextValues);
           setValues(nextValues);
           setReviewValues(null);

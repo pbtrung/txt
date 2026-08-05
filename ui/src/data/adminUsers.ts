@@ -17,7 +17,6 @@ interface UserRow {
   email?: string;
   type?: string | null;
   umk?: string | null;
-  credStore?: CredStoreRow[];
 }
 
 interface EntityRow {
@@ -50,6 +49,7 @@ export interface AdminUserSession {
   umk: Uint8Array;
   credStoreKey: Uint8Array;
   r2Config: R2Config;
+  displayName?: string | null;
 }
 
 export interface UserCredentialFields {
@@ -62,7 +62,7 @@ export interface UserCredentialFields {
   userRootKey: string;
 }
 
-type AdminStoredUserCreds = Omit<UserCredentialFields, "displayName">;
+export type AdminStoredUserCreds = Omit<UserCredentialFields, "displayName">;
 
 export function generateUserRootKey(): string {
   return bytesToBase64(randomBytes(256));
@@ -83,12 +83,6 @@ function validateUserRootKey(value: string): Uint8Array {
 
 function normalizeEmail(email: string | undefined): string | undefined {
   return email?.trim().toLowerCase();
-}
-
-function optionalDisplayName(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 function storedCredsFromJson(json: unknown): AdminStoredUserCreds | null {
@@ -119,7 +113,7 @@ function storedCredsToJson(
   creds: AdminStoredUserCreds,
 ): Record<string, string> {
   // Persisted admin escrow payload. Identity is the row's forUser link, and
-  // display_name belongs only in the target user's own credStore self row.
+  // display_name belongs only to the target user's own session, not admin UI.
   const json: Record<string, string> = {
     instant_app_id: creds.instantAppId,
     instant_client_name: creds.instantClientName,
@@ -232,7 +226,6 @@ async function queryPagedRows<T>(
 async function queryUser(db: any, userId: string): Promise<UserRow | null> {
   const rows = await queryRows<UserRow>(db, "$users", {
     $: { where: { id: userId } },
-    credStore: {},
   });
   return rows[0] ?? null;
 }
@@ -240,7 +233,6 @@ async function queryUser(db: any, userId: string): Promise<UserRow | null> {
 async function queryUsers(db: any): Promise<UserRow[]> {
   return queryPagedRows<UserRow>(db, "$users", {
     $: { order: { email: "asc" } },
-    credStore: {},
   });
 }
 
@@ -306,94 +298,6 @@ async function queryAdminCredStoresForUser(
   });
 }
 
-async function readAdminStoredCreds(
-  db: any,
-  session: AdminUserSession,
-  users: UserRow[] = [],
-): Promise<Map<string, { row: CredStoreRow; creds: AdminStoredUserCreds }>> {
-  const rows = await queryAdminCredStores(db, session.authId);
-  const userIdByEmail = new Map<string, string>();
-  for (const user of users) {
-    const email = normalizeEmail(user.email);
-    if (email) userIdByEmail.set(email, user.id);
-  }
-  const byUserId = new Map<
-    string,
-    { row: CredStoreRow; creds: AdminStoredUserCreds }
-  >();
-  for (const row of rows) {
-    const creds = await decryptStoredCreds(session.umk, row);
-    if (!creds) continue;
-    const userId =
-      row.forUser?.[0]?.id ??
-      userIdByEmail.get(normalizeEmail(creds.firebaseEmail) ?? "");
-    if (userId) byUserId.set(userId, { row, creds });
-  }
-  return byUserId;
-}
-
-async function decryptCredStoreContent(
-  credStoreKey: Uint8Array,
-  row: CredStoreRow,
-): Promise<Record<string, unknown> | null> {
-  if (!row.content) return null;
-  try {
-    const plaintext = await blob.decrypt(
-      credStoreKey,
-      base64ToBytes(row.content),
-      true,
-    );
-    const decoded = JSON.parse(new TextDecoder().decode(plaintext));
-    if (typeof decoded !== "object" || decoded === null) return null;
-    return decoded as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
-async function displayNameFromOwnCredStore(
-  umk: Uint8Array,
-  rows: CredStoreRow[] | undefined,
-): Promise<string | undefined> {
-  if (!Array.isArray(rows)) return undefined;
-  for (const row of rows) {
-    if (!row.credStoreKey) continue;
-    try {
-      const credStoreKey = await blob.decrypt(
-        umk,
-        base64ToBytes(row.credStoreKey),
-      );
-      const content = await decryptCredStoreContent(credStoreKey, row);
-      if (!content || !("r2_config" in content)) continue;
-      const displayName = optionalDisplayName(content.display_name);
-      if (displayName) return displayName;
-    } catch {
-      continue;
-    }
-  }
-  return undefined;
-}
-
-async function displayNameForUser(
-  user: UserRow,
-  session: AdminUserSession,
-  stored: AdminStoredUserCreds | undefined,
-): Promise<string | undefined> {
-  if (user.id === session.authId) {
-    return displayNameFromOwnCredStore(session.umk, user.credStore);
-  }
-  if (!user.umk || !stored) return undefined;
-  try {
-    const userUmk = await blob.decrypt(
-      validateUserRootKey(stored.userRootKey),
-      base64ToBytes(user.umk),
-    );
-    return displayNameFromOwnCredStore(userUmk, user.credStore);
-  } catch {
-    return undefined;
-  }
-}
-
 async function findAdminStoredCreds(
   db: any,
   session: AdminUserSession,
@@ -439,35 +343,26 @@ export async function listUsersWithInfo(
   session: AdminUserSession,
 ): Promise<UserSummary[]> {
   const users = await queryUsers(db);
-  const storedByUserId = await readAdminStoredCreds(db, session, users);
 
-  return Promise.all(
-    users.map(async (row) => {
-      const stored = storedByUserId.get(row.id)?.creds;
-      const displayName =
-        (await displayNameForUser(row, session, stored)) ?? row.email;
-      return {
-        id: row.id,
-        email: row.email,
-        displayName,
-        isAdmin: row.type === "admin",
-      };
-    }),
-  );
+  return users.map((row) => ({
+    id: row.id,
+    email: row.email,
+    displayName:
+      row.id === session.authId
+        ? (session.displayName ?? row.email)
+        : row.email,
+    isAdmin: row.type === "admin",
+  }));
 }
 
 export async function getUserCreds(
   db: any,
   session: AdminUserSession,
   userId: string,
-): Promise<UserCredentialFields | null> {
+): Promise<AdminStoredUserCreds | null> {
   const found = await findAdminStoredCreds(db, session, userId);
   if (!found) return null;
-  const user = await queryUser(db, userId);
-  const displayName = user
-    ? ((await displayNameForUser(user, session, found.creds)) ?? "")
-    : "";
-  return { ...found.creds, displayName };
+  return found.creds;
 }
 
 export async function createUser(
@@ -555,76 +450,53 @@ export async function updateUserCreds(
   db: any,
   session: AdminUserSession,
   userId: string,
-  input: UserCredentialFields,
+  input: AdminStoredUserCreds,
 ): Promise<void> {
   const nextRootKey = validateUserRootKey(input.userRootKey);
   const found = await findAdminStoredCreds(db, session, userId);
   if (!found) {
     throw new AdminUsersError("no stored credentials for this user");
   }
-  const user = await queryUser(db, userId);
-  if (!user?.umk) {
-    throw new AdminUsersError("this user has no stored umk");
-  }
-
-  let userUmk: Uint8Array;
-  try {
-    userUmk = await blob.decrypt(
-      validateUserRootKey(found.creds.userRootKey),
-      base64ToBytes(user.umk),
-    );
-  } catch {
-    throw new AdminUsersError(
-      "stored user_root_key cannot decrypt this user's umk",
-    );
-  }
-
-  const userCredStores = await queryOwnedRows<CredStoreRow>(
-    db,
-    "credStore",
-    userId,
-  );
-  const userCredStore = userCredStores[0];
-  if (!userCredStore?.credStoreKey) {
-    throw new AdminUsersError("this user has no credStore row");
-  }
-  const userCredStoreKey = await blob.decrypt(
-    userUmk,
-    base64ToBytes(userCredStore.credStoreKey),
-  );
   const adminEscrowCredStoreKey = randomBytes(RANDOM_KEY_LEN);
   const nextAdminCredStoreKey = await blob.encrypt(
     session.umk,
     adminEscrowCredStoreKey,
   );
 
-  const [nextUmkBlob, nextUserContent, nextAdminContent] = await Promise.all([
-    blob.encrypt(nextRootKey, userUmk),
-    wrapUserCredStoreContent(
-      userCredStoreKey,
-      session.r2Config,
-      input.displayName,
-    ),
-    wrapStoredCreds(adminEscrowCredStoreKey, {
-      instantAppId: input.instantAppId,
-      instantClientName: input.instantClientName,
-      firebaseEmail: input.firebaseEmail,
-      firebasePassword: input.firebasePassword,
-      firebaseApiKey: input.firebaseApiKey,
-      userRootKey: input.userRootKey,
-    }),
-  ]);
-
-  await db.transact([
-    tx.$users![userId]!.update({
-      umk: bytesToBase64(nextUmkBlob),
-    }),
-    tx.credStore![userCredStore.id]!.update({ content: nextUserContent }),
+  const chunks: unknown[] = [
     tx.credStore![found.row.id]!.update({
       credStoreKey: bytesToBase64(nextAdminCredStoreKey),
-      content: nextAdminContent,
+      content: await wrapStoredCreds(adminEscrowCredStoreKey, input),
     }),
-  ]);
+  ];
+
+  if (input.userRootKey !== found.creds.userRootKey) {
+    // Root-key rotation rewraps $users.umk only. It deliberately does not
+    // decrypt or rewrite the target-owned credStore.content.
+    const user = await queryUser(db, userId);
+    if (!user?.umk) {
+      throw new AdminUsersError("this user has no stored umk");
+    }
+    let userUmk: Uint8Array;
+    try {
+      userUmk = await blob.decrypt(
+        validateUserRootKey(found.creds.userRootKey),
+        base64ToBytes(user.umk),
+      );
+    } catch {
+      throw new AdminUsersError(
+        "stored user_root_key cannot decrypt this user's umk",
+      );
+    }
+    const nextUmkBlob = await blob.encrypt(nextRootKey, userUmk);
+    chunks.unshift(
+      tx.$users![userId]!.update({
+        umk: bytesToBase64(nextUmkBlob),
+      }),
+    );
+  }
+
+  await db.transact(chunks);
 }
 
 export async function deleteUser(

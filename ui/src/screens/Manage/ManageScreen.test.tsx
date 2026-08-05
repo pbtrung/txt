@@ -164,7 +164,6 @@ beforeEach(() => {
     firebaseEmail: "bob@example.com",
     firebasePassword: "pw",
     firebaseApiKey: "fake-api-key",
-    displayName: "Bob",
     userRootKey: "stored-root-key",
   });
   vi.mocked(updateUserCreds).mockResolvedValue(undefined);
@@ -467,7 +466,7 @@ describe("ManageScreen", () => {
       expect.anything(),
       expect.objectContaining({ authId: "auth-1" }),
       "user-2",
-      expect.objectContaining({ firebasePassword: "pw2", displayName: "Bob" }),
+      expect.objectContaining({ firebasePassword: "pw2" }),
     );
   });
 

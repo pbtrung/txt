@@ -60,7 +60,8 @@ const _schema = i.schema({
     // JSON string; self rows store r2_config/display_name, admin recovery
     // rows store the admin-only backup/edit credential bundle. forUser is the
     // identity link, so recovery content does not duplicate user_auth_id or
-    // display_name.
+    // display_name, and admin flows do not read target-owned self rows to
+    // recover display_name.
     credStore: i.entity({
       // 128 random bytes, freshly generated per row and wrapped under this
       // row owner's umk. Two rows can describe the same target account, but

@@ -58,7 +58,7 @@ There's no app-level profile entity in this design — `$users` (InstantDB's own
   }
   ```
 
-  The admin-only recovery row does not duplicate identity/profile fields: `forUser` identifies the target account, and the user-facing display name belongs only in that target user's own self `credStore.content`.
+  The admin-only recovery row does not duplicate identity/profile fields: `forUser` identifies the target account, and the user-facing display name belongs only in that target user's own self `credStore.content`. Manage Users does not decrypt a target user's self row to recover `display_name`; admin list/edit screens use non-secret account identity such as the `$users.email` value instead.
 
   For the admin's own self row:
 

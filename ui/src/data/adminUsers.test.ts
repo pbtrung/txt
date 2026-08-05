@@ -36,6 +36,7 @@ const session: AdminUserSession = {
   umk: new Uint8Array([9]),
   credStoreKey: new Uint8Array([10]),
   r2Config: { endpoint: "https://r2.example", region: "auto", bucket: "b" },
+  displayName: "Admin",
 };
 
 const input: UserCredentialFields = {
@@ -71,25 +72,6 @@ function storedCreds(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function userCredStore(
-  id: string,
-  content: Record<string, unknown>,
-  keyByte = 12,
-) {
-  return {
-    id,
-    credStoreKey: bytesToBase64(new Uint8Array([keyByte])),
-    content: encodedJson({
-      r2_config: {
-        endpoint: "https://r2.example",
-        region: "auto",
-        bucket: "b",
-      },
-      ...content,
-    }),
-  };
-}
-
 function adminEscrowRow(
   id = "escrow-1",
   content: Record<string, unknown> = storedCreds(),
@@ -115,39 +97,21 @@ beforeEach(() => {
 });
 
 describe("adminUsers", () => {
-  it("lists users with display names recovered from their own credential rows", async () => {
-    const adminEscrow = adminEscrowRow();
-    const adminOwnCredStore = userCredStore("admin-cred-1", {
-      display_name: "Admin",
-    });
-    const userOwnCredStore = userCredStore("user-cred-1", {
-      display_name: "Robert",
-    });
+  it("lists the current admin display name and other users by email", async () => {
     const db = fakeDb((query) => {
-      if (query.$users?.$?.where?.id === "admin-1") {
-        return {
-          $users: [
-            {
-              id: "admin-1",
-              credStore: [adminEscrow, adminOwnCredStore],
-            },
-          ],
-        };
-      }
+      expect(query.$users?.credStore).toBeUndefined();
       return {
         $users: [
           {
             id: "admin-1",
             email: "admin@example.com",
             type: "admin",
-            credStore: [adminEscrow, adminOwnCredStore],
           },
           {
             id: "user-2",
             email: "bob@example.com",
             type: "user",
             umk: bytesToBase64(new Uint8Array([11])),
-            credStore: [userOwnCredStore],
           },
           {
             id: "user-3",
@@ -169,7 +133,7 @@ describe("adminUsers", () => {
       {
         id: "user-2",
         email: "bob@example.com",
-        displayName: "Robert",
+        displayName: "bob@example.com",
         isAdmin: false,
       },
       {
@@ -262,10 +226,6 @@ describe("adminUsers", () => {
             {
               id: "user-2",
               email: "bob@example.com",
-              umk: bytesToBase64(new Uint8Array([11])),
-              credStore: [
-                userCredStore("user-cred-1", { display_name: "Bob" }),
-              ],
             },
           ],
         };
@@ -289,26 +249,15 @@ describe("adminUsers", () => {
       firebaseEmail: "bob@example.com",
       firebasePassword: "pw",
       firebaseApiKey: "api-key",
-      displayName: "Bob",
       userRootKey: oldRootKey,
     });
   });
 
-  it("updates admin escrow, the user's own credStore content, and the umk root wrap", async () => {
+  it("updates admin escrow and the umk root wrap without touching the user's own credStore", async () => {
     const db = fakeDb((query) => {
       if (query.credStore?.$?.where?.["forUser.id"] === "user-2") {
         return {
           credStore: [adminEscrowRow()],
-        };
-      }
-      if (query.credStore?.$?.where?.["owner.id"] === "user-2") {
-        return {
-          credStore: [
-            {
-              id: "user-cred-1",
-              credStoreKey: bytesToBase64(new Uint8Array([12])),
-            },
-          ],
         };
       }
       if (query.$users?.$?.where?.id === "user-2") {
@@ -335,14 +284,11 @@ describe("adminUsers", () => {
       return {};
     });
 
-    await updateUserCreds(db, session, "user-2", {
-      ...input,
-      displayName: "Bobby",
-    });
+    await updateUserCreds(db, session, "user-2", input);
 
     expect(db.transact).toHaveBeenCalledOnce();
     const chunks = db.transact.mock.calls[0]![0];
-    expect(chunks).toHaveLength(3);
+    expect(chunks).toHaveLength(2);
     expect(JSON.stringify(chunks)).not.toContain('"type"');
     const ops: unknown[] = chunks.flatMap(
       (chunk: { __ops?: unknown[] }) => chunk.__ops ?? [],
@@ -358,6 +304,21 @@ describe("adminUsers", () => {
             content: expect.any(String),
           }),
         ],
+      ]),
+    );
+    expect(ops).toEqual(
+      expect.arrayContaining([
+        [
+          "update",
+          "$users",
+          "user-2",
+          expect.objectContaining({ umk: expect.any(String) }),
+        ],
+      ]),
+    );
+    expect(ops).not.toEqual(
+      expect.arrayContaining([
+        ["update", "credStore", "user-cred-1", expect.anything()],
       ]),
     );
     const adminUpdate = ops.find(
