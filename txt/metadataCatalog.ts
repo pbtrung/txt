@@ -7,6 +7,7 @@ export interface TxtMetadataContent {
 
 export interface TxtMetadataCatalog {
   name: string;
+  title: string;
   authors: string[];
   subjects: string[];
   publishers: string[];
@@ -58,6 +59,7 @@ export function catalogFromMetadataContent(
   const { name, metadata } = parseMetadataContent(content);
   return {
     name,
+    title: textOf(metadata.title) ?? name,
     authors: textsOf(metadata.creator),
     subjects: textsOf(metadata.subject),
     publishers: textsOf(metadata.publisher),

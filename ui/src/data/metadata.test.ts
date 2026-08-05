@@ -103,6 +103,7 @@ describe("catalog metadata", () => {
     expect(
       catalogFromMetadataContent(
         content("book.epub.txt", {
+          title: "Some Book",
           creator: [{ text: "Author One", role: "aut" }, "Author Two"],
           subject: ["Fantasy", "Classic"],
           publisher: { text: "Press", id: "pub-1" },
@@ -111,6 +112,7 @@ describe("catalog metadata", () => {
       ),
     ).toEqual({
       name: "book.epub.txt",
+      title: "Some Book",
       authors: ["Author One", "Author Two"],
       subjects: ["Fantasy", "Classic"],
       publishers: ["Press"],
@@ -121,6 +123,7 @@ describe("catalog metadata", () => {
     expect(
       toCatalogBookInfo("txt-1", {
         name: "book.epub.txt",
+        title: "Some Book",
         authors: ["Author"],
         subjects: ["Fantasy"],
         publishers: ["Press"],
@@ -128,7 +131,7 @@ describe("catalog metadata", () => {
     ).toEqual({
       txtId: "txt-1",
       name: "book.epub.txt",
-      title: "book.epub.txt",
+      title: "Some Book",
       author: "Author",
       subjects: ["Fantasy"],
       publisher: "Press",
@@ -136,6 +139,20 @@ describe("catalog metadata", () => {
       series: undefined,
       seriesIndex: undefined,
       rawMetadata: [],
+    });
+  });
+
+  it("falls back to catalog.name for older catalog blobs without title", () => {
+    expect(
+      toCatalogBookInfo("txt-1", {
+        name: "book.epub.txt",
+        authors: [],
+        subjects: [],
+        publishers: [],
+      }),
+    ).toMatchObject({
+      name: "book.epub.txt",
+      title: "book.epub.txt",
     });
   });
 });
@@ -202,6 +219,7 @@ describe("parseMetadataCatalog", () => {
     const docKey = randomBytes(128);
     const payload = {
       name: "doc-one.txt",
+      title: "Some Book",
       authors: ["Author"],
       subjects: ["Fantasy"],
       publishers: ["Press"],

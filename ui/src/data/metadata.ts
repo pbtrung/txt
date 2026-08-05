@@ -12,7 +12,7 @@
 
 import * as blob from "../crypto/blob";
 import { base64ToBytes, bytesToBase64 } from "../crypto/bytes";
-import { requireObject, requireString } from "./jsonObject";
+import { optionalString, requireObject, requireString } from "./jsonObject";
 
 export interface MetadataField {
   key: string;
@@ -147,6 +147,7 @@ export interface TxtMetadataContent {
 
 export interface TxtMetadataCatalog {
   name: string;
+  title?: string;
   authors: string[];
   subjects: string[];
   publishers: string[];
@@ -186,6 +187,7 @@ export function catalogFromMetadataContent(
   const { name, metadata } = content;
   return {
     name,
+    title: textOf(metadata.title) ?? name,
     authors: textsOf(metadata.creator),
     subjects: textsOf(metadata.subject),
     publishers: textsOf(metadata.publisher),
@@ -199,7 +201,7 @@ export function toCatalogBookInfo(
   return {
     txtId,
     name: catalog.name,
-    title: catalog.name,
+    title: catalog.title ?? catalog.name,
     author: catalog.authors[0],
     subjects: catalog.subjects,
     publisher: catalog.publishers[0],
@@ -244,6 +246,7 @@ export async function parseMetadataCatalog(
   );
   return {
     name: requireString(parsed, "name"),
+    title: optionalString(parsed, "title"),
     authors: stringArrayOf(parsed.authors, "authors"),
     subjects: stringArrayOf(parsed.subjects, "subjects"),
     publishers: stringArrayOf(parsed.publishers, "publishers"),

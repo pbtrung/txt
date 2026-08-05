@@ -28,11 +28,17 @@ function fakeSession(overrides: Partial<Session> = {}): Session {
   };
 }
 
-async function ownedTxtRow(id: string, name: string, author?: string) {
+async function ownedTxtRow(
+  id: string,
+  name: string,
+  author?: string,
+  title = name,
+) {
   const txtKey = randomBytes(128);
   const txtKeyBlob = await blob.encrypt(umk, txtKey);
   const catalogPayload = {
     name,
+    title,
     authors: author ? [author] : [],
     subjects: [],
     publishers: [],
@@ -46,7 +52,7 @@ async function ownedTxtRow(id: string, name: string, author?: string) {
   };
 }
 
-async function sharedTxtSharesRow(txtId: string, name: string) {
+async function sharedTxtSharesRow(txtId: string, name: string, title = name) {
   const { pubKey, privKey } = await kemKeypair();
   const txtKey = randomBytes(128);
   const { ct, ss } = await kemEncapsulate(pubKey);
@@ -59,6 +65,7 @@ async function sharedTxtSharesRow(txtId: string, name: string) {
 
   const catalogPayload = {
     name,
+    title,
     authors: [],
     subjects: [],
     publishers: [],
@@ -95,13 +102,18 @@ function fakeDb(txt: unknown[], txtShares: unknown[] = []) {
 
 describe("loadLibrary", () => {
   it("loads owned documents, decrypting txtKey under umk and catalog under txtKey", async () => {
-    const row = await ownedTxtRow("txt-1", "doc-one.txt", "Author One");
+    const row = await ownedTxtRow(
+      "txt-1",
+      "doc-one.txt",
+      "Author One",
+      "Doc One",
+    );
     const db = fakeDb([row]);
     const session = fakeSession();
 
     const { metadataById, docKeys } = await loadLibrary(db, session);
 
-    expect(metadataById.get("txt-1")?.title).toBe("doc-one.txt");
+    expect(metadataById.get("txt-1")?.title).toBe("Doc One");
     expect(metadataById.get("txt-1")?.name).toBe("doc-one.txt");
     expect(metadataById.get("txt-1")?.author).toBe("Author One");
     expect(metadataById.get("txt-1")?.rawMetadata).toEqual([]);

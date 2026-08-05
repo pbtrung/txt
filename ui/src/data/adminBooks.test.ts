@@ -181,6 +181,7 @@ describe("saveBookMetadata", () => {
       parseMetadataCatalog(docKey, chunk.payload.catalog),
     ).resolves.toEqual({
       name: "book.txt",
+      title: "New Title",
       authors: ["New Author"],
       subjects: ["Fantasy"],
       publishers: ["Press"],
