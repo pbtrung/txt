@@ -238,7 +238,8 @@ describe("ManageScreen", () => {
     await userEvent.click(screen.getByRole("button", { name: /^Shares/ }));
     expect(screen.getByLabelText(/search shares/i)).toBeInTheDocument();
     expect(screen.getByText("Book One")).toBeInTheDocument();
-    expect(screen.getByText("Shared with Bob (user-2)")).toBeInTheDocument();
+    expect(screen.getByText("Shared with Bob")).toBeInTheDocument();
+    expect(screen.queryByText("Shared with Bob (user-2)")).toBeNull();
   });
 
   it("edits book metadata from the Books toolbar", async () => {
@@ -507,6 +508,10 @@ describe("ManageScreen", () => {
     await userEvent.click(screen.getByRole("button", { name: /^Shares/ }));
     await userEvent.click(screen.getByRole("button", { name: "Create" }));
     await userEvent.selectOptions(screen.getByLabelText("Book"), "txt-1");
+    expect(screen.getByRole("option", { name: "Bob" })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("option", { name: "Bob (user-2)" }),
+    ).not.toBeInTheDocument();
     await userEvent.selectOptions(screen.getByLabelText("Recipient"), "user-2");
     await userEvent.click(screen.getByRole("button", { name: "Grant share" }));
 

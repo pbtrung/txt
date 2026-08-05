@@ -74,6 +74,14 @@ export function userLabel(user: {
   return displayName ? `${displayName} (${user.id})` : user.id;
 }
 
+export function userDisplayLabel(user: {
+  id: string;
+  displayName?: string;
+  email?: string;
+}): string {
+  return user.displayName?.trim() || user.email?.trim() || user.id;
+}
+
 export function truncateOptionLabel(text: string, maxLength = 40): string {
   return text.length > maxLength ? `${text.slice(0, maxLength - 3)}...` : text;
 }

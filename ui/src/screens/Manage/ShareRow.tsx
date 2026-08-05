@@ -1,7 +1,7 @@
 import type { CSSProperties } from "react";
 
 import { ClickableRow } from "../../components/ClickableRow";
-import { userLabel } from "./manageShared";
+import { userDisplayLabel } from "./manageShared";
 
 export const SHARE_ROW_HEIGHT = 80;
 
@@ -35,7 +35,7 @@ export function ShareRow({
         <span
           className={`d-block small text-truncate ${selected ? "" : "text-body-secondary"}`}
         >
-          Shared with {userLabel(recipient)}
+          Shared with {userDisplayLabel(recipient)}
         </span>
       </span>
     </ClickableRow>

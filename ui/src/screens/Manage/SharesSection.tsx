@@ -15,7 +15,7 @@ import {
   FormField,
   errorMessage,
   truncateOptionLabel,
-  userLabel,
+  userDisplayLabel,
   yieldToPaint,
 } from "./manageShared";
 
@@ -111,7 +111,7 @@ function GrantShareForm({
             </option>
             {recipients.map((user) => (
               <option key={user.id} value={user.id}>
-                {truncateOptionLabel(userLabel(user))}
+                {truncateOptionLabel(userDisplayLabel(user))}
               </option>
             ))}
           </select>
@@ -169,7 +169,7 @@ function RevokeSharePanel({
   return (
     <Modal title="Revoke share" onClose={onClose}>
       <p className="small text-body-secondary">
-        This immediately revokes {userLabel(recipient)}&apos;s access to{" "}
+        This immediately revokes {userDisplayLabel(recipient)}&apos;s access to{" "}
         <strong>{title}</strong>.
       </p>
       <div className="d-flex gap-2">
@@ -243,7 +243,7 @@ export function SharesSection({
     if (!q) return shares;
     return shares.filter((share) => {
       const title = booksById.get(share.txtId)?.title ?? share.txtId;
-      const recipient = userLabel(
+      const recipient = userDisplayLabel(
         usersById.get(share.toUserId) ?? unknownUser(share.toUserId),
       );
       return (
