@@ -481,27 +481,42 @@ describe("ReaderScreen", () => {
     expect(await screen.findByText("Library screen")).toBeInTheDocument();
   });
 
-  it('shows "-" instead of 0 for the part box/total on first load, before partCount is known', () => {
+  it("shows only the first-load spinner before partCount is known", () => {
     renderReader(
       baseResult({ loading: true, partCount: 0, currentPartNum: 1 }),
     );
-    const input = screen.getByRole("textbox", { name: /go to part/i });
-    expect(input).toHaveValue("-");
-    expect(input).toBeDisabled();
-    expect(screen.getByText("/ -")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("textbox", { name: /go to part/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("/ -")).not.toBeInTheDocument();
   });
 
-  it("shows a spinner in the reading pane while loading, but keeps the rest of the chrome", () => {
+  it("shows only the first-load spinner until initial text is ready", () => {
     renderReader(baseResult({ loading: true }));
     expect(screen.getByRole("status")).toBeInTheDocument();
-    // The top bar (back-to-library, book title fallback) renders right away
-    // instead of being replaced by a full-page loading screen.
     expect(
-      screen.getByRole("button", { name: /library/i }),
-    ).toBeInTheDocument();
+      screen.queryByRole("button", { name: /library/i }),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByText("First paragraph of part 14."),
     ).not.toBeInTheDocument();
+  });
+
+  it("keeps fallback catalog names hidden during the first-load metadata gap", () => {
+    renderReader(
+      baseResult({
+        loading: false,
+        partTextLoading: false,
+        partText: null,
+        info: {
+          ...baseResult().info!,
+          title: "white-order.epub.txt",
+        },
+      }),
+    );
+    expect(screen.getByRole("status")).toBeInTheDocument();
+    expect(screen.queryByText("white-order.epub.txt")).not.toBeInTheDocument();
   });
 
   it("shows a spinner in the reading pane while a part is (re)loading", () => {

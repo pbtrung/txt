@@ -93,6 +93,19 @@ export function ReaderScreen() {
     bookmarkLine,
     removeBookmark,
   } = useReaderBook(txtId);
+  const initialContentReady = !loading && !partTextLoading && partText !== null;
+  const [readyTxtId, setReadyTxtId] = useState<string | null>(() =>
+    initialContentReady ? txtId : null,
+  );
+  const initialReaderReady = readyTxtId === txtId;
+
+  useEffect(() => {
+    setReadyTxtId(null);
+  }, [txtId]);
+
+  useEffect(() => {
+    if (initialContentReady) setReadyTxtId(txtId);
+  }, [initialContentReady, txtId]);
 
   // The bottom bar's editable part-number box: a local, freely-typeable
   // string kept in sync with currentPartNum whenever *that* changes (paging,
@@ -228,6 +241,21 @@ export function ReaderScreen() {
         </div>
         <div className="alert alert-danger m-4" role="alert">
           {error}
+        </div>
+      </div>
+    );
+  }
+
+  if (!initialReaderReady) {
+    return (
+      <div className="shell-60 d-flex flex-column vh-100">
+        <div
+          className="flex-grow-1 d-flex align-items-center justify-content-center"
+          role="status"
+        >
+          <div className="spinner-border text-primary">
+            <span className="visually-hidden">Loading…</span>
+          </div>
         </div>
       </div>
     );

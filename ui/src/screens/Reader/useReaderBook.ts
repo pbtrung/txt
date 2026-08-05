@@ -138,15 +138,18 @@ export function useReaderBook(txtId: string): UseReaderBookResult {
       if (!docKey) {
         throw new Error(`you don't have access to txtId=${txtId}`);
       }
-      fetchBookInfo(session.instantDb, txtId, docKey)
-        .then((bookInfo) => {
-          if (!cancelled) setFullInfo(bookInfo);
-        })
+      const bookInfoPromise = fetchBookInfo(session.instantDb, txtId, docKey)
+        .then((bookInfo) => bookInfo)
         .catch((err: unknown) => {
           verbose("useReaderBook: fetchBookInfo failed", err);
+          return null;
         });
-      const doc = await openDoc(session.instantDb, txtId, docKey);
+      const [bookInfo, doc] = await Promise.all([
+        bookInfoPromise,
+        openDoc(session.instantDb, txtId, docKey),
+      ]);
       if (cancelled) return;
+      if (bookInfo) setFullInfo(bookInfo);
       docRef.current = doc;
       const count = countParts(doc);
       setPartCount(count);
