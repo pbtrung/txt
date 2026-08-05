@@ -61,6 +61,14 @@ export interface UseReaderBookResult {
 // credential is renewed before it actually expires rather than right after.
 const R2_CRED_REFRESH_BUFFER_MS = 60_000;
 
+function positiveIntegerParam(
+  searchParams: URLSearchParams,
+  name: string,
+): number | null {
+  const value = Number(searchParams.get(name));
+  return Number.isInteger(value) && value > 0 ? value : null;
+}
+
 async function ensureR2Credential(
   session: VaultSession,
   doc: OpenedDoc,
@@ -99,6 +107,7 @@ export function useReaderBook(txtId: string): UseReaderBookResult {
   const partTextCache = useRef(new Map<number, string>());
   const docRef = useRef<OpenedDoc | null>(null);
   const r2CredRef = useRef<TempR2Credential | null>(null);
+  const currentPartNumRef = useRef(currentPartNum);
 
   const bookmarks = bookmarksMap[txtId] ?? [];
   // Library unlock loads only txtMetadata.catalog for the book list. Keep
@@ -106,6 +115,11 @@ export function useReaderBook(txtId: string): UseReaderBookResult {
   // txtMetadata.content once this reader screen fetches it on demand.
   const catalogInfo: BookInfo | null = session?.metadataById.get(txtId) ?? null;
   const info: BookInfo | null = fullInfo ?? catalogInfo;
+  const search = searchParams.toString();
+
+  useEffect(() => {
+    currentPartNumRef.current = currentPartNum;
+  }, [currentPartNum]);
 
   // Opens the document once per (session, txtId) -- resolves its prefix and
   // every part's own txtPartKey (reader.ts's openDoc), then seeds the
@@ -158,19 +172,14 @@ export function useReaderBook(txtId: string): UseReaderBookResult {
       // that, once, over the saved read position (mirrors clicking a
       // bookmark in-screen, just from a cold load instead of an
       // already-open book).
-      const requestedPart = Number(searchParams.get("part"));
-      const requestedLine = Number(searchParams.get("line"));
+      const requestedPart = positiveIntegerParam(searchParams, "part");
+      const requestedLine = positiveIntegerParam(searchParams, "line");
       const initialPart =
-        Number.isInteger(requestedPart) && requestedPart > 0
+        requestedPart !== null
           ? requestedPart
           : (accessMap[txtId]?.lastPartNum ?? 1);
       setCurrentPartNum(clampPartNum(initialPart, count));
-      if (
-        Number.isInteger(requestedPart) &&
-        requestedPart > 0 &&
-        Number.isInteger(requestedLine) &&
-        requestedLine > 0
-      ) {
+      if (requestedPart !== null && requestedLine !== null) {
         setTargetLine(requestedLine);
       }
       setLoading(false);
@@ -187,6 +196,24 @@ export function useReaderBook(txtId: string): UseReaderBookResult {
     // accessMap/searchParams intentionally excluded -- see comment above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, txtId]);
+
+  // React to bookmark deep-link query changes while the same Reader screen
+  // stays mounted. The initial open effect above reads searchParams only
+  // once so ordinary read-position updates do not reload the whole book.
+  useEffect(() => {
+    if (loading || partCount <= 0) return;
+    const params = new URLSearchParams(search);
+    const requestedPart = positiveIntegerParam(params, "part");
+    const requestedLine = positiveIntegerParam(params, "line");
+    if (requestedPart === null || requestedLine === null) return;
+
+    const target = clampPartNum(requestedPart, partCount);
+    if (target !== currentPartNumRef.current) {
+      setPartText(null);
+    }
+    setCurrentPartNum(target);
+    setTargetLine(requestedLine);
+  }, [search, loading, partCount]);
 
   // Fetch (and cache) the current part's content, then decode it; persist
   // the read position.

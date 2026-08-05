@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { act, renderHook, waitFor } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { act, render, renderHook, waitFor } from "@testing-library/react";
+import { MemoryRouter, useNavigate } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 
 import type { AccessMap } from "../../data/access";
@@ -10,7 +10,7 @@ import * as bookMetadataModule from "../../data/bookMetadata";
 import * as readerModule from "../../data/reader";
 import * as tempR2CredsModule from "../../data/tempR2Creds";
 import * as VaultContextModule from "../../state/VaultContext";
-import { useReaderBook } from "./useReaderBook";
+import { useReaderBook, type UseReaderBookResult } from "./useReaderBook";
 
 vi.mock("../../data/bookMetadata");
 vi.mock("../../data/reader");
@@ -129,6 +129,35 @@ function renderReaderBook(txtId: string, initialPath = "/") {
   });
 }
 
+let latestReaderResult: UseReaderBookResult | null = null;
+let latestNavigate: ((to: string) => void) | null = null;
+
+function ReaderBookHarness({ txtId }: { txtId: string }) {
+  latestReaderResult = useReaderBook(txtId);
+  latestNavigate = useNavigate();
+  return null;
+}
+
+function renderReaderBookHarness(txtId: string, initialPath = "/") {
+  latestReaderResult = null;
+  latestNavigate = null;
+  render(
+    <MemoryRouter initialEntries={[initialPath]}>
+      <ReaderBookHarness txtId={txtId} />
+    </MemoryRouter>,
+  );
+  return {
+    result: () => {
+      if (!latestReaderResult) throw new Error("reader hook not rendered");
+      return latestReaderResult;
+    },
+    navigate: (to: string) => {
+      if (!latestNavigate) throw new Error("navigate not ready");
+      latestNavigate(to);
+    },
+  };
+}
+
 describe("useReaderBook", () => {
   it("loads book data, starts at the saved read position, and fetches that part's text", async () => {
     const session = mockVault(
@@ -203,6 +232,28 @@ describe("useReaderBook", () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.currentPartNum).toBe(4);
     expect(result.current.targetLine).toBe(7);
+  });
+
+  it("responds to bookmark query changes while the same reader route stays mounted", async () => {
+    mockVault({ "txt-3": { lastPartNum: 1, lastAccessedMs: 1 } });
+    partCount.mockReturnValue(5);
+    mockPartContent(["p1", "p2", "p3", "p4", "p5"]);
+
+    const { result, navigate } = renderReaderBookHarness(
+      "txt-3",
+      "/?part=2&line=4",
+    );
+    await waitFor(() => expect(result().loading).toBe(false));
+    await waitFor(() => expect(result().partText).toBe("p2"));
+
+    act(() => result().clearTargetLine());
+    expect(result().targetLine).toBeNull();
+
+    act(() => navigate("/?part=4&line=9"));
+
+    await waitFor(() => expect(result().currentPartNum).toBe(4));
+    expect(result().targetLine).toBe(9);
+    await waitFor(() => expect(result().partText).toBe("p4"));
   });
 
   it("goToBookmark() moves to the given part and sets targetLine", async () => {
