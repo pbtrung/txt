@@ -50,17 +50,15 @@ There's no app-level profile entity in this design — `$users` (InstantDB's own
   ```json
   {
     "instant_app_id": "",
-    "instant_client_name": "firebase",
+    "instant_client_name": "",
     "firebase_email": "",
     "firebase_password": "",
     "firebase_api_key": "",
-    "display_name": "",
-    "user_root_key": "",
-    "user_auth_id": ""
+    "user_root_key": ""
   }
   ```
 
-  `display_name` in that admin-only recovery row is internal bookkeeping so edit flows can preserve the user's canonical display name. The JSON that Manage Users shows an admin to download/copy deliberately omits `display_name`; the user-facing display name belongs in the target user's own self `credStore.content`.
+  The admin-only recovery row does not duplicate identity/profile fields: `forUser` identifies the target account, and the user-facing display name belongs only in that target user's own self `credStore.content`.
 
   For the admin's own self row:
 

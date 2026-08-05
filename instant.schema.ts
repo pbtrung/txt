@@ -58,7 +58,9 @@ const _schema = i.schema({
     // owner == forUser; an admin-managed recovery row has owner == admin and
     // forUser == target user. content is a Blob-wrapped (crypto.md format)
     // JSON string; self rows store r2_config/display_name, admin recovery
-    // rows store the admin-only backup/edit credential bundle.
+    // rows store the admin-only backup/edit credential bundle. forUser is the
+    // identity link, so recovery content does not duplicate user_auth_id or
+    // display_name.
     credStore: i.entity({
       // 128 random bytes, freshly generated per row and wrapped under this
       // row owner's umk. Two rows can describe the same target account, but

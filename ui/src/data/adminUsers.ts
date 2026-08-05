@@ -24,9 +24,14 @@ interface EntityRow {
   id: string;
 }
 
+interface LinkedId {
+  id: string;
+}
+
 interface CredStoreRow extends EntityRow {
   credStoreKey?: string;
   content?: string;
+  forUser?: LinkedId[];
 }
 
 interface ShareRow extends EntityRow {
@@ -57,9 +62,7 @@ export interface UserCredentialFields {
   userRootKey: string;
 }
 
-interface AdminStoredUserCreds extends UserCredentialFields {
-  userAuthId?: string;
-}
+type AdminStoredUserCreds = Omit<UserCredentialFields, "displayName">;
 
 export function generateUserRootKey(): string {
   return bytesToBase64(randomBytes(256));
@@ -108,28 +111,23 @@ function storedCredsFromJson(json: unknown): AdminStoredUserCreds | null {
     firebaseEmail: data.firebase_email as string,
     firebasePassword: data.firebase_password as string,
     firebaseApiKey: data.firebase_api_key as string,
-    displayName: typeof data.display_name === "string" ? data.display_name : "",
     userRootKey: data.user_root_key as string,
-    userAuthId:
-      typeof data.user_auth_id === "string" ? data.user_auth_id : undefined,
   };
 }
 
 function storedCredsToJson(
   creds: AdminStoredUserCreds,
 ): Record<string, string> {
-  // Internal admin escrow payload. UsersSection.credentialsJson intentionally
-  // strips display_name from the JSON shown for copy/download.
+  // Persisted admin escrow payload. Identity is the row's forUser link, and
+  // display_name belongs only in the target user's own credStore self row.
   const json: Record<string, string> = {
     instant_app_id: creds.instantAppId,
     instant_client_name: creds.instantClientName,
     firebase_email: creds.firebaseEmail,
     firebase_password: creds.firebasePassword,
     firebase_api_key: creds.firebaseApiKey,
-    display_name: creds.displayName,
     user_root_key: creds.userRootKey,
   };
-  if (creds.userAuthId) json.user_auth_id = creds.userAuthId;
   return json;
 }
 
@@ -234,6 +232,7 @@ async function queryPagedRows<T>(
 async function queryUser(db: any, userId: string): Promise<UserRow | null> {
   const rows = await queryRows<UserRow>(db, "$users", {
     $: { where: { id: userId } },
+    credStore: {},
   });
   return rows[0] ?? null;
 }
@@ -285,10 +284,26 @@ async function queryAdminCredStores(
   const result = await db.queryOnce({
     $users: {
       $: { where: { id: adminAuthId } },
-      credStore: {},
+      credStore: { forUser: {} },
     },
   });
   return result.data.$users?.[0]?.credStore ?? [];
+}
+
+async function queryAdminCredStoresForUser(
+  db: any,
+  adminAuthId: string,
+  userId: string,
+): Promise<CredStoreRow[]> {
+  return queryRows<CredStoreRow>(db, "credStore", {
+    $: {
+      where: {
+        "owner.id": adminAuthId,
+        "forUser.id": userId,
+      },
+    },
+    forUser: {},
+  });
 }
 
 async function readAdminStoredCreds(
@@ -310,10 +325,9 @@ async function readAdminStoredCreds(
     const creds = await decryptStoredCreds(session.umk, row);
     if (!creds) continue;
     const userId =
-      creds.userAuthId ??
+      row.forUser?.[0]?.id ??
       userIdByEmail.get(normalizeEmail(creds.firebaseEmail) ?? "");
-    if (userId)
-      byUserId.set(userId, { row, creds: { ...creds, userAuthId: userId } });
+    if (userId) byUserId.set(userId, { row, creds });
   }
   return byUserId;
 }
@@ -387,19 +401,30 @@ async function findAdminStoredCreds(
 ): Promise<{ row: CredStoreRow; creds: AdminStoredUserCreds } | null> {
   const user = await queryUser(db, userId);
   const targetEmail = normalizeEmail(user?.email);
+  const targetRows = await queryAdminCredStoresForUser(
+    db,
+    session.authId,
+    userId,
+  );
+  for (const row of targetRows) {
+    const creds = await decryptStoredCreds(session.umk, row);
+    if (creds) return { row, creds };
+  }
+
+  // Fallback for older rows created before forUser was backfilled: match the
+  // encrypted Firebase email if a target email is known.
   const rows = await queryAdminCredStores(db, session.authId);
   let emailMatch: { row: CredStoreRow; creds: AdminStoredUserCreds } | null =
     null;
   for (const row of rows) {
     const creds = await decryptStoredCreds(session.umk, row);
     if (!creds) continue;
-    if (creds.userAuthId === userId) return { row, creds };
     if (
       targetEmail &&
       normalizeEmail(creds.firebaseEmail) === targetEmail &&
       !emailMatch
     ) {
-      emailMatch = { row, creds: { ...creds, userAuthId: userId } };
+      emailMatch = { row, creds };
     }
   }
   return emailMatch;
@@ -438,8 +463,11 @@ export async function getUserCreds(
 ): Promise<UserCredentialFields | null> {
   const found = await findAdminStoredCreds(db, session, userId);
   if (!found) return null;
-  const { userAuthId: _userAuthId, ...creds } = found.creds;
-  return creds;
+  const user = await queryUser(db, userId);
+  const displayName = user
+    ? ((await displayNameForUser(user, session, found.creds)) ?? "")
+    : "";
+  return { ...found.creds, displayName };
 }
 
 export async function createUser(
@@ -481,10 +509,11 @@ export async function createUser(
     session.r2Config,
     input.displayName,
   );
-  const adminStoredCreds = await wrapStoredCreds(adminEscrowCredStoreKey, {
-    ...input,
-    userAuthId: auth.authId,
-  });
+  const { displayName: _displayName, ...adminInput } = input;
+  const adminStoredCreds = await wrapStoredCreds(
+    adminEscrowCredStoreKey,
+    adminInput,
+  );
   const adminCredStoreKeyBlob = await blob.encrypt(
     session.umk,
     adminEscrowCredStoreKey,
@@ -577,8 +606,12 @@ export async function updateUserCreds(
       input.displayName,
     ),
     wrapStoredCreds(adminEscrowCredStoreKey, {
-      ...input,
-      userAuthId: userId,
+      instantAppId: input.instantAppId,
+      instantClientName: input.instantClientName,
+      firebaseEmail: input.firebaseEmail,
+      firebasePassword: input.firebasePassword,
+      firebaseApiKey: input.firebaseApiKey,
+      userRootKey: input.userRootKey,
     }),
   ]);
 

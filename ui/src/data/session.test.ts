@@ -121,9 +121,7 @@ describe("resolveSession", () => {
       firebase_email: "bob@example.com",
       firebase_password: "pw",
       firebase_api_key: "api-key",
-      display_name: "Bob",
       user_root_key: bytesToBase64(new Uint8Array(256).fill(5)),
-      user_auth_id: "user-2",
     });
     const ownCredStoreRow = await buildCredStoreRow({
       display_name: "Admin",

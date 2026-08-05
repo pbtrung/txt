@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { bytesToBase64 } from "../crypto/bytes";
+import { base64ToBytes, bytesToBase64 } from "../crypto/bytes";
 import {
   AdminUsersError,
   createUser,
@@ -66,9 +66,7 @@ function storedCreds(overrides: Record<string, unknown> = {}) {
     firebase_email: "bob@example.com",
     firebase_password: "pw",
     firebase_api_key: "api-key",
-    display_name: "Bob",
     user_root_key: oldRootKey,
-    user_auth_id: "user-2",
     ...overrides,
   };
 }
@@ -96,12 +94,20 @@ function adminEscrowRow(
   id = "escrow-1",
   content: Record<string, unknown> = storedCreds(),
   keyByte = 13,
+  forUserId = "user-2",
 ) {
   return {
     id,
     credStoreKey: bytesToBase64(new Uint8Array([keyByte])),
     content: encodedJson(content),
+    forUser: [{ id: forUserId }],
   };
+}
+
+function decodedContent(row: { content: string }): Record<string, unknown> {
+  return JSON.parse(
+    new TextDecoder().decode(base64ToBytes(row.content)),
+  ) as Record<string, unknown>;
 }
 
 beforeEach(() => {
@@ -110,10 +116,7 @@ beforeEach(() => {
 
 describe("adminUsers", () => {
   it("lists users with display names recovered from their own credential rows", async () => {
-    const adminEscrow = adminEscrowRow(
-      "escrow-1",
-      storedCreds({ display_name: "Admin escrow Bob" }),
-    );
+    const adminEscrow = adminEscrowRow();
     const adminOwnCredStore = userCredStore("admin-cred-1", {
       display_name: "Admin",
     });
@@ -230,14 +233,43 @@ describe("adminUsers", () => {
         op[0] === "update" &&
         op[1] === "credStore" &&
         op[2] === adminLink?.[2],
-    ) as [string, string, string, { credStoreKey: string }] | undefined;
+    ) as
+      | [string, string, string, { credStoreKey: string; content: string }]
+      | undefined;
     expect(adminUpdate?.[3].credStoreKey).not.toBe(
       bytesToBase64(session.credStoreKey),
     );
+    expect(decodedContent(adminUpdate![3])).toEqual({
+      instant_app_id: "app-1",
+      instant_client_name: "firebase",
+      firebase_email: "bob@example.com",
+      firebase_password: "pw",
+      firebase_api_key: "api-key",
+      user_root_key: rootKey,
+    });
   });
 
   it("reads a user's stored credential fields from admin escrow", async () => {
     const db = fakeDb((query) => {
+      if (query.credStore?.$?.where?.["forUser.id"] === "user-2") {
+        return {
+          credStore: [adminEscrowRow()],
+        };
+      }
+      if (query.$users?.$?.where?.id === "user-2") {
+        return {
+          $users: [
+            {
+              id: "user-2",
+              email: "bob@example.com",
+              umk: bytesToBase64(new Uint8Array([11])),
+              credStore: [
+                userCredStore("user-cred-1", { display_name: "Bob" }),
+              ],
+            },
+          ],
+        };
+      }
       if (query.$users?.credStore) {
         return {
           $users: [
@@ -248,7 +280,7 @@ describe("adminUsers", () => {
           ],
         };
       }
-      return { $users: [{ id: "user-2", email: "bob@example.com" }] };
+      return {};
     });
 
     await expect(getUserCreds(db, session, "user-2")).resolves.toEqual({
@@ -264,17 +296,22 @@ describe("adminUsers", () => {
 
   it("updates admin escrow, the user's own credStore content, and the umk root wrap", async () => {
     const db = fakeDb((query) => {
-      if (query.$users?.credStore) {
+      if (query.credStore?.$?.where?.["forUser.id"] === "user-2") {
         return {
-          $users: [
+          credStore: [adminEscrowRow()],
+        };
+      }
+      if (query.credStore?.$?.where?.["owner.id"] === "user-2") {
+        return {
+          credStore: [
             {
-              id: "admin-1",
-              credStore: [adminEscrowRow()],
+              id: "user-cred-1",
+              credStoreKey: bytesToBase64(new Uint8Array([12])),
             },
           ],
         };
       }
-      if (query.$users) {
+      if (query.$users?.$?.where?.id === "user-2") {
         return {
           $users: [
             {
@@ -285,12 +322,12 @@ describe("adminUsers", () => {
           ],
         };
       }
-      if (query.credStore) {
+      if (query.$users?.credStore) {
         return {
-          credStore: [
+          $users: [
             {
-              id: "user-cred-1",
-              credStoreKey: bytesToBase64(new Uint8Array([12])),
+              id: "admin-1",
+              credStore: [adminEscrowRow()],
             },
           ],
         };
@@ -323,6 +360,23 @@ describe("adminUsers", () => {
         ],
       ]),
     );
+    const adminUpdate = ops.find(
+      (op) =>
+        Array.isArray(op) &&
+        op[0] === "update" &&
+        op[1] === "credStore" &&
+        op[2] === "escrow-1",
+    ) as
+      | [string, string, string, { credStoreKey: string; content: string }]
+      | undefined;
+    expect(decodedContent(adminUpdate![3])).toEqual({
+      instant_app_id: "app-1",
+      instant_client_name: "firebase",
+      firebase_email: "bob@example.com",
+      firebase_password: "pw",
+      firebase_api_key: "api-key",
+      user_root_key: rootKey,
+    });
   });
 
   it("deletes shares, access/bookmarks, key/cred rows, and the admin escrow row", async () => {
@@ -332,6 +386,11 @@ describe("adminUsers", () => {
       }
       if (query.txtShares?.$?.where?.["fromUser.id"]) {
         return { txtShares: [{ id: "share-out", shareKey: "b" }] };
+      }
+      if (query.credStore?.$?.where?.["forUser.id"] === "user-2") {
+        return {
+          credStore: [adminEscrowRow()],
+        };
       }
       if (query.keyStore) return { keyStore: [{ id: "key-1" }] };
       if (query.credStore?.$?.where?.["owner.id"] === "user-2") {
@@ -349,7 +408,10 @@ describe("adminUsers", () => {
           ],
         };
       }
-      return { $users: [{ id: "user-2", email: "bob@example.com" }] };
+      if (query.$users?.$?.where?.id === "user-2") {
+        return { $users: [{ id: "user-2", email: "bob@example.com" }] };
+      }
+      return {};
     });
 
     await deleteUser(db, session, "user-2");
