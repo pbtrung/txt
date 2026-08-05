@@ -317,6 +317,11 @@ describe("adminUsers", () => {
     const chunks = db.transact.mock.calls[0]![0];
     expect(chunks).toHaveLength(8);
     expect(JSON.stringify(chunks)).not.toContain('"type"');
+    expect(
+      chunks.flatMap((chunk: { __ops?: unknown[] }) => chunk.__ops ?? []),
+    ).toEqual(
+      expect.arrayContaining([["delete", "$users", "user-2", undefined]]),
+    );
   });
 
   it("rejects deleting the current admin account", async () => {

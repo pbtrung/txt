@@ -611,7 +611,7 @@ export async function deleteUser(
   if (adminStored) {
     chunks.push(tx.credStore![adminStored.row.id]!.delete());
   }
-  chunks.push(tx.$users![targetUserId]!.update({ umk: null }));
+  chunks.push(tx.$users![targetUserId]!.delete());
 
   await transactIfAny(db, chunks);
 }
