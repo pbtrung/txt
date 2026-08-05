@@ -326,7 +326,7 @@ describe("ReaderScreen", () => {
       ).not.toBeInTheDocument();
     });
 
-    it("shows every raw metadata field from the catalog entry, not just the curated summary", async () => {
+    it("shows every raw metadata field from the full metadata record, not just the curated summary", async () => {
       renderReader(baseResult());
       await openInfo();
       expect(screen.getByText("All metadata")).toBeInTheDocument();

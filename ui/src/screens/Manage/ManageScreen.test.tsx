@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { fetchBookInfo } from "../../data/bookMetadata";
 import type { BookInfo } from "../../data/metadata";
 import * as VaultContextModule from "../../state/VaultContext";
 import { ManageScreen } from "./ManageScreen";
@@ -37,6 +38,15 @@ vi.mock("../../data/adminShares", async () => {
     grantShare: vi.fn(),
     listShares: vi.fn(),
     revokeShare: vi.fn(),
+  };
+});
+vi.mock("../../data/bookMetadata", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../data/bookMetadata")
+  >("../../data/bookMetadata");
+  return {
+    ...actual,
+    fetchBookInfo: vi.fn(),
   };
 });
 
@@ -84,7 +94,7 @@ function setup(refreshing = false) {
       credStoreKey: new Uint8Array(),
       r2Config: { endpoint: "https://x", region: "auto", bucket: "b" },
       metadataById,
-      docKeys: new Map(),
+      docKeys: new Map([["txt-1", new Uint8Array()]]),
       txtAccess: { id: null, key: new Uint8Array() },
       txtBookmarks: { id: null, key: new Uint8Array() },
     } as unknown as VaultContextModule.VaultSession,
@@ -151,6 +161,7 @@ beforeEach(() => {
   vi.mocked(deleteUser).mockResolvedValue(undefined);
   vi.mocked(grantShare).mockResolvedValue(undefined);
   vi.mocked(revokeShare).mockResolvedValue(undefined);
+  vi.mocked(fetchBookInfo).mockResolvedValue(metadataById.get("txt-1")!);
   updateBookMetadata.mockResolvedValue(undefined);
 });
 
@@ -230,6 +241,7 @@ describe("ManageScreen", () => {
     expect(
       screen.getByRole("dialog", { name: "Edit Book One" }),
     ).toBeInTheDocument();
+    await waitFor(() => expect(fetchBookInfo).toHaveBeenCalledOnce());
     const title = screen.getByLabelText("Title");
     await userEvent.clear(title);
     await userEvent.type(title, "Book Uno");

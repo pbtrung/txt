@@ -1,10 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import * as blob from "../crypto/blob";
 import { bytesToBase64, concatBytes, randomBytes } from "../crypto/bytes";
 import { SALT_LEN } from "../crypto/constants";
 import { kemEncapsulate, kemKeypair } from "./leancrypto";
 import { loadLibrary } from "./library";
+import { wrapMetadataCatalog } from "./metadata";
 import type { Session } from "./session";
 
 const umk = randomBytes(128);
@@ -27,22 +28,21 @@ function fakeSession(overrides: Partial<Session> = {}): Session {
   };
 }
 
-async function ownedTxtRow(id: string, name: string, opfTitle?: string) {
+async function ownedTxtRow(id: string, name: string, author?: string) {
   const txtKey = randomBytes(128);
   const txtKeyBlob = await blob.encrypt(umk, txtKey);
-  const contentPayload = {
+  const catalogPayload = {
     name,
-    metadata: opfTitle ? { title: opfTitle } : {},
+    authors: author ? [author] : [],
+    subjects: [],
+    publishers: [],
   };
-  const contentBlob = await blob.encrypt(
-    txtKey,
-    new TextEncoder().encode(JSON.stringify(contentPayload)),
-    { compressed: true },
-  );
   return {
     id,
     txtKey: bytesToBase64(txtKeyBlob),
-    txtMetadata: [{ content: bytesToBase64(contentBlob) }],
+    txtMetadata: [
+      { catalog: await wrapMetadataCatalog(txtKey, catalogPayload) },
+    ],
   };
 }
 
@@ -57,18 +57,23 @@ async function sharedTxtSharesRow(txtId: string, name: string) {
   const salt = txtKeyBlob.slice(4, 4 + SALT_LEN); // magic(2)+version(2) header, then salt
   const saltKemCt = concatBytes(salt, ct);
 
-  const contentPayload = { name, metadata: {} };
-  const contentBlob = await blob.encrypt(
-    txtKey,
-    new TextEncoder().encode(JSON.stringify(contentPayload)),
-    { compressed: true },
-  );
+  const catalogPayload = {
+    name,
+    authors: [],
+    subjects: [],
+    publishers: [],
+  };
   return {
     row: {
       saltKemCt: bytesToBase64(saltKemCt),
       txtKey: bytesToBase64(txtKeyBlob),
       txt: [
-        { id: txtId, txtMetadata: [{ content: bytesToBase64(contentBlob) }] },
+        {
+          id: txtId,
+          txtMetadata: [
+            { catalog: await wrapMetadataCatalog(txtKey, catalogPayload) },
+          ],
+        },
       ],
     },
     privKey,
@@ -77,28 +82,34 @@ async function sharedTxtSharesRow(txtId: string, name: string) {
 
 function fakeDb(txt: unknown[], txtShares: unknown[] = []) {
   return {
-    queryOnce: async (query: any) => {
+    queryOnce: vi.fn(async (query: any) => {
       if (query.txt) {
         return { data: { txt: query.txt.$.offset === 0 ? txt : [] } };
       }
       return {
         data: { txtShares: query.txtShares.$.offset === 0 ? txtShares : [] },
       };
-    },
+    }),
   };
 }
 
 describe("loadLibrary", () => {
-  it("loads owned documents, decrypting txtKey under umk and metadata under txtKey", async () => {
-    const row = await ownedTxtRow("txt-1", "doc-one.txt", "Real Title");
+  it("loads owned documents, decrypting txtKey under umk and catalog under txtKey", async () => {
+    const row = await ownedTxtRow("txt-1", "doc-one.txt", "Author One");
     const db = fakeDb([row]);
     const session = fakeSession();
 
     const { metadataById, docKeys } = await loadLibrary(db, session);
 
-    expect(metadataById.get("txt-1")?.title).toBe("Real Title");
+    expect(metadataById.get("txt-1")?.title).toBe("doc-one.txt");
     expect(metadataById.get("txt-1")?.name).toBe("doc-one.txt");
+    expect(metadataById.get("txt-1")?.author).toBe("Author One");
+    expect(metadataById.get("txt-1")?.rawMetadata).toEqual([]);
     expect(docKeys.get("txt-1")).toBeInstanceOf(Uint8Array);
+    expect(db.queryOnce.mock.calls[0]![0].txt.txtMetadata.$.fields).toEqual([
+      "catalog",
+    ]);
+    expect(db.queryOnce.mock.calls[0]![0].txt.$.fields).toEqual(["txtKey"]);
   });
 
   it("falls back to name when there's no OPF title", async () => {

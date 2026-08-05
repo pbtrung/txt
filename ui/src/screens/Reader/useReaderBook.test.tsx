@@ -6,11 +6,13 @@ import { describe, expect, it, vi } from "vitest";
 import type { AccessMap } from "../../data/access";
 import type { BookmarksMap } from "../../data/bookmarks";
 import type { BookInfo } from "../../data/metadata";
+import * as bookMetadataModule from "../../data/bookMetadata";
 import * as readerModule from "../../data/reader";
 import * as tempR2CredsModule from "../../data/tempR2Creds";
 import * as VaultContextModule from "../../state/VaultContext";
 import { useReaderBook } from "./useReaderBook";
 
+vi.mock("../../data/bookMetadata");
 vi.mock("../../data/reader");
 vi.mock("../../data/tempR2Creds");
 vi.mock("../../state/VaultContext", async () => {
@@ -27,6 +29,7 @@ const removeBookmarkEntry = vi.fn().mockResolvedValue(undefined);
 const openDoc = vi.mocked(readerModule.openDoc);
 const partCount = vi.mocked(readerModule.partCount);
 const partContent = vi.mocked(readerModule.partContent);
+const fetchBookInfo = vi.mocked(bookMetadataModule.fetchBookInfo);
 const fetchTempR2Credential = vi.mocked(
   tempR2CredsModule.fetchTempR2Credential,
 );
@@ -56,6 +59,13 @@ function mockVault(
   metadataById: Map<string, BookInfo> = new Map(),
 ) {
   openDoc.mockResolvedValue(FAKE_DOC as never);
+  fetchBookInfo.mockImplementation(async (_db, id) => ({
+    txtId: id,
+    name: `full-${id}.txt`,
+    title: `full-${id}.txt`,
+    subjects: [],
+    rawMetadata: [],
+  }));
   fetchTempR2Credential.mockResolvedValue({
     client: {} as never,
     expiresAtMs: Date.now() + 900_000,
@@ -120,7 +130,7 @@ function renderReaderBook(txtId: string, initialPath = "/") {
 
 describe("useReaderBook", () => {
   it("loads book data, starts at the saved read position, and fetches that part's text", async () => {
-    mockVault(
+    const session = mockVault(
       { "txt-7": { lastPartNum: 14, lastAccessedMs: 1 } },
       {},
       new Map([
@@ -147,6 +157,14 @@ describe("useReaderBook", () => {
 
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.currentPartNum).toBe(14);
+    await waitFor(() =>
+      expect(result.current.info?.title).toBe("full-txt-7.txt"),
+    );
+    expect(fetchBookInfo).toHaveBeenCalledWith(
+      expect.anything(),
+      "txt-7",
+      session.docKeys.get("txt-7"),
+    );
 
     await waitFor(() => expect(result.current.partText).toBe("part-14"));
     expect(recordReadPosition).toHaveBeenCalledWith(

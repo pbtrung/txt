@@ -329,8 +329,8 @@ export function ReaderScreen() {
               {/* The curated fields above (title/author/series/subjects/
                   description) exist for their own special-purpose rendering;
                   this is the complete record underneath -- every OPF/Calibre
-                  field this book's metadata carries, verbatim key and
-                  values, so nothing from the catalog entry is hidden. */}
+                  field this book's full metadata carries, verbatim key and
+                  values. */}
               {info && info.rawMetadata.length > 0 && (
                 <div className="mt-3 pt-2 border-top">
                   <div className="text-body-secondary text-uppercase small fw-semibold mb-1">

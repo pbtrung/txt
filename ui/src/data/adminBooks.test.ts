@@ -29,7 +29,11 @@ import {
   type AdminBooksSession,
   type BookMetadataEdits,
 } from "./adminBooks";
-import { parseMetadataContent, type TxtMetadataContent } from "./metadata";
+import {
+  parseMetadataCatalog,
+  parseMetadataContent,
+  type TxtMetadataContent,
+} from "./metadata";
 
 const docKey = randomBytes(128);
 const session: AdminBooksSession = {
@@ -121,7 +125,7 @@ describe("applyBookMetadataEdits", () => {
 });
 
 describe("saveBookMetadata", () => {
-  it("rewrites txtMetadata content and returns updated BookInfo", async () => {
+  it("rewrites txtMetadata content/catalog and returns updated BookInfo", async () => {
     const db = fakeDb({
       id: "metadata-1",
       content: await encodedMetadata({
@@ -157,7 +161,7 @@ describe("saveBookMetadata", () => {
     expect(db.transact).toHaveBeenCalledOnce();
     const chunk = db.transact.mock.calls[0]![0][0] as {
       id: string;
-      payload: { content: string };
+      payload: { content: string; catalog: string };
     };
     expect(chunk.id).toBe("metadata-1");
     await expect(
@@ -172,6 +176,14 @@ describe("saveBookMetadata", () => {
         subject: "Fantasy",
         description: "Updated.",
       },
+    });
+    await expect(
+      parseMetadataCatalog(docKey, chunk.payload.catalog),
+    ).resolves.toEqual({
+      name: "book.txt",
+      authors: ["New Author"],
+      subjects: ["Fantasy"],
+      publishers: ["Press"],
     });
   });
 

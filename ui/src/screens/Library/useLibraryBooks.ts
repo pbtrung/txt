@@ -8,10 +8,10 @@ export interface UseLibraryBooksResult {
   loading: boolean;
 }
 
-/** Derives the Library's book list from data already loaded in full during
- * unlock (session.metadataById, the context's own accessMap) -- no DB calls
- * of its own. `loading` is only ever true for the brief window before a
- * session exists at all. */
+/** Derives the Library's book list from catalog data loaded during unlock
+ * (session.metadataById, the context's own accessMap) -- no DB calls of its
+ * own. `loading` is only ever true for the brief window before a session
+ * exists at all. */
 export function useLibraryBooks(): UseLibraryBooksResult {
   const { session, accessMap } = useVault();
 

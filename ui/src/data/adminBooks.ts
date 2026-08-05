@@ -1,10 +1,11 @@
 import { tx } from "@instantdb/react";
 
-import * as blob from "../crypto/blob";
-import { bytesToBase64 } from "../crypto/bytes";
 import {
+  catalogFromMetadataContent,
   parseMetadataContent,
   toBookInfo,
+  wrapMetadataCatalog,
+  wrapMetadataContent,
   type BookInfo,
   type OpfMetadata,
   type OpfValue,
@@ -79,26 +80,14 @@ export function applyBookMetadataEdits(
   return { ...content, metadata };
 }
 
-async function wrapMetadataContent(
-  docKey: Uint8Array,
-  content: TxtMetadataContent,
-): Promise<string> {
-  const encrypted = await blob.encrypt(
-    docKey,
-    new TextEncoder().encode(JSON.stringify(content)),
-    { compressed: true },
-  );
-  return bytesToBase64(encrypted);
-}
-
 async function queryTxtMetadata(
   db: any,
   txtId: string,
 ): Promise<TxtMetadataRow> {
   const result = await db.queryOnce({
     txt: {
-      $: { where: { id: txtId } },
-      txtMetadata: {},
+      $: { where: { id: txtId }, fields: [] },
+      txtMetadata: { $: { fields: ["content"] } },
     },
   });
   const row = result.data.txt?.[0]?.txtMetadata?.[0];
@@ -126,8 +115,12 @@ export async function saveBookMetadata(
   const next = applyBookMetadataEdits(current, edits);
 
   onProgress?.("Saving metadata");
-  const wrapped = await wrapMetadataContent(docKey, next);
-  await db.transact([tx.txtMetadata![row.id]!.update({ content: wrapped })]);
+  const content = await wrapMetadataContent(docKey, next);
+  const catalog = await wrapMetadataCatalog(
+    docKey,
+    catalogFromMetadataContent(next),
+  );
+  await db.transact([tx.txtMetadata![row.id]!.update({ content, catalog })]);
 
   return toBookInfo(txtId, next);
 }

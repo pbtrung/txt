@@ -4,14 +4,14 @@
 // txt/download.py's _txt_names but keeps the full metadata, not just name.
 //
 // docs/data_model.md's txtMetadata.content decrypts (under that document's
-// own txtKey -- see library.ts, which resolves that key and calls
-// parseMetadataContent below) to a single JSON object: {"name": "original
-// filename", "metadata": {...opf sidecar fields, when present}}. name and
-// metadata used to be two separate SQL columns (one always-present TEXT,
-// one nullable BLOB); now they're both fields of the one decrypted payload.
+// own txtKey -- see reader/admin metadata paths, which resolve that key and
+// call parseMetadataContent below) to a single JSON object: {"name":
+// "original filename", "metadata": {...opf sidecar fields, when present}}.
+// txtMetadata.catalog is the lighter encrypted projection that library.ts
+// loads for book lists.
 
 import * as blob from "../crypto/blob";
-import { base64ToBytes } from "../crypto/bytes";
+import { base64ToBytes, bytesToBase64 } from "../crypto/bytes";
 import { requireObject, requireString } from "./jsonObject";
 
 export interface MetadataField {
@@ -145,6 +145,22 @@ export interface TxtMetadataContent {
   metadata: OpfMetadata;
 }
 
+export interface TxtMetadataCatalog {
+  name: string;
+  authors: string[];
+  subjects: string[];
+  publishers: string[];
+}
+
+function stringArrayOf(value: unknown, field: string): string[] {
+  if (!Array.isArray(value)) return [];
+  const values = value.filter((v): v is string => typeof v === "string");
+  if (values.length !== value.length) {
+    throw new Error(`txtMetadata.catalog.${field} must contain only strings`);
+  }
+  return values;
+}
+
 export function toBookInfo(
   txtId: string,
   content: TxtMetadataContent,
@@ -164,8 +180,38 @@ export function toBookInfo(
   };
 }
 
+export function catalogFromMetadataContent(
+  content: TxtMetadataContent,
+): TxtMetadataCatalog {
+  const { name, metadata } = content;
+  return {
+    name,
+    authors: textsOf(metadata.creator),
+    subjects: textsOf(metadata.subject),
+    publishers: textsOf(metadata.publisher),
+  };
+}
+
+export function toCatalogBookInfo(
+  txtId: string,
+  catalog: TxtMetadataCatalog,
+): BookInfo {
+  return {
+    txtId,
+    name: catalog.name,
+    title: catalog.name,
+    author: catalog.authors[0],
+    subjects: catalog.subjects,
+    publisher: catalog.publishers[0],
+    description: undefined,
+    series: undefined,
+    seriesIndex: undefined,
+    rawMetadata: [],
+  };
+}
+
 /** Decrypts a txtMetadata row's own `content` blob (base64) under this
- * document's already-resolved docKey (library.ts) and decodes it into
+ * document's already-resolved docKey and decodes it into
  * {name, metadata} -- docs/data_model.md's txtMetadata entity: a single
  * encrypted, brotli-compressed JSON blob, wrapped directly under txtKey (no
  * intermediate key, unlike keyStore/credStore/txtAccess/txtBookmarks). */
@@ -185,4 +231,45 @@ export async function parseMetadataContent(
       ? metadata
       : {}) as OpfMetadata,
   };
+}
+
+export async function parseMetadataCatalog(
+  docKey: Uint8Array,
+  catalogBase64: string,
+): Promise<TxtMetadataCatalog> {
+  const json = await blob.decrypt(docKey, base64ToBytes(catalogBase64), true);
+  const parsed = requireObject(
+    JSON.parse(new TextDecoder().decode(json)),
+    "txtMetadata.catalog must decode to a JSON object",
+  );
+  return {
+    name: requireString(parsed, "name"),
+    authors: stringArrayOf(parsed.authors, "authors"),
+    subjects: stringArrayOf(parsed.subjects, "subjects"),
+    publishers: stringArrayOf(parsed.publishers, "publishers"),
+  };
+}
+
+export async function wrapMetadataContent(
+  docKey: Uint8Array,
+  content: TxtMetadataContent,
+): Promise<string> {
+  const encrypted = await blob.encrypt(
+    docKey,
+    new TextEncoder().encode(JSON.stringify(content)),
+    { compressed: true },
+  );
+  return bytesToBase64(encrypted);
+}
+
+export async function wrapMetadataCatalog(
+  docKey: Uint8Array,
+  catalog: TxtMetadataCatalog,
+): Promise<string> {
+  const encrypted = await blob.encrypt(
+    docKey,
+    new TextEncoder().encode(JSON.stringify(catalog)),
+    { compressed: true },
+  );
+  return bytesToBase64(encrypted);
 }

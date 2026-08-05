@@ -18,6 +18,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
 import type { Bookmark } from "../../data/bookmarks";
+import { fetchBookInfo } from "../../data/bookMetadata";
 import type { BookInfo } from "../../data/metadata";
 import {
   openDoc,
@@ -93,16 +94,18 @@ export function useReaderBook(txtId: string): UseReaderBookResult {
   const [partText, setPartText] = useState<string | null>(null);
   const [partTextLoading, setPartTextLoading] = useState(false);
   const [targetLine, setTargetLine] = useState<number | null>(null);
+  const [fullInfo, setFullInfo] = useState<BookInfo | null>(null);
 
   const partTextCache = useRef(new Map<number, string>());
   const docRef = useRef<OpenedDoc | null>(null);
   const r2CredRef = useRef<TempR2Credential | null>(null);
 
   const bookmarks = bookmarksMap[txtId] ?? [];
-  // Metadata for every book is already loaded in full during unlock (see
-  // VaultContext) -- available instantly, unlike part count/content, which
-  // are only ever fetched for whichever book is actually open.
-  const info: BookInfo | null = session?.metadataById.get(txtId) ?? null;
+  // Library unlock loads only txtMetadata.catalog for the book list. Keep
+  // that lightweight info available immediately, then replace it with full
+  // txtMetadata.content once this reader screen fetches it on demand.
+  const catalogInfo: BookInfo | null = session?.metadataById.get(txtId) ?? null;
+  const info: BookInfo | null = fullInfo ?? catalogInfo;
 
   // Opens the document once per (session, txtId) -- resolves its prefix and
   // every part's own txtPartKey (reader.ts's openDoc), then seeds the
@@ -112,10 +115,14 @@ export function useReaderBook(txtId: string): UseReaderBookResult {
   // below, since a read-position write (which updates accessMap) shouldn't
   // re-trigger a full reload.
   useEffect(() => {
-    if (!session) return;
+    if (!session) {
+      setFullInfo(null);
+      return;
+    }
     let cancelled = false;
     setLoading(true);
     setError(null);
+    setFullInfo(null);
     // Clears out the previous book's (or part's) text immediately, rather
     // than leaving it visible until this load finishes -- otherwise there's
     // a render in between where loading/partTextLoading are both false but
@@ -131,6 +138,13 @@ export function useReaderBook(txtId: string): UseReaderBookResult {
       if (!docKey) {
         throw new Error(`you don't have access to txtId=${txtId}`);
       }
+      fetchBookInfo(session.instantDb, txtId, docKey)
+        .then((bookInfo) => {
+          if (!cancelled) setFullInfo(bookInfo);
+        })
+        .catch((err: unknown) => {
+          verbose("useReaderBook: fetchBookInfo failed", err);
+        });
       const doc = await openDoc(session.instantDb, txtId, docKey);
       if (cancelled) return;
       docRef.current = doc;

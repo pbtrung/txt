@@ -1,9 +1,16 @@
-import { useMemo, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type FormEvent,
+} from "react";
 
 import { BookRow, BOOK_ROW_HEIGHT } from "../../components/BookRow";
 import { Modal } from "../../components/Modal";
 import { VirtualizedListGroup } from "../../components/VirtualizedListGroup";
 import type { BookMetadataEdits } from "../../data/adminBooks";
+import { fetchBookInfo } from "../../data/bookMetadata";
 import type { BookInfo } from "../../data/metadata";
 import { useVault } from "../../state/VaultContext";
 import { allBooksSorted, matchesSearch } from "../Library/libraryModel";
@@ -11,11 +18,15 @@ import { useLibraryBooks } from "../Library/useLibraryBooks";
 import { FormField, errorMessage, yieldToPaint } from "./manageShared";
 
 function EditBookPanel({
+  txtId,
   book,
+  loadFullInfo,
   onSaved,
   onClose,
 }: {
+  txtId: string;
   book: BookInfo;
+  loadFullInfo: (txtId: string) => Promise<BookInfo>;
   onSaved: (
     edits: BookMetadataEdits,
     onProgress: (label: string) => void,
@@ -27,12 +38,42 @@ function EditBookPanel({
   const [publisher, setPublisher] = useState(book.publisher ?? "");
   const [subjects, setSubjects] = useState(book.subjects.join(", "));
   const [description, setDescription] = useState(book.description ?? "");
+  const [metadataLoading, setMetadataLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [progressLabel, setProgressLabel] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  function applyInfo(info: BookInfo) {
+    setTitle(info.title);
+    setAuthor(info.author ?? "");
+    setPublisher(info.publisher ?? "");
+    setSubjects(info.subjects.join(", "));
+    setDescription(info.description ?? "");
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    applyInfo(book);
+    setMetadataLoading(true);
+    setError(null);
+    loadFullInfo(txtId)
+      .then((info) => {
+        if (!cancelled) applyInfo(info);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setError(errorMessage(err));
+      })
+      .finally(() => {
+        if (!cancelled) setMetadataLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [book, loadFullInfo, txtId]);
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    if (metadataLoading) return;
     setBusy(true);
     setError(null);
     setProgressLabel(null);
@@ -68,6 +109,7 @@ function EditBookPanel({
             type="text"
             className="form-control form-control-sm themed-control"
             value={title}
+            disabled={busy || metadataLoading}
             onChange={(e) => setTitle(e.target.value)}
           />
         </FormField>
@@ -77,6 +119,7 @@ function EditBookPanel({
             type="text"
             className="form-control form-control-sm themed-control"
             value={author}
+            disabled={busy || metadataLoading}
             onChange={(e) => setAuthor(e.target.value)}
           />
         </FormField>
@@ -86,6 +129,7 @@ function EditBookPanel({
             type="text"
             className="form-control form-control-sm themed-control"
             value={publisher}
+            disabled={busy || metadataLoading}
             onChange={(e) => setPublisher(e.target.value)}
           />
         </FormField>
@@ -98,6 +142,7 @@ function EditBookPanel({
             type="text"
             className="form-control form-control-sm themed-control"
             value={subjects}
+            disabled={busy || metadataLoading}
             onChange={(e) => setSubjects(e.target.value)}
           />
         </FormField>
@@ -107,6 +152,7 @@ function EditBookPanel({
             className="form-control form-control-sm themed-control"
             rows={3}
             value={description}
+            disabled={busy || metadataLoading}
             onChange={(e) => setDescription(e.target.value)}
           />
         </FormField>
@@ -114,7 +160,7 @@ function EditBookPanel({
           <button
             type="submit"
             className="btn btn-sm btn-primary d-flex align-items-center gap-2"
-            disabled={busy}
+            disabled={busy || metadataLoading}
           >
             {busy && (
               <span
@@ -125,6 +171,9 @@ function EditBookPanel({
             )}
             Save
           </button>
+          {metadataLoading && (
+            <span className="small text-body-secondary">Loading metadata</span>
+          )}
           {busy && progressLabel && (
             <span className="small text-body-secondary">{progressLabel}</span>
           )}
@@ -150,7 +199,7 @@ export function BooksSection({
   onSelectRow: (txtId: string | null) => void;
   onSetMode: (mode: BooksMode) => void;
 }) {
-  const { updateBookMetadata } = useVault();
+  const { session, updateBookMetadata } = useVault();
   const { books } = useLibraryBooks();
   const sorted = useMemo(() => allBooksSorted(books ?? []), [books]);
   const filtered = useMemo(() => {
@@ -167,11 +216,23 @@ export function BooksSection({
     onSetMode("none");
   }
 
+  const loadFullInfo = useCallback(
+    async (txtId: string) => {
+      if (!session) throw new Error("vault is locked");
+      const docKey = session.docKeys.get(txtId);
+      if (!docKey) throw new Error(`missing document key for txt ${txtId}`);
+      return fetchBookInfo(session.instantDb, txtId, docKey);
+    },
+    [session],
+  );
+
   return (
     <div className="d-flex flex-column flex-grow-1 overflow-hidden">
       {mode === "edit" && selectedBook && (
         <EditBookPanel
+          txtId={selectedBook.txtId}
           book={selectedBook.info}
+          loadFullInfo={loadFullInfo}
           onSaved={async (edits, onProgress) => {
             await updateBookMetadata(selectedBook.txtId, edits, onProgress);
             onSetMode("none");

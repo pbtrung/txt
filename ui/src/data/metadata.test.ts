@@ -3,9 +3,14 @@ import { describe, expect, it } from "vitest";
 import * as blob from "../crypto/blob";
 import { bytesToBase64, randomBytes } from "../crypto/bytes";
 import {
+  catalogFromMetadataContent,
   formatOpfDate,
+  parseMetadataCatalog,
   parseMetadataContent,
+  toCatalogBookInfo,
   toBookInfo,
+  wrapMetadataCatalog,
+  wrapMetadataContent,
   type OpfMetadata,
   type TxtMetadataContent,
 } from "./metadata";
@@ -93,6 +98,48 @@ describe("toBookInfo", () => {
   });
 });
 
+describe("catalog metadata", () => {
+  it("extracts the lightweight catalog projection from full metadata content", () => {
+    expect(
+      catalogFromMetadataContent(
+        content("book.epub.txt", {
+          creator: [{ text: "Author One", role: "aut" }, "Author Two"],
+          subject: ["Fantasy", "Classic"],
+          publisher: { text: "Press", id: "pub-1" },
+          description: "Full metadata only.",
+        }),
+      ),
+    ).toEqual({
+      name: "book.epub.txt",
+      authors: ["Author One", "Author Two"],
+      subjects: ["Fantasy", "Classic"],
+      publishers: ["Press"],
+    });
+  });
+
+  it("turns catalog into the lightweight BookInfo shape used by library lists", () => {
+    expect(
+      toCatalogBookInfo("txt-1", {
+        name: "book.epub.txt",
+        authors: ["Author"],
+        subjects: ["Fantasy"],
+        publishers: ["Press"],
+      }),
+    ).toEqual({
+      txtId: "txt-1",
+      name: "book.epub.txt",
+      title: "book.epub.txt",
+      author: "Author",
+      subjects: ["Fantasy"],
+      publisher: "Press",
+      description: undefined,
+      series: undefined,
+      seriesIndex: undefined,
+      rawMetadata: [],
+    });
+  });
+});
+
 describe("formatOpfDate", () => {
   it("formats a date-only value (no time component at all) as just the date", () => {
     expect(formatOpfDate("2020-01-15")).toBe("January 15, 2020");
@@ -117,14 +164,9 @@ describe("parseMetadataContent", () => {
   it("decrypts and JSON-parses a real txtMetadata.content blob", async () => {
     const docKey = randomBytes(128);
     const payload = { name: "doc-one.txt", metadata: { title: "Some Book" } };
-    const encrypted = await blob.encrypt(
-      docKey,
-      new TextEncoder().encode(JSON.stringify(payload)),
-      { compressed: true },
-    );
     const decoded = await parseMetadataContent(
       docKey,
-      bytesToBase64(encrypted),
+      await wrapMetadataContent(docKey, payload),
     );
     expect(decoded).toEqual(payload);
   });
@@ -152,5 +194,22 @@ describe("parseMetadataContent", () => {
     await expect(
       parseMetadataContent(randomBytes(128), bytesToBase64(encrypted)),
     ).rejects.toThrow();
+  });
+});
+
+describe("parseMetadataCatalog", () => {
+  it("decrypts and JSON-parses a real txtMetadata.catalog blob", async () => {
+    const docKey = randomBytes(128);
+    const payload = {
+      name: "doc-one.txt",
+      authors: ["Author"],
+      subjects: ["Fantasy"],
+      publishers: ["Press"],
+    };
+    const decoded = await parseMetadataCatalog(
+      docKey,
+      await wrapMetadataCatalog(docKey, payload),
+    );
+    expect(decoded).toEqual(payload);
   });
 });

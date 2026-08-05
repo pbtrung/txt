@@ -5,7 +5,8 @@
 // documents"). For each document, resolves its own txtKey (decrypt under
 // this account's umk for an owned doc; Decapsulate via keyStore.privKey for
 // a shared one -- docs/protocols.md's Sharing protocol) and decrypts its
-// txtMetadata.content into a BookInfo.
+// txtMetadata.catalog into a BookInfo. Full txtMetadata.content is fetched
+// only by the reader screen and metadata editor.
 //
 // Paginated the same way txt/migrate.ts's resolveExistingTargets and
 // txt/collectGarbage.ts's resolveSweepTargets page through txt rows: an
@@ -20,7 +21,11 @@ import { base64ToBytes } from "../crypto/bytes";
 import { SALT_LEN } from "../crypto/constants";
 import { collectAllPages } from "./instaqlPagination";
 import { kemDecapsulate } from "./leancrypto";
-import { parseMetadataContent, toBookInfo, type BookInfo } from "./metadata";
+import {
+  parseMetadataCatalog,
+  toCatalogBookInfo,
+  type BookInfo,
+} from "./metadata";
 
 const PAGE_SIZE = 1000; // mirrors txt/constants.ts's INSTAQL_QUERY_PAGE_SIZE
 
@@ -52,7 +57,7 @@ export interface LibrarySnapshot {
 }
 
 interface TxtMetadataLink {
-  content: string;
+  catalog?: string | null;
 }
 
 interface OwnedTxtRow {
@@ -77,9 +82,9 @@ async function toLibraryDoc(
   // elsewhere, not something this loader can recover from for this one
   // document. Skip it (log via the caller's own catch, if any) rather than
   // failing the whole library load over one bad row.
-  if (!metadataRow) return null;
-  const content = await parseMetadataContent(docKey, metadataRow.content);
-  return { txtId, info: toBookInfo(txtId, content), docKey };
+  if (!metadataRow?.catalog) return null;
+  const catalog = await parseMetadataCatalog(docKey, metadataRow.catalog);
+  return { txtId, info: toCatalogBookInfo(txtId, catalog), docKey };
 }
 
 async function loadOwnedDocs(
@@ -95,8 +100,9 @@ async function loadOwnedDocs(
           order: { sourceTxtId: "asc" },
           limit: PAGE_SIZE,
           offset,
+          fields: ["txtKey"],
         },
-        txtMetadata: {},
+        txtMetadata: { $: { fields: ["catalog"] } },
       },
     });
     const page = result.data.txt ?? [];
@@ -129,8 +135,12 @@ async function loadSharedDocs(
           order: { shareKey: "asc" },
           limit: PAGE_SIZE,
           offset,
+          fields: ["saltKemCt", "txtKey"],
         },
-        txt: { txtMetadata: {} },
+        txt: {
+          $: { fields: [] },
+          txtMetadata: { $: { fields: ["catalog"] } },
+        },
       },
     });
     const page = result.data.txtShares ?? [];
