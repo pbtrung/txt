@@ -503,13 +503,13 @@ export async function createUser(
         credStoreKey: bytesToBase64(userCredStoreKeyBlob),
         content: userCredStoreContent,
       })
-      .link({ owner: auth.authId }),
+      .link({ owner: auth.authId, forUser: auth.authId }),
     tx
       .credStore![adminEscrowId]!.update({
         credStoreKey: bytesToBase64(adminCredStoreKeyBlob),
         content: adminStoredCreds,
       })
-      .link({ owner: session.authId }),
+      .link({ owner: session.authId, forUser: auth.authId }),
   ]);
 
   return auth.authId;

@@ -185,6 +185,24 @@ describe("adminUsers", () => {
     const chunks = db.transact.mock.calls[0]![0];
     expect(chunks).toHaveLength(4);
     expect(JSON.stringify(chunks)).not.toContain('"type"');
+    expect(
+      chunks.flatMap((chunk: { __ops?: unknown[] }) => chunk.__ops ?? []),
+    ).toEqual(
+      expect.arrayContaining([
+        [
+          "link",
+          "credStore",
+          expect.any(String),
+          { owner: "user-2", forUser: "user-2" },
+        ],
+        [
+          "link",
+          "credStore",
+          expect.any(String),
+          { owner: "admin-1", forUser: "user-2" },
+        ],
+      ]),
+    );
   });
 
   it("reads a user's stored credential fields from admin escrow", async () => {
