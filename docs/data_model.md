@@ -16,19 +16,23 @@ Only an `admin`-typed account ever creates a `txt` row (a document) or its `txtP
 
 ## Entities
 
-There's no app-level profile entity in this design — `$users` (InstantDB's own built-in auth entity) is the only account-identity entity, and every other entity's `owner`/`user` link points directly at it. `auth.id` already equals a `$users` row's own id, so ownership checks below are always a single-hop `data.ref('owner.id')`, never a two-hop traversal through an intermediate row — the one exception is a share recipient's _read_ access to `txtParts`/`txtMetadata`, which does need a two-hop check through the parent `txt`; see "Permission rules" below.
+There's no app-level profile entity in this design — `$users` (InstantDB's own built-in auth entity) is the only account-identity entity, and every other entity's `owner`/`forUser`/`fromUser`/`toUser` link points directly at it. `auth.id` already equals a `$users` row's own id, so ownership checks below are always a single-hop `data.ref('owner.id')`, never a two-hop traversal through an intermediate row — the one exception is a share recipient's _read_ access to `txtParts`/`txtMetadata`, which does need a two-hop check through the parent `txt`; see "Permission rules" below.
 
 - **`$users`** — one row per Firebase-authenticated identity, keyed by email. Carries two custom attributes beyond the built-in ones:
-  - **`umk`** — base64, 128 random bytes, generated once per account and wrapped (`crypto.md`'s Blob format) under `user_root_key` — an external secret supplied by `creds.json`, never stored in InstantDB. `umk` is the encryption key for this account's `keyStore.keyStoreKey` and `credStore.credStoreKey` (below) — the intermediate keys that in turn protect `keyStore.privKey` and `credStore.content`, not those fields directly.
+  - **`umk`** — base64, 128 random bytes, generated once per account and wrapped (`crypto.md`'s Blob format) under `user_root_key` — an external secret supplied by `creds.json`, never stored in InstantDB. `umk` is the encryption key for this account's `keyStore.keyStoreKey` and for every `credStore.credStoreKey` on a row this account owns — the intermediate keys that in turn protect `keyStore.privKey` and `credStore.content`, not those fields directly. `credStore.forUser` says which account a credential row is about; it does not change which `umk` wraps that row.
   - **`type`** — `'admin' | 'user'`. `'admin'` can create/update/delete any `txt`/`txtMetadata`/`txtParts`/`txtShares` row and act on any account's data, full stop; `'user'` can only view its own `keyStore`/`credStore` rows (create/update/delete on those are admin-only — provisioning or rotating key material is a provisioning action, never a regular user self-service write), can view/create/update/delete its own `txtAccess`/`txtBookmarks` rows freely, and can read (never write) a `txt`/`txtMetadata`/`txtParts` row they have a `txtShares` grant for — see "Permission rules" below for the exact rule per entity. Only ever writable via `instant.perms.ts`'s `$users.update: "isAdmin"` — there's no `isSelf` branch, so a plain user can never touch their own `type` (or anything else on their own `$users` row) through the normal write path, let alone self-promote to admin.
 
   **Unverified — confirm before relying on this:** whether `auth.ref('$user.type')` (`instant.perms.ts`'s `isAdmin` check) resolves a plain, non-linked attribute on the current session's own `$users` row the same way `auth.ref`/`data.ref` resolve an attribute reached across a real link.
 
 - **`keyStore`** — one row per user (`owner`, unique link to `$users`), holding that account's `lc_kyber_1024_x448` composite keypair (see `crypto.md`'s Composite KEM Key Sizes). `pubKey` is stored raw (1624 bytes, not sensitive); `keyStoreKey` (128 random bytes, wrapped under the owner's `umk`) protects `privKey` — a fresh intermediate key rather than wrapping `privKey` directly under `umk`. This keypair exists purely so the admin can share a document with this account without ever needing that account's `umk` — see `txtShares` below. Provisioned for every account, admin included (the admin needs a `keyStore` row too, in case anyone ever needs to share _to_ the admin, though in practice the admin is always the sharer, never the recipient, today).
 
-- **`credStore`** — one row per `user`-role account (`owner`, link to `$users`), but the admin's own `owner` is deliberately **not** unique: the admin can hold several `credStore` rows, all sharing the _same_ `credStoreKey` (generated once for the admin, not minted fresh per row) rather than each row wrapping its own. `credStoreKey` (128 random bytes, wrapped under the owner's `umk`) protects `content`, a single encrypted JSON blob holding that row's own R2 connection info plus a display label — a fresh intermediate key rather than wrapping `content` directly under `umk`, same pattern as `keyStore.keyStoreKey`. Because `owner` isn't globally `unique()` at the schema level (unlike every other one-row-per-account entity here), "exactly one row" for a `user`-role account is a client-side/provisioning-time convention, not a database-enforced constraint. The R2 connection info exists for exactly one purpose: connecting to the bucket to read (or, for the admin, write) `txtParts` objects — the actual object addresses come from `txtParts.path` (below), not from here.
+- **`credStore`** — encrypted credential rows. Fields: `owner` (link to `$users` — the account whose `umk` wraps this row's `credStoreKey`), `forUser` (link to `$users` — the account these credentials belong to), `credStoreKey` (128 random bytes, freshly generated per row and wrapped under `owner`'s `umk`), and `content`, a single encrypted JSON blob protected by that row's own `credStoreKey`. `forUser` is deliberately plaintext and queryable: the admin user-management flow can fetch the admin-owned credential row for one target user directly, instead of decrypting every admin-owned `credStore` row and matching by email or embedded id. It is not a permission grant; read access is still based on `owner` (or `isAdmin`) below.
 
-  For a `user`-role account:
+  The normal self row for an account has `owner == forUser == that account`. An admin-managed recovery row has `owner == admin` and `forUser == target user`; its `content` mirrors the target user's own credential content so the admin can export backup credentials, help with recovery, or edit that user, but it is encrypted through a different wrapping chain: `admin.umk -> this row's fresh credStoreKey -> content`. The target user's own row uses `target.umk -> its own fresh credStoreKey -> content`. These rows never share a `credStoreKey`, even when their plaintext `content` is intentionally the same.
+
+  Because `owner` is not globally `unique()` at the schema level, "exactly one self row per account" and "at most one admin-managed recovery row per user" are provisioning/UI invariants, not database-enforced constraints. The R2 connection info exists for exactly one purpose: connecting to the bucket to read (or, for the admin, write) `txtParts` objects — the actual object addresses come from `txtParts.path` (below), not from here.
+
+  For a `user`-role account's self row, and for an admin-managed recovery row that mirrors that same user-facing credential content:
 
   ```json
   {
@@ -41,7 +45,7 @@ There's no app-level profile entity in this design — `$users` (InstantDB's own
   }
   ```
 
-  For the admin's own row:
+  For the admin's own self row:
 
   ```json
   {
@@ -62,7 +66,9 @@ There's no app-level profile entity in this design — `$users` (InstantDB's own
 
 - **`txt`** — one row per document. Fields: `owner` (link to `$users` — always the admin account today, per the operating model above), `txtKey` (128 random bytes, wrapped under `owner`'s `umk`), `prefix` — this document's own R2 prefix: a Crockford-base32-lowercase encoding of 32 random bytes, generated once when the document is created and wrapped under this row's own `txtKey` — and `sourceTxtId`, present only on a document created by `txt.ts --migrate`: the plaintext integer `txt_id` it had in the source snapshot (`txt/owner.ts`'s legacy schema), queried by to make a re-run resumable (see "Ingest / write path" in [protocols.md](protocols.md)) since InstantDB rows have no integer id to reuse the way that source schema's own `txt_id` could double as its own target row id. `prefix` is what actually addresses this document's content in R2 (see `txtParts` below and [r2_credentials.md](r2_credentials.md)): unlike a value derived from `auth.id`, it's random and only ever recoverable by decrypting it under `txtKey` — so knowing which account owns a document, or even that account's `auth.id`, gives an attacker no way to compute where that document's parts live in the bucket. `txt` itself carries no name/metadata/read-position — see `txtMetadata` and `txtAccess` below.
 
-- **`txtMetadata`** — one row per document (`txt`, unique link to `txt`). Fields: `owner` (link to `$users`, same account as `txt.owner` — kept as its own single-hop link for permission rules rather than traversing `txt.owner`), and `content` — a single encrypted JSON blob (wrapped directly under this document's own `txtKey`, brotli-compressed):
+- **`txtMetadata`** — one row per document (`txt`, unique link to `txt`). Fields: `owner` (link to `$users`, same account as `txt.owner` — kept as its own single-hop link for permission rules rather than traversing `txt.owner`), `content`, and `catalog`.
+
+  `content` is the full encrypted metadata JSON blob (wrapped directly under this document's own `txtKey`, brotli-compressed):
 
   ```json
   {
@@ -71,7 +77,20 @@ There's no app-level profile entity in this design — `$users` (InstantDB's own
   }
   ```
 
-  Unwrapping this content is the same two-step chain as a document's `txtParts`: `umk` (or a share's Decapsulate) unwraps `txtKey`, `txtKey` unwraps `content` directly — no intermediate per-purpose key. A share recipient reads this the same way they read `txtParts`: once they've Decapsulated `txtKey`, `txtMetadata` unwraps exactly like it does for the owner.
+  `catalog` is the lightweight listing projection extracted from `content`, also wrapped directly under the document's own `txtKey` and brotli-compressed:
+
+  ```json
+  {
+    "name": "original filename",
+    "authors": [],
+    "subjects": [],
+    "publishers": []
+  }
+  ```
+
+  `catalog` is the preferred column name: it describes the normalized data needed to render the library/catalog list, without implying that this is the complete metadata (`metadata`) or a human-written excerpt (`summary`/`preview`). Library loading fetches `txtMetadata.catalog` only. The reader screen and metadata-edit flow fetch full `txtMetadata.content` on demand; any metadata edit must update both `content` and the derived `catalog` in the same transaction.
+
+  Unwrapping either metadata blob is the same two-step chain as a document's `txtParts`: `umk` (or a share's Decapsulate) unwraps `txtKey`, `txtKey` unwraps `content` or `catalog` directly — no intermediate per-purpose key. A share recipient reads metadata the same way they read `txtParts`: once they've Decapsulated `txtKey`, `txtMetadata` unwraps exactly like it does for the owner.
 
 - **`txtParts`** — a document's content, chunked into ordered parts. Fields: `txt` (link to `txt`), `owner` (link to `$users`, same account as `txt.owner` — kept as its own single-hop link for permission rules rather than traversing `txt.owner`, same reasoning as `txtMetadata` above), `partNum`, `txtPartKey` (128 random bytes, wrapped under this document's own `txtKey`), `path` — wrapped under this row's own `txtPartKey`, not `txtKey` directly — Crockford-base32-lowercase encoding of 32 random bytes, and a synthetic `partKey = "${txtId}:${partNum}"` (`unique().indexed()` — see "The composite-uniqueness problem" below). The actual part content is **not** in InstantDB: `path`, once decrypted, is a fresh random key `raw_key`, and the real R2 object lives at `raw_path = "${prefix}/${raw_key}"`, where `prefix` is this document's own `txt` row's `prefix` field, decrypted directly under `txtKey` (unaffected by any one part's own `txtPartKey`). The R2 object body is `Blob.encrypt(txtPartKey, brotli(cleaned part text))` — the same `txtPartKey` that wraps `path`, a second independent application of it. Giving every part its own key (rather than reusing the document's `txtKey` directly for `path`/the object body) means a single part's `txtPartKey` being compromised exposes only that one part — never another part of the same document, and never the document-level `prefix`, both of which stay under `txtKey` alone.
 
@@ -108,6 +127,7 @@ The asymmetry this table encodes is the whole point of the operating model: once
 
 - **Isolation depends entirely on permission rules, not physical separation** — a rules bug is a cross-user data leak across the whole app, not contained to a single account.
 - **Reading a document and tracking your own progress through it are deliberately two different permissions.** A share recipient's `isSharedReader` grant covers `txt`/`txtMetadata`/`txtParts` read-only, full stop — but their `txtAccess`/`txtBookmarks` rows are gated on `isOwner` (of that row, not the document), so they can freely record their own read position and bookmarks for a shared document without ever needing write access to the document itself.
+- **`credStore.forUser` is an admin-management index, not an access-control hook.** A user can read a `credStore` row only when they own that row; the admin recovery copy for that same user is owned by the admin and remains admin-only despite pointing at the user through `forUser`.
 
 ## The composite-uniqueness problem (guarded insert)
 

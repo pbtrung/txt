@@ -17,16 +17,18 @@ $users.umk
     |                 (lc_kyber_1024_x448 composite private key, 3224
     |                 raw bytes -- pubKey stored raw/public, not wrapped)
     |
-    +--> credStore.credStoreKey   (128 random bytes; one per user-role
-    |        |                     account, but shared across every
-    |        |                     row the admin owns)
+    +--> credStore.credStoreKey   (128 random bytes; fresh per credStore
+    |        |                     row, wrapped by that row owner's umk;
+    |        |                     credStore.forUser only identifies the
+    |        |                     account the row is about)
     |        |  used directly as IKM --
-    |        +--> credStore.content   (r2_config + display_name, per row)
+    |        +--> credStore.content   (credential JSON, per row)
     |
     +--> txt.txtKey            (per document, 128 random bytes, owner-only)
     |        |  used directly as IKM --
     |        +--> txt.prefix           (this document's own R2 prefix)
-    |        +--> txtMetadata.content  (name/opf metadata, no intermediate key)
+    |        +--> txtMetadata.content  (full name/opf metadata, no intermediate key)
+    |        +--> txtMetadata.catalog  (listing projection, no intermediate key)
     |        |
     |        +--> txtParts.txtPartKey   (per part, 128 random bytes)
     |                 |  used directly as IKM --
@@ -62,3 +64,4 @@ Every wrapped-key and content blob uses the blob format, AEAD, and KDF mechanics
 ## Design notes
 
 - **Every part's own `txtPartKey`, layered under the document's `txtKey`, bounds a compromised part to that one part.** `txt.prefix` (document-level) is wrapped directly under `txtKey`; a part's `path` and its R2 object body are both wrapped under that row's own `txtPartKey` instead — two independent applications of `txtPartKey`, one protecting the R2 _address_, one the part's _content_. Compromising a single part's `txtPartKey` never exposes another part of the same document, nor the document-level `prefix`, both of which stay under `txtKey` alone. Compromising R2 list/read access alone (without any `txtPartKey`) yields neither the mapping from part to object nor the ability to decrypt any object it did manage to guess.
+- **Every `credStore` row has its own intermediate key.** Two rows can intentionally hold the same plaintext credential payload — for example, a user's own row and the admin's recovery copy for that user — but the ciphertexts are independent because each row has a different random `credStoreKey`, wrapped under a different owner's `umk`.
