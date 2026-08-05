@@ -489,7 +489,6 @@ export async function createUser(
   const adminEscrowId = id();
   await db.transact([
     tx.$users![auth.authId]!.update({
-      type: "user",
       umk: bytesToBase64(userUmkBlob),
     }),
     tx
@@ -570,7 +569,6 @@ export async function updateUserCreds(
 
   await db.transact([
     tx.$users![userId]!.update({
-      type: "user",
       umk: bytesToBase64(nextUmkBlob),
     }),
     tx.credStore![userCredStore.id]!.update({ content: nextUserContent }),
@@ -613,7 +611,7 @@ export async function deleteUser(
   if (adminStored) {
     chunks.push(tx.credStore![adminStored.row.id]!.delete());
   }
-  chunks.push(tx.$users![targetUserId]!.update({ type: null, umk: null }));
+  chunks.push(tx.$users![targetUserId]!.update({ umk: null }));
 
   await transactIfAny(db, chunks);
 }

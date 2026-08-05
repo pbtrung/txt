@@ -27,7 +27,7 @@ import {
   type BookInfo,
 } from "./metadata";
 
-const PAGE_SIZE = 1000; // mirrors txt/constants.ts's INSTAQL_QUERY_PAGE_SIZE
+const PAGE_SIZE = 1500;
 
 /** The only three fields of session.ts's own Session this module ever
  * needs -- narrower than importing that whole type, so a caller (e.g.

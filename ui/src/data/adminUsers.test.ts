@@ -182,7 +182,9 @@ describe("adminUsers", () => {
 
     expect(resolveInstantAuthId).toHaveBeenCalledWith(input);
     expect(db.transact).toHaveBeenCalledOnce();
-    expect(db.transact.mock.calls[0]![0]).toHaveLength(4);
+    const chunks = db.transact.mock.calls[0]![0];
+    expect(chunks).toHaveLength(4);
+    expect(JSON.stringify(chunks)).not.toContain('"type"');
   });
 
   it("reads a user's stored credential fields from admin escrow", async () => {
@@ -257,7 +259,9 @@ describe("adminUsers", () => {
     });
 
     expect(db.transact).toHaveBeenCalledOnce();
-    expect(db.transact.mock.calls[0]![0]).toHaveLength(3);
+    const chunks = db.transact.mock.calls[0]![0];
+    expect(chunks).toHaveLength(3);
+    expect(JSON.stringify(chunks)).not.toContain('"type"');
   });
 
   it("deletes shares, access/bookmarks, key/cred rows, and the admin escrow row", async () => {
@@ -292,7 +296,9 @@ describe("adminUsers", () => {
     await deleteUser(db, session, "user-2");
 
     expect(db.transact).toHaveBeenCalledOnce();
-    expect(db.transact.mock.calls[0]![0]).toHaveLength(8);
+    const chunks = db.transact.mock.calls[0]![0];
+    expect(chunks).toHaveLength(8);
+    expect(JSON.stringify(chunks)).not.toContain('"type"');
   });
 
   it("rejects deleting the current admin account", async () => {
