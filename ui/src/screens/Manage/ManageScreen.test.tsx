@@ -381,6 +381,9 @@ describe("ManageScreen", () => {
     ) as HTMLTextAreaElement;
     expect(json.value).toContain('"firebase_email": "new@example.com"');
     expect(json.value).toContain('"user_root_key": "generated-root-key"');
+    expect(json.value).not.toContain("display_name");
+    expect(json.style.whiteSpace).toBe("pre-wrap");
+    expect(json.style.overflowWrap).toBe("anywhere");
 
     await userEvent.click(within(review).getByRole("button", { name: "Edit" }));
     expect(
@@ -455,7 +458,7 @@ describe("ManageScreen", () => {
     const json = within(review).getByLabelText(
       "Credentials JSON",
     ) as HTMLTextAreaElement;
-    expect(json.value).toContain('"display_name": "Bobby"');
+    expect(json.value).not.toContain("display_name");
     await userEvent.click(within(review).getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(updateUserCreds).toHaveBeenCalledOnce());

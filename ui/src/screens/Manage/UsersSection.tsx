@@ -57,7 +57,6 @@ function credentialsJson(values: UserCredentialFields): Record<string, string> {
     firebase_email: values.firebaseEmail,
     firebase_password: values.firebasePassword,
     firebase_api_key: values.firebaseApiKey,
-    display_name: values.displayName,
     user_root_key: values.userRootKey,
   };
 }
@@ -306,7 +305,8 @@ function CredentialReviewModal({
             style={{
               minHeight: "16rem",
               fontFamily: "var(--bs-font-monospace)",
-              whiteSpace: "pre",
+              whiteSpace: "pre-wrap",
+              overflowWrap: "anywhere",
             }}
             value={jsonText}
             readOnly
