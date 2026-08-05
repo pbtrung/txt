@@ -92,7 +92,7 @@ const _schema = i.schema({
     }),
     // One row per document (docs/data_model.md's txtMetadata entity).
     // content is the full name/OPF-sidecar metadata; catalog is the
-    // lightweight {name, authors, subjects, publishers} projection for
+    // lightweight {name, title, authors, subjects, publishers} projection for
     // library loading. Both are wrapped directly under the document's own
     // txtKey (no intermediate key, unlike keyStore/credStore/txtAccess/
     // txtBookmarks). catalog stays optional at the schema level so the

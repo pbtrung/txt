@@ -57,7 +57,9 @@ function printUsage(): void {
       "       node txt.ts --init-admin <creds.json> [-v|--verbose]\n" +
       "       node txt.ts --migrate --from <in.db> --from-creds <from_creds.json> --to-creds <to_creds.json> [-v|--verbose] [--dry-run] [-y|--yes]\n" +
       "       node txt.ts --collect-garbage --creds <creds.json> [-v|--verbose] [--dry-run] [-y|--yes]\n" +
-      "       node txt.ts --update-db-catalog --creds <creds.json> [-v|--verbose] [--dry-run]",
+      "       node txt.ts --update-db-catalog --creds <creds.json> [-v|--verbose] [--dry-run]\n\n" +
+      "Notes:\n" +
+      "  --update-db-catalog rewrites every owned txtMetadata.catalog row, including rows that already have catalog.",
   );
 }
 

@@ -82,6 +82,7 @@ There's no app-level profile entity in this design — `$users` (InstantDB's own
   ```json
   {
     "name": "original filename",
+    "title": "display title",
     "authors": [],
     "subjects": [],
     "publishers": []
@@ -89,6 +90,8 @@ There's no app-level profile entity in this design — `$users` (InstantDB's own
   ```
 
   `catalog` is the preferred column name: it describes the normalized data needed to render the library/catalog list, without implying that this is the complete metadata (`metadata`) or a human-written excerpt (`summary`/`preview`). Library loading fetches `txtMetadata.catalog` only. The reader screen and metadata-edit flow fetch full `txtMetadata.content` on demand; any metadata edit must update both `content` and the derived `catalog` in the same transaction.
+
+  `txt.ts --update-db-catalog --creds <creds.json>` rewrites this derived `catalog` for every admin-owned metadata row, including rows that already have an older catalog blob, so additive projection changes like `title` are backfilled rather than only filling missing values.
 
   Unwrapping either metadata blob is the same two-step chain as a document's `txtParts`: `umk` (or a share's Decapsulate) unwraps `txtKey`, `txtKey` unwraps `content` or `catalog` directly — no intermediate per-purpose key. A share recipient reads metadata the same way they read `txtParts`: once they've Decapsulated `txtKey`, `txtMetadata` unwraps exactly like it does for the owner.
 

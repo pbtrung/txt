@@ -57,6 +57,9 @@ export class DbCatalogUpdater {
       appId: this.creds.instantAppId,
       adminToken: this.creds.instantAdminToken,
     });
+    this.log.info(
+      "Rewriting txtMetadata.catalog for every owned metadata row; existing catalog blobs will be overwritten.",
+    );
     const admin = await this.resolveAdmin(db, crypto);
     const rows = await this.fetchTxtRows(db, admin.authId);
 
@@ -109,6 +112,9 @@ export class DbCatalogUpdater {
         );
         const catalog = catalogFromMetadataContent(content);
         const catalogBlob = wrapCatalogBlob(crypto, txtKey, catalog);
+        // Always rewrite rather than filling only missing values: catalog is
+        // a derived projection, so schema changes such as adding title must
+        // backfill rows that already had an older catalog blob.
         pending.push(
           tx.txtMetadata![metadata.id]!.update({ catalog: catalogBlob }),
         );
@@ -116,7 +122,8 @@ export class DbCatalogUpdater {
         this.log.debug(
           `${label}: queued catalog update for ${JSON.stringify(catalog.name)} ` +
             `(${catalog.authors.length} author(s), ${catalog.subjects.length} subject(s), ` +
-            `${catalog.publishers.length} publisher(s); existing catalog ${metadata.catalog ? "present" : "missing"})`,
+            `${catalog.publishers.length} publisher(s); ` +
+            `${metadata.catalog ? "overwriting existing catalog" : "creating missing catalog"})`,
         );
         if (pending.length >= CATALOG_UPDATE_COMMIT_SIZE) await flush();
       } catch (e) {
