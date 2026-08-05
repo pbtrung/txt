@@ -147,6 +147,7 @@ export function ReaderScreen() {
 
   function scrollToTop() {
     readingPaneRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+    window.scrollTo({ top: 0, behavior: "smooth" });
     setBottomBarHidden(false);
   }
 
@@ -176,7 +177,7 @@ export function ReaderScreen() {
       return;
     const target = document.getElementById(lineElementId(targetLine));
     if (!target) return;
-    target.scrollIntoView({ behavior: "smooth", block: "center" });
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
     clearTargetLine();
   }, [
     initialReaderReady,

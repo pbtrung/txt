@@ -1,5 +1,11 @@
 // @vitest-environment jsdom
-import { render, screen, waitFor, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
@@ -465,7 +471,10 @@ describe("ReaderScreen", () => {
     const scrollIntoView = vi.fn();
     Element.prototype.scrollIntoView = scrollIntoView;
     renderReader(baseResult({ targetLine: 1 }));
-    expect(scrollIntoView).toHaveBeenCalled();
+    expect(scrollIntoView).toHaveBeenCalledWith({
+      behavior: "smooth",
+      block: "start",
+    });
   });
 
   it("clears the target line once it's been scrolled to", () => {
@@ -514,6 +523,50 @@ describe("ReaderScreen", () => {
     await screen.findByText("Second paragraph.");
     await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
     expect(clearTargetLine).toHaveBeenCalledTimes(1);
+  });
+
+  it("small-screen scroll-to-top resets both the page and reading pane", async () => {
+    const originalInnerWidth = window.innerWidth;
+    const originalWindowScrollTo = window.scrollTo;
+    const windowScrollTo = vi.fn();
+    const paneScrollTo = vi.fn();
+    Object.defineProperty(window, "scrollTo", {
+      configurable: true,
+      value: windowScrollTo,
+    });
+    window.innerWidth = 400;
+    try {
+      renderReader(baseResult());
+      const readingPane = screen
+        .getByText("First paragraph of part 14.")
+        .closest(".overflow-auto") as HTMLElement;
+      Object.defineProperty(readingPane, "scrollTo", {
+        configurable: true,
+        value: paneScrollTo,
+      });
+      readingPane.scrollTop = 50;
+      fireEvent.scroll(readingPane);
+
+      const button = await screen.findByRole("button", {
+        name: /scroll to top/i,
+      });
+      await userEvent.click(button);
+
+      expect(paneScrollTo).toHaveBeenCalledWith({
+        top: 0,
+        behavior: "smooth",
+      });
+      expect(windowScrollTo).toHaveBeenCalledWith({
+        top: 0,
+        behavior: "smooth",
+      });
+    } finally {
+      window.innerWidth = originalInnerWidth;
+      Object.defineProperty(window, "scrollTo", {
+        configurable: true,
+        value: originalWindowScrollTo,
+      });
+    }
   });
 
   it("navigates back to /library", async () => {
