@@ -76,13 +76,22 @@ const metadataById = new Map<string, BookInfo>([
 const lock = vi.fn();
 const refresh = vi.fn().mockResolvedValue(undefined);
 const updateBookMetadata = vi.fn().mockResolvedValue(undefined);
+const syncBookInfo = vi.fn();
+type MetadataSubscriptionResult = {
+  data?: { txt?: { txtMetadata?: unknown[] }[] };
+};
+type SubscribeQuery = (
+  query: unknown,
+  cb: (result: MetadataSubscriptionResult) => void,
+) => () => void;
+const subscribeQuery = vi.fn<SubscribeQuery>(() => vi.fn());
 
 function setup(refreshing = false) {
   vi.mocked(VaultContextModule.useVault).mockReturnValue({
     status: "unlocked",
     session: {
       displayName: "Alice",
-      instantDb: {},
+      instantDb: { subscribeQuery },
       auth: {},
       authId: "auth-1",
       instantAppId: "app-1",
@@ -111,6 +120,7 @@ function setup(refreshing = false) {
     addBookmarkEntry: vi.fn(),
     removeBookmarkEntry: vi.fn(),
     updateBookMetadata,
+    syncBookInfo,
   });
   return render(
     <MemoryRouter>
@@ -163,6 +173,7 @@ beforeEach(() => {
   vi.mocked(revokeShare).mockResolvedValue(undefined);
   vi.mocked(fetchBookInfo).mockResolvedValue(metadataById.get("txt-1")!);
   updateBookMetadata.mockResolvedValue(undefined);
+  subscribeQuery.mockReturnValue(vi.fn());
 });
 
 afterEach(() => {
@@ -262,6 +273,46 @@ describe("ManageScreen", () => {
         description: undefined,
       },
       expect.any(Function),
+    );
+  });
+
+  it("syncs only the selected book when InstantDB reports metadata changes", async () => {
+    const callbacks: ((result: MetadataSubscriptionResult) => void)[] = [];
+    const unsubscribe = vi.fn();
+    subscribeQuery.mockImplementation(
+      (_query: unknown, cb: (result: MetadataSubscriptionResult) => void) => {
+        callbacks.push(cb);
+        return unsubscribe;
+      },
+    );
+    vi.mocked(fetchBookInfo).mockResolvedValue({
+      ...metadataById.get("txt-1")!,
+      title: "Book One Live",
+    });
+
+    setup();
+    await waitFor(() => expect(screen.getByText("Bob")).toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole("button", { name: /^Books/ }));
+    await userEvent.click(screen.getByRole("button", { name: /^Book One/ }));
+
+    await waitFor(() => expect(subscribeQuery).toHaveBeenCalledOnce());
+    expect(subscribeQuery.mock.calls[0]![0]).toEqual({
+      txt: {
+        $: { where: { id: "txt-1" }, fields: [] },
+        txtMetadata: { $: { fields: ["content"] } },
+      },
+    });
+
+    const emit = callbacks[0]!;
+    emit({ data: { txt: [{ txtMetadata: [{}] }] } });
+    emit({ data: { txt: [{ txtMetadata: [{}] }] } });
+
+    await waitFor(() =>
+      expect(syncBookInfo).toHaveBeenCalledWith(
+        "txt-1",
+        expect.objectContaining({ title: "Book One Live" }),
+      ),
     );
   });
 

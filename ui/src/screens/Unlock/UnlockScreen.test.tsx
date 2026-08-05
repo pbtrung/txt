@@ -43,6 +43,7 @@ function baseVaultValue(): VaultContextModule.VaultContextValue {
     addBookmarkEntry: vi.fn(),
     removeBookmarkEntry: vi.fn(),
     updateBookMetadata: vi.fn(),
+    syncBookInfo: vi.fn(),
   };
 }
 

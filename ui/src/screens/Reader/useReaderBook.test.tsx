@@ -116,6 +116,7 @@ function mockVault(
     addBookmarkEntry,
     removeBookmarkEntry,
     updateBookMetadata: vi.fn(),
+    syncBookInfo: vi.fn(),
   });
   return session;
 }

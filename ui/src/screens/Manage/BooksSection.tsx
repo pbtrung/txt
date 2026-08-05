@@ -199,7 +199,7 @@ export function BooksSection({
   onSelectRow: (txtId: string | null) => void;
   onSetMode: (mode: BooksMode) => void;
 }) {
-  const { session, updateBookMetadata } = useVault();
+  const { session, updateBookMetadata, syncBookInfo } = useVault();
   const { books } = useLibraryBooks();
   const sorted = useMemo(() => allBooksSorted(books ?? []), [books]);
   const filtered = useMemo(() => {
@@ -225,6 +225,41 @@ export function BooksSection({
     },
     [session],
   );
+
+  useEffect(() => {
+    if (!session || !selectedTxtId) return;
+    if (typeof session.instantDb.subscribeQuery !== "function") return;
+    const docKey = session.docKeys.get(selectedTxtId);
+    if (!docKey) return;
+
+    let cancelled = false;
+    let seenInitialPayload = false;
+    const unsubscribe = session.instantDb.subscribeQuery(
+      {
+        txt: {
+          $: { where: { id: selectedTxtId }, fields: [] },
+          txtMetadata: { $: { fields: ["content"] } },
+        },
+      },
+      (result: { data?: { txt?: { txtMetadata?: unknown[] }[] } }) => {
+        if (!seenInitialPayload) {
+          seenInitialPayload = true;
+          return;
+        }
+        if (!result.data?.txt?.[0]?.txtMetadata?.[0]) return;
+        fetchBookInfo(session.instantDb, selectedTxtId, docKey)
+          .then((info) => {
+            if (!cancelled) syncBookInfo(selectedTxtId, info);
+          })
+          .catch(() => undefined);
+      },
+    );
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [selectedTxtId, session, syncBookInfo]);
 
   return (
     <div className="d-flex flex-column flex-grow-1 overflow-hidden">

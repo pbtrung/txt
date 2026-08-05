@@ -135,6 +135,7 @@ export interface VaultContextValue {
     edits: BookMetadataEdits,
     onProgress?: (label: string) => void,
   ) => Promise<void>;
+  syncBookInfo: (txtId: string, info: BookInfo) => void;
 }
 
 const VaultContext = createContext<VaultContextValue | null>(null);
@@ -369,6 +370,17 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     [session, bookmarksMap, bookmarksQueue],
   );
 
+  const syncBookInfo = useCallback((txtId: string, info: BookInfo) => {
+    setSession((prev) => {
+      if (!prev) return prev;
+      const current = prev.metadataById.get(txtId);
+      if (current === info) return prev;
+      const metadataById = new Map(prev.metadataById);
+      metadataById.set(txtId, info);
+      return { ...prev, metadataById };
+    });
+  }, []);
+
   const updateBookMetadata = useCallback(
     async (
       txtId: string,
@@ -383,14 +395,9 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         edits,
         onProgress,
       );
-      setSession((prev) => {
-        if (!prev) return prev;
-        const metadataById = new Map(prev.metadataById);
-        metadataById.set(txtId, info);
-        return { ...prev, metadataById };
-      });
+      syncBookInfo(txtId, info);
     },
-    [session],
+    [session, syncBookInfo],
   );
 
   const value = useMemo<VaultContextValue>(
@@ -410,6 +417,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       addBookmarkEntry,
       removeBookmarkEntry,
       updateBookMetadata,
+      syncBookInfo,
     }),
     [
       status,
@@ -427,6 +435,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       addBookmarkEntry,
       removeBookmarkEntry,
       updateBookMetadata,
+      syncBookInfo,
     ],
   );
 
