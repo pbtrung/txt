@@ -395,8 +395,8 @@ describe("useReaderBook", () => {
     const { result } = renderReaderBook("txt-5");
     await waitFor(() => expect(result.current.loading).toBe(false));
 
-    act(() => result.current.removeBookmark("txt-5:0:1:1000"));
+    act(() => result.current.removeBookmark("txt-5:1:1:1000"));
 
-    expect(removeBookmarkEntry).toHaveBeenCalledWith("txt-5", "txt-5:0:1:1000");
+    expect(removeBookmarkEntry).toHaveBeenCalledWith("txt-5", "txt-5:1:1:1000");
   });
 });

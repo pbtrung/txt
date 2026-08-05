@@ -4,21 +4,23 @@
 // and docs/auth.md. Verify against a real InstantDB app via
 // `npx instant-cli@latest push perms` before treating this as final.
 //
-// There's no separate app-level profile entity in this design -- type lives
-// directly on $users, and every other entity's owner/forUser/fromUser/toUser
-// link points at $users directly. auth.id already equals a $users row's own
-// id, so every isOwner check below is a single-hop data.ref('owner.id'), not
-// a two-hop ref through an intermediate profile row -- the one exception is
-// isSharedReader on txtParts/txtMetadata, a genuine two-hop
+// There's no separate app-level profile entity in this design -- appRole
+// lives directly on $users, and every other entity's owner/forUser/fromUser/
+// toUser link points at $users directly. auth.id already equals a $users
+// row's own id, so every isOwner check below is a single-hop
+// data.ref('owner.id'), not a two-hop ref through an intermediate profile
+// row -- the one exception is isSharedReader on txtParts/txtMetadata, a
+// genuine two-hop
 // data.ref('txt.txtShares.toUser.id'), since a share grants access to a
 // document, not to its individual parts or metadata row (docs/data_model.md's
 // Permission rules).
 //
-// $users.type 'admin' can act on any user's data; 'user' can only read/write
-// its own (or, for txt/txtMetadata/txtParts, read-only what's been shared to
-// it) -- see docs/data_model.md's Permission rules table for the exact rule
-// per entity. isAdmin reads auth's own $users row's type directly via
-// auth.ref('$user.type') -- UNVERIFIED whether this resolves a plain,
+// $users.appRole 'admin' can act on any user's data; any other/missing value
+// can only read/write its own (or, for txt/txtMetadata/txtParts, read-only
+// what's been shared to it) -- see docs/data_model.md's Permission rules
+// table for the exact rule per entity. isAdmin reads auth's own $users row's
+// appRole directly via auth.ref('$user.appRole') -- UNVERIFIED whether this
+// resolves a plain,
 // non-linked attribute the same way auth.ref/data.ref resolve one reached
 // across a real link (a prior design routed type through a separate profile
 // entity specifically so this never had to be answered -- confirmed there,
@@ -32,15 +34,15 @@
 // shape).
 //
 // $users is InstantDB's own auth-managed entity, but it now carries two
-// custom attributes -- umk and type (docs/key_hierarchy.md) -- alongside the
-// system-managed ones -- see its own rules below.
+// custom attributes -- umk and appRole (docs/key_hierarchy.md) -- alongside
+// the system-managed ones -- see its own rules below.
 //
 // Also confirmed via push (2026-08-01): $users.allow.delete must be the
 // literal "false", not a CEL expression -- InstantDB's push API rejects
 // anything else with "The $users namespace doesn't support permissions for
 // delete."
 
-const ADMIN_BIND = ["isAdmin", "'admin' in auth.ref('$user.type')"];
+const ADMIN_BIND = ["isAdmin", "'admin' in auth.ref('$user.appRole')"];
 const OWNER_BIND = ["isOwner", "auth.id in data.ref('owner.id')"];
 
 const rules = {
@@ -48,8 +50,8 @@ const rules = {
     // isSelf is a direct id comparison here, not a ref traversal like every
     // other entity in this file -- $users *is* the auth identity, so
     // auth.id already equals this row's own id. view lets a session read
-    // and locally decrypt its own umk (and see its own type) after unlock;
-    // update is admin-only, since setting/rotating umk or type is a
+    // and locally decrypt its own umk (and see its own appRole) after unlock;
+    // update is admin-only, since setting/rotating umk or appRole is a
     // provisioning action (AdminInitializer-equivalent), never a regular
     // user self-service write -- there's no isSelf branch on update at all,
     // which alone is what keeps a plain user from self-promoting to admin.
@@ -59,16 +61,16 @@ const rules = {
     // be necessary even with this account's $users row pre-created via the
     // Admin SDK first (adminInit.ts's provisionAuthUser, using
     // db.auth.createToken/verifyToken -- which, like all Admin SDK calls,
-    // bypasses instant.perms.ts entirely) and already carrying type: "admin"
+    // bypasses instant.perms.ts entirely) and already carrying appRole: "admin"
     // by the time the real Firebase sign-in happens: create: "isAdmin" still
     // made that live sign-in's oauth/id_token exchange fail ("Permission
     // denied: not perms-pass?"), row already existing or not. So this isn't
     // only about the row not existing yet -- auth apparently isn't (fully)
     // bound for self-referential CEL checks (isSelf's auth.id == data.id,
-    // isAdmin's auth.ref('$user.type')) during this specific internal
+    // isAdmin's auth.ref('$user.appRole')) during this specific internal
     // operation at all, existing row or not. Firebase's own token
     // verification is the real gate on who can trigger this in the first
-    // place; umk/type themselves stay protected by update: isAdmin
+    // place; umk/appRole themselves stay protected by update: isAdmin
     // regardless of how permissive create is.
     bind: [...ADMIN_BIND, "isSelf", "auth.id == data.id"],
     allow: {

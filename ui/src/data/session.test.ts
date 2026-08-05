@@ -10,9 +10,9 @@ const keyStoreKey = new Uint8Array(128).fill(11);
 const privKey = new Uint8Array(3224).fill(13);
 const credStoreKey = new Uint8Array(128).fill(17);
 
-async function buildAuthRow(type?: string) {
+async function buildAuthRow(appRole?: string) {
   const umkBlob = await blob.encrypt(userRootKey, umk);
-  return { umk: bytesToBase64(umkBlob), type };
+  return { umk: bytesToBase64(umkBlob), appRole };
 }
 
 async function buildKeyStoreRow() {
@@ -90,7 +90,7 @@ describe("resolveSession", () => {
     expect(session.txtBookmarks.content).toEqual({});
   });
 
-  it("marks admin sessions from $users.type", async () => {
+  it("marks admin sessions from $users.appRole", async () => {
     const authRow = await buildAuthRow("admin");
     const keyStoreRow = await buildKeyStoreRow();
     const credStoreRow = await buildCredStoreRow();
@@ -172,7 +172,7 @@ describe("resolveSession", () => {
       new TextEncoder().encode(
         JSON.stringify({
           "txt-1": [
-            { part_num: 0, line: 5, txt_preview: "hi", created_at: 1000 },
+            { part_num: 1, line: 5, txt_preview: "hi", created_at: 1000 },
           ],
         }),
       ),

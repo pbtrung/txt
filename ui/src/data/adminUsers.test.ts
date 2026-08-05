@@ -92,17 +92,28 @@ function userCredStore(
   };
 }
 
+function adminEscrowRow(
+  id = "escrow-1",
+  content: Record<string, unknown> = storedCreds(),
+  keyByte = 13,
+) {
+  return {
+    id,
+    credStoreKey: bytesToBase64(new Uint8Array([keyByte])),
+    content: encodedJson(content),
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
 });
 
 describe("adminUsers", () => {
   it("lists users with display names recovered from their own credential rows", async () => {
-    const adminEscrow = {
-      id: "escrow-1",
-      credStoreKey: bytesToBase64(new Uint8Array([12])),
-      content: encodedJson(storedCreds({ display_name: "Admin escrow Bob" })),
-    };
+    const adminEscrow = adminEscrowRow(
+      "escrow-1",
+      storedCreds({ display_name: "Admin escrow Bob" }),
+    );
     const adminOwnCredStore = userCredStore("admin-cred-1", {
       display_name: "Admin",
     });
@@ -125,20 +136,18 @@ describe("adminUsers", () => {
           {
             id: "admin-1",
             email: "admin@example.com",
-            type: "admin",
+            appRole: "admin",
             credStore: [adminEscrow, adminOwnCredStore],
           },
           {
             id: "user-2",
             email: "bob@example.com",
-            type: "user",
             umk: bytesToBase64(new Uint8Array([11])),
             credStore: [userOwnCredStore],
           },
           {
             id: "user-3",
             email: "fallback@example.com",
-            type: "user",
             credStore: [],
           },
         ],
@@ -185,6 +194,7 @@ describe("adminUsers", () => {
     const chunks = db.transact.mock.calls[0]![0];
     expect(chunks).toHaveLength(4);
     expect(JSON.stringify(chunks)).not.toContain('"type"');
+    expect(JSON.stringify(chunks)).not.toContain('"appRole"');
     expect(
       chunks.flatMap((chunk: { __ops?: unknown[] }) => chunk.__ops ?? []),
     ).toEqual(
@@ -203,6 +213,26 @@ describe("adminUsers", () => {
         ],
       ]),
     );
+    const ops: unknown[] = chunks.flatMap(
+      (chunk: { __ops?: unknown[] }) => chunk.__ops ?? [],
+    );
+    const adminLink = ops.find(
+      (op) =>
+        Array.isArray(op) &&
+        op[0] === "link" &&
+        op[1] === "credStore" &&
+        (op[3] as { owner?: string; forUser?: string }).owner === "admin-1",
+    ) as [string, string, string, unknown] | undefined;
+    const adminUpdate = ops.find(
+      (op) =>
+        Array.isArray(op) &&
+        op[0] === "update" &&
+        op[1] === "credStore" &&
+        op[2] === adminLink?.[2],
+    ) as [string, string, string, { credStoreKey: string }] | undefined;
+    expect(adminUpdate?.[3].credStoreKey).not.toBe(
+      bytesToBase64(session.credStoreKey),
+    );
   });
 
   it("reads a user's stored credential fields from admin escrow", async () => {
@@ -212,9 +242,7 @@ describe("adminUsers", () => {
           $users: [
             {
               id: "admin-1",
-              credStore: [
-                { id: "escrow-1", content: encodedJson(storedCreds()) },
-              ],
+              credStore: [adminEscrowRow()],
             },
           ],
         };
@@ -240,9 +268,7 @@ describe("adminUsers", () => {
           $users: [
             {
               id: "admin-1",
-              credStore: [
-                { id: "escrow-1", content: encodedJson(storedCreds()) },
-              ],
+              credStore: [adminEscrowRow()],
             },
           ],
         };
@@ -280,6 +306,23 @@ describe("adminUsers", () => {
     const chunks = db.transact.mock.calls[0]![0];
     expect(chunks).toHaveLength(3);
     expect(JSON.stringify(chunks)).not.toContain('"type"');
+    expect(JSON.stringify(chunks)).not.toContain('"appRole"');
+    const ops: unknown[] = chunks.flatMap(
+      (chunk: { __ops?: unknown[] }) => chunk.__ops ?? [],
+    );
+    expect(ops).toEqual(
+      expect.arrayContaining([
+        [
+          "update",
+          "credStore",
+          "escrow-1",
+          expect.objectContaining({
+            credStoreKey: expect.any(String),
+            content: expect.any(String),
+          }),
+        ],
+      ]),
+    );
   });
 
   it("deletes shares, access/bookmarks, key/cred rows, and the admin escrow row", async () => {
@@ -301,9 +344,7 @@ describe("adminUsers", () => {
           $users: [
             {
               id: "admin-1",
-              credStore: [
-                { id: "escrow-1", content: encodedJson(storedCreds()) },
-              ],
+              credStore: [adminEscrowRow()],
             },
           ],
         };
@@ -317,7 +358,8 @@ describe("adminUsers", () => {
     const chunks = db.transact.mock.calls[0]![0];
     expect(chunks).toHaveLength(8);
     expect(JSON.stringify(chunks)).not.toContain('"type"');
-    const ops = chunks.flatMap(
+    expect(JSON.stringify(chunks)).not.toContain('"appRole"');
+    const ops: unknown[] = chunks.flatMap(
       (chunk: { __ops?: unknown[] }) => chunk.__ops ?? [],
     );
     expect(ops).toEqual(

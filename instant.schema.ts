@@ -2,10 +2,9 @@
 // docs/data_model.md (entities, permission rules), docs/key_hierarchy.md
 // (how the encryption keys below nest), docs/protocols.md (ingest/read/
 // share/GC flows), docs/r2_credentials.md (R2 credential broker, account
-// provisioning), and docs/auth.md (sign-in flow). Not wired into any running
-// code yet. Verify against a real `npx instant-cli@latest push schema`
-// before treating this as final; the API shape here is synthesized from
-// InstantDB's own docs, not exercised against a live schema.
+// provisioning), and docs/auth.md (sign-in flow). Verify against a real
+// `npx instant-cli@latest push schema` before treating schema changes as
+// final.
 //
 // Only the admin account ever creates txt/txtMetadata/txtParts/txtShares
 // rows (docs/data_model.md's Operating model) -- a `user`-role account only
@@ -33,11 +32,10 @@ const _schema = i.schema({
       // query result still can't be unwrapped without the external
       // user_root_key.
       umk: i.string().optional(),
-      // 'admin' | 'user' -- the permission system's role switch. Only ever
-      // admin-writable (instant.perms.ts's $users.update: "isAdmin", no
-      // isSelf branch at all), so self-promotion isn't possible through the
-      // normal write path.
-      type: i.string().optional(),
+      // 'admin' means app admin; missing/anything else is user-level. Named
+      // appRole rather than type because $users.type is an InstantDB system
+      // column and cannot be written by app transactions.
+      appRole: i.string().optional(),
     }),
     // Per-account lc_kyber_1024_x448 composite keypair (docs/data_model.md's
     // keyStore entity) -- lets the admin share a document with this account
@@ -58,11 +56,12 @@ const _schema = i.schema({
     // identifies the account this row is about. A user's self row has
     // owner == forUser; an admin-managed recovery row has owner == admin and
     // forUser == target user. content is a Blob-wrapped (crypto.md format)
-    // JSON string.
+    // JSON string; self rows store r2_config/display_name, admin recovery
+    // rows store the admin-only backup/edit credential bundle.
     credStore: i.entity({
       // 128 random bytes, freshly generated per row and wrapped under this
-      // row owner's umk. Two rows can intentionally hold the same plaintext
-      // credential payload, but never share a credStoreKey.
+      // row owner's umk. Two rows can describe the same target account, but
+      // never share a credStoreKey.
       credStoreKey: i.string(),
       content: i.string(),
     }),

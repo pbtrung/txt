@@ -156,7 +156,7 @@ export class DbCatalogUpdater {
     crypto: CryptoEngine,
   ): Promise<AdminIdentity> {
     const result = await db.query({
-      $users: { $: { where: { type: "admin" } } },
+      $users: { $: { where: { appRole: "admin" } } },
     });
     const candidates = result.$users ?? [];
     for (const row of candidates) {
@@ -189,7 +189,7 @@ export class DbCatalogUpdater {
             limit: C.INSTAQL_QUERY_PAGE_SIZE,
             offset,
           },
-          txtMetadata: {},
+          txtMetadata: { $: { fields: ["content", "catalog"] } },
         },
       });
       const page = result.txt ?? [];

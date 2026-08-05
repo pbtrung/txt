@@ -9,7 +9,7 @@
 // the admin's own identity, never another account's.
 import { init } from "@instantdb/admin";
 import * as C from "./constants.ts";
-import { loadR2Config, type R2ConfigResolved } from "./creds.ts";
+import { loadReadWriteR2Config, type R2ConfigResolved } from "./creds.ts";
 import { CryptoEngine } from "./crypto.ts";
 import type { GcCreds } from "./gcCreds.ts";
 import { collectAllPages } from "./instaqlPagination.ts";
@@ -73,43 +73,40 @@ export class GarbageCollector {
     };
   }
 
-  // Finds the one $users row (type: "admin") whose umk actually decrypts
+  // Finds the one $users row (appRole: "admin") whose umk actually decrypts
   // under this creds.json's own user_root_key -- there's no other way to
   // know which admin row it belongs to without trying each candidate (AEAD
   // tag verification fails hard on a wrong key, so this is safe: exactly
   // one candidate can ever succeed). Then unwraps that account's own
-  // credStore row for its real r2_config -- reused for every document's R2
-  // operations below, since only the admin ever owns content.
+  // admin credential row for the read-write r2_config used by every R2
+  // operation below, since only the admin ever owns content.
   private async resolveAdmin(
     db: any,
     crypto: CryptoEngine,
   ): Promise<AdminIdentity> {
     const result = await db.query({
-      $users: { $: { where: { type: "admin" } } },
+      $users: { $: { where: { appRole: "admin" } } },
     });
     const candidates = result.$users ?? [];
     for (const row of candidates) {
+      let umk: Buffer;
       try {
-        const umk = crypto.blobDecrypt(
+        umk = crypto.blobDecrypt(
           this.creds.userRootKey,
           Buffer.from(row.umk, "base64"),
           false,
         );
-        const r2Config = await this.resolveOwnCredStore(
-          db,
-          crypto,
-          row.id,
-          umk,
-        );
-        this.log.info(`Resolved admin identity: auth.id=${row.id}`);
-        return {
-          authId: row.id,
-          umk,
-          r2: new R2Client(r2Config, false, this.log),
-        };
       } catch {
         // Wrong admin candidate for this user_root_key -- try the next one.
+        continue;
       }
+      const r2Config = await this.resolveOwnCredStore(db, crypto, row.id, umk);
+      this.log.info(`Resolved admin identity: auth.id=${row.id}`);
+      return {
+        authId: row.id,
+        umk,
+        r2: new R2Client(r2Config, false, this.log),
+      };
     }
     throw new Error(
       `no admin $users row's umk decrypts under this creds.json's user_root_key ` +
@@ -117,9 +114,10 @@ export class GarbageCollector {
     );
   }
 
-  // The admin's own owner link on credStore isn't unique (docs/data_model.md's
-  // credStore entity) -- any one of its rows unwraps to the same real
-  // r2_config, since they all share one credStoreKey.
+  // The admin's owner link on credStore is not unique: it includes the
+  // admin's own self row and admin-owned recovery rows for users. Recovery
+  // rows are intentionally missing static R2 keys, so scan for the row whose
+  // decrypted content has a read-write r2_config instead of taking the first.
   private async resolveOwnCredStore(
     db: any,
     crypto: CryptoEngine,
@@ -129,19 +127,31 @@ export class GarbageCollector {
     const result = await db.query({
       credStore: { $: { where: { "owner.id": ownerId } } },
     });
-    const row = result.credStore?.[0];
-    if (!row) throw new Error(`no credStore row for auth.id=${ownerId}`);
-    const credStoreKey = crypto.blobDecrypt(
-      umk,
-      Buffer.from(row.credStoreKey, "base64"),
-      false,
+    const rows = result.credStore ?? [];
+    for (const row of rows) {
+      try {
+        const credStoreKey = crypto.blobDecrypt(
+          umk,
+          Buffer.from(row.credStoreKey, "base64"),
+          false,
+        );
+        const payload = JSON.parse(
+          crypto
+            .blobDecrypt(credStoreKey, Buffer.from(row.content, "base64"), true)
+            .toString("utf8"),
+        );
+        return loadReadWriteR2Config(payload);
+      } catch (err) {
+        this.log.debug(
+          `Skipping admin-owned credStore row without read-write R2 config: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+    throw new Error(
+      `no admin-owned credStore row with read-write r2_config for auth.id=${ownerId}`,
     );
-    const payload = JSON.parse(
-      crypto
-        .blobDecrypt(credStoreKey, Buffer.from(row.content, "base64"), true)
-        .toString("utf8"),
-    );
-    return loadR2Config(payload);
   }
 
   // Every document (`txt` row) this admin owns, with every one of its own

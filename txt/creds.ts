@@ -1,7 +1,6 @@
-// Loading/validating creds.json (see docs/credentials.md's Creds/AdminCreds
-// for the reference shape -- this tool's own is a smaller variant with no
-// turso/display_name fields, since it reads a local sqlite snapshot rather
-// than a live connection).
+// Loading/validating creds.json for txt.ts's legacy-snapshot CLI paths. This
+// tool's shape is smaller than the browser/admin provisioning JSON: it needs
+// the source username, wrapping keys, and R2 config, but not Firebase fields.
 import { readFileSync } from "node:fs";
 import * as C from "./constants.ts";
 
@@ -60,12 +59,26 @@ export function loadR2Config(raw: any): R2ConfigResolved {
   };
 }
 
+export function hasReadWriteR2Config(r2: R2ConfigResolved): boolean {
+  return Boolean(r2.readWriteAccessKeyId && r2.readWriteSecretAccessKey);
+}
+
+export function loadReadWriteR2Config(raw: any): R2ConfigResolved {
+  const r2 = loadR2Config(raw);
+  if (!hasReadWriteR2Config(r2)) {
+    throw new Error(
+      "r2_config missing read_write_access_key_id/read_write_secret_access_key",
+    );
+  }
+  return r2;
+}
+
 // Deletion needs read-write R2 keys; --dry-run only lists, so read-only-only
 // creds are tolerated there (confirmed with the user -- a deliberate
 // deviation from the Python reference, which always requires read-write).
 function checkWriteAccess(r2: R2ConfigResolved, dryRun: boolean): void {
   if (dryRun) return;
-  if (!(r2.readWriteAccessKeyId && r2.readWriteSecretAccessKey)) {
+  if (!hasReadWriteR2Config(r2)) {
     throw new Error(
       "r2_config must include read_write_access_key_id/read_write_secret_access_key for a live (non---dry-run) run",
     );

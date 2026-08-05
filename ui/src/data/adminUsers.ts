@@ -15,7 +15,7 @@ const PAGE_SIZE = 1000;
 interface UserRow {
   id: string;
   email?: string;
-  type?: string | null;
+  appRole?: string | null;
   umk?: string | null;
   credStore?: CredStoreRow[];
 }
@@ -118,6 +118,8 @@ function storedCredsFromJson(json: unknown): AdminStoredUserCreds | null {
 function storedCredsToJson(
   creds: AdminStoredUserCreds,
 ): Record<string, string> {
+  // Internal admin escrow payload. UsersSection.credentialsJson intentionally
+  // strips display_name from the JSON shown for copy/download.
   const json: Record<string, string> = {
     instant_app_id: creds.instantAppId,
     instant_client_name: creds.instantClientName,
@@ -132,13 +134,17 @@ function storedCredsToJson(
 }
 
 async function decryptStoredCreds(
-  adminCredStoreKey: Uint8Array,
+  adminUmk: Uint8Array,
   row: CredStoreRow,
 ): Promise<AdminStoredUserCreds | null> {
-  if (!row.content) return null;
+  if (!row.credStoreKey || !row.content) return null;
   try {
+    const credStoreKey = await blob.decrypt(
+      adminUmk,
+      base64ToBytes(row.credStoreKey),
+    );
     const plaintext = await blob.decrypt(
-      adminCredStoreKey,
+      credStoreKey,
       base64ToBytes(row.content),
       true,
     );
@@ -301,7 +307,7 @@ async function readAdminStoredCreds(
     { row: CredStoreRow; creds: AdminStoredUserCreds }
   >();
   for (const row of rows) {
-    const creds = await decryptStoredCreds(session.credStoreKey, row);
+    const creds = await decryptStoredCreds(session.umk, row);
     if (!creds) continue;
     const userId =
       creds.userAuthId ??
@@ -385,7 +391,7 @@ async function findAdminStoredCreds(
   let emailMatch: { row: CredStoreRow; creds: AdminStoredUserCreds } | null =
     null;
   for (const row of rows) {
-    const creds = await decryptStoredCreds(session.credStoreKey, row);
+    const creds = await decryptStoredCreds(session.umk, row);
     if (!creds) continue;
     if (creds.userAuthId === userId) return { row, creds };
     if (
@@ -419,7 +425,7 @@ export async function listUsersWithInfo(
         id: row.id,
         email: row.email,
         displayName,
-        isAdmin: row.type === "admin",
+        isAdmin: row.appRole === "admin",
       };
     }),
   );
@@ -463,6 +469,7 @@ export async function createUser(
   const userUmk = randomBytes(RANDOM_KEY_LEN);
   const keyStoreKey = randomBytes(RANDOM_KEY_LEN);
   const userCredStoreKey = randomBytes(RANDOM_KEY_LEN);
+  const adminEscrowCredStoreKey = randomBytes(RANDOM_KEY_LEN);
   const { pubKey, privKey } = await kemKeypair();
 
   const userUmkBlob = await blob.encrypt(userRootKey, userUmk);
@@ -474,13 +481,13 @@ export async function createUser(
     session.r2Config,
     input.displayName,
   );
-  const adminStoredCreds = await wrapStoredCreds(session.credStoreKey, {
+  const adminStoredCreds = await wrapStoredCreds(adminEscrowCredStoreKey, {
     ...input,
     userAuthId: auth.authId,
   });
   const adminCredStoreKeyBlob = await blob.encrypt(
     session.umk,
-    session.credStoreKey,
+    adminEscrowCredStoreKey,
   );
 
   onProgress?.("Saving account");
@@ -556,6 +563,11 @@ export async function updateUserCreds(
     userUmk,
     base64ToBytes(userCredStore.credStoreKey),
   );
+  const adminEscrowCredStoreKey = randomBytes(RANDOM_KEY_LEN);
+  const nextAdminCredStoreKey = await blob.encrypt(
+    session.umk,
+    adminEscrowCredStoreKey,
+  );
 
   const [nextUmkBlob, nextUserContent, nextAdminContent] = await Promise.all([
     blob.encrypt(nextRootKey, userUmk),
@@ -564,7 +576,10 @@ export async function updateUserCreds(
       session.r2Config,
       input.displayName,
     ),
-    wrapStoredCreds(session.credStoreKey, { ...input, userAuthId: userId }),
+    wrapStoredCreds(adminEscrowCredStoreKey, {
+      ...input,
+      userAuthId: userId,
+    }),
   ]);
 
   await db.transact([
@@ -572,7 +587,10 @@ export async function updateUserCreds(
       umk: bytesToBase64(nextUmkBlob),
     }),
     tx.credStore![userCredStore.id]!.update({ content: nextUserContent }),
-    tx.credStore![found.row.id]!.update({ content: nextAdminContent }),
+    tx.credStore![found.row.id]!.update({
+      credStoreKey: bytesToBase64(nextAdminCredStoreKey),
+      content: nextAdminContent,
+    }),
   ]);
 }
 

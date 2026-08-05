@@ -70,8 +70,7 @@ export function userLabel(user: {
   displayName?: string;
   email?: string;
 }): string {
-  const displayName = user.displayName?.trim() || user.email?.trim();
-  return displayName ? `${displayName} (${user.id})` : user.id;
+  return user.displayName?.trim() || user.email?.trim() || user.id;
 }
 
 export function userDisplayLabel(user: {

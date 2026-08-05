@@ -1,9 +1,8 @@
 // Mints a short-lived, prefix-scoped, READ-ONLY R2 credential
-// (docs/data_model.md's "Temporary, prefix-scoped R2 credentials"
-// section) -- the only thing standing between a Firebase-signed identity
-// and R2 access, for every account, admin included
+// (docs/r2_credentials.md) -- the only thing standing between a
+// Firebase-signed identity and R2 access, for every account, admin included
 // (env.READ_WRITE_ACCESS_KEY_ID/SECRET is the admin's own static R2
-// credential, held only as a Worker secret -- never sent to any client).
+// credential as provided to this Worker -- never sent to any client).
 //
 // This endpoint is for the frontend (ui/) only, and every credential it
 // mints is read-only ("object-read-only"), regardless of whether the verified
@@ -135,8 +134,8 @@ async function verifyFirebaseIdToken(
 // endpoint's own host) -- R2 uses "iss" (not the request's own accessKeyId)
 // to look up which parent secret to re-verify the HS256 signature against.
 // No outbound call to Cloudflare's own API either way: this is pure local
-// signing with the admin's parent R2 secret access key (held only as a
-// Worker secret). The parent access key ID is reused as-is for the
+// signing with the admin's parent R2 secret access key from env. The parent
+// access key ID is reused as-is for the
 // temporary credential; the temporary secretAccessKey is the SHA-256 hex
 // digest of the signed JWT; the sessionToken is plain base64("jwt/" +
 // <signed JWT>) (confirmed against the runnable example -- not base64url,

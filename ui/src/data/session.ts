@@ -36,7 +36,7 @@ export interface KeyedContent<T> {
 
 export interface Session {
   authId: string;
-  /** $users.type === 'admin' -- gates the Manage screen (RequireAdmin) and
+  /** $users.appRole === 'admin' -- gates the Manage screen (RequireAdmin) and
    * every admin-only write ui/'s data layer performs (adminUsers.ts/
    * adminBooks.ts/adminShares.ts). A 'user'-role session's own umk/
    * keyStorePrivKey are exactly as capable as an admin's own for reading
@@ -51,12 +51,9 @@ export interface Session {
    * uses the matching keyStore.pubKey (fetched fresh per grant, not kept
    * here) to Encapsulate when granting a new share (adminShares.ts). */
   keyStorePrivKey: Uint8Array;
-  /** Unwrapped credStoreKey -- normally discarded once credStore.content is
-   * decrypted below, but an admin session keeps it: docs/data_model.md's
-   * credStore entity lets the admin hold several rows that all share this
-   * same raw key (rather than each minting its own), which is exactly what
-   * adminUsers.ts's createUser/deleteUser need to create/remove the admin's
-   * own escrowed copy of another account's full credentials. */
+  /** Unwrapped key for this account's own credStore self row. Other
+   * credStore rows owned by this account still have their own independent
+   * credStoreKey values; decrypt those per row under umk. */
   credStoreKey: Uint8Array;
   r2Config: R2Config;
   /** This account's own display_name, as stored in credStore.content --
@@ -248,7 +245,7 @@ export async function resolveSession(
 
   return {
     authId,
-    isAdmin: authRow.type === "admin",
+    isAdmin: authRow.appRole === "admin",
     umk,
     keyStorePrivKey,
     credStoreKey,

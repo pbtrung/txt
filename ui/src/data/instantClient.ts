@@ -3,12 +3,12 @@
 // own docs show) so tests can construct an independent client per test
 // instead of sharing one global instance across the whole suite. Schema-less
 // on purpose: instant.schema.ts (repo root) is the InstantDB schema pushed
-// against the real app (own header: "Not wired into any running code yet"),
-// not a TypeScript type import anything in this repo actually uses -- pulling
-// it into ui/'s separate tsconfig project just for autocomplete isn't worth
-// the cross-project include wiring -- every query in this app's data layer
-// is untyped `db.query`, same as the rest of this codebase's `db: any`
-// convention (adminInit.ts, remotePageStore.ts, migrate.ts).
+// against the real app, not a TypeScript type import anything in this repo
+// actually uses -- pulling it into ui/'s separate tsconfig project just for
+// autocomplete isn't worth the cross-project include wiring -- every query in
+// this app's data layer is untyped `db.query`, same as the rest of this
+// codebase's `db: any` convention (adminInit.ts, remotePageStore.ts,
+// migrate.ts).
 //
 // shimWindowForWorker() below works around a real gap in @instantdb/core's
 // own feature detection: its Reactor constructor gates *all* real
@@ -29,7 +29,9 @@
 // `typeof window.location`/`typeof document` guard (OAuth-redirect-specific
 // code this app never exercises, since it only ever calls
 // signInWithIdToken, never a redirect flow) -- so faking just enough of
-// `window` to pass isClient() still leaves those safely no-op-ing.
+// `window` to pass isClient() still leaves those safely no-op-ing. The
+// current R2 credential Worker intentionally does not use InstantDB; this
+// shim is for any future Worker-side InstantDB client code.
 import { init } from "@instantdb/react";
 
 function shimWindowForWorker(): void {

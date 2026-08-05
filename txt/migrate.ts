@@ -28,7 +28,11 @@ import type { DatabaseSync } from "node:sqlite";
 import { randomBytes } from "node:crypto";
 import { id, init, tx } from "@instantdb/admin";
 import * as C from "./constants.ts";
-import { type Creds, loadR2Config, type R2ConfigResolved } from "./creds.ts";
+import {
+  type Creds,
+  loadReadWriteR2Config,
+  type R2ConfigResolved,
+} from "./creds.ts";
 import { CryptoEngine } from "./crypto.ts";
 import { collectAllPages } from "./instaqlPagination.ts";
 import type { InitAdminCreds } from "./initAdminCreds.ts";
@@ -233,27 +237,35 @@ export class Migrator {
       Buffer.from(authRow.umk, "base64"),
       false,
     );
-    // The admin's owner link on credStore isn't unique (docs/data_model.md's
-    // credStore entity) -- any one of its rows unwraps to the same real
-    // r2_config, since they all share one credStoreKey.
-    const credStoreRow = result.credStore?.[0];
-    if (!credStoreRow)
-      throw new Error(`auth.id=${authId} has no credStore row`);
-    const credStoreKey = crypto.blobDecrypt(
-      umk,
-      Buffer.from(credStoreRow.credStoreKey, "base64"),
-      false,
+    const credStoreRows = result.credStore ?? [];
+    for (const credStoreRow of credStoreRows) {
+      try {
+        const credStoreKey = crypto.blobDecrypt(
+          umk,
+          Buffer.from(credStoreRow.credStoreKey, "base64"),
+          false,
+        );
+        const payload = JSON.parse(
+          crypto
+            .blobDecrypt(
+              credStoreKey,
+              Buffer.from(credStoreRow.content, "base64"),
+              true,
+            )
+            .toString("utf8"),
+        );
+        return { authId, umk, r2Config: loadReadWriteR2Config(payload) };
+      } catch (err) {
+        this.log.debug(
+          `Skipping admin-owned credStore row without read-write R2 config: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+    throw new Error(
+      `auth.id=${authId} has no admin-owned credStore row with read-write r2_config`,
     );
-    const payload = JSON.parse(
-      crypto
-        .blobDecrypt(
-          credStoreKey,
-          Buffer.from(credStoreRow.content, "base64"),
-          true,
-        )
-        .toString("utf8"),
-    );
-    return { authId, umk, r2Config: loadR2Config(payload) };
   }
 
   // Every document this admin has already migrated, keyed by its source

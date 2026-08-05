@@ -3,9 +3,9 @@
 // collection never signs in as any particular account (collectGarbage.ts
 // enumerates every account directly via the Admin SDK, which bypasses
 // instant.perms.ts entirely). The only external secret it needs is the
-// admin's own user_root_key, the entry point into its own umk/credStore --
-// and, via the credStore row it holds for every other provisioned account,
-// into every other account's key material too.
+// admin's own user_root_key, the entry point into its own umk. From there
+// collectGarbage.ts finds the admin-owned credStore row that carries the
+// real read-write R2 config.
 import { readFileSync } from "node:fs";
 import * as C from "./constants.ts";
 import { checkKeyLength, requireField } from "./creds.ts";

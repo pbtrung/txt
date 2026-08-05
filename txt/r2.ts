@@ -1,7 +1,7 @@
 // R2 (S3-compatible) object storage client. Port of txt/r2.py's R2Client:
 // list/delete with the same 3-attempt/2-4-8s backoff retry pattern, plus
-// batched deletion (a deliberate, documented deviation from the Python
-// reference's one-key-at-a-time delete -- see docs/cli.md notes).
+// batched deletion (a deliberate deviation from the Python reference's
+// one-key-at-a-time delete, capped by S3_DELETE_BATCH_SIZE).
 import {
   DeleteObjectsCommand,
   GetObjectCommand,
