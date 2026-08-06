@@ -49,9 +49,10 @@ umk -- once per share recipient:
     admin Encapsulates (crypto.md) against recipient's keyStore.pubKey
         |
         v
-    txtShares.{saltKemCt, txtKey}
+    txtShares.{kemCt, txtKey}
         (txtKey here is the same bytes as txt.txtKey, wrapped via
-        HKDF-SHA3-512(IKM=ss, salt) -> 128-byte OKM instead of umk)
+        HKDF-SHA3-512(IKM=ss, blob salt) -> 128-byte OKM instead of umk;
+        kemCt stores only the KEM ciphertext)
         |
         |  recipient Decapsulates using their own keyStore.privKey
         v
