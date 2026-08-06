@@ -115,7 +115,9 @@ const rules = {
   // One row per document (docs/data_model.md's txt entity). create/update/
   // delete are admin-only (docs/data_model.md's Operating model: only the
   // admin ever owns/writes documents) -- isSharedReader extends view only,
-  // never write, to whoever a txtShares row names as toUser.
+  // never write, to whoever a txtShares row names as toUser. The R2 broker
+  // queries this row with the caller's Instant token and no admin token, so
+  // this same view rule is also the credential-mint authorization boundary.
   txt: {
     bind: [
       ...ADMIN_BIND,

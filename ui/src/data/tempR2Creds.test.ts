@@ -14,11 +14,12 @@ afterEach(() => {
 });
 
 describe("fetchTempR2Credential", () => {
-  it("POSTs idToken/prefix and builds an AwsClient from the response", async () => {
+  it("POSTs instantToken/txtId/prefix and builds an AwsClient from the response", async () => {
     const fetchMock = vi.fn(async (url: string, init: RequestInit) => {
       expect(url).toBe("/api/r2-creds");
       expect(JSON.parse(init.body as string)).toEqual({
-        idToken: "id-token-1",
+        instantToken: "instant-token-1",
+        txtId: "txt-1",
         prefix: "doc-prefix-1",
       });
       return new Response(
@@ -34,7 +35,8 @@ describe("fetchTempR2Credential", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const cred = await fetchTempR2Credential(
-      "id-token-1",
+      "instant-token-1",
+      "txt-1",
       "doc-prefix-1",
       r2Config,
     );
@@ -58,7 +60,12 @@ describe("fetchTempR2Credential", () => {
     );
 
     await expect(
-      fetchTempR2Credential("id-token-1", "doc-prefix-1", r2Config),
+      fetchTempR2Credential(
+        "instant-token-1",
+        "txt-1",
+        "doc-prefix-1",
+        r2Config,
+      ),
     ).rejects.toThrow("HTTP 403: prefix mismatch");
   });
 
@@ -69,7 +76,12 @@ describe("fetchTempR2Credential", () => {
     );
 
     await expect(
-      fetchTempR2Credential("id-token-1", "doc-prefix-1", r2Config),
+      fetchTempR2Credential(
+        "instant-token-1",
+        "txt-1",
+        "doc-prefix-1",
+        r2Config,
+      ),
     ).rejects.toThrow("HTTP 500");
   });
 });

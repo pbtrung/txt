@@ -1,54 +1,33 @@
 // Mints a short-lived, prefix-scoped, READ-ONLY R2 credential
-// (docs/r2_credentials.md) -- the only thing standing between a
-// Firebase-signed identity and R2 access, for every account, admin included
-// (env.READ_WRITE_ACCESS_KEY_ID/SECRET is the admin's own static R2
-// credential as provided to this Worker -- never sent to any client).
+// (docs/r2_credentials.md). The caller presents its current InstantDB
+// session token plus the txt row id and already-decrypted prefix. Before
+// minting anything, this Worker queries InstantDB as that exact caller:
+// instant.perms.ts therefore decides whether the caller still owns the txt
+// or has a current share grant, while txt.prefixHash proves that the supplied
+// prefix is the one belonging to that authorized row.
 //
-// This endpoint is for the frontend (ui/) only, and every credential it
-// mints is read-only ("object-read-only"), regardless of whether the verified
-// identity is the admin or a `user`-role account -- the frontend never
-// writes to R2 through this Worker. Writing (ingesting a new document's
-// txtParts) is an admin-tooling operation that uses the admin's own real,
-// static R2 credential directly (recoverable from the admin's own
-// credStore row, docs/data_model.md's credStore entity), not a
-// Worker-minted temporary one.
+// Authorization happens once per opened document, not once per part. The
+// returned R2 credential is restricted to `${prefix}/` and
+// "object-read-only"; the browser then fetches every encrypted part directly
+// from R2. Part bodies never transit this Worker. Revoking a share prevents
+// minting another credential, while a credential already issued before the
+// revoke remains usable only until this file's short TTL expires.
 //
-// Request body: { idToken, prefix }. This Worker's only
-// job is verifying that idToken is a genuine, non-expired Firebase ID token
-// for this app's own Firebase project (RS256 signature against Google's
-// public JWKS via jose -- no outbound call to InstantDB at all, unlike an
-// earlier draft of this file) and, if so, minting a read-only credential
-// scoped to exactly the requested prefix in env.R2_BUCKET at env.R2_ENDPOINT.
-// It does NOT cross-check that the token's own subject actually owns that
-// prefix -- this Worker intentionally never talks to InstantDB. The simple
-// design treats possession of a decrypted txt.prefix as a bearer read
-// capability for R2 ciphertext access. A leaked prefix can let any verified
-// caller fetch encrypted objects under that prefix until the prefix is
-// rotated, but it does not grant write access and does not by itself decrypt
-// document text.
-import { createRemoteJWKSet, jwtVerify, SignJWT } from "jose";
+// The parent access key in env is the admin's own static R2 credential and is
+// never sent to a client. Ingest tooling continues to write with its own
+// static credential directly; this endpoint only ever grants reads.
+import { SignJWT } from "jose";
 
-// The fixed endpoint Firebase ID tokens are verified against -- distinct
-// from Google's general OAuth JWKS, specific to securetoken's signing keys.
-// createRemoteJWKSet caches the fetched keys itself (in-memory, for this
-// isolate's lifetime), so this only ever costs a real fetch on a cold start
-// or a kid the cache hasn't seen yet.
-const FIREBASE_JWKS = createRemoteJWKSet(
-  new URL(
-    "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com",
-  ),
-);
+const INSTANT_API_ORIGIN = "https://api.instantdb.com";
 
-// Comfortably covers reading one document's worth of parts (docs/protocols.md's
-// Read path) -- short enough that a leaked credential stops working quickly,
-// long enough that a normal reading session never needs more than one per
-// document. ui/src/screens/Reader/useReaderBook.ts (via tempR2Creds.ts)
-// requests a fresh one once this one is close to expiring; nothing caches
-// it beyond that.
+// Comfortably covers reading one document's worth of parts, while bounding
+// how long a credential minted just before share revocation remains useful.
+// ui/src/screens/Reader/useReaderBook.ts renews shortly before expiry.
 const TTL_SECONDS = 900;
 
 interface R2CredsRequestBody {
-  idToken: string;
+  instantToken: string;
+  txtId: string;
   prefix: string;
 }
 
@@ -59,6 +38,10 @@ interface TemporaryCredential {
   expiresAtMs: number;
 }
 
+interface InstantTxtQueryResult {
+  txt?: Array<{ prefixHash?: unknown }>;
+}
+
 export async function handleR2Creds(
   request: Request,
   env: Env,
@@ -66,19 +49,16 @@ export async function handleR2Creds(
   const body = await parseBody(request);
   if (!body) return jsonError("invalid or incomplete JSON body", 400);
 
-  const verified = await verifyFirebaseIdToken(
-    body.idToken,
-    env.FIREBASE_PROJECT_ID,
-  );
-  if (!verified) {
-    return jsonError("idToken is not a valid Firebase ID token", 401);
+  let authorized: boolean;
+  try {
+    authorized = await isAuthorizedPrefix(env, body);
+  } catch {
+    return jsonError("authorization service unavailable", 502);
   }
+  if (!authorized) return jsonError("document access denied", 403);
 
   const cred = await mintTemporaryCredential(env, body.prefix);
-  return new Response(JSON.stringify(cred), {
-    status: 200,
-    headers: { "content-type": "application/json" },
-  });
+  return jsonResponse(cred, 200);
 }
 
 async function parseBody(request: Request): Promise<R2CredsRequestBody | null> {
@@ -90,58 +70,70 @@ async function parseBody(request: Request): Promise<R2CredsRequestBody | null> {
   }
   if (typeof data !== "object" || data === null) return null;
   const d = data as Record<string, unknown>;
-  const { idToken, prefix } = d;
-  if (typeof idToken !== "string" || typeof prefix !== "string") {
+  const { instantToken, txtId, prefix } = d;
+  if (
+    typeof instantToken !== "string" ||
+    instantToken.length === 0 ||
+    typeof txtId !== "string" ||
+    txtId.length === 0 ||
+    typeof prefix !== "string" ||
+    prefix.length === 0
+  ) {
     return null;
   }
-  return { idToken, prefix };
+  return { instantToken, txtId, prefix };
 }
 
-// RS256 signature check against Firebase's own public JWKS, plus the
-// standard Firebase ID token issuer/audience claims
-// (https://firebase.google.com/docs/auth/admin/verify-id-tokens#verify_id_tokens_using_a_third-party_jwt_library)
-// -- issuer/audience are pinned to env.FIREBASE_PROJECT_ID (a Worker var,
-// never client-supplied): accepting either from the request itself would
-// let a caller point verification at a *different* Firebase project they
-// control, defeating the check entirely.
-async function verifyFirebaseIdToken(
-  idToken: string,
-  firebaseProjectId: string,
+/** Queries only the requested txt row while impersonating the caller. The
+ * `As-Token` form intentionally omits an admin token: InstantDB applies the
+ * ordinary `txt.view` rule, including current owner/share links, instead of
+ * bypassing it. An absent row is indistinguishable from a denied row here.
+ * The Worker hashes the supplied prefix itself; clients never get to submit
+ * the commitment they want compared. */
+async function isAuthorizedPrefix(
+  env: Env,
+  body: R2CredsRequestBody,
 ): Promise<boolean> {
-  try {
-    await jwtVerify(idToken, FIREBASE_JWKS, {
-      issuer: `https://securetoken.google.com/${firebaseProjectId}`,
-      audience: firebaseProjectId,
-    });
-    return true;
-  } catch {
-    return false;
+  const response = await fetch(
+    `${INSTANT_API_ORIGIN}/admin/query?app_id=${encodeURIComponent(env.INSTANT_APP_ID)}`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "app-id": env.INSTANT_APP_ID,
+        "as-token": body.instantToken,
+      },
+      body: JSON.stringify({
+        query: {
+          txt: {
+            $: {
+              where: { id: body.txtId },
+              fields: ["prefixHash"],
+            },
+          },
+        },
+      }),
+    },
+  );
+
+  if (response.status === 401 || response.status === 403) return false;
+  if (!response.ok) {
+    throw new Error(`InstantDB query failed with HTTP ${response.status}`);
   }
+
+  const result = (await response.json()) as InstantTxtQueryResult;
+  const prefixHash = result.txt?.[0]?.prefixHash;
+  return (
+    typeof prefixHash === "string" &&
+    prefixHash === (await sha256Hex(body.prefix))
+  );
 }
 
-// R2's "local signing" path for Temporary Credentials
-// (https://developers.cloudflare.com/r2/examples/authenticate-r2-temp-credentials/,
-// which has actual runnable code, unlike
-// developers.cloudflare.com/r2/api/s3/temporary-credentials/'s prose-only
-// description -- an earlier version of this function was reverse-engineered
-// from the latter and got several things wrong, confirmed live against a
-// real R2 bucket: the claim is "scope", not "permission" ("permission" is
-// the separate Temporary Credentials *API*'s own parameter name, not this
-// JWT's field); there's no "ttlSeconds" claim at all -- expiry is the JWT's
-// own standard "exp", set via setExpirationTime; and the JWT needs
-// "sub"/"iss"/"aud" claims this Worker wasn't setting (subject = the R2
-// account ID, issuer = the parent access key ID, audience = the R2
-// endpoint's own host) -- R2 uses "iss" (not the request's own accessKeyId)
-// to look up which parent secret to re-verify the HS256 signature against.
-// No outbound call to Cloudflare's own API either way: this is pure local
-// signing with the admin's parent R2 secret access key from env. The parent
-// access key ID is reused as-is for the
-// temporary credential; the temporary secretAccessKey is the SHA-256 hex
-// digest of the signed JWT; the sessionToken is plain base64("jwt/" +
-// <signed JWT>) (confirmed against the runnable example -- not base64url,
-// despite an earlier guess to the contrary). `scope` is always
-// "object-read-only" -- this Worker never mints a write-capable credential
-// for any identity; see this file's top comment for why.
+// R2's local-signing Temporary Credentials path. The JWT is signed with the
+// parent R2 secret without an outbound Cloudflare API call. `scope` is always
+// object-read-only and prefixPaths contains exactly the already-authorized
+// document prefix. The parent key id is reused as the temporary access key;
+// R2 derives verification from the JWT session token and its digest.
 async function mintTemporaryCredential(
   env: Env,
   prefix: string,
@@ -179,9 +171,16 @@ async function sha256Hex(s: string): Promise<string> {
     .join("");
 }
 
-function jsonError(message: string, status: number): Response {
-  return new Response(JSON.stringify({ error: message }), {
+function jsonResponse(body: unknown, status: number): Response {
+  return new Response(JSON.stringify(body), {
     status,
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      "cache-control": "no-store",
+    },
   });
+}
+
+function jsonError(message: string, status: number): Response {
+  return jsonResponse({ error: message }, status);
 }

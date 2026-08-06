@@ -1,6 +1,6 @@
 // wrangler.jsonc has no [vars] block for these on purpose -- their real
 // values are set as Cloudflare dashboard Variables and Secrets, never
-// committed to this repo. R2_BUCKET/R2_ENDPOINT/FIREBASE_PROJECT_ID are not
+// committed to this repo. R2_BUCKET/R2_ENDPOINT/INSTANT_APP_ID are not
 // themselves sensitive, but they live alongside the two real secrets rather
 // than in wrangler.jsonc so there's one configuration surface, not two.
 // `wrangler types` only knows
@@ -13,8 +13,7 @@ interface Env {
   R2_BUCKET: string;
   // e.g. https://<accountId>.r2.cloudflarestorage.com
   R2_ENDPOINT: string;
-  // Pins the issuer/audience verifyFirebaseIdToken checks a token's claims
-  // against -- must never be accepted from the request itself (see
-  // r2Creds.ts's comment on verifyFirebaseIdToken for why).
-  FIREBASE_PROJECT_ID: string;
+  // The app queried with the caller's own Instant session token. No Instant
+  // admin token is configured: As-Token must remain subject to permissions.
+  INSTANT_APP_ID: string;
 }

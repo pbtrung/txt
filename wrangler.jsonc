@@ -22,7 +22,7 @@
   },
   // No [vars] block here on purpose -- worker/r2Creds.ts's runtime values
   // (READ_WRITE_ACCESS_KEY_ID, READ_WRITE_SECRET_ACCESS_KEY, R2_BUCKET,
-  // R2_ENDPOINT, FIREBASE_PROJECT_ID; see worker/env.d.ts) are configured as
+  // R2_ENDPOINT, INSTANT_APP_ID; see worker/env.d.ts) are configured as
   // Cloudflare dashboard Variables and Secrets instead of committed here. The
   // two access-key values are the admin's real R2 credential and must not be
   // in git; the non-secret vars live beside them so there is one deployment

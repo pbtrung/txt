@@ -17,7 +17,6 @@
 // writing back read-position/bookmark updates.
 
 import { id, tx } from "@instantdb/react";
-import type { Auth } from "firebase/auth";
 import {
   createContext,
   useCallback,
@@ -87,12 +86,10 @@ export interface VaultSession {
    * display_name, else the signed-in Firebase account's own email. */
   displayName: string | null | undefined;
   instantDb: any;
-  /** The real Firebase Auth instance (not just its ID token) -- every R2
-   * temp-credential request (tempR2Creds.ts, one per document opened) needs
-   * a fresh ID token, and auth.currentUser.getIdToken() transparently
-   * refreshes an expiring one; the original signIn()'s own token is only
-   * ever used once, for the initial signInWithIdToken() call above. */
-  auth: Auth;
+  /** InstantDB session token returned by signInWithIdToken. The R2 broker
+   * sends it back as As-Token so InstantDB applies txt.view to the exact
+   * document before the broker mints a prefix-scoped credential. */
+  instantToken: string;
   authId: string;
   instantAppId: string;
   instantClientName: string;
@@ -168,7 +165,7 @@ function useSerialQueue(): (task: () => Promise<void>) => Promise<void> {
 
 async function resolveIdentity(file: File): Promise<{
   instantDb: any;
-  auth: Auth;
+  instantToken: string;
   authId: string;
   creds: Creds;
   keys: Session;
@@ -178,7 +175,7 @@ async function resolveIdentity(file: File): Promise<{
   const creds = await loadCredsFromFile(file);
 
   verbose("unlock: signing in with Firebase");
-  const { auth, idToken } = await firebaseAuth.signIn(
+  const { idToken } = await firebaseAuth.signIn(
     {
       apiKey: creds.firebaseApiKey,
       authDomain: creds.firebaseAuthDomain,
@@ -193,13 +190,17 @@ async function resolveIdentity(file: File): Promise<{
     idToken,
   });
   const authId: string = authResult.user.id;
+  const instantToken: unknown = authResult.user.refresh_token;
+  if (typeof instantToken !== "string" || instantToken.length === 0) {
+    throw new Error("InstantDB sign-in returned no session token");
+  }
 
   verbose("unlock: resolving session ($users/keyStore/credStore)");
   const keys = await resolveSession(instantDb, authId, creds.userRootKey);
 
   return {
     instantDb,
-    auth,
+    instantToken,
     authId,
     creds,
     keys,
@@ -224,7 +225,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     setError(null);
     setProgress(phaseProgress(UNLOCK_PHASES, 0));
     try {
-      const { instantDb, auth, authId, creds, keys, displayName } =
+      const { instantDb, instantToken, authId, creds, keys, displayName } =
         await resolveIdentity(file);
 
       setProgress(phaseProgress(UNLOCK_PHASES, 1));
@@ -238,7 +239,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       setSession({
         displayName,
         instantDb,
-        auth,
+        instantToken,
         authId,
         instantAppId: creds.instantAppId,
         instantClientName: creds.instantClientName,

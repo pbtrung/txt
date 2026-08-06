@@ -77,10 +77,12 @@ async function ensureR2Credential(
   if (cached && Date.now() < cached.expiresAtMs - R2_CRED_REFRESH_BUFFER_MS) {
     return cached;
   }
-  const currentUser = session.auth.currentUser;
-  if (!currentUser) throw new Error("no signed-in Firebase user");
-  const idToken = await currentUser.getIdToken();
-  return fetchTempR2Credential(idToken, doc.prefix, session.r2Config);
+  return fetchTempR2Credential(
+    session.instantToken,
+    doc.txtId,
+    doc.prefix,
+    session.r2Config,
+  );
 }
 
 export function useReaderBook(txtId: string): UseReaderBookResult {

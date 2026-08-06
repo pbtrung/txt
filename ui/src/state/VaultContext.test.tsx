@@ -86,7 +86,11 @@ function installFakeAuth(sessionOverrides: Partial<Session> = {}) {
   const instantDb = {
     auth: {
       signInWithIdToken: vi.fn().mockResolvedValue({
-        user: { id: "auth-1", email: "admin@example.com" },
+        user: {
+          id: "auth-1",
+          email: "admin@example.com",
+          refresh_token: "instant-token",
+        },
         created: false,
       }),
     },
@@ -147,6 +151,7 @@ describe("VaultProvider", () => {
     const { result, instantDb } = await unlockWith();
 
     expect(result.current.session?.displayName).toBe("admin@example.com");
+    expect(result.current.session?.instantToken).toBe("instant-token");
     expect(result.current.session?.isAdmin).toBe(false);
     expect(result.current.session?.credStoreKey).toBeInstanceOf(Uint8Array);
     expect(result.current.session?.metadataById.get("txt-1")?.title).toBe(

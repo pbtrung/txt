@@ -81,6 +81,11 @@ const _schema = i.schema({
       // derived from auth.id, so it's only ever recoverable by whoever can
       // unwrap txtKey (docs/r2_credentials.md).
       prefix: i.string(),
+      // Plain lowercase-hex SHA-256 commitment to the decrypted prefix. The
+      // R2 credential broker queries this row under the caller's own Instant
+      // session permissions, hashes the prefix supplied by the caller, and
+      // mints only when they match. It reveals no usable R2 path by itself.
+      prefixHash: i.string(),
       // Plaintext, present only on a migrated document: the source
       // snapshot's own integer txt_id (txt/owner.ts's legacy schema).
       // InstantDB rows have no integer primary key to reuse the way the

@@ -74,9 +74,7 @@ function mockVault(
   const session = {
     displayName: "admin@example.com",
     instantDb: {},
-    auth: {
-      currentUser: { getIdToken: vi.fn().mockResolvedValue("id-token") },
-    },
+    instantToken: "instant-token",
     authId: "auth-1",
     umk: new Uint8Array(),
     keyStorePrivKey: new Uint8Array(),
@@ -197,6 +195,12 @@ describe("useReaderBook", () => {
     );
 
     await waitFor(() => expect(result.current.partText).toBe("part-14"));
+    expect(fetchTempR2Credential).toHaveBeenCalledWith(
+      "instant-token",
+      "txt-1",
+      "prefix-1",
+      session.r2Config,
+    );
     expect(recordReadPosition).toHaveBeenCalledWith(
       "txt-7",
       expect.objectContaining({ lastPartNum: 14 }),

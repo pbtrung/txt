@@ -20,17 +20,18 @@ interface R2CredsResponse {
   expiresAtMs: number;
 }
 
-/** idToken is the same Firebase ID token already used for this session's
- * own signInWithIdToken call. This one has no built-in retry for an idToken
- * that's gone stale since the session started; a 401 here surfaces as an
- * ordinary thrown error, same as any other stale-idToken failure.
+/** instantToken is the session token returned by InstantDB's own
+ * signInWithIdToken call. The Worker presents it back to InstantDB via
+ * As-Token so the normal txt.view permission checks current ownership/share
+ * authorization before any R2 credential is minted.
  *
  * prefix is a document's own already-decrypted txt.prefix, not derived from
  * authId -- a temporary credential scopes to exactly one document at a
  * time (docs/r2_credentials.md), so a caller reading N different documents
  * calls this N times, once per document, rather than once per session. */
 export async function fetchTempR2Credential(
-  idToken: string,
+  instantToken: string,
+  txtId: string,
   prefix: string,
   r2Config: R2Config,
 ): Promise<TempR2Credential> {
@@ -38,7 +39,8 @@ export async function fetchTempR2Credential(
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      idToken,
+      instantToken,
+      txtId,
       prefix,
     }),
   });
