@@ -43,6 +43,11 @@ $users.umk
              |  used directly as IKM --
              +--> txtBookmarks.content   (bookmarks, keyed by txt_id)
 
+txt.prefixHash is not another key-hierarchy edge: it is the plaintext
+lowercase-hex SHA-256 commitment of the decrypted txt.prefix, stored on the
+same txt row so the credential Worker can bind {txtId, prefix} before minting
+a read-only credential. The 32-random-byte prefix remains encrypted above.
+
 txt.txtKey, in parallel, is also wrapped a second way -- not under
 umk -- once per share recipient:
 
