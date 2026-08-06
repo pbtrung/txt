@@ -45,6 +45,7 @@ import {
 } from "./metadataCatalog.ts";
 import { type OrphanSweepTarget, sweepOrphanObjects } from "./orphanSweep.ts";
 import { TxtOwner, type TxtMetadataEntry } from "./owner.ts";
+import { computePrefixHash } from "./prefixHash.ts";
 import { generateRandomToken, unwrapToken, wrapToken } from "./randomToken.ts";
 import { R2Client } from "./r2.ts";
 
@@ -508,6 +509,7 @@ export class Migrator {
                 .blobEncrypt(admin.umk, doc.txtKey, false)
                 .toString("base64"),
               prefix: wrapToken(crypto, doc.txtKey, doc.prefix),
+              prefixHash: computePrefixHash(doc.prefix),
               sourceTxtId: doc.oldTxtId,
             })
             .link({ owner: admin.authId }),

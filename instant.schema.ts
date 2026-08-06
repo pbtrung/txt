@@ -85,7 +85,10 @@ const _schema = i.schema({
       // The R2 credential broker queries this row under the caller's own
       // Instant session permissions, hashes the prefix supplied by the caller,
       // and mints only when they match. It reveals no usable R2 path by itself.
-      prefixHash: i.string(),
+      // Optional only for the additive rollout: the schema must be pushable
+      // before --update-db-prefixHash backfills existing rows. New writes set
+      // it, and the broker rejects a row where it is absent.
+      prefixHash: i.string().optional(),
       // Plaintext, present only on a migrated document: the source
       // snapshot's own integer txt_id (txt/owner.ts's legacy schema).
       // InstantDB rows have no integer primary key to reuse the way the

@@ -17,6 +17,7 @@ import { TxtOwner } from "./owner.ts";
 import { R2Client } from "./r2.ts";
 import { Reporter } from "./stats.ts";
 import { DbCatalogUpdater } from "./updateDbCatalog.ts";
+import { DbPrefixHashUpdater } from "./updateDbPrefixHash.ts";
 
 type CliArgs =
   | {
@@ -49,6 +50,12 @@ type CliArgs =
       credsPath: string;
       verbose: boolean;
       dryRun: boolean;
+    }
+  | {
+      command: "update-db-prefixHash";
+      credsPath: string;
+      verbose: boolean;
+      dryRun: boolean;
     };
 
 function printUsage(): void {
@@ -57,9 +64,11 @@ function printUsage(): void {
       "       node txt.ts --init-admin <creds.json> [-v|--verbose]\n" +
       "       node txt.ts --migrate --from <in.db> --from-creds <from_creds.json> --to-creds <to_creds.json> [-v|--verbose] [--dry-run] [-y|--yes]\n" +
       "       node txt.ts --collect-garbage --creds <creds.json> [-v|--verbose] [--dry-run] [-y|--yes]\n" +
-      "       node txt.ts --update-db-catalog --creds <creds.json> [-v|--verbose] [--dry-run]\n\n" +
+      "       node txt.ts --update-db-catalog --creds <creds.json> [-v|--verbose] [--dry-run]\n" +
+      "       node txt.ts --update-db-prefixHash --creds <creds.json> [-v|--verbose] [--dry-run]\n\n" +
       "Notes:\n" +
-      "  --update-db-catalog rewrites every owned txtMetadata.catalog row, including rows that already have catalog.",
+      "  --update-db-catalog rewrites every owned txtMetadata.catalog row, including rows that already have catalog.\n" +
+      "  --update-db-prefixHash backfills missing and repairs incorrect owned txt.prefixHash values.",
   );
 }
 
@@ -72,6 +81,7 @@ function parseCliArgs(argv: string[]): CliArgs {
       migrate: { type: "boolean", default: false },
       "collect-garbage": { type: "boolean", default: false },
       "update-db-catalog": { type: "boolean", default: false },
+      "update-db-prefixHash": { type: "boolean", default: false },
       from: { type: "string" },
       "from-creds": { type: "string" },
       "to-creds": { type: "string" },
@@ -126,6 +136,14 @@ function parseCliArgs(argv: string[]): CliArgs {
   if (values["update-db-catalog"] && values.creds) {
     return {
       command: "update-db-catalog",
+      credsPath: values.creds,
+      verbose: values.verbose!,
+      dryRun: values["dry-run"]!,
+    };
+  }
+  if (values["update-db-prefixHash"] && values.creds) {
+    return {
+      command: "update-db-prefixHash",
       credsPath: values.creds,
       verbose: values.verbose!,
       dryRun: values["dry-run"]!,
@@ -291,11 +309,39 @@ function printUpdateDbCatalogSummary(
   log.info(`failed:            ${result.failed}`);
 }
 
+async function updateDbPrefixHash(
+  args: Extract<CliArgs, { command: "update-db-prefixHash" }>,
+  log: Logger,
+): Promise<number> {
+  const creds = loadGcCreds(args.credsPath);
+  const updater = new DbPrefixHashUpdater(creds, log);
+  const result = await updater.run({ dryRun: args.dryRun });
+  printUpdateDbPrefixHashSummary(result, log);
+  return result.failed > 0 ? 1 : 0;
+}
+
+function printUpdateDbPrefixHashSummary(
+  result: Awaited<ReturnType<DbPrefixHashUpdater["run"]>>,
+  log: Logger,
+): void {
+  log.info("--- update-db-prefixHash summary ---");
+  log.info(`mode:              ${result.dryRun ? "dry-run" : "live"}`);
+  log.info(`documents:         ${result.documentCount}`);
+  log.info(
+    `${result.dryRun ? "prepared" : "updated"}:          ${result.updated}`,
+  );
+  log.info(`unchanged:         ${result.unchanged}`);
+  log.info(`skipped:           ${result.skipped}`);
+  log.info(`failed:            ${result.failed}`);
+}
+
 async function dispatch(args: CliArgs, log: Logger): Promise<number> {
   if (args.command === "init-admin") return initAdmin(args, log);
   if (args.command === "migrate") return migrate(args, log);
   if (args.command === "collect-garbage") return collectGarbage(args, log);
   if (args.command === "update-db-catalog") return updateDbCatalog(args, log);
+  if (args.command === "update-db-prefixHash")
+    return updateDbPrefixHash(args, log);
   return cleanBucket(args, log);
 }
 
