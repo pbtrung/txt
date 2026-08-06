@@ -18,7 +18,6 @@
 
 import * as blob from "../crypto/blob";
 import { base64ToBytes } from "../crypto/bytes";
-import { SALT_LEN } from "../crypto/constants";
 import { collectAllPages } from "./instaqlPagination";
 import { kemDecapsulate } from "./leancrypto";
 import {
@@ -67,7 +66,7 @@ interface OwnedTxtRow {
 }
 
 interface SharedTxtSharesRow {
-  saltKemCt: string;
+  kemCt: string;
   txtKey: string;
   txt: { id: string; txtMetadata: TxtMetadataLink[] }[];
 }
@@ -135,7 +134,7 @@ async function loadSharedDocs(
           order: { shareKey: "asc" },
           limit: PAGE_SIZE,
           offset,
-          fields: ["saltKemCt", "txtKey"],
+          fields: ["kemCt", "txtKey"],
         },
         txt: {
           $: { fields: [] },
@@ -155,11 +154,7 @@ async function loadSharedDocs(
   for (const row of rows) {
     const txtRow = row.txt?.[0];
     if (!txtRow) continue; // the shared txt row itself is gone/inaccessible
-    // crypto.md's Decapsulate: saltKemCt = salt (64 bytes) || ct (1624
-    // bytes), raw/public. salt itself isn't needed separately here --
-    // blob.decrypt below parses the same salt back out of txtKey's own blob
-    // header, per crypto.md's Encapsulate step 3.
-    const ct = base64ToBytes(row.saltKemCt).slice(SALT_LEN);
+    const ct = base64ToBytes(row.kemCt);
     const ss = await kemDecapsulate(session.keyStorePrivKey, ct);
     const docKey = await blob.decrypt(ss, base64ToBytes(row.txtKey));
     const doc = await toLibraryDoc(txtRow.id, docKey, txtRow.txtMetadata?.[0]);

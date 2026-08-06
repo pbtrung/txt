@@ -1,8 +1,7 @@
 import { id, tx } from "@instantdb/react";
 
 import * as blob from "../crypto/blob";
-import { base64ToBytes, bytesToBase64, concatBytes } from "../crypto/bytes";
-import { HEADER_LEN, SALT_LEN } from "../crypto/constants";
+import { base64ToBytes, bytesToBase64 } from "../crypto/bytes";
 import { collectAllPages } from "./instaqlPagination";
 import { kemEncapsulate } from "./leancrypto";
 
@@ -100,14 +99,13 @@ export async function grantShare(
   const pubKey = await recipientPubKey(db, toUserId);
   const { ct, ss } = await kemEncapsulate(pubKey);
   const wrappedTxtKey = await blob.encrypt(ss, txtKey);
-  const salt = wrappedTxtKey.slice(HEADER_LEN, HEADER_LEN + SALT_LEN);
   const shareId = id();
 
   await db.transact([
     tx
       .txtShares![shareId]!.update({
         shareKey: `${txtId}:${session.authId}:${toUserId}`,
-        saltKemCt: bytesToBase64(concatBytes(salt, ct)),
+        kemCt: bytesToBase64(ct),
         txtKey: bytesToBase64(wrappedTxtKey),
       })
       .link({ txt: txtId, fromUser: session.authId, toUser: toUserId }),

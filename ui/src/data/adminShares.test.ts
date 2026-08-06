@@ -111,12 +111,14 @@ describe("grantShare", () => {
     expect(db.transact).toHaveBeenCalledOnce();
     const chunk = db.transact.mock.calls[0]![0][0] as {
       id: string;
-      payload: { shareKey: string; saltKemCt: string; txtKey: string };
+      payload: { shareKey: string; kemCt: string; txtKey: string };
       links: { txt: string; fromUser: string; toUser: string };
     };
     expect(chunk.id).toBe("share-new");
     expect(chunk.payload.shareKey).toBe("txt-1:admin-1:user-2");
-    expect(base64ToBytes(chunk.payload.saltKemCt)).toHaveLength(64 + 1624);
+    expect(base64ToBytes(chunk.payload.kemCt)).toEqual(
+      new Uint8Array(1624).fill(4),
+    );
     await expect(
       blob.decrypt(
         new Uint8Array(88).fill(9),

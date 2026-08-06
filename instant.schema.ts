@@ -132,9 +132,10 @@ const _schema = i.schema({
     // always the admin's own $users row) -- see docs/protocols.md's Sharing
     // protocol.
     txtShares: i.entity({
-      // salt (64 random bytes) || lc_kyber_1024_x448 KEM ciphertext (1624
-      // bytes), raw/public -- what the recipient needs to Decapsulate.
-      saltKemCt: i.string(),
+      // Raw/public lc_kyber_1024_x448 KEM ciphertext (1624 bytes) -- what
+      // the recipient needs to Decapsulate. The wrapping salt is already
+      // embedded in txtKey's standard blob.
+      kemCt: i.string(),
       // The same txt.txtKey bytes, rewrapped for this recipient via
       // HKDF-SHA3-512(IKM=ss, salt) -> 128-byte OKM (crypto.md's
       // Encapsulate/Decapsulate) instead of the owner's umk.

@@ -171,7 +171,7 @@ const rules = {
   // txtShares entity). view deliberately includes the recipient
   // (auth.id in data.ref('toUser.id')) -- without it, a recipient could
   // never discover which documents have been shared to them, or fetch the
-  // saltKemCt/txtKey blob they need to Decapsulate. Every write stays
+  // kemCt/txtKey values they need to Decapsulate. Every write stays
   // admin-only: only the admin ever grants or revokes a share
   // (docs/protocols.md's Sharing protocol).
   txtShares: {

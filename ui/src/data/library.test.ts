@@ -1,8 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import * as blob from "../crypto/blob";
-import { bytesToBase64, concatBytes, randomBytes } from "../crypto/bytes";
-import { SALT_LEN } from "../crypto/constants";
+import { bytesToBase64, randomBytes } from "../crypto/bytes";
 import { kemEncapsulate, kemKeypair } from "./leancrypto";
 import { loadLibrary } from "./library";
 import { wrapMetadataCatalog } from "./metadata";
@@ -56,12 +55,7 @@ async function sharedTxtSharesRow(txtId: string, name: string, title = name) {
   const { pubKey, privKey } = await kemKeypair();
   const txtKey = randomBytes(128);
   const { ct, ss } = await kemEncapsulate(pubKey);
-  // crypto.md's Encapsulate step 3: reuse the salt embedded in the returned
-  // blob's own header as saltKemCt's own salt half -- extract it after
-  // encrypting, same as txtShares.saltKemCt/txtKey really carry.
   const txtKeyBlob = await blob.encrypt(ss, txtKey);
-  const salt = txtKeyBlob.slice(4, 4 + SALT_LEN); // magic(2)+version(2) header, then salt
-  const saltKemCt = concatBytes(salt, ct);
 
   const catalogPayload = {
     name,
@@ -72,7 +66,7 @@ async function sharedTxtSharesRow(txtId: string, name: string, title = name) {
   };
   return {
     row: {
-      saltKemCt: bytesToBase64(saltKemCt),
+      kemCt: bytesToBase64(ct),
       txtKey: bytesToBase64(txtKeyBlob),
       txt: [
         {
