@@ -18,14 +18,12 @@ function request(body: unknown): Request {
   });
 }
 
-async function sha256Hex(value: string): Promise<string> {
+async function sha256Base64(value: string): Promise<string> {
   const digest = await crypto.subtle.digest(
     "SHA-256",
     new TextEncoder().encode(value),
   );
-  return [...new Uint8Array(digest)]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
+  return Buffer.from(digest).toString("base64");
 }
 
 afterEach(() => {
@@ -54,7 +52,7 @@ describe("handleR2Creds", () => {
         },
       });
       return Response.json({
-        txt: [{ prefixHash: await sha256Hex("prefix-1") }],
+        txt: [{ prefixHash: await sha256Base64("prefix-1") }],
       });
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -84,7 +82,7 @@ describe("handleR2Creds", () => {
       "fetch",
       vi.fn(async () =>
         Response.json({
-          txt: [{ prefixHash: await sha256Hex("real-prefix") }],
+          txt: [{ prefixHash: await sha256Base64("real-prefix") }],
         }),
       ),
     );

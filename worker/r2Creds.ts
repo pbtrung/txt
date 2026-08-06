@@ -125,7 +125,7 @@ async function isAuthorizedPrefix(
   const prefixHash = result.txt?.[0]?.prefixHash;
   return (
     typeof prefixHash === "string" &&
-    prefixHash === (await sha256Hex(body.prefix))
+    prefixHash === (await sha256Base64(body.prefix))
   );
 }
 
@@ -162,13 +162,19 @@ async function mintTemporaryCredential(
 }
 
 async function sha256Hex(s: string): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(s),
-  );
+  const digest = await sha256(s);
   return [...new Uint8Array(digest)]
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
+}
+
+async function sha256Base64(s: string): Promise<string> {
+  const digest = new Uint8Array(await sha256(s));
+  return btoa(String.fromCharCode(...digest));
+}
+
+function sha256(s: string): Promise<ArrayBuffer> {
+  return crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
 }
 
 function jsonResponse(body: unknown, status: number): Response {
