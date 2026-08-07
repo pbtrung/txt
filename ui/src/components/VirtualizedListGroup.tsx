@@ -65,7 +65,7 @@ export function VirtualizedListGroup<T>({
   });
 
   if (items.length === 0) {
-    return <p className="text-body-secondary px-3 pb-3">{emptyMessage}</p>;
+    return <p className="text-body-secondary p-3">{emptyMessage}</p>;
   }
 
   return (
