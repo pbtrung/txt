@@ -4,7 +4,7 @@
 // client from a static key: every AwsClient this app uses comes from
 // tempR2Creds.ts's short-lived, prefix-scoped temporary credential instead
 // (docs/r2_credentials.md), for every account, admin included. GET-only:
-// only the CLI (txt.ts --migrate) ever writes a txtParts object to R2, using
+// only the CLI (txt.ts --ingest) ever writes a txtParts object to R2, using
 // the admin's own real, static credential directly, never through this
 // module or the Worker-brokered temporary credential this file's own
 // getObject always uses -- see docs/protocols.md's Ingest/write path.

@@ -7,7 +7,7 @@
 // actually uses -- pulling it into ui/'s separate tsconfig project just for
 // autocomplete isn't worth the cross-project include wiring -- every query in
 // this app's data layer is untyped `db.query`, same as the rest of this
-// codebase's `db: any` convention (adminInit.ts, migrate.ts). This factory is
+// codebase's `db: any` convention (adminInit.ts, ingest.ts). This factory is
 // browser-only. The R2 credential Worker intentionally never initializes or
 // queries InstantDB (docs/r2_credentials.md).
 import { init } from "@instantdb/react";

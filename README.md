@@ -9,6 +9,7 @@ See [`docs/data_model.md`](docs/data_model.md) for the entities and permission r
 ## Main features
 
 - **`--init-admin`** — provisions the admin account end to end: signs into Firebase, resolves an InstantDB identity for it, generates its key hierarchy (a `keyStore` Kyber/X448 keypair and a `credStore` row holding its real R2 credentials), and writes both in one transaction. No per-user database or initial upload needed.
+- **`--ingest`** — cleans, splits, and uploads every `.txt` file in a directory (skipping any filename already recorded under an owned document) as its own `txt`/`txtMetadata`/`txtParts` InstantDB entities plus per-part R2 objects, with an optional Calibre `.opf` sidecar folded into a `.epub.txt` file's metadata. Nothing is written to InstantDB for a file until every one of its parts has already uploaded — a failed file leaves no trace to resume from and is retried whole on the next run.
 - **`--clean-bucket`** — sweeps an R2 bucket for objects no longer referenced by any admin-owned `txtParts` row in InstantDB (including R2 objects a crashed `--ingest` run left behind), with a dry-run mode and a confirmation prompt before deleting anything.
 - **`--update-db-catalog`** — rebuilds every admin-owned `txtMetadata.catalog` projection from full encrypted metadata, overwriting older projections so newly added fields are backfilled.
 - **`--update-db-prefixHash`** — backfills/repairs every admin-owned `txt.prefixHash` from its own decrypted `prefix`, the plaintext commitment the R2-credential Worker checks a caller-supplied prefix against.
@@ -30,6 +31,8 @@ npm install
 node txt.ts --init-admin <creds.json> [-v|--verbose]
 
 node txt.ts --clean-bucket --creds <creds.json> [-v|--verbose] [--dry-run] [-y|--yes]
+
+node txt.ts --ingest <dir> --creds <creds.json> [-v|--verbose] [--dry-run]
 
 node txt.ts --update-db-catalog --creds <creds.json> [-v|--verbose] [--dry-run]
 
@@ -66,7 +69,7 @@ node txt.ts --update-db-prefixHash --creds <creds.json> [-v|--verbose] [--dry-ru
 }
 ```
 
-`--clean-bucket`, `--update-db-catalog`, and `--update-db-prefixHash` take a much smaller file instead — none of them sign into Firebase as any particular account (they enumerate through the InstantDB Admin SDK), so they only need enough to find the admin identity and unwrap its own key material:
+`--ingest`, `--clean-bucket`, `--update-db-catalog`, and `--update-db-prefixHash` take a much smaller file instead — none of them sign into Firebase as any particular account (they enumerate through the InstantDB Admin SDK), so they only need enough to find the admin identity and unwrap its own key material:
 
 ```json
 {

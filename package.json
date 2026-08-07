@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "test": "vitest run tests",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "ui:dev": "vite --config ui/vite.config.ts",

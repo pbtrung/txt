@@ -1,5 +1,5 @@
 // The unlock file (see screens/Unlock/UnlockScreen.tsx) is the same
-// creds.json shape the CLI's --init-admin/--migrate --to-creds already take
+// creds.json shape the CLI's --init-admin already takes
 // (txt/initAdminCreds.ts) -- the admin's one credentials file now works for
 // both, rather than needing a separate browser-specific bundle. This parser
 // only requires firebase_email/firebase_password/firebase_api_key (the
