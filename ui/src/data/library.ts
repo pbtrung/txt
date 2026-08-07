@@ -9,7 +9,7 @@
 // only by the reader screen and metadata editor.
 //
 // Paginated the same way txt/migrate.ts's resolveExistingTargets and
-// txt/collectGarbage.ts's resolveSweepTargets page through txt rows: an
+// txt/bucket.ts's resolveOwnedDocuments page through txt rows: an
 // entity's own built-in `id` can't be used in an InstaQL `order` clause
 // (confirmed against a real InstantDB app), so owned docs page by
 // sourceTxtId (set on every txt row today -- only --migrate ever creates

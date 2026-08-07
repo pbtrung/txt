@@ -8,7 +8,7 @@ Every column that holds user content, a wrapped key, or anything else sensitive 
 
 Exact InstantDB API names below (`i.entity`, `unique()`, `.ref()`, permission rule shape) come from InstantDB's own docs (`instantdb.com/docs/modeling-data`, `/docs/permissions`, `/docs/auth/firebase`) — verify against a real `npx instant-cli@latest push schema` before treating any of this as final.
 
-This file covers the entities themselves and who can touch them. See [key_hierarchy.md](key_hierarchy.md) for how their encryption keys nest, [protocols.md](protocols.md) for the read/write/share/garbage-collection flows, [r2_credentials.md](r2_credentials.md) for how R2 access is brokered (and how new accounts are provisioned), [auth.md](auth.md) for the sign-in flow, and [crypto.md](crypto.md) for the underlying AEAD/KDF/KEM primitives.
+This file covers the entities themselves and who can touch them. See [key_hierarchy.md](key_hierarchy.md) for how their encryption keys nest, [protocols.md](protocols.md) for the read/write/share/cleanup flows, [r2_credentials.md](r2_credentials.md) for how R2 access is brokered (and how new accounts are provisioned), [auth.md](auth.md) for the sign-in flow, and [crypto.md](crypto.md) for the underlying AEAD/KDF/KEM primitives.
 
 ## Operating model: admin owns content, users only ever read shared documents
 

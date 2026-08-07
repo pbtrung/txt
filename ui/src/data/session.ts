@@ -1,6 +1,6 @@
 // Resolves a signed-in Firebase/InstantDB identity down to this account's
 // key hierarchy (docs/key_hierarchy.md) -- the browser-side mirror of
-// txt/collectGarbage.ts's resolveAdmin/resolveOwnCredStore, using
+// txt/bucket.ts's resolveAdmin/resolveOwnCredStore, using
 // @instantdb/react's real client SDK (permission-rule-gated: db.queryOnce,
 // not the admin SDK the CLI uses) instead of an admin token.
 //

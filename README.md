@@ -4,7 +4,7 @@ A personal document-storage system built on a single [InstantDB](https://instant
 
 `txt.ts`, `ui/`, and `worker/` all implement the same InstantDB entity design: each document is its own set of InstantDB entities (`txt`/`txtMetadata`/`txtParts`, plus a Kyber/X448 keypair per account for sharing) with per-part R2 objects — see the `docs/` files below.
 
-See [`docs/data_model.md`](docs/data_model.md) for the entities and permission rules, [`docs/key_hierarchy.md`](docs/key_hierarchy.md) for how the encryption keys nest, [`docs/protocols.md`](docs/protocols.md) for the ingest/read/share/garbage-collection flows, [`docs/r2_credentials.md`](docs/r2_credentials.md) for the R2 credential broker and account provisioning, [`docs/auth.md`](docs/auth.md) for the sign-in flow, and [`docs/crypto.md`](docs/crypto.md) for the encryption format.
+See [`docs/data_model.md`](docs/data_model.md) for the entities and permission rules, [`docs/key_hierarchy.md`](docs/key_hierarchy.md) for how the encryption keys nest, [`docs/protocols.md`](docs/protocols.md) for the ingest/read/share/cleanup flows, [`docs/r2_credentials.md`](docs/r2_credentials.md) for the R2 credential broker and account provisioning, [`docs/auth.md`](docs/auth.md) for the sign-in flow, and [`docs/crypto.md`](docs/crypto.md) for the encryption format.
 
 ## Main features
 
