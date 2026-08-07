@@ -34,6 +34,11 @@ export const RANDOM_KEY_LEN = 128;
 // Crockford-base32-lowercase encoding of this many random bytes.
 export const RAW_TOKEN_LEN = 32;
 
+// textproc.ts's splitParts groups paragraphs into txtParts-sized chunks up
+// to roughly this many bytes each (matches txt/constants.py's PART_TARGET
+// from the pre-InstantDB Python design).
+export const PART_TARGET = 222 * 1024;
+
 export const ORPHAN_PREVIEW_LIMIT = 50;
 export const S3_DELETE_BATCH_SIZE = 1000; // AWS DeleteObjects hard limit
 export const RETRY_DELAYS_MS = [2000, 4000, 8000]; // matches txt/r2.py's _RETRY_DELAYS
