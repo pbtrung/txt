@@ -9,10 +9,10 @@ See [`docs/data_model.md`](docs/data_model.md) for the entities and permission r
 ## Main features
 
 - **`--init-admin`** — provisions the admin account end to end: signs into Firebase, resolves an InstantDB identity for it, generates its key hierarchy (a `keyStore` Kyber/X448 keypair and a `credStore` row holding its real R2 credentials), and writes both in one transaction. No per-user database or initial upload needed.
-- **`--clean-bucket`** — sweeps an R2 bucket for objects no longer referenced by a (legacy, pre-InstantDB) account snapshot, with a dry-run mode and a confirmation prompt before deleting anything.
+- **`--clean-bucket`** — sweeps an R2 bucket for objects no longer referenced by any admin-owned `txtParts` row in InstantDB (including R2 objects a crashed `--migrate` run left behind), with a dry-run mode and a confirmation prompt before deleting anything.
 - **`--migrate`** — imports every document from a legacy account snapshot, re-encrypting each part under the current key hierarchy as it goes and writing it directly as `txt`/`txtMetadata`/`txtParts` InstantDB entities plus per-part R2 objects. Fetches documents in parallel batches, writes each one's parts in small chunks (so one huge document can't blow up a single transaction), and resumes an interrupted run at the exact part it left off on, not just the last fully-migrated document.
-- **`--collect-garbage`** — sweeps every document the admin account owns for R2 objects a crashed `--migrate` run left behind (a part's own R2 upload and its InstantDB row are two separate steps).
 - **`--update-db-catalog`** — rebuilds every admin-owned `txtMetadata.catalog` projection from full encrypted metadata, overwriting older projections so newly added fields are backfilled.
+- **`--update-db-prefixHash`** — backfills/repairs every admin-owned `txt.prefixHash` from its own decrypted `prefix`, the plaintext commitment the R2-credential Worker checks a caller-supplied prefix against.
 - **`ui/`** — the React viewer: unlock a vault with a creds.json file, browse/read documents, bookmark, and write back read-position/bookmark updates, all client-side against InstantDB + R2 directly.
 - **`worker/`** — the one server component the design needs: verifies a Firebase ID token and mints a short-lived, prefix-scoped R2 credential for it, so `ui/` never needs a static R2 key.
 - **End-to-end encryption throughout**: the CLI wraps every document/part/key in the AEAD blob format (Ascon-Keccak + HKDF-SHA3-512) and uses a Kyber/X448 KEM to share a document with another account — see `docs/crypto.md`.
@@ -30,21 +30,21 @@ npm install
 ```
 node txt.ts --init-admin <creds.json> [-v|--verbose]
 
-node txt.ts --clean-bucket <in.db> --creds <creds.json> [-v|--verbose] [--dry-run] [-y|--yes]
+node txt.ts --clean-bucket --creds <creds.json> [-v|--verbose] [--dry-run] [-y|--yes]
 
 node txt.ts --migrate --from <in.db> --from-creds <from_creds.json> --to-creds <to_creds.json> \
   [-v|--verbose] [--dry-run] [-y|--yes]
 
-node txt.ts --collect-garbage --creds <creds.json> [-v|--verbose] [--dry-run] [-y|--yes]
-
 node txt.ts --update-db-catalog --creds <creds.json> [-v|--verbose] [--dry-run]
+
+node txt.ts --update-db-prefixHash --creds <creds.json> [-v|--verbose] [--dry-run]
 ```
 
 `-v`/`--verbose` enables debug logging; `--dry-run` reports what would happen without writing anything; `-y`/`--yes` skips the confirmation prompt for a live (non-dry-run) run.
 
 ### Credentials
 
-`--init-admin` and `--migrate --to-creds` take a live-account credentials file. This is also the one file `npm run deploy` needs (see "Build + deploy" below) — `slhdsa_256f_priv_key`/`asset_base_url` are ignored by `--init-admin`/`--migrate`/`--collect-garbage`, carried through purely so one creds.json can serve both purposes instead of two separate files:
+`--init-admin` and `--migrate --to-creds` take a live-account credentials file. This is also the one file `npm run deploy` needs (see "Build + deploy" below) — `slhdsa_256f_priv_key`/`asset_base_url` are ignored by `--init-admin`/`--migrate`, carried through purely so one creds.json can serve both purposes instead of two separate files:
 
 ```json
 {
@@ -72,7 +72,7 @@ node txt.ts --update-db-catalog --creds <creds.json> [-v|--verbose] [--dry-run]
 
 `--migrate --to-creds` doesn't actually need `r2_config` filled in — it reads that account's real R2 connection info from its own live `credStore` row instead (see `docs/data_model.md`), so only the rest of this shape matters there.
 
-`--collect-garbage` and `--update-db-catalog` take a much smaller file instead — neither signs into Firebase as any particular account (they enumerate through the InstantDB Admin SDK), so they only need enough to find the admin identity and unwrap its own key material:
+`--clean-bucket`, `--update-db-catalog`, and `--update-db-prefixHash` take a much smaller file instead — none of them sign into Firebase as any particular account (they enumerate through the InstantDB Admin SDK), so they only need enough to find the admin identity and unwrap its own key material:
 
 ```json
 {
@@ -82,7 +82,7 @@ node txt.ts --update-db-catalog --creds <creds.json> [-v|--verbose] [--dry-run]
 }
 ```
 
-`--clean-bucket` and `--migrate --from-creds` take a legacy-account credentials file instead (identifies one account in a local sqlite snapshot):
+`--migrate --from-creds` takes a legacy-account credentials file instead (identifies one account in a local sqlite snapshot):
 
 ```json
 {

@@ -30,12 +30,12 @@ vi.mock("../txt/randomToken.ts", () => ({
   unwrapToken: (_crypto: unknown, _key: unknown, value: string) => value,
 }));
 
-import type { GcCreds } from "../txt/gcCreds.ts";
 import type { Logger } from "../txt/logger.ts";
 import { computePrefixHash } from "../txt/prefixHash.ts";
+import type { ScanCreds } from "../txt/scanCreds.ts";
 import { DbPrefixHashUpdater } from "../txt/updateDbPrefixHash.ts";
 
-const creds: GcCreds = {
+const creds: ScanCreds = {
   instantAppId: "app-1",
   instantAdminToken: "admin-token",
   userRootKey: Buffer.from("root-key"),

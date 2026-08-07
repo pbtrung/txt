@@ -29,7 +29,7 @@ export interface InitAdminCreds {
   // no credStore row yet to read it from before that command creates it).
   r2Config: R2ConfigResolved | null;
   userRootKey: Buffer;
-  // Neither field is read by --init-admin/--migrate/--collect-garbage --
+  // Neither field is read by --init-admin/--migrate --
   // both are carried through unvalidated, purely so a single creds.json can
   // also serve as ui/'s own build-creds.json (npm run deploy) without a
   // second file: slhdsa256fPrivKey is that command's SLH-DSA-256f signing
