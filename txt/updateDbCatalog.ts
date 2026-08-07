@@ -1,7 +1,7 @@
 import { init, tx } from "@instantdb/admin";
 import * as C from "./constants.ts";
 import { CryptoEngine } from "./crypto.ts";
-import type { GcCreds } from "./gcCreds.ts";
+import type { ScanCreds } from "./scanCreds.ts";
 import { collectAllPages } from "./instaqlPagination.ts";
 import type { Logger } from "./logger.ts";
 import {
@@ -43,10 +43,10 @@ export interface UpdateDbCatalogResult {
 }
 
 export class DbCatalogUpdater {
-  private creds: GcCreds;
+  private creds: ScanCreds;
   private log: Logger;
 
-  constructor(creds: GcCreds, log: Logger) {
+  constructor(creds: ScanCreds, log: Logger) {
     this.creds = creds;
     this.log = log;
   }

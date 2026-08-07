@@ -6,11 +6,6 @@ export interface RunStats {
   dryRun: boolean;
   txtCount: number;
   totalKnownPaths: number;
-  // Whether txt_metadata.content pointed at an R2 object that got added to
-  // the keep-set (see txt/owner.ts's collectKnownRawPaths) -- false means
-  // there's nothing to keep for it (no row, NULL content, or still the
-  // legacy inline-JSON format), not that anything was missed.
-  metadataObjectFound: boolean;
   totalObjects: number;
   orphanCount: number;
   orphanBytes: number;
@@ -64,7 +59,6 @@ export class Reporter {
       `mode:               ${mode}`,
       `txt documents:      ${stats.txtCount}`,
       `known paths (kept): ${stats.totalKnownPaths}`,
-      `txt_metadata object: ${stats.metadataObjectFound ? "found, kept" : "not present"}`,
       `objects in bucket:  ${stats.totalObjects}`,
       `orphaned objects:   ${stats.orphanCount} (${formatBytes(stats.orphanBytes)})`,
       `deleted objects:    ${stats.deletedCount} (${formatBytes(stats.deletedBytes)})`,

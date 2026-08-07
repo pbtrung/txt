@@ -1,7 +1,7 @@
 // Loading/validating the creds.json shape --init-admin takes -- distinct
-// from txt/creds.ts's Creds (that one's for --clean-bucket, against a local
-// sqlite snapshot; this one provisions the admin account directly against a
-// live Firebase project + InstantDB app).
+// from txt/creds.ts's Creds (that one's for --migrate --from-creds, against
+// a local sqlite snapshot; this one provisions the admin account directly
+// against a live Firebase project + InstantDB app).
 import { randomBytes } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import * as C from "./constants.ts";

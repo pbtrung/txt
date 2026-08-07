@@ -3,18 +3,14 @@ import { DatabaseSync } from "node:sqlite";
 import { parseArgs } from "node:util";
 import { AdminInitializer } from "./adminInit.ts";
 import { TxtBucketCleaner } from "./bucket.ts";
-import { GarbageCollector } from "./collectGarbage.ts";
-import { type Creds, loadCreds } from "./creds.ts";
-import { CryptoEngine } from "./crypto.ts";
-import { loadGcCreds } from "./gcCreds.ts";
+import { loadCreds } from "./creds.ts";
+import { loadScanCreds } from "./scanCreds.ts";
 import {
   ensureUserRootKeyGenerated,
   loadInitAdminCreds,
 } from "./initAdminCreds.ts";
 import { ConsoleLogger, type Logger } from "./logger.ts";
 import { Migrator } from "./migrate.ts";
-import { TxtOwner } from "./owner.ts";
-import { R2Client } from "./r2.ts";
 import { Reporter } from "./stats.ts";
 import { DbCatalogUpdater } from "./updateDbCatalog.ts";
 import { DbPrefixHashUpdater } from "./updateDbPrefixHash.ts";
@@ -22,7 +18,6 @@ import { DbPrefixHashUpdater } from "./updateDbPrefixHash.ts";
 type CliArgs =
   | {
       command: "clean-bucket";
-      inDb: string;
       credsPath: string;
       verbose: boolean;
       dryRun: boolean;
@@ -34,13 +29,6 @@ type CliArgs =
       fromDb: string;
       fromCredsPath: string;
       toCredsPath: string;
-      verbose: boolean;
-      dryRun: boolean;
-      yes: boolean;
-    }
-  | {
-      command: "collect-garbage";
-      credsPath: string;
       verbose: boolean;
       dryRun: boolean;
       yes: boolean;
@@ -60,10 +48,9 @@ type CliArgs =
 
 function printUsage(): void {
   console.error(
-    "Usage: node txt.ts --clean-bucket <in.db> --creds <creds.json> [-v|--verbose] [--dry-run] [-y|--yes]\n" +
+    "Usage: node txt.ts --clean-bucket --creds <creds.json> [-v|--verbose] [--dry-run] [-y|--yes]\n" +
       "       node txt.ts --init-admin <creds.json> [-v|--verbose]\n" +
       "       node txt.ts --migrate --from <in.db> --from-creds <from_creds.json> --to-creds <to_creds.json> [-v|--verbose] [--dry-run] [-y|--yes]\n" +
-      "       node txt.ts --collect-garbage --creds <creds.json> [-v|--verbose] [--dry-run] [-y|--yes]\n" +
       "       node txt.ts --update-db-catalog --creds <creds.json> [-v|--verbose] [--dry-run]\n" +
       "       node txt.ts --update-db-prefixHash --creds <creds.json> [-v|--verbose] [--dry-run]\n\n" +
       "Notes:\n" +
@@ -76,10 +63,9 @@ function parseCliArgs(argv: string[]): CliArgs {
   const { values } = parseArgs({
     args: argv,
     options: {
-      "clean-bucket": { type: "string" },
+      "clean-bucket": { type: "boolean", default: false },
       "init-admin": { type: "string" },
       migrate: { type: "boolean", default: false },
-      "collect-garbage": { type: "boolean", default: false },
       "update-db-catalog": { type: "boolean", default: false },
       "update-db-prefixHash": { type: "boolean", default: false },
       from: { type: "string" },
@@ -117,16 +103,6 @@ function parseCliArgs(argv: string[]): CliArgs {
   if (values["clean-bucket"] && values.creds) {
     return {
       command: "clean-bucket",
-      inDb: values["clean-bucket"],
-      credsPath: values.creds,
-      verbose: values.verbose!,
-      dryRun: values["dry-run"]!,
-      yes: values.yes!,
-    };
-  }
-  if (values["collect-garbage"] && values.creds) {
-    return {
-      command: "collect-garbage",
       credsPath: values.creds,
       verbose: values.verbose!,
       dryRun: values["dry-run"]!,
@@ -164,13 +140,13 @@ async function confirm(message: string, skip: boolean): Promise<boolean> {
   }
 }
 
-async function reportAndExit(
-  cleaner: TxtBucketCleaner,
-  creds: Creds,
+async function cleanBucket(
   args: Extract<CliArgs, { command: "clean-bucket" }>,
   log: Logger,
 ): Promise<number> {
-  const { stats, orphans } = await cleaner.clean(creds, {
+  const creds = loadScanCreds(args.credsPath);
+  const cleaner = new TxtBucketCleaner(creds, log);
+  const { stats, orphans } = await cleaner.clean({
     dryRun: args.dryRun,
     confirm: (message) => confirm(message, args.yes),
   });
@@ -178,23 +154,6 @@ async function reportAndExit(
   reporter.printOrphanPreview(orphans);
   reporter.printStats(stats);
   return stats.deleteErrors.length > 0 ? 1 : 0;
-}
-
-async function cleanBucket(
-  args: Extract<CliArgs, { command: "clean-bucket" }>,
-  log: Logger,
-): Promise<number> {
-  const creds = loadCreds(args.credsPath, args.dryRun);
-  const cryptoEngine = await CryptoEngine.create();
-  const db = new DatabaseSync(args.inDb, { readOnly: true });
-  try {
-    const owner = new TxtOwner(db, cryptoEngine, log);
-    const r2 = new R2Client(creds.r2Config, args.dryRun, log);
-    const cleaner = new TxtBucketCleaner(owner, r2, log);
-    return await reportAndExit(cleaner, creds, args, log);
-  } finally {
-    db.close();
-  }
 }
 
 async function initAdmin(
@@ -257,37 +216,11 @@ function printMigrateSummary(
   }
 }
 
-async function collectGarbage(
-  args: Extract<CliArgs, { command: "collect-garbage" }>,
-  log: Logger,
-): Promise<number> {
-  const creds = loadGcCreds(args.credsPath);
-  const collector = new GarbageCollector(creds, log);
-  const result = await collector.run({
-    dryRun: args.dryRun,
-    confirm: (message) => confirm(message, args.yes),
-  });
-  printCollectGarbageSummary(result, log);
-  return 0;
-}
-
-function printCollectGarbageSummary(
-  result: Awaited<ReturnType<GarbageCollector["run"]>>,
-  log: Logger,
-): void {
-  log.info("--- collect-garbage summary ---");
-  log.info(`mode:              ${result.dryRun ? "dry-run" : "live"}`);
-  log.info(`documents:         ${result.documentCount}`);
-  log.info(
-    `stale R2 objects:  ${result.staleObjectsDeleted} ${result.dryRun ? "would be " : ""}deleted`,
-  );
-}
-
 async function updateDbCatalog(
   args: Extract<CliArgs, { command: "update-db-catalog" }>,
   log: Logger,
 ): Promise<number> {
-  const creds = loadGcCreds(args.credsPath);
+  const creds = loadScanCreds(args.credsPath);
   const updater = new DbCatalogUpdater(creds, log);
   const result = await updater.run({ dryRun: args.dryRun });
   printUpdateDbCatalogSummary(result, log);
@@ -313,7 +246,7 @@ async function updateDbPrefixHash(
   args: Extract<CliArgs, { command: "update-db-prefixHash" }>,
   log: Logger,
 ): Promise<number> {
-  const creds = loadGcCreds(args.credsPath);
+  const creds = loadScanCreds(args.credsPath);
   const updater = new DbPrefixHashUpdater(creds, log);
   const result = await updater.run({ dryRun: args.dryRun });
   printUpdateDbPrefixHashSummary(result, log);
@@ -338,7 +271,6 @@ function printUpdateDbPrefixHashSummary(
 async function dispatch(args: CliArgs, log: Logger): Promise<number> {
   if (args.command === "init-admin") return initAdmin(args, log);
   if (args.command === "migrate") return migrate(args, log);
-  if (args.command === "collect-garbage") return collectGarbage(args, log);
   if (args.command === "update-db-catalog") return updateDbCatalog(args, log);
   if (args.command === "update-db-prefixHash")
     return updateDbPrefixHash(args, log);

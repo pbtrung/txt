@@ -1,6 +1,7 @@
-// Loading/validating creds.json for txt.ts's legacy-snapshot CLI paths. This
-// tool's shape is smaller than the browser/admin provisioning JSON: it needs
-// the source username, wrapping keys, and R2 config, but not Firebase fields.
+// Loading/validating creds.json for --migrate --from-creds, identifying one
+// account in a legacy sqlite snapshot. This shape is smaller than the
+// browser/admin provisioning JSON: it needs the source username, wrapping
+// keys, and R2 config, but not Firebase fields.
 import { readFileSync } from "node:fs";
 import * as C from "./constants.ts";
 

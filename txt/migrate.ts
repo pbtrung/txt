@@ -278,9 +278,8 @@ export class Migrator {
   // indexed"/"not typed. Only indexed and typed attributes can be used to
   // order by." sourceTxtId is indexed and, today, set on every txt row this
   // method sees -- only --migrate ever creates one) rather than one
-  // unpaginated query, same reasoning as collectGarbage.ts's own paged
-  // queries: a large corpus risks exceeding InstantDB's own query timeout
-  // otherwise.
+  // unpaginated query, same reasoning as bucket.ts's own paged queries: a
+  // large corpus risks exceeding InstantDB's own query timeout otherwise.
   private async resolveExistingTargets(
     db: any,
     crypto: CryptoEngine,
@@ -340,9 +339,9 @@ export class Migrator {
   }
 
   // For every already-migrated document, sweep its own R2 prefix for
-  // objects its own known raw_keys don't account for (orphanSweep.ts --
-  // shared with collectGarbage.ts, which does the same thing for every
-  // txt row this admin owns, not just ones this particular run touches).
+  // objects its own known raw_keys don't account for (orphanSweep.ts's
+  // sweepOrphanObjects, scoped here to just the documents this run
+  // touches -- bucket.ts's --clean-bucket sweeps the whole account instead).
   private async sweepStaleR2Objects(
     r2: R2Client,
     existing: Map<number, ExistingTarget>,
@@ -354,7 +353,7 @@ export class Migrator {
         knownRawKeys: new Set(target.parts.map((p) => p.rawKey)),
       }),
     );
-    const totalDeleted = await sweepOrphanObjects(r2, targets, this.log, false);
+    const totalDeleted = await sweepOrphanObjects(r2, targets, this.log);
     if (totalDeleted === 0) {
       this.log.info(
         "No stale R2 object(s) found across any already-migrated document",

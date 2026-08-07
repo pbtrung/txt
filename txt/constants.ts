@@ -1,8 +1,9 @@
 // Byte lengths and blob-format fields. See docs/crypto.md (blob format,
-// shared by both --clean-bucket's schema and the InstantDB design in
-// docs/data_model.md) and, for --clean-bucket specifically, docs/data_model.md
-// as of commit 1ed39d433365c39a6973303c171c7bb5510d7e3e (the actual running
-// schema at that point, not this branch's InstantDB design docs).
+// shared by both the legacy sqlite schema --migrate's --from side reads
+// and the InstantDB design in docs/data_model.md) and, for that legacy
+// schema specifically, docs/data_model.md as of commit
+// 1ed39d433365c39a6973303c171c7bb5510d7e3e (the actual running schema at
+// that point, not this branch's InstantDB design docs).
 
 export const MAGIC = [0x54, 0x58];
 export const VERSION_MAJOR = 0x01;
@@ -50,10 +51,10 @@ export const RETRY_DELAYS_MS = [2000, 4000, 8000]; // matches txt/r2.py's _RETRY
 // (slow for anything beyond a handful of parts).
 export const R2_BATCH_CONCURRENCY = 15;
 
-// migrate.ts/collectGarbage.ts/updateDbCatalog.ts page through `txt`/
-// `txtParts` rows (tens of thousands for a large corpus) rather than one
-// unpaginated query -- InstantDB enforces its own query timeout, and a
-// single query over that many rows risks exceeding it.
+// migrate.ts/bucket.ts/updateDbCatalog.ts page through `txt`/`txtParts` rows
+// (tens of thousands for a large corpus) rather than one unpaginated query
+// -- InstantDB enforces its own query timeout, and a single query over that
+// many rows risks exceeding it.
 export const INSTAQL_QUERY_PAGE_SIZE = 1000;
 
 // migrate.ts fetches/decrypts/inserts this many source documents at a time

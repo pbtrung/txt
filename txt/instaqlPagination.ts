@@ -1,7 +1,8 @@
 // Generic pagination loop over any InstaQL top-level query result -- shared
 // by any admin-SDK query that could return thousands of rows for one
-// account (migrate.ts's/collectGarbage.ts's own collectKnownRawPaths are
-// current callers). Kept backend/shape-agnostic on purpose: the caller
+// account (migrate.ts's resolveExistingTargets and bucket.ts's own
+// resolveOwnedDocuments are current callers). Kept backend/shape-agnostic on
+// purpose: the caller
 // builds its own query for a given `after` value and pulls
 // {rows, hasNextPage, endCursor} back out of whatever shape its own
 // db.query() call returns, so this has no dependency on @instantdb/admin's

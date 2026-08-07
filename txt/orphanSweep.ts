@@ -1,6 +1,6 @@
-// Shared by txt.ts --migrate and --collect-garbage: for a set of documents,
-// each with its own R2 prefix (docs/data_model.md's txt entity) and its own
-// set of known raw_keys (every txtParts row's own decrypted raw_key,
+// Used by txt.ts --migrate's own crash cleanup: for a set of documents, each
+// with its own R2 prefix (docs/data_model.md's txt entity) and its own set
+// of known raw_keys (every txtParts row's own decrypted raw_key,
 // docs/protocols.md's Read path), lists each document's own prefix and
 // deletes whatever isn't accounted for. The only way a legitimately-created
 // object ends up here is a previous run that crashed between a part's own
@@ -19,22 +19,19 @@ export interface OrphanSweepTarget {
 // One list call per document (each has its own prefix) rather than one for
 // a whole account -- R2_BATCH_CONCURRENCY at a time rather than fully
 // serial, since a large corpus could otherwise mean a long wait before any
-// other work even starts. dryRun still lists/diffs (so callers can report
-// an accurate count) but skips the actual delete -- --migrate always sweeps
-// live (a stale object here is unambiguous crash cleanup, not something its
-// own --dry-run is meant to preview), while --collect-garbage's whole job
-// is this sweep, so its --dry-run has to actually mean something.
+// other work even starts. Always deletes live: a stale object here is
+// unambiguous crash cleanup from this same operator re-running --migrate,
+// not something its own --dry-run is meant to preview.
 export async function sweepOrphanObjects(
   r2: R2Client,
   targets: OrphanSweepTarget[],
   log: Logger,
-  dryRun: boolean,
 ): Promise<number> {
   let totalDeleted = 0;
   for (let i = 0; i < targets.length; i += C.R2_BATCH_CONCURRENCY) {
     const batch = targets.slice(i, i + C.R2_BATCH_CONCURRENCY);
     const deleted = await Promise.all(
-      batch.map((target) => sweepOneDocument(r2, target, log, dryRun)),
+      batch.map((target) => sweepOneDocument(r2, target, log)),
     );
     totalDeleted += deleted.reduce((sum, n) => sum + n, 0);
   }
@@ -45,7 +42,6 @@ async function sweepOneDocument(
   r2: R2Client,
   target: OrphanSweepTarget,
   log: Logger,
-  dryRun: boolean,
 ): Promise<number> {
   const objects = await r2.listAllObjects(`${target.prefix}/`);
   const stale = objects.filter((o) => {
@@ -55,9 +51,8 @@ async function sweepOneDocument(
   if (stale.length === 0) return 0;
   log.warn(
     `${target.label}: found ${stale.length} stale R2 object(s) under prefix=${target.prefix}/ ` +
-      `(left by a previous incomplete run)${dryRun ? "" : " -- deleting"}`,
+      `(left by a previous incomplete run) -- deleting`,
   );
-  if (dryRun) return stale.length;
   const result = await r2.deleteObjects(stale.map((o) => o.key));
   for (const err of result.errors) {
     log.warn(`Failed to delete stale object ${err.key}: ${err.message}`);
