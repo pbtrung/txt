@@ -103,4 +103,44 @@ describe("parseOpfMetadata", () => {
       identifier: { text: "978-0-000-00000-0", scheme: "ISBN" },
     });
   });
+
+  // The following cover real robustness the switch to a real XML parser
+  // (@xmldom/xmldom's DOMParser) was specifically for -- a hand-rolled
+  // regex-based tag scanner does not reliably handle these.
+  it("treats CDATA content as literal text, not nested markup", () => {
+    const opfPath = join(dir, "cdata.opf");
+    writeFileSync(
+      opfPath,
+      `<package><metadata xmlns:dc="urn:dc">
+        <dc:description><![CDATA[Has <b>markup</b> & an ampersand]]></dc:description>
+      </metadata></package>`,
+    );
+    expect(parseOpfMetadata(opfPath)).toEqual({
+      description: "Has <b>markup</b> & an ampersand",
+    });
+  });
+
+  it("handles an attribute value containing a literal '>'", () => {
+    const opfPath = join(dir, "gt.opf");
+    writeFileSync(
+      opfPath,
+      `<package><metadata xmlns:dc="urn:dc" xmlns:opf="urn:opf">
+        <dc:identifier opf:scheme="weird>scheme">value</dc:identifier>
+      </metadata></package>`,
+    );
+    expect(parseOpfMetadata(opfPath)).toEqual({
+      identifier: { text: "value", scheme: "weird>scheme" },
+    });
+  });
+
+  it("throws on malformed (not well-formed) XML instead of silently mis-parsing", () => {
+    const opfPath = join(dir, "broken.opf");
+    writeFileSync(
+      opfPath,
+      `<package><metadata xmlns:dc="urn:dc">
+        <dc:title>Unclosed
+      </metadata></package>`,
+    );
+    expect(() => parseOpfMetadata(opfPath)).toThrow();
+  });
 });

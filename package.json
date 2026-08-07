@@ -26,6 +26,7 @@
     "@noble/hashes": "^2.3.0",
     "@noble/post-quantum": "^0.6.1",
     "@tanstack/react-virtual": "^3.14.9",
+    "@xmldom/xmldom": "^0.9.10",
     "aws4fetch": "^1.0.20",
     "bootstrap": "^5.3.8",
     "bootstrap-icons": "^1.13.1",
