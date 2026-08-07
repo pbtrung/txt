@@ -229,6 +229,30 @@ describe("VaultProvider", () => {
     expect(Object.keys(result.current.accessMap)).toHaveLength(0);
   });
 
+  it("lock() zeroes the old session's key material in place, not just the reference", async () => {
+    const { result } = await unlockWith();
+    const preLock = result.current.session!;
+    const docKey = preLock.docKeys.get("txt-1")!;
+    expect(preLock.umk.some((b) => b !== 0)).toBe(true); // sanity: not already zero
+
+    act(() => result.current.lock());
+
+    expect(preLock.umk).toEqual(new Uint8Array(preLock.umk.length));
+    expect(preLock.keyStorePrivKey).toEqual(
+      new Uint8Array(preLock.keyStorePrivKey.length),
+    );
+    expect(preLock.credStoreKey).toEqual(
+      new Uint8Array(preLock.credStoreKey.length),
+    );
+    expect(preLock.txtAccess.key).toEqual(
+      new Uint8Array(preLock.txtAccess.key.length),
+    );
+    expect(preLock.txtBookmarks.key).toEqual(
+      new Uint8Array(preLock.txtBookmarks.key.length),
+    );
+    expect(docKey).toEqual(new Uint8Array(docKey.length));
+  });
+
   it("recordReadPosition creates this account's first txtAccess row and updates accessMap", async () => {
     const { result, instantDb } = await unlockWith();
 

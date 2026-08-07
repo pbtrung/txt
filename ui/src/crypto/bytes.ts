@@ -34,3 +34,14 @@ export function bytesToBase64(bytes: Uint8Array): string {
   }
   return btoa(binary);
 }
+
+/** Overwrites every byte with 0 in place -- best-effort scrubbing of key
+ * material immediately before its last reference is dropped (e.g.
+ * VaultContext.tsx's lock()). This reliably clears this specific buffer,
+ * but it's not a complete guarantee: it can't reach any other reference to
+ * the same bytes held elsewhere (there shouldn't be one, but nothing
+ * enforces that), and it says nothing about copies the WASM crypto layer
+ * made and already freed unzeroed on its own side. */
+export function zeroBytes(bytes: Uint8Array): void {
+  bytes.fill(0);
+}

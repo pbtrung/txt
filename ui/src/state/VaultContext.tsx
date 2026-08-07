@@ -42,7 +42,7 @@ import {
   type BookmarksMap,
 } from "../data/bookmarks";
 import * as blob from "../crypto/blob";
-import { bytesToBase64 } from "../crypto/bytes";
+import { bytesToBase64, zeroBytes } from "../crypto/bytes";
 import { loadCredsFromFile } from "../data/creds";
 import type { Creds } from "../data/creds";
 import * as firebaseAuth from "../data/firebaseAuth";
@@ -145,6 +145,31 @@ function elapsed(start: number): string {
   return `${(performance.now() - start).toFixed(1)}ms`;
 }
 
+/** Zeroes every sensitive Uint8Array a Session/VaultSession holds directly
+ * (umk, keyStorePrivKey, credStoreKey, txtAccess/txtBookmarks' own key) --
+ * called right before the last reference to one of these is dropped
+ * (lock(), a failed unlock(), refresh() replacing a stale one), never on a
+ * key still live in the current session. docKeys (VaultSession-only, absent
+ * on a plain Session) needs its own pass since it's a Map, not a single
+ * field -- see zeroDocKeys. */
+function zeroKeyMaterial(keys: {
+  umk: Uint8Array;
+  keyStorePrivKey: Uint8Array;
+  credStoreKey: Uint8Array;
+  txtAccess: { key: Uint8Array };
+  txtBookmarks: { key: Uint8Array };
+}): void {
+  zeroBytes(keys.umk);
+  zeroBytes(keys.keyStorePrivKey);
+  zeroBytes(keys.credStoreKey);
+  zeroBytes(keys.txtAccess.key);
+  zeroBytes(keys.txtBookmarks.key);
+}
+
+function zeroDocKeys(docKeys: Map<string, Uint8Array>): void {
+  for (const key of docKeys.values()) zeroBytes(key);
+}
+
 /** Runs `task` after every previously queued task on this same queue has
  * settled -- used to serialize txtAccess/txtBookmarks writes (each is a
  * read-modify-write of one whole-account row, and the row's own id
@@ -224,9 +249,15 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     setStatus("unlocking");
     setError(null);
     setProgress(phaseProgress(UNLOCK_PHASES, 0));
+    // Tracked outside the try so a failure between resolveIdentity()
+    // succeeding and loadLibrary() succeeding can still zero the keys it
+    // already resolved, instead of just letting them fall out of scope
+    // unzeroed on the way to the catch block below.
+    let keys: Session | undefined;
     try {
-      const { instantDb, instantToken, authId, creds, keys, displayName } =
-        await resolveIdentity(file);
+      const resolved = await resolveIdentity(file);
+      keys = resolved.keys;
+      const { instantDb, instantToken, authId, creds, displayName } = resolved;
 
       setProgress(phaseProgress(UNLOCK_PHASES, 1));
       verbose("unlock: loading library");
@@ -259,7 +290,14 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       verbose("unlock: done");
     } catch (err) {
       verbose("unlock: failed", err);
-      setSession(null);
+      if (keys) zeroKeyMaterial(keys);
+      setSession((prev) => {
+        if (prev) {
+          zeroKeyMaterial(prev);
+          zeroDocKeys(prev.docKeys);
+        }
+        return null;
+      });
       setStatus("locked");
       setError(errorMessage(err) || "Failed to unlock your library.");
       setProgress(null);
@@ -267,7 +305,13 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const lock = useCallback(() => {
-    setSession(null);
+    setSession((prev) => {
+      if (prev) {
+        zeroKeyMaterial(prev);
+        zeroDocKeys(prev.docKeys);
+      }
+      return null;
+    });
     setAccessMap({});
     setBookmarksMap({});
     setStatus("locked");
@@ -296,17 +340,23 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           reloadKeyedMaps(session.instantDb, session.authId, session.umk),
         ]);
 
-      setSession((prev) =>
-        prev
-          ? {
-              ...prev,
-              metadataById,
-              docKeys,
-              txtAccess: { id: txtAccess.id, key: txtAccess.key },
-              txtBookmarks: { id: txtBookmarks.id, key: txtBookmarks.key },
-            }
-          : prev,
-      );
+      setSession((prev) => {
+        if (!prev) return prev;
+        // loadLibrary/reloadKeyedMaps always decrypt fresh Uint8Arrays --
+        // the ones being replaced here are never the same instances as the
+        // new docKeys/txtAccess.key/txtBookmarks.key below, so zeroing them
+        // first can't clobber anything still in use.
+        zeroDocKeys(prev.docKeys);
+        zeroBytes(prev.txtAccess.key);
+        zeroBytes(prev.txtBookmarks.key);
+        return {
+          ...prev,
+          metadataById,
+          docKeys,
+          txtAccess: { id: txtAccess.id, key: txtAccess.key },
+          txtBookmarks: { id: txtBookmarks.id, key: txtBookmarks.key },
+        };
+      });
       setAccessMap(txtAccess.content);
       setBookmarksMap(txtBookmarks.content);
       verbose("refresh: done");
