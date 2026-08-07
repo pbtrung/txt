@@ -6,7 +6,6 @@
 import { randomBytes } from "node:crypto";
 import { id, init, tx } from "@instantdb/admin";
 import * as C from "./constants.ts";
-import type { R2ConfigResolved } from "./creds.ts";
 import { CryptoEngine } from "./crypto.ts";
 import type { InitAdminCreds } from "./initAdminCreds.ts";
 import { signInToInstant } from "./instantSignIn.ts";
@@ -39,20 +38,6 @@ export class AdminInitializer {
   constructor(creds: InitAdminCreds, log: Logger) {
     this.creds = creds;
     this.log = log;
-  }
-
-  // --init-admin always needs a real, local r2Config -- there's no live
-  // credStore row yet to read one from before this command creates it
-  // (unlike --migrate --to-creds, which can load creds.json with
-  // requireR2: false since it reads R2 config from the account's own
-  // credStore instead -- initAdminCreds.ts).
-  private requireR2Config(): R2ConfigResolved {
-    if (!this.creds.r2Config) {
-      throw new Error(
-        "creds.json is missing r2_config -- --init-admin needs a real one to provision the admin's own credStore row",
-      );
-    }
-    return this.creds.r2Config;
   }
 
   async run(): Promise<AdminInitResult> {
@@ -139,7 +124,7 @@ export class AdminInitializer {
     cryptoEngine: CryptoEngine,
     keys: GeneratedKeys,
   ): string {
-    const r2 = this.requireR2Config();
+    const r2 = this.creds.r2Config;
     const payload = {
       r2_config: {
         endpoint: r2.endpoint,

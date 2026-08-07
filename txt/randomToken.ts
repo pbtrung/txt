@@ -1,7 +1,7 @@
 // Generates and wraps the random, opaque tokens this design uses for R2
 // addressing (docs/data_model.md's txt.prefix and txtParts.path -- both a
 // Crockford-base32-lowercase encoding of 32 random bytes, wrapped under the
-// relevant key). Shared by txt.ts --migrate (which mints fresh ones) and
+// relevant key). Shared by txt.ts --ingest (which mints fresh ones) and
 // --clean-bucket/--update-db-prefixHash (which only ever unwrap existing
 // ones).
 import { randomBytes } from "node:crypto";

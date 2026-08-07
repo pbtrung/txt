@@ -105,9 +105,9 @@ export class R2Client {
   }
 
   // Logs before, not just after, issuing the request: a batch of these runs
-  // R2_BATCH_CONCURRENCY at a time (fetchTxtParts/uploadPages), and a single
-  // slow/stuck one among them otherwise gives no sign of which key it's
-  // actually waiting on until the whole batch settles.
+  // R2_BATCH_CONCURRENCY at a time (e.g. ingest.ts's own part uploads), and a
+  // single slow/stuck one among them otherwise gives no sign of which key
+  // it's actually waiting on until the whole batch settles.
   async getObject(key: string): Promise<Buffer> {
     this.log.debug(`Get ${key}: issuing...`);
     const resp = await this.withRetries(`get ${key}`, () =>

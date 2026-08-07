@@ -1,16 +1,13 @@
 import { createInterface } from "node:readline/promises";
-import { DatabaseSync } from "node:sqlite";
 import { parseArgs } from "node:util";
 import { AdminInitializer } from "./adminInit.ts";
 import { TxtBucketCleaner } from "./bucket.ts";
-import { loadCreds } from "./creds.ts";
 import { loadScanCreds } from "./scanCreds.ts";
 import {
   ensureUserRootKeyGenerated,
   loadInitAdminCreds,
 } from "./initAdminCreds.ts";
 import { ConsoleLogger, type Logger } from "./logger.ts";
-import { Migrator } from "./migrate.ts";
 import { Reporter } from "./stats.ts";
 import { DbCatalogUpdater } from "./updateDbCatalog.ts";
 import { DbPrefixHashUpdater } from "./updateDbPrefixHash.ts";
@@ -24,15 +21,6 @@ type CliArgs =
       yes: boolean;
     }
   | { command: "init-admin"; credsPath: string; verbose: boolean }
-  | {
-      command: "migrate";
-      fromDb: string;
-      fromCredsPath: string;
-      toCredsPath: string;
-      verbose: boolean;
-      dryRun: boolean;
-      yes: boolean;
-    }
   | {
       command: "update-db-catalog";
       credsPath: string;
@@ -50,7 +38,6 @@ function printUsage(): void {
   console.error(
     "Usage: node txt.ts --clean-bucket --creds <creds.json> [-v|--verbose] [--dry-run] [-y|--yes]\n" +
       "       node txt.ts --init-admin <creds.json> [-v|--verbose]\n" +
-      "       node txt.ts --migrate --from <in.db> --from-creds <from_creds.json> --to-creds <to_creds.json> [-v|--verbose] [--dry-run] [-y|--yes]\n" +
       "       node txt.ts --update-db-catalog --creds <creds.json> [-v|--verbose] [--dry-run]\n" +
       "       node txt.ts --update-db-prefixHash --creds <creds.json> [-v|--verbose] [--dry-run]\n\n" +
       "Notes:\n" +
@@ -65,12 +52,8 @@ function parseCliArgs(argv: string[]): CliArgs {
     options: {
       "clean-bucket": { type: "boolean", default: false },
       "init-admin": { type: "string" },
-      migrate: { type: "boolean", default: false },
       "update-db-catalog": { type: "boolean", default: false },
       "update-db-prefixHash": { type: "boolean", default: false },
-      from: { type: "string" },
-      "from-creds": { type: "string" },
-      "to-creds": { type: "string" },
       creds: { type: "string" },
       verbose: { type: "boolean", short: "v", default: false },
       "dry-run": { type: "boolean", default: false },
@@ -82,22 +65,6 @@ function parseCliArgs(argv: string[]): CliArgs {
       command: "init-admin",
       credsPath: values["init-admin"],
       verbose: values.verbose!,
-    };
-  }
-  if (
-    values.migrate &&
-    values.from &&
-    values["from-creds"] &&
-    values["to-creds"]
-  ) {
-    return {
-      command: "migrate",
-      fromDb: values.from,
-      fromCredsPath: values["from-creds"],
-      toCredsPath: values["to-creds"],
-      verbose: values.verbose!,
-      dryRun: values["dry-run"]!,
-      yes: values.yes!,
     };
   }
   if (values["clean-bucket"] && values.creds) {
@@ -170,52 +137,6 @@ async function initAdmin(
   return 0;
 }
 
-async function migrate(
-  args: Extract<CliArgs, { command: "migrate" }>,
-  log: Logger,
-): Promise<number> {
-  // The "from" side is always read-only for --migrate (it only ever
-  // downloads from the legacy bucket, never writes) -- loadCreds(path, true)
-  // skips the read-write-key requirement regardless of --migrate's own
-  // --dry-run flag.
-  const fromCreds = loadCreds(args.fromCredsPath, true);
-  // --migrate reads the target's R2 config from its own live credStore row
-  // (migrate.ts's resolveTargetAdmin), not from to-creds.json -- no local
-  // r2_config required here.
-  const toCreds = loadInitAdminCreds(args.toCredsPath, { requireR2: false });
-  const fromDb = new DatabaseSync(args.fromDb, { readOnly: true });
-  try {
-    const migrator = new Migrator(fromDb, fromCreds, toCreds, log);
-    const result = await migrator.run({
-      dryRun: args.dryRun,
-      confirm: (message) => confirm(message, args.yes),
-    });
-    printMigrateSummary(result, log);
-    return 0;
-  } finally {
-    fromDb.close();
-  }
-}
-
-function printMigrateSummary(
-  result: Awaited<ReturnType<Migrator["run"]>>,
-  log: Logger,
-): void {
-  log.info("--- migrate summary ---");
-  log.info(`mode:              ${result.committed ? "live" : "dry-run"}`);
-  log.info(`documents:         ${result.migrated.length}`);
-  log.info(`already migrated:  ${result.alreadyMigratedCount}`);
-  log.info(`stale R2 objects:  ${result.staleObjectsDeleted} deleted`);
-  for (const d of result.migrated) {
-    log.info(
-      `  txt_id=${d.oldTxtId} name=${JSON.stringify(d.name)} parts=${d.partCount}`,
-    );
-  }
-  if (result.committed) {
-    log.info(`auth.id:           ${result.authId}`);
-  }
-}
-
 async function updateDbCatalog(
   args: Extract<CliArgs, { command: "update-db-catalog" }>,
   log: Logger,
@@ -270,7 +191,6 @@ function printUpdateDbPrefixHashSummary(
 
 async function dispatch(args: CliArgs, log: Logger): Promise<number> {
   if (args.command === "init-admin") return initAdmin(args, log);
-  if (args.command === "migrate") return migrate(args, log);
   if (args.command === "update-db-catalog") return updateDbCatalog(args, log);
   if (args.command === "update-db-prefixHash")
     return updateDbPrefixHash(args, log);

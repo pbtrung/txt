@@ -9,8 +9,7 @@ See [`docs/data_model.md`](docs/data_model.md) for the entities and permission r
 ## Main features
 
 - **`--init-admin`** — provisions the admin account end to end: signs into Firebase, resolves an InstantDB identity for it, generates its key hierarchy (a `keyStore` Kyber/X448 keypair and a `credStore` row holding its real R2 credentials), and writes both in one transaction. No per-user database or initial upload needed.
-- **`--clean-bucket`** — sweeps an R2 bucket for objects no longer referenced by any admin-owned `txtParts` row in InstantDB (including R2 objects a crashed `--migrate` run left behind), with a dry-run mode and a confirmation prompt before deleting anything.
-- **`--migrate`** — imports every document from a legacy account snapshot, re-encrypting each part under the current key hierarchy as it goes and writing it directly as `txt`/`txtMetadata`/`txtParts` InstantDB entities plus per-part R2 objects. Fetches documents in parallel batches, writes each one's parts in small chunks (so one huge document can't blow up a single transaction), and resumes an interrupted run at the exact part it left off on, not just the last fully-migrated document.
+- **`--clean-bucket`** — sweeps an R2 bucket for objects no longer referenced by any admin-owned `txtParts` row in InstantDB (including R2 objects a crashed `--ingest` run left behind), with a dry-run mode and a confirmation prompt before deleting anything.
 - **`--update-db-catalog`** — rebuilds every admin-owned `txtMetadata.catalog` projection from full encrypted metadata, overwriting older projections so newly added fields are backfilled.
 - **`--update-db-prefixHash`** — backfills/repairs every admin-owned `txt.prefixHash` from its own decrypted `prefix`, the plaintext commitment the R2-credential Worker checks a caller-supplied prefix against.
 - **`ui/`** — the React viewer: unlock a vault with a creds.json file, browse/read documents, bookmark, and write back read-position/bookmark updates, all client-side against InstantDB + R2 directly.
@@ -32,9 +31,6 @@ node txt.ts --init-admin <creds.json> [-v|--verbose]
 
 node txt.ts --clean-bucket --creds <creds.json> [-v|--verbose] [--dry-run] [-y|--yes]
 
-node txt.ts --migrate --from <in.db> --from-creds <from_creds.json> --to-creds <to_creds.json> \
-  [-v|--verbose] [--dry-run] [-y|--yes]
-
 node txt.ts --update-db-catalog --creds <creds.json> [-v|--verbose] [--dry-run]
 
 node txt.ts --update-db-prefixHash --creds <creds.json> [-v|--verbose] [--dry-run]
@@ -44,7 +40,7 @@ node txt.ts --update-db-prefixHash --creds <creds.json> [-v|--verbose] [--dry-ru
 
 ### Credentials
 
-`--init-admin` and `--migrate --to-creds` take a live-account credentials file. This is also the one file `npm run deploy` needs (see "Build + deploy" below) — `slhdsa_256f_priv_key`/`asset_base_url` are ignored by `--init-admin`/`--migrate`, carried through purely so one creds.json can serve both purposes instead of two separate files:
+`--init-admin` takes a live-account credentials file. This is also the one file `npm run deploy` needs (see "Build + deploy" below) — `slhdsa_256f_priv_key`/`asset_base_url` are ignored by `--init-admin`, carried through purely so one creds.json can serve both purposes instead of two separate files:
 
 ```json
 {
@@ -70,8 +66,6 @@ node txt.ts --update-db-prefixHash --creds <creds.json> [-v|--verbose] [--dry-ru
 }
 ```
 
-`--migrate --to-creds` doesn't actually need `r2_config` filled in — it reads that account's real R2 connection info from its own live `credStore` row instead (see `docs/data_model.md`), so only the rest of this shape matters there.
-
 `--clean-bucket`, `--update-db-catalog`, and `--update-db-prefixHash` take a much smaller file instead — none of them sign into Firebase as any particular account (they enumerate through the InstantDB Admin SDK), so they only need enough to find the admin identity and unwrap its own key material:
 
 ```json
@@ -82,19 +76,7 @@ node txt.ts --update-db-prefixHash --creds <creds.json> [-v|--verbose] [--dry-ru
 }
 ```
 
-`--migrate --from-creds` takes a legacy-account credentials file instead (identifies one account in a local sqlite snapshot):
-
-```json
-{
-  "username": "",
-  "username_lookup_key": "",
-  "password": "",
-  "r2_config": { "...": "same shape as above" },
-  "user_root_key": ""
-}
-```
-
-`user_root_key`/`username_lookup_key` are base64. Never commit a filled-in credentials file — `.gitignore` already blocks all `*.json` except `package.json`/`package-lock.json` for exactly this reason.
+`user_root_key` is base64. Never commit a filled-in credentials file — `.gitignore` already blocks all `*.json` except `package.json`/`package-lock.json` for exactly this reason.
 
 ## Deploying `ui/` + `worker/`
 

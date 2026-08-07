@@ -1,7 +1,6 @@
-// Loading/validating the creds.json shape --init-admin takes -- distinct
-// from txt/creds.ts's Creds (that one's for --migrate --from-creds, against
-// a local sqlite snapshot; this one provisions the admin account directly
-// against a live Firebase project + InstantDB app).
+// Loading/validating the creds.json shape --init-admin takes: provisions
+// the admin account directly against a live Firebase project + InstantDB
+// app.
 import { randomBytes } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import * as C from "./constants.ts";
@@ -21,21 +20,15 @@ export interface InitAdminCreds {
   firebasePassword: string;
   firebaseApiKey: string;
   displayName: string;
-  // null when loaded with requireR2: false (--migrate --to-creds) -- that
-  // path reads R2 config from the target account's own live credStore row
-  // instead (docs/data_model.md's credStore entity), since it's the
-  // account's actual, current connection info and to-creds.json's own copy
-  // could drift from it. --init-admin still needs a real local one (there's
-  // no credStore row yet to read it from before that command creates it).
-  r2Config: R2ConfigResolved | null;
+  r2Config: R2ConfigResolved;
   userRootKey: Buffer;
-  // Neither field is read by --init-admin/--migrate --
-  // both are carried through unvalidated, purely so a single creds.json can
-  // also serve as ui/'s own build-creds.json (npm run deploy) without a
-  // second file: slhdsa256fPrivKey is that command's SLH-DSA-256f signing
-  // key (generated once, then reused -- see
-  // ui/scripts/build-integrity.mjs), assetBaseUrl the public URL its build
-  // is served from. Empty string when absent from creds.json.
+  // Neither field is read by --init-admin -- both are carried through
+  // unvalidated, purely so a single creds.json can also serve as ui/'s own
+  // build-creds.json (npm run deploy) without a second file:
+  // slhdsa256fPrivKey is that command's SLH-DSA-256f signing key (generated
+  // once, then reused -- see ui/scripts/build-integrity.mjs), assetBaseUrl
+  // the public URL its build is served from. Empty string when absent from
+  // creds.json.
   slhdsa256fPrivKey: string;
   assetBaseUrl: string;
 }
@@ -73,17 +66,10 @@ function requireReadWriteR2(r2: R2ConfigResolved): void {
   }
 }
 
-export function loadInitAdminCreds(
-  path: string,
-  opts: { requireR2?: boolean } = {},
-): InitAdminCreds {
-  const requireR2 = opts.requireR2 ?? true;
+export function loadInitAdminCreds(path: string): InitAdminCreds {
   const raw = JSON.parse(readFileSync(path, "utf8"));
-  let r2Config: R2ConfigResolved | null = null;
-  if (requireR2) {
-    r2Config = loadR2Config(raw);
-    requireReadWriteR2(r2Config);
-  }
+  const r2Config = loadR2Config(raw);
+  requireReadWriteR2(r2Config);
   const userRootKey = Buffer.from(
     requireField(raw.user_root_key, "user_root_key"),
     "base64",

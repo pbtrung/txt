@@ -1,9 +1,5 @@
-// Byte lengths and blob-format fields. See docs/crypto.md (blob format,
-// shared by both the legacy sqlite schema --migrate's --from side reads
-// and the InstantDB design in docs/data_model.md) and, for that legacy
-// schema specifically, docs/data_model.md as of commit
-// 1ed39d433365c39a6973303c171c7bb5510d7e3e (the actual running schema at
-// that point, not this branch's InstantDB design docs).
+// Byte lengths and blob-format fields. See docs/crypto.md for the blob
+// format these sizes back.
 
 export const MAGIC = [0x54, 0x58];
 export const VERSION_MAJOR = 0x01;
@@ -25,8 +21,6 @@ export const BLOB_MIN_LEN = AD_LEN + TAG_LEN; // 132
 // each other's blobs need no version negotiation over the quality level).
 export const BROTLI_QUALITY = 11;
 
-export const TXT_METADATA_LEGACY_THRESHOLD = 200;
-export const USERNAME_LOOKUP_KEY_MIN_LEN = 32;
 export const USER_ROOT_KEY_MIN_LEN = 256;
 
 // docs/key_hierarchy.md: every symmetric wrapping/content key in the current
@@ -51,22 +45,8 @@ export const RETRY_DELAYS_MS = [2000, 4000, 8000]; // matches txt/r2.py's _RETRY
 // (slow for anything beyond a handful of parts).
 export const R2_BATCH_CONCURRENCY = 15;
 
-// migrate.ts/bucket.ts/updateDbCatalog.ts page through `txt`/`txtParts` rows
-// (tens of thousands for a large corpus) rather than one unpaginated query
-// -- InstantDB enforces its own query timeout, and a single query over that
-// many rows risks exceeding it.
+// bucket.ts/updateDbCatalog.ts/updateDbPrefixHash.ts page through `txt`/
+// `txtParts` rows (tens of thousands for a large corpus) rather than one
+// unpaginated query -- InstantDB enforces its own query timeout, and a
+// single query over that many rows risks exceeding it.
 export const INSTAQL_QUERY_PAGE_SIZE = 1000;
-
-// migrate.ts fetches/decrypts/inserts this many source documents at a time
-// (each document's own parts fetched in parallel too, R2_BATCH_CONCURRENCY
-// at once) instead of downloading every remaining document's content into
-// memory before inserting any of it -- bounds peak memory for a large
-// backlog and gets useful progress sooner.
-export const MIGRATE_BATCH_SIZE = 10;
-
-// migrate.ts transacts at most this many new txtParts rows at once -- one
-// transact() per whole document risks blowing up a document with many parts
-// into a single db.transact() with too many rows ("The query took too long
-// to complete", confirmed against a real InstantDB app). A document with
-// more parts than this gets multiple transacts instead of one.
-export const MIGRATE_PARTS_PER_COMMIT = 20;

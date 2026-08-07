@@ -1,9 +1,6 @@
-// Loading/validating creds.json for --migrate --from-creds, identifying one
-// account in a legacy sqlite snapshot. This shape is smaller than the
-// browser/admin provisioning JSON: it needs the source username, wrapping
-// keys, and R2 config, but not Firebase fields.
-import { readFileSync } from "node:fs";
-import * as C from "./constants.ts";
+// Shared creds.json loading/validation helpers -- R2 config parsing plus
+// generic field/key-length checks reused by every other creds.json loader
+// in this directory (initAdminCreds.ts, scanCreds.ts).
 
 export interface R2ConfigResolved {
   endpoint: string;
@@ -15,15 +12,8 @@ export interface R2ConfigResolved {
   readWriteSecretAccessKey: string | null;
 }
 
-export interface Creds {
-  username: string;
-  usernameLookupKey: Buffer;
-  userRootKey: Buffer;
-  r2Config: R2ConfigResolved;
-}
-
-// Exported for reuse by other creds.json loaders (e.g. initAdminCreds.ts) --
-// generic, not coupled to this file's own Creds shape.
+// Generic, reused by every creds.json loader in this directory
+// (initAdminCreds.ts, scanCreds.ts).
 export function requireField(value: unknown, field: string): string {
   if (typeof value !== "string" || value.length === 0) {
     throw new Error(`creds.json missing/empty field: ${field}`);
@@ -72,41 +62,4 @@ export function loadReadWriteR2Config(raw: any): R2ConfigResolved {
     );
   }
   return r2;
-}
-
-// Deletion needs read-write R2 keys; --dry-run only lists, so read-only-only
-// creds are tolerated there (confirmed with the user -- a deliberate
-// deviation from the Python reference, which always requires read-write).
-function checkWriteAccess(r2: R2ConfigResolved, dryRun: boolean): void {
-  if (dryRun) return;
-  if (!hasReadWriteR2Config(r2)) {
-    throw new Error(
-      "r2_config must include read_write_access_key_id/read_write_secret_access_key for a live (non---dry-run) run",
-    );
-  }
-}
-
-export function loadCreds(path: string, dryRun: boolean): Creds {
-  const raw = JSON.parse(readFileSync(path, "utf8"));
-  const username = requireField(raw.username, "username");
-  const usernameLookupKey = Buffer.from(
-    requireField(raw.username_lookup_key, "username_lookup_key"),
-    "base64",
-  );
-  const userRootKey = Buffer.from(
-    requireField(raw.user_root_key, "user_root_key"),
-    "base64",
-  );
-  checkKeyLength(
-    usernameLookupKey,
-    C.USERNAME_LOOKUP_KEY_MIN_LEN,
-    "username_lookup_key",
-  );
-  checkKeyLength(userRootKey, C.USER_ROOT_KEY_MIN_LEN, "user_root_key");
-  // password is part of the shared creds shape but unused here: this tool
-  // goes straight from user_root_key to umk, no login/auth step.
-
-  const r2Config = loadR2Config(raw);
-  checkWriteAccess(r2Config, dryRun);
-  return { username, usernameLookupKey, userRootKey, r2Config };
 }

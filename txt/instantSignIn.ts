@@ -23,9 +23,8 @@ import type { Logger } from "./logger.ts";
 const INSTANT_API_URI = "https://api.instantdb.com";
 
 // The subset of InitAdminCreds (initAdminCreds.ts) signInToInstant needs --
-// structural rather than importing that type directly, so this module (and
-// --migrate, which signs into the same kind of account with its own
-// to_creds.json) don't have to share a name for the same shape.
+// structural rather than importing that type directly, so this module
+// doesn't have to share a name with that one for the same shape.
 export interface InstantSignInCreds {
   firebaseApiKey: string;
   firebaseEmail: string;
@@ -73,8 +72,8 @@ function instantError(body: any, appId: string, clientName: string): Error {
 }
 
 // Composes firebaseAuth's password sign-in with signInWithFirebaseIdToken
-// above -- shared by --init-admin and --migrate, which both need to resolve
-// a creds.json's Firebase account down to its InstantDB auth.id the same way.
+// above -- resolves a creds.json's Firebase account down to its InstantDB
+// auth.id, for --init-admin.
 export async function signInToInstant(
   creds: InstantSignInCreds,
   log: Logger,

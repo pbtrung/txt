@@ -1,10 +1,8 @@
 // Ascon-Keccak AEAD + HKDF-SHA3-512 (docs/crypto.md's Blob format) and the
 // lc_kyber_1024_x448 composite KEM (docs/crypto.md's Encapsulate/Decapsulate),
 // via the vendored leancrypto WASM module (leancrypto/leancrypto.js, shared
-// with ui/) -- never hand-rolled. Native Node crypto covers HMAC-SHA3-256
-// (username_hash), a standard primitive with no leancrypto-specific behavior
-// to replicate.
-import { createHmac, randomBytes } from "node:crypto";
+// with ui/) -- never hand-rolled.
+import { randomBytes } from "node:crypto";
 import {
   brotliCompressSync,
   brotliDecompressSync,
@@ -91,12 +89,6 @@ export class CryptoEngine {
     const sha3_512 = deref(module, module._lc_sha3_512);
     const seededRng = deref(module, module._lc_seeded_rng);
     return new CryptoEngine(module, new WasmMem(module), sha3_512, seededRng);
-  }
-
-  usernameHash(usernameLookupKey: Buffer, username: string): Buffer {
-    return createHmac("sha3-256", usernameLookupKey)
-      .update(username, "utf8")
-      .digest();
   }
 
   // compressed must match the value passed to blobEncrypt for this blob --
