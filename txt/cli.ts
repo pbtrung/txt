@@ -2,6 +2,7 @@ import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
 import { AdminInitializer } from "./adminInit.ts";
 import { TxtBucketCleaner } from "./bucket.ts";
+import { TxtIngester } from "./ingest.ts";
 import { loadScanCreds } from "./scanCreds.ts";
 import {
   ensureUserRootKeyGenerated,
@@ -22,6 +23,13 @@ type CliArgs =
     }
   | { command: "init-admin"; credsPath: string; verbose: boolean }
   | {
+      command: "ingest";
+      srcDir: string;
+      credsPath: string;
+      verbose: boolean;
+      dryRun: boolean;
+    }
+  | {
       command: "update-db-catalog";
       credsPath: string;
       verbose: boolean;
@@ -38,9 +46,11 @@ function printUsage(): void {
   console.error(
     "Usage: node txt.ts --clean-bucket --creds <creds.json> [-v|--verbose] [--dry-run] [-y|--yes]\n" +
       "       node txt.ts --init-admin <creds.json> [-v|--verbose]\n" +
+      "       node txt.ts --ingest <dir> --creds <creds.json> [-v|--verbose] [--dry-run]\n" +
       "       node txt.ts --update-db-catalog --creds <creds.json> [-v|--verbose] [--dry-run]\n" +
       "       node txt.ts --update-db-prefixHash --creds <creds.json> [-v|--verbose] [--dry-run]\n\n" +
       "Notes:\n" +
+      "  --ingest cleans, splits, and uploads every .txt file in <dir> not already recorded under an owned document's name.\n" +
       "  --update-db-catalog rewrites every owned txtMetadata.catalog row, including rows that already have catalog.\n" +
       "  --update-db-prefixHash backfills missing and repairs incorrect owned txt.prefixHash values.",
   );
@@ -52,6 +62,7 @@ function parseCliArgs(argv: string[]): CliArgs {
     options: {
       "clean-bucket": { type: "boolean", default: false },
       "init-admin": { type: "string" },
+      ingest: { type: "string" },
       "update-db-catalog": { type: "boolean", default: false },
       "update-db-prefixHash": { type: "boolean", default: false },
       creds: { type: "string" },
@@ -65,6 +76,15 @@ function parseCliArgs(argv: string[]): CliArgs {
       command: "init-admin",
       credsPath: values["init-admin"],
       verbose: values.verbose!,
+    };
+  }
+  if (values.ingest && values.creds) {
+    return {
+      command: "ingest",
+      srcDir: values.ingest,
+      credsPath: values.creds,
+      verbose: values.verbose!,
+      dryRun: values["dry-run"]!,
     };
   }
   if (values["clean-bucket"] && values.creds) {
@@ -137,6 +157,39 @@ async function initAdmin(
   return 0;
 }
 
+async function ingest(
+  args: Extract<CliArgs, { command: "ingest" }>,
+  log: Logger,
+): Promise<number> {
+  const creds = loadScanCreds(args.credsPath);
+  const ingester = new TxtIngester(creds, log);
+  const result = await ingester.run({
+    srcDir: args.srcDir,
+    dryRun: args.dryRun,
+  });
+  printIngestSummary(result, log);
+  return result.failed.length > 0 ? 1 : 0;
+}
+
+function printIngestSummary(
+  result: Awaited<ReturnType<TxtIngester["run"]>>,
+  log: Logger,
+): void {
+  log.info("--- ingest summary ---");
+  log.info(`mode:      ${result.dryRun ? "dry-run" : "live"}`);
+  log.info(`ingested:  ${result.ingested.length}`);
+  log.info(`skipped:   ${result.skipped.length}`);
+  log.info(`failed:    ${result.failed.length}`);
+  for (const d of result.ingested) {
+    log.info(
+      `  ${JSON.stringify(d.name)}${result.dryRun ? "" : ` txt_id=${d.txtId}`} parts=${d.partCount}`,
+    );
+  }
+  for (const f of result.failed) {
+    log.info(`  FAILED ${JSON.stringify(f.name)}: ${f.error}`);
+  }
+}
+
 async function updateDbCatalog(
   args: Extract<CliArgs, { command: "update-db-catalog" }>,
   log: Logger,
@@ -191,6 +244,7 @@ function printUpdateDbPrefixHashSummary(
 
 async function dispatch(args: CliArgs, log: Logger): Promise<number> {
   if (args.command === "init-admin") return initAdmin(args, log);
+  if (args.command === "ingest") return ingest(args, log);
   if (args.command === "update-db-catalog") return updateDbCatalog(args, log);
   if (args.command === "update-db-prefixHash")
     return updateDbPrefixHash(args, log);
