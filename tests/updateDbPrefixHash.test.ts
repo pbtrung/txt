@@ -72,27 +72,27 @@ describe("DbPrefixHashUpdater", () => {
         txt: [
           {
             id: "txt-missing",
-            sourceTxtId: 1,
+            seq: 1,
             txtKey: "wrapped-key",
             prefix: "prefix-1",
           },
           {
             id: "txt-current",
-            sourceTxtId: 2,
+            seq: 2,
             txtKey: "wrapped-key",
             prefix: "prefix-2",
             prefixHash: computePrefixHash("prefix-2"),
           },
           {
             id: "txt-wrong",
-            sourceTxtId: 3,
+            seq: 3,
             txtKey: "wrapped-key",
             prefix: "prefix-3",
             prefixHash: "wrong",
           },
           {
             id: "txt-incomplete",
-            sourceTxtId: 4,
+            seq: 4,
             txtKey: "wrapped-key",
           },
         ],

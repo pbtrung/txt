@@ -20,7 +20,7 @@ interface AdminIdentity {
 
 interface TxtRow {
   id: string;
-  sourceTxtId?: number;
+  seq?: number;
   txtKey?: string | null;
   prefix?: string | null;
   prefixHash?: string | null;
@@ -162,7 +162,7 @@ export class DbPrefixHashUpdater {
         txt: {
           $: {
             where: { "owner.id": authId },
-            order: { sourceTxtId: "asc" },
+            order: { seq: "asc" },
             limit: C.INSTAQL_QUERY_PAGE_SIZE,
             offset,
           },
@@ -181,10 +181,7 @@ export class DbPrefixHashUpdater {
   }
 
   private rowLabel(row: TxtRow): string {
-    const source =
-      typeof row.sourceTxtId === "number"
-        ? ` sourceTxtId=${row.sourceTxtId}`
-        : "";
-    return `txt=${row.id}${source}`;
+    const seq = typeof row.seq === "number" ? ` seq=${row.seq}` : "";
+    return `txt=${row.id}${seq}`;
   }
 }

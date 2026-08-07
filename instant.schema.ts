@@ -89,17 +89,16 @@ const _schema = i.schema({
       // before --update-db-prefixHash backfills existing rows. New writes set
       // it, and the broker rejects a row where it is absent.
       prefixHash: i.string().optional(),
-      // Plaintext, present only on a migrated document: the source
-      // snapshot's own integer txt_id (txt/owner.ts's legacy schema).
-      // InstantDB rows have no integer primary key to reuse the way the
-      // legacy design reused txt_id directly as its own target row id
-      // (docs/protocols.md's Ingest/write path), so this is what
-      // txt.ts --migrate queries by instead to make a re-run resumable:
-      // whether a given source document has already landed, and (via a
-      // COUNT of its txtParts) how many of its parts have. Not sensitive
-      // (a document's original position in an already-admin-only-readable
-      // source snapshot), same category as partKey/shareKey below.
-      sourceTxtId: i.number().indexed().optional(),
+      // Plaintext, admin-assigned incrementing integer, set once by
+      // txt.ts --ingest when it creates a document. Its only purpose is
+      // giving the whole-account paginated scans below (bucket.ts,
+      // updateDbCatalog.ts, updateDbPrefixHash.ts, and ui/'s own library
+      // loader) a real, indexed attribute to order by -- an entity's own
+      // built-in `id` cannot be used in an InstaQL `order` clause
+      // (confirmed against a real InstantDB app). Not sensitive (a
+      // document's own ordinal among this admin's documents), same
+      // category as partKey/shareKey below.
+      seq: i.number().indexed().optional(),
     }),
     // One row per document (docs/data_model.md's txtMetadata entity).
     // content is the full name/OPF-sidecar metadata; catalog is the

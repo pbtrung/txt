@@ -8,13 +8,12 @@
 // txtMetadata.catalog into a BookInfo. Full txtMetadata.content is fetched
 // only by the reader screen and metadata editor.
 //
-// Paginated the same way txt/migrate.ts's resolveExistingTargets and
-// txt/bucket.ts's resolveOwnedDocuments page through txt rows: an
-// entity's own built-in `id` can't be used in an InstaQL `order` clause
-// (confirmed against a real InstantDB app), so owned docs page by
-// sourceTxtId (set on every txt row today -- only --migrate ever creates
-// one) and shared docs page by txtShares' own unique shareKey -- a personal
-// library can run to thousands of documents.
+// Paginated the same way txt/bucket.ts's resolveOwnedDocuments pages
+// through txt rows: an entity's own built-in `id` can't be used in an
+// InstaQL `order` clause (confirmed against a real InstantDB app), so owned
+// docs page by seq (set on every txt row by txt.ts --ingest) and shared
+// docs page by txtShares' own unique shareKey -- a personal library can run
+// to thousands of documents.
 
 import * as blob from "../crypto/blob";
 import { base64ToBytes } from "../crypto/bytes";
@@ -96,7 +95,7 @@ async function loadOwnedDocs(
       txt: {
         $: {
           where: { "owner.id": session.authId },
-          order: { sourceTxtId: "asc" },
+          order: { seq: "asc" },
           limit: PAGE_SIZE,
           offset,
           fields: ["txtKey"],

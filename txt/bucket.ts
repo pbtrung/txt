@@ -178,14 +178,13 @@ export class TxtBucketCleaner {
   }
 
   // Every document (`txt` row) this admin owns, with every one of its own
-  // parts' raw_key already decrypted -- paginated (order by sourceTxtId --
-  // an entity's own built-in `id` is NOT usable in an InstaQL `order`
-  // clause, confirmed against a real InstantDB app: "The `txt.id` attribute
-  // is not indexed"/"not typed. Only indexed and typed attributes can be
-  // used to order by." sourceTxtId is indexed and, today, set on every txt
-  // row -- only --migrate ever creates one) rather than one unpaginated
-  // query, since a large corpus risks exceeding InstantDB's own query
-  // timeout otherwise.
+  // parts' raw_key already decrypted -- paginated (order by seq -- an
+  // entity's own built-in `id` is NOT usable in an InstaQL `order` clause,
+  // confirmed against a real InstantDB app: "The `txt.id` attribute is not
+  // indexed"/"not typed. Only indexed and typed attributes can be used to
+  // order by." seq is indexed and set on every txt row by --ingest) rather
+  // than one unpaginated query, since a large corpus risks exceeding
+  // InstantDB's own query timeout otherwise.
   private async resolveOwnedDocuments(
     db: any,
     crypto: CryptoEngine,
@@ -202,7 +201,7 @@ export class TxtBucketCleaner {
         txt: {
           $: {
             where: { "owner.id": admin.authId },
-            order: { sourceTxtId: "asc" },
+            order: { seq: "asc" },
             limit: C.INSTAQL_QUERY_PAGE_SIZE,
             offset,
           },
