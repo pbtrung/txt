@@ -43,7 +43,7 @@ const DESCRIPTION_PREVIEW_LEN = 200;
 // tracked live -- resizing afterward shouldn't fight a size the user may
 // have since picked themselves): a phone-sized screen defaults smaller,
 // matching the same sm breakpoint this screen already uses elsewhere
-// (bottomBarHidden's d-sm-flex) to distinguish a phone from anything
+// (barsHidden's d-sm-flex) to distinguish a phone from anything
 // bigger.
 const FONT_SIZES_PX = [14, 16, 18, 20, 22, 24];
 const SMALL_SCREEN_DEFAULT_FONT_SIZE_PX = 16;
@@ -64,14 +64,14 @@ export function ReaderScreen() {
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const [fontSizePx, setFontSizePx] = useState(defaultFontSizePx);
 
-  // Below sm, the bottom bar auto-hides on scroll-down (more room for text
-  // on a phone) and reappears on scroll-up or once back at the top -- at sm+
-  // it stays put regardless (see the bar's own d-sm-flex below, which
-  // overrides d-none there no matter what this state is). While hidden, a
-  // floating scroll-to-top button takes its place as the way back up/to the
-  // bar's controls (Bookmarks, in particular, would otherwise be
-  // unreachable without manually scrolling back).
-  const [bottomBarHidden, setBottomBarHidden] = useState(false);
+  // Below sm, the top and bottom bars auto-hide on scroll-down (more room
+  // for text on a phone) and reappear on scroll-up or once back at the top
+  // -- at sm+ they stay put regardless (see each bar's own d-sm-flex below,
+  // which overrides d-none there no matter what this state is). While
+  // hidden, a floating scroll-to-top button takes the bottom bar's place as
+  // the way back up/to its controls (Bookmarks, in particular, would
+  // otherwise be unreachable without manually scrolling back).
+  const [barsHidden, setBarsHidden] = useState(false);
   const lastScrollTopRef = useRef(0);
   const readingPaneRef = useRef<HTMLDivElement>(null);
 
@@ -127,20 +127,20 @@ export function ReaderScreen() {
   useEffect(() => setDescriptionExpanded(false), [txtId]);
 
   // A fresh book or part lands at the top of the reading pane (a new
-  // scrollable element, scrollTop 0) -- so the bar shouldn't stay hidden
+  // scrollable element, scrollTop 0) -- so the bars shouldn't stay hidden
   // from wherever the *previous* one had scrolled to.
-  useEffect(() => setBottomBarHidden(false), [txtId, currentPartNum]);
+  useEffect(() => setBarsHidden(false), [txtId, currentPartNum]);
 
   const SCROLL_HIDE_THRESHOLD_PX = 10;
   function handleReadingPaneScroll(event: UIEvent<HTMLDivElement>) {
     const scrollTop = event.currentTarget.scrollTop;
     const delta = scrollTop - lastScrollTopRef.current;
     if (scrollTop <= 0) {
-      setBottomBarHidden(false);
+      setBarsHidden(false);
     } else if (delta > SCROLL_HIDE_THRESHOLD_PX) {
-      setBottomBarHidden(true);
+      setBarsHidden(true);
     } else if (delta < -SCROLL_HIDE_THRESHOLD_PX) {
-      setBottomBarHidden(false);
+      setBarsHidden(false);
     }
     lastScrollTopRef.current = scrollTop;
   }
@@ -148,7 +148,7 @@ export function ReaderScreen() {
   function scrollToTop() {
     readingPaneRef.current?.scrollTo({ top: 0, behavior: "smooth" });
     window.scrollTo({ top: 0, behavior: "smooth" });
-    setBottomBarHidden(false);
+    setBarsHidden(false);
   }
 
   const lines = useMemo(
@@ -277,7 +277,11 @@ export function ReaderScreen() {
 
   return (
     <div className="shell-60 d-flex flex-column vh-100">
-      <div className="border-bottom d-flex align-items-center gap-3 ps-2 ps-sm-3 pe-3 py-2">
+      {/* Below sm, d-none/d-flex here follows barsHidden; d-sm-flex always
+          wins at sm+ regardless of it -- see handleReadingPaneScroll. */}
+      <div
+        className={`border-bottom align-items-center gap-3 ps-2 ps-sm-3 pe-3 py-2 d-sm-flex ${barsHidden ? "d-none" : "d-flex"}`}
+      >
         <button
           type="button"
           className="btn btn-link text-decoration-none px-0"
@@ -462,12 +466,12 @@ export function ReaderScreen() {
         </div>
       </div>
 
-      {/* Below sm, d-none/d-flex here follows bottomBarHidden; d-sm-flex
+      {/* Below sm, d-none/d-flex here follows barsHidden; d-sm-flex
           always wins at sm+ regardless of it -- the auto-hide behavior (see
           handleReadingPaneScroll) only ever applies on a phone-sized
           screen. */}
       <div
-        className={`border-top align-items-center gap-2 gap-sm-3 ps-2 ps-sm-3 pe-3 py-2 d-sm-flex ${bottomBarHidden ? "d-none" : "d-flex"}`}
+        className={`border-top align-items-center gap-2 gap-sm-3 ps-2 ps-sm-3 pe-3 py-2 d-sm-flex ${barsHidden ? "d-none" : "d-flex"}`}
       >
         <select
           className="form-select form-select-sm themed-control font-size-select"
@@ -589,11 +593,11 @@ export function ReaderScreen() {
       </div>
 
       {/* Takes the bottom bar's place (Bookmarks in particular) while it's
-          auto-hidden on a phone -- see bottomBarHidden above. d-sm-none is
-          belt-and-suspenders: bottomBarHidden always resets on part/book
+          auto-hidden on a phone -- see barsHidden above. d-sm-none is
+          belt-and-suspenders: barsHidden always resets on part/book
           change, but this keeps the button phone-only even if that timing
           ever drifted. */}
-      {bottomBarHidden && (
+      {barsHidden && (
         <button
           type="button"
           className="btn btn-primary btn-sm rounded-circle position-fixed bottom-0 end-0 m-3 d-sm-none shadow d-flex align-items-center justify-content-center p-0"
