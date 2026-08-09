@@ -38,10 +38,9 @@ Minimum valid blob length: 2 + 2 + 64 + 0 + 64 = 132 bytes.
 
 ## Version Numbering
 
-| Version bytes | Meaning                                                             |
-| -------------- | ------------------------------------------------------------------- |
-| `0x01 0x00`    | v1.0 — no `context`; `AD = magic \|\| version \|\| salt`            |
-| `0x02 0x00`    | v2.0, current format — adds `context` (see Additional Data below)   |
+| Version bytes | Meaning              |
+| ------------- | -------------------- |
+| `0x01 0x00`   | v1.0, current format |
 
 Bump minor for additive, backward-compatible changes (e.g. new optional fields in a plaintext JSON payload, a brotli parameter change) — an older decoder can still decode a newer-minor blob by ignoring unknown fields.
 
@@ -56,8 +55,6 @@ AD = magic (2) || version (2) || salt (64) || context (var)
 The AEAD tag covers the blob header, `context`, and the ciphertext: any single-bit modification to the magic, version, salt, context, ciphertext, or tag causes authentication failure before any plaintext is returned — this binds the blob's format identity, version, and context to its authenticity, not just its salt.
 
 `context` is an opaque byte string the caller supplies alongside the IKM, for domain separation — it is never stored in the blob and never derived from the blob's own bytes, the same as the IKM itself. Its job: when one IKM protects more than one logically distinct value (the common case throughout this design's key hierarchy — see key_hierarchy.md), each such value is encrypted under its own distinct `context`, so a blob copied from one column or row into another decrypts under the wrong `context` and fails authentication rather than silently succeeding against the wrong value. `context` is not secret — its security value comes entirely from living outside the ciphertext being moved, not from being hidden, so it is typically stored in plaintext next to the column it protects (see key_hierarchy.md's Context columns). This document only defines the mechanism; which columns need one and what value each uses is a question for the layer that actually has a schema (key_hierarchy.md/data_model.md), not this one.
-
-A v1.0 blob has no `context`; both Encrypt and Decrypt treat it as the empty byte string when producing or verifying a v1.0 blob, regardless of what the caller passed in for other purposes.
 
 ## Encrypt
 
@@ -79,7 +76,7 @@ Given a blob, the same IKM used to encrypt it, and the same `context` used to en
 1. Reject the blob if it is shorter than 132 bytes.
 2. Parse `magic`, `version`, `salt`, `ciphertext`, `tag` from their fixed offsets.
 3. Verify `magic == 0x54 0x58`; reject otherwise.
-4. Verify `version`'s major byte matches a major version this decoder supports; reject otherwise (see Version Numbering). For a v1.0 blob, treat `context` as empty for steps 5–6 below regardless of what was passed in.
+4. Verify `version`'s major byte matches a major version this decoder supports; reject otherwise (see Version Numbering).
 5. Rebuild `AD = magic || version || salt || context`.
 6. Derive the same OKM via `HKDF-SHA3-512(IKM, salt, info=context)` and split it into the AEAD key and IV, exactly as in Encrypt steps 2–3.
 7. Run Ascon-Keccak AEAD decrypt with the derived key, IV, AD, `ciphertext`, and `tag`. If tag verification fails — including because the wrong `context` was supplied — abort; no plaintext is returned.
