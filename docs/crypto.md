@@ -38,9 +38,10 @@ Minimum valid blob length: 2 + 2 + 64 + 0 + 64 = 132 bytes.
 
 ## Version Numbering
 
-| Version bytes | Meaning              |
-| ------------- | -------------------- |
-| `0x01 0x00`   | v1.0, current format |
+| Version bytes | Meaning                                                             |
+| -------------- | ------------------------------------------------------------------- |
+| `0x01 0x00`    | v1.0 — no `context`; `AD = magic \|\| version \|\| salt`            |
+| `0x02 0x00`    | v2.0, current format — adds `context` (see Additional Data below)   |
 
 Bump minor for additive, backward-compatible changes (e.g. new optional fields in a plaintext JSON payload, a brotli parameter change) — an older decoder can still decode a newer-minor blob by ignoring unknown fields.
 
@@ -49,35 +50,39 @@ Bump major for breaking changes (different cipher/KDF, different field sizes/ord
 ## Additional Data (AD)
 
 ```
-AD = magic (2) || version (2) || salt (64)   -> 68 bytes total
+AD = magic (2) || version (2) || salt (64) || context (var)
 ```
 
-The AEAD tag covers the blob header as well as the ciphertext: any single-bit modification to the magic, version, salt, ciphertext, or tag causes authentication failure before any plaintext is returned — this binds the blob's format identity and version to its authenticity, not just its salt.
+The AEAD tag covers the blob header, `context`, and the ciphertext: any single-bit modification to the magic, version, salt, context, ciphertext, or tag causes authentication failure before any plaintext is returned — this binds the blob's format identity, version, and context to its authenticity, not just its salt.
+
+`context` is an opaque byte string the caller supplies alongside the IKM, for domain separation — it is never stored in the blob and never derived from the blob's own bytes, the same as the IKM itself. Its job: when one IKM protects more than one logically distinct value (the common case throughout this design's key hierarchy — see key_hierarchy.md), each such value is encrypted under its own distinct `context`, so a blob copied from one column or row into another decrypts under the wrong `context` and fails authentication rather than silently succeeding against the wrong value. `context` is not secret — its security value comes entirely from living outside the ciphertext being moved, not from being hidden, so it is typically stored in plaintext next to the column it protects (see key_hierarchy.md's Context columns). This document only defines the mechanism; which columns need one and what value each uses is a question for the layer that actually has a schema (key_hierarchy.md/data_model.md), not this one.
+
+A v1.0 blob has no `context`; both Encrypt and Decrypt treat it as the empty byte string when producing or verifying a v1.0 blob, regardless of what the caller passed in for other purposes.
 
 ## Encrypt
 
-Given a plaintext payload and an IKM (input keying material — the caller's key from the applicable key hierarchy):
+Given a plaintext payload, an IKM (input keying material — the caller's key from the applicable key hierarchy), and a `context` (see Additional Data above):
 
 1. Generate a random 64-byte `salt`.
-2. Derive OKM via `HKDF-SHA3-512(IKM, salt)` — 128 bytes (64-byte AEAD key + 64-byte IV).
+2. Derive OKM via `HKDF-SHA3-512(IKM, salt, info=context)` — 128 bytes (64-byte AEAD key + 64-byte IV).
 3. Split the OKM into the AEAD key and IV.
 4. If the payload is a structured (e.g. JSON) payload, brotli-compress it first; raw binary payloads are used as-is.
 5. Set `magic = 0x54 0x58`, `version` to the current format version.
-6. Build `AD = magic || version || salt` (68 bytes).
+6. Build `AD = magic || version || salt || context`.
 7. Run Ascon-Keccak AEAD encrypt with the derived key, IV, and AD over the (compressed) payload, producing `ciphertext` and a 64-byte `tag`.
-8. Assemble the blob: `magic || version || salt || ciphertext || tag`.
+8. Assemble the blob: `magic || version || salt || ciphertext || tag` — `context` is not part of the assembled blob; the caller must supply the identical `context` again at Decrypt.
 
 ## Decrypt
 
-Given a blob and the same IKM used to encrypt it:
+Given a blob, the same IKM used to encrypt it, and the same `context` used to encrypt it:
 
 1. Reject the blob if it is shorter than 132 bytes.
 2. Parse `magic`, `version`, `salt`, `ciphertext`, `tag` from their fixed offsets.
 3. Verify `magic == 0x54 0x58`; reject otherwise.
-4. Verify `version`'s major byte matches a major version this decoder supports; reject otherwise (see Version Numbering).
-5. Rebuild `AD = magic || version || salt`.
-6. Derive the same OKM via `HKDF-SHA3-512(IKM, salt)` and split it into the AEAD key and IV, exactly as in Encrypt step 2–3.
-7. Run Ascon-Keccak AEAD decrypt with the derived key, IV, AD, `ciphertext`, and `tag`. If tag verification fails, abort — no plaintext is returned.
+4. Verify `version`'s major byte matches a major version this decoder supports; reject otherwise (see Version Numbering). For a v1.0 blob, treat `context` as empty for steps 5–6 below regardless of what was passed in.
+5. Rebuild `AD = magic || version || salt || context`.
+6. Derive the same OKM via `HKDF-SHA3-512(IKM, salt, info=context)` and split it into the AEAD key and IV, exactly as in Encrypt steps 2–3.
+7. Run Ascon-Keccak AEAD decrypt with the derived key, IV, AD, `ciphertext`, and `tag`. If tag verification fails — including because the wrong `context` was supplied — abort; no plaintext is returned.
 8. If the payload was brotli-compressed at encrypt time, brotli-decompress the decrypted bytes to recover the original payload.
 
 ## Encapsulate / Decapsulate (Asymmetric Wrap)
@@ -87,13 +92,13 @@ Used wherever key material must be wrapped under a _recipient's_ public key rath
 **Encapsulate** (sender, holding the recipient's composite `pubKey`):
 
 1. Run `lc_kyber_1024_x448_enc` against `pubKey`, producing a KEM ciphertext (`ct`, 1624 bytes) and an 88-byte shared secret (`ss`). Deliberately not `lc_kyber_1024_x448_enc_kdf`: the plain `_enc` call hands back `ss` as leancrypto's `lc_kyber_1024_x448_ss` struct, the raw concatenation of the 32-byte ML-KEM-1024 shared secret and the 56-byte X448 shared secret — uncombined. (`_enc_kdf` would instead run its own internal KMAC256-based combiner and return a caller-chosen-length already-combined secret; using it here would mean trusting/depending on a second KDF construction alongside HKDF-SHA3-512 for no benefit.)
-2. Run the standard Encrypt procedure using `ss` as its IKM to wrap the key material being shared. Encrypt generates a random 64-byte `salt`, derives a 128-byte OKM via `HKDF-SHA3-512(ss, salt)`, and embeds that salt in the standard blob (`magic||version||salt||ciphertext||tag`). This HKDF call is also where the ML-KEM-1024/X448 combining actually happens (see below) — it isn't a separate step.
-3. Store `ct` alongside the resulting blob — e.g. `txtShares.kemCt`/`txtShares.txtKey` in data_model.md. The KEM ciphertext is sufficient for decapsulation; the recipient obtains the wrapping salt from the `txtKey` blob itself.
+2. Run the standard Encrypt procedure using `ss` as its IKM and a caller-supplied `context` (see key_hierarchy.md for the value this design uses) to wrap the key material being shared. Encrypt generates a random 64-byte `salt`, derives a 128-byte OKM via `HKDF-SHA3-512(ss, salt, info=context)`, and embeds that salt (not `context`) in the standard blob (`magic||version||salt||ciphertext||tag`). This HKDF call is also where the ML-KEM-1024/X448 combining actually happens (see below) — it isn't a separate step.
+3. Store `ct` alongside the resulting blob — e.g. `txtShares.kemCt`/`txtShares.txtKey` in data_model.md. The KEM ciphertext is sufficient for decapsulation; the recipient obtains the wrapping salt from the `txtKey` blob itself, and the same `context` from wherever the encrypting side got it (a fixed, non-secret value both sides can compute independently — see key_hierarchy.md).
 
 **Decapsulate** (recipient, holding their composite `privKey`):
 
 1. Read the stored `ct`.
 2. Run `lc_kyber_1024_x448_dec` on `ct` using `privKey`, recovering the same raw `ss`.
-3. Run the standard Decrypt procedure on the blob using `ss` as its IKM — Decrypt parses the salt from the blob header itself.
+3. Run the standard Decrypt procedure on the blob using `ss` as its IKM and the same `context` used at Encapsulate time — Decrypt parses the salt from the blob header itself.
 
-The combiner is concatenate-then-HKDF: `ss` is `ML-KEM-1024-SS (32 bytes) || X448-SS (56 bytes)`, uncombined, and `HKDF-SHA3-512(ss, salt)` in Encapsulate step 2 above is what actually combines them — the same KDF this codebase already uses for every other Encrypt/Decrypt call, rather than a second, separate combiner. This is a standard robust construction: the derived key stays secure as long as at least one of ML-KEM-1024 or X448 remains unbroken. It does not bind `ct` or either party's public key into the derivation, only the two raw shared secrets and `salt`. Hybrid-KEM designs such as X-Wing additionally fold `ct` and the recipient's static X448 `pubKey` into the derivation (e.g. as HKDF `info`) for domain separation and cross-protocol safety — worth adopting the same refinement here.
+The combiner is concatenate-then-HKDF: `ss` is `ML-KEM-1024-SS (32 bytes) || X448-SS (56 bytes)`, uncombined, and `HKDF-SHA3-512(ss, salt, info=context)` in Encapsulate step 2 above is what actually combines them — the same KDF this codebase already uses for every other Encrypt/Decrypt call, rather than a second, separate combiner. This is a standard robust construction: the derived key stays secure as long as at least one of ML-KEM-1024 or X448 remains unbroken. By itself it does not bind `ct` or either party's public key into the derivation, only the two raw shared secrets, `salt`, and whatever `context` happens to be. Hybrid-KEM designs such as X-Wing additionally fold `ct` and the recipient's static X448 `pubKey` into the derivation for domain separation and cross-protocol safety — this design's `context` mechanism is general enough to provide that too, by choosing `context = ct || pubKey` (or that concatenated onto the fixed per-share label from key_hierarchy.md) for this specific call site, rather than needing a second, separate mechanism.
