@@ -54,11 +54,12 @@ There's no app-level profile entity in this design — `$users` (InstantDB's own
     "firebase_email": "",
     "firebase_password": "",
     "firebase_api_key": "",
+    "display_name": "",
     "user_root_key": ""
   }
   ```
 
-  The admin-only recovery row does not duplicate identity/profile fields: `forUser` identifies the target account, and the user-facing display name belongs only in that target user's own self `credStore.content`. Manage Users does not decrypt a target user's self row to recover `display_name`; admin list/edit screens use non-secret account identity such as the `$users.email` value instead.
+  The admin-managed recovery row also carries its own copy of `display_name`, written once at creation from the same admin-supplied value as the target's own self row (above) — `forUser` still identifies which account it's about, but Manage Users needs a name it can show/label a target account by without ever decrypting that account's own self row, which only the target's own `umk` can unwrap. Manage Users' Edit User screen surfaces this copy read-only and never resubmits it as part of an edit; nothing in the schema or permission rules enforces that, so an admin-authored `db.transact` outside that screen could still change it, and neither copy is kept in sync with the other after creation.
 
   For the admin's own self row:
 

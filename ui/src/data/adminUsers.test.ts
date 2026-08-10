@@ -97,9 +97,25 @@ beforeEach(() => {
 });
 
 describe("adminUsers", () => {
-  it("lists the current admin display name and other users by email", async () => {
+  it("lists the current admin's display name and every other user's stored display name, falling back to email", async () => {
     const db = fakeDb((query) => {
-      expect(query.$users?.credStore).toBeUndefined();
+      if (query.$users?.credStore) {
+        return {
+          $users: [
+            {
+              id: "admin-1",
+              credStore: [
+                adminEscrowRow(
+                  "escrow-2",
+                  storedCreds({ display_name: "Bob" }),
+                  13,
+                  "user-2",
+                ),
+              ],
+            },
+          ],
+        };
+      }
       return {
         $users: [
           {
@@ -117,7 +133,6 @@ describe("adminUsers", () => {
             id: "user-3",
             email: "fallback@example.com",
             type: "user",
-            credStore: [],
           },
         ],
       };
@@ -133,7 +148,7 @@ describe("adminUsers", () => {
       {
         id: "user-2",
         email: "bob@example.com",
-        displayName: "bob@example.com",
+        displayName: "Bob",
         isAdmin: false,
       },
       {
@@ -209,6 +224,7 @@ describe("adminUsers", () => {
       firebase_email: "bob@example.com",
       firebase_password: "pw",
       firebase_api_key: "api-key",
+      display_name: "Bob",
       user_root_key: rootKey,
     });
   });
@@ -249,6 +265,7 @@ describe("adminUsers", () => {
       firebaseEmail: "bob@example.com",
       firebasePassword: "pw",
       firebaseApiKey: "api-key",
+      displayName: "",
       userRootKey: oldRootKey,
     });
   });
@@ -336,6 +353,7 @@ describe("adminUsers", () => {
       firebase_email: "bob@example.com",
       firebase_password: "pw",
       firebase_api_key: "api-key",
+      display_name: "Bob",
       user_root_key: rootKey,
     });
   });

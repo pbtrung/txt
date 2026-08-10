@@ -164,6 +164,7 @@ beforeEach(() => {
     firebaseEmail: "bob@example.com",
     firebasePassword: "pw",
     firebaseApiKey: "fake-api-key",
+    displayName: "Bob",
     userRootKey: "stored-root-key",
   });
   vi.mocked(updateUserCreds).mockResolvedValue(undefined);
@@ -438,7 +439,11 @@ describe("ManageScreen", () => {
         "user-2",
       ),
     );
-    expect(screen.queryByLabelText("Display name")).not.toBeInTheDocument();
+    const displayName = screen.getByLabelText(
+      "Display name",
+    ) as HTMLInputElement;
+    expect(displayName).toHaveValue("Bob");
+    expect(displayName).toBeDisabled();
     const firstProceed = screen.getByRole("button", { name: "Proceed" });
     expect(firstProceed).toBeDisabled();
     const password = screen.getByLabelText(

@@ -92,11 +92,11 @@ async function copyText(text: string): Promise<void> {
 function CredentialFields({
   values,
   onChange,
-  showDisplayName = true,
+  displayNameEditable = true,
 }: {
   values: UserCredentialFields;
   onChange: (values: UserCredentialFields) => void;
-  showDisplayName?: boolean;
+  displayNameEditable?: boolean;
 }) {
   const [passwordVisible, setPasswordVisible] = useState(false);
 
@@ -190,18 +190,17 @@ function CredentialFields({
           required
         />
       </FormField>
-      {showDisplayName && (
-        <FormField label="Display name" htmlFor="manage-user-display-name">
-          <input
-            id="manage-user-display-name"
-            type="text"
-            className="form-control form-control-sm themed-control"
-            value={values.displayName}
-            onChange={(e) => update("displayName", e.target.value)}
-            required
-          />
-        </FormField>
-      )}
+      <FormField label="Display name" htmlFor="manage-user-display-name">
+        <input
+          id="manage-user-display-name"
+          type="text"
+          className="form-control form-control-sm themed-control"
+          value={values.displayName}
+          onChange={(e) => update("displayName", e.target.value)}
+          disabled={!displayNameEditable}
+          required={displayNameEditable}
+        />
+      </FormField>
       <FormField label="User root key" htmlFor="manage-user-root-key">
         <div className="input-group input-group-sm">
           <input
@@ -526,11 +525,11 @@ function EditUserPanel({
         const stored = await getUserCreds(session.instantDb, session, user.id);
         if (!cancelled) {
           const nextValues = stored
-            ? { ...stored, displayName: "" }
+            ? stored
             : {
                 ...credentialDefaults(session),
                 firebaseEmail: user.email ?? "",
-                displayName: "",
+                displayName: user.displayName ?? "",
               };
           setInitialValues(nextValues);
           setValues(nextValues);
@@ -623,7 +622,7 @@ function EditUserPanel({
           <CredentialFields
             values={values}
             onChange={setValues}
-            showDisplayName={false}
+            displayNameEditable={false}
           />
           <button
             type="submit"

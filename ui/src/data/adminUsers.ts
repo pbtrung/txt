@@ -62,7 +62,7 @@ export interface UserCredentialFields {
   userRootKey: string;
 }
 
-export type AdminStoredUserCreds = Omit<UserCredentialFields, "displayName">;
+export type AdminStoredUserCreds = UserCredentialFields;
 
 export function generateUserRootKey(): string {
   return bytesToBase64(randomBytes(256));
@@ -105,6 +105,9 @@ function storedCredsFromJson(json: unknown): AdminStoredUserCreds | null {
     firebaseEmail: data.firebase_email as string,
     firebasePassword: data.firebase_password as string,
     firebaseApiKey: data.firebase_api_key as string,
+    // Absent on a row written before this field existed; treat as unnamed
+    // rather than rejecting the whole row.
+    displayName: typeof data.display_name === "string" ? data.display_name : "",
     userRootKey: data.user_root_key as string,
   };
 }
@@ -112,17 +115,15 @@ function storedCredsFromJson(json: unknown): AdminStoredUserCreds | null {
 function storedCredsToJson(
   creds: AdminStoredUserCreds,
 ): Record<string, string> {
-  // Persisted admin escrow payload. Identity is the row's forUser link, and
-  // display_name belongs only to the target user's own session, not admin UI.
-  const json: Record<string, string> = {
+  return {
     instant_app_id: creds.instantAppId,
     instant_client_name: creds.instantClientName,
     firebase_email: creds.firebaseEmail,
     firebase_password: creds.firebasePassword,
     firebase_api_key: creds.firebaseApiKey,
+    display_name: creds.displayName,
     user_root_key: creds.userRootKey,
   };
-  return json;
 }
 
 async function decryptStoredCreds(
@@ -338,11 +339,31 @@ async function transactIfAny(db: any, chunks: unknown[]): Promise<void> {
   if (chunks.length > 0) await db.transact(chunks);
 }
 
+async function displayNameByUserId(
+  db: any,
+  session: AdminUserSession,
+): Promise<Map<string, string>> {
+  const rows = await queryAdminCredStores(db, session.authId);
+  const byUserId = new Map<string, string>();
+  await Promise.all(
+    rows.map(async (row) => {
+      const forUserId = row.forUser?.[0]?.id;
+      if (!forUserId) return;
+      const creds = await decryptStoredCreds(session.umk, row);
+      if (creds?.displayName) byUserId.set(forUserId, creds.displayName);
+    }),
+  );
+  return byUserId;
+}
+
 export async function listUsersWithInfo(
   db: any,
   session: AdminUserSession,
 ): Promise<UserSummary[]> {
-  const users = await queryUsers(db);
+  const [users, names] = await Promise.all([
+    queryUsers(db),
+    displayNameByUserId(db, session),
+  ]);
 
   return users.map((row) => ({
     id: row.id,
@@ -350,7 +371,7 @@ export async function listUsersWithInfo(
     displayName:
       row.id === session.authId
         ? (session.displayName ?? row.email)
-        : row.email,
+        : (names.get(row.id) ?? row.email),
     isAdmin: row.type === "admin",
   }));
 }
@@ -404,10 +425,9 @@ export async function createUser(
     session.r2Config,
     input.displayName,
   );
-  const { displayName: _displayName, ...adminInput } = input;
   const adminStoredCreds = await wrapStoredCreds(
     adminEscrowCredStoreKey,
-    adminInput,
+    input,
   );
   const adminCredStoreKeyBlob = await blob.encrypt(
     session.umk,
