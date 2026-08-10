@@ -283,47 +283,30 @@ async function queryAdminCredStores(
   return result.data.$users?.[0]?.credStore ?? [];
 }
 
-async function queryAdminCredStoresForUser(
-  db: any,
-  adminAuthId: string,
-  userId: string,
-): Promise<CredStoreRow[]> {
-  return queryRows<CredStoreRow>(db, "credStore", {
-    $: {
-      where: {
-        "owner.id": adminAuthId,
-        "forUser.id": userId,
-      },
-    },
-    forUser: {},
-  });
-}
-
 async function findAdminStoredCreds(
   db: any,
   session: AdminUserSession,
   userId: string,
 ): Promise<{ row: CredStoreRow; creds: AdminStoredUserCreds } | null> {
-  const user = await queryUser(db, userId);
+  // A single owner.id-scoped query (the same shape every other admin-owned
+  // scan in this file already uses successfully), filtered client-side by
+  // forUser -- rather than a second query that ANDs two different link
+  // conditions (owner.id and forUser.id) in one `where`, a combination no
+  // other query in this codebase relies on.
+  const [user, rows] = await Promise.all([
+    queryUser(db, userId),
+    queryAdminCredStores(db, session.authId),
+  ]);
   const targetEmail = normalizeEmail(user?.email);
-  const targetRows = await queryAdminCredStoresForUser(
-    db,
-    session.authId,
-    userId,
-  );
-  for (const row of targetRows) {
-    const creds = await decryptStoredCreds(session.umk, row);
-    if (creds) return { row, creds };
-  }
 
-  // Fallback for older rows created before forUser was backfilled: match the
-  // encrypted Firebase email if a target email is known.
-  const rows = await queryAdminCredStores(db, session.authId);
   let emailMatch: { row: CredStoreRow; creds: AdminStoredUserCreds } | null =
     null;
   for (const row of rows) {
     const creds = await decryptStoredCreds(session.umk, row);
     if (!creds) continue;
+    if (row.forUser?.[0]?.id === userId) return { row, creds };
+    // Fallback for rows written before forUser was backfilled: match the
+    // encrypted Firebase email if a target email is known.
     if (
       targetEmail &&
       normalizeEmail(creds.firebaseEmail) === targetEmail &&

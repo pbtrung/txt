@@ -231,11 +231,6 @@ describe("adminUsers", () => {
 
   it("reads a user's stored credential fields from admin escrow", async () => {
     const db = fakeDb((query) => {
-      if (query.credStore?.$?.where?.["forUser.id"] === "user-2") {
-        return {
-          credStore: [adminEscrowRow()],
-        };
-      }
       if (query.$users?.$?.where?.id === "user-2") {
         return {
           $users: [
@@ -272,11 +267,6 @@ describe("adminUsers", () => {
 
   it("updates admin escrow and the umk root wrap without touching the user's own credStore", async () => {
     const db = fakeDb((query) => {
-      if (query.credStore?.$?.where?.["forUser.id"] === "user-2") {
-        return {
-          credStore: [adminEscrowRow()],
-        };
-      }
       if (query.$users?.$?.where?.id === "user-2") {
         return {
           $users: [
@@ -365,11 +355,6 @@ describe("adminUsers", () => {
       }
       if (query.txtShares?.$?.where?.["fromUser.id"]) {
         return { txtShares: [{ id: "share-out", shareKey: "b" }] };
-      }
-      if (query.credStore?.$?.where?.["forUser.id"] === "user-2") {
-        return {
-          credStore: [adminEscrowRow()],
-        };
       }
       if (query.keyStore) return { keyStore: [{ id: "key-1" }] };
       if (query.credStore?.$?.where?.["owner.id"] === "user-2") {
