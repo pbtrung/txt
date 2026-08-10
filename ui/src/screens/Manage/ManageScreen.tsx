@@ -85,6 +85,13 @@ function bookToolbarButtons(
       disabled: selectedId === null,
       onClick: () => setMode(nextMode(mode, "edit")),
     },
+    {
+      key: "share",
+      icon: "bi-share",
+      label: "Share",
+      disabled: selectedId === null,
+      onClick: () => setMode(nextMode(mode, "share")),
+    },
   ];
 }
 
@@ -94,12 +101,6 @@ function shareToolbarButtons(
   selectedId: string | null,
 ): ToolbarButtonConfig[] {
   return [
-    {
-      key: "create",
-      icon: "bi-plus-lg",
-      label: "Create",
-      onClick: () => setMode(nextMode(mode, "create")),
-    },
     {
       key: "delete",
       icon: "bi-trash",
@@ -354,7 +355,7 @@ export function ManageScreen() {
                   {usersError}
                 </div>
               )}
-              {sharesError && section === "shares" && (
+              {sharesError && (section === "books" || section === "shares") && (
                 <div className="alert alert-danger m-2 py-2 px-3" role="alert">
                   {sharesError}
                 </div>
@@ -379,8 +380,11 @@ export function ManageScreen() {
                     search={search}
                     selectedTxtId={booksSelectedId}
                     mode={booksMode}
+                    users={users ?? []}
+                    shares={shares ?? []}
                     onSelectRow={setBooksSelectedId}
                     onSetMode={setBooksMode}
+                    onSharesChanged={() => void loadShares()}
                   />
                 )}
                 {section === "shares" && (

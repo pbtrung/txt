@@ -10,12 +10,24 @@ import { BookRow, BOOK_ROW_HEIGHT } from "../../components/BookRow";
 import { Modal } from "../../components/Modal";
 import { VirtualizedListGroup } from "../../components/VirtualizedListGroup";
 import type { BookMetadataEdits } from "../../data/adminBooks";
+import {
+  grantShare,
+  revokeShare,
+  type ShareEntry,
+} from "../../data/adminShares";
+import type { UserSummary } from "../../data/adminUsers";
 import { fetchBookInfo } from "../../data/bookMetadata";
 import type { BookInfo } from "../../data/metadata";
-import { useVault } from "../../state/VaultContext";
+import { useVault, type VaultSession } from "../../state/VaultContext";
 import { allBooksSorted, matchesSearch } from "../Library/libraryModel";
 import { useLibraryBooks } from "../Library/useLibraryBooks";
-import { FormField, errorMessage, yieldToPaint } from "./manageShared";
+import {
+  FormField,
+  errorMessage,
+  truncateOptionLabel,
+  userDisplayLabel,
+  yieldToPaint,
+} from "./manageShared";
 
 function EditBookPanel({
   txtId,
@@ -184,20 +196,181 @@ function EditBookPanel({
   );
 }
 
-export type BooksMode = "none" | "edit";
+function ShareBookPanel({
+  session,
+  book,
+  users,
+  shares,
+  onChanged,
+  onClose,
+}: {
+  session: VaultSession;
+  book: BookInfo;
+  users: UserSummary[];
+  shares: ShareEntry[];
+  onChanged: () => void;
+  onClose: () => void;
+}) {
+  const [toUserId, setToUserId] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [revokingId, setRevokingId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const bookShares = useMemo(
+    () => shares.filter((share) => share.txtId === book.txtId),
+    [shares, book.txtId],
+  );
+  const usersById = useMemo(
+    () => new Map(users.map((user) => [user.id, user])),
+    [users],
+  );
+  const sharedUserIds = useMemo(
+    () => new Set(bookShares.map((share) => share.toUserId)),
+    [bookShares],
+  );
+  const recipients = useMemo(
+    () =>
+      users.filter(
+        (user) => user.id !== session.authId && !sharedUserIds.has(user.id),
+      ),
+    [users, session.authId, sharedUserIds],
+  );
+
+  async function handleGrant(e: FormEvent) {
+    e.preventDefault();
+    if (!toUserId) return;
+    setBusy(true);
+    setError(null);
+    await yieldToPaint();
+    try {
+      await grantShare(session.instantDb, session, book.txtId, toUserId);
+      setToUserId("");
+      onChanged();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleRevoke(shareId: string) {
+    setRevokingId(shareId);
+    setError(null);
+    try {
+      await revokeShare(session.instantDb, shareId);
+      onChanged();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setRevokingId(null);
+    }
+  }
+
+  return (
+    <Modal title={`Share ${book.title}`} onClose={onClose}>
+      {bookShares.length > 0 && (
+        <ul className="list-group list-group-flush mb-3">
+          {bookShares.map((share) => {
+            const recipient = usersById.get(share.toUserId) ?? {
+              id: share.toUserId,
+              displayName: undefined,
+            };
+            const revoking = revokingId === share.id;
+            return (
+              <li
+                key={share.id}
+                className="list-group-item d-flex align-items-center justify-content-between gap-2 px-0"
+              >
+                <span className="text-truncate">
+                  {userDisplayLabel(recipient)}
+                </span>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-outline-danger d-flex align-items-center gap-2"
+                  onClick={() => void handleRevoke(share.id)}
+                  disabled={revoking}
+                >
+                  {revoking && (
+                    <span
+                      className="spinner-border spinner-border-sm"
+                      role="status"
+                      aria-hidden="true"
+                    />
+                  )}
+                  Revoke
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {recipients.length > 0 ? (
+        <form onSubmit={(e) => void handleGrant(e)}>
+          <FormField label="Recipient" htmlFor="manage-book-share-recipient">
+            <select
+              id="manage-book-share-recipient"
+              className="form-select form-select-sm themed-control"
+              value={toUserId}
+              onChange={(e) => setToUserId(e.target.value)}
+              required
+              disabled={busy}
+            >
+              <option value="" disabled>
+                Choose a recipient
+              </option>
+              {recipients.map((user) => (
+                <option key={user.id} value={user.id}>
+                  {truncateOptionLabel(userDisplayLabel(user))}
+                </option>
+              ))}
+            </select>
+          </FormField>
+          <button
+            type="submit"
+            className="btn btn-sm btn-primary d-flex align-items-center gap-2"
+            disabled={busy || !toUserId}
+          >
+            {busy && (
+              <span
+                className="spinner-border spinner-border-sm"
+                role="status"
+                aria-hidden="true"
+              />
+            )}
+            Grant
+          </button>
+        </form>
+      ) : (
+        <div className="small text-body-secondary">
+          No other users left to share this with.
+        </div>
+      )}
+      {error && <div className="text-danger small mt-2">{error}</div>}
+    </Modal>
+  );
+}
+
+export type BooksMode = "none" | "edit" | "share";
 
 export function BooksSection({
   search,
   selectedTxtId,
   mode,
+  users,
+  shares,
   onSelectRow,
   onSetMode,
+  onSharesChanged,
 }: {
   search: string;
   selectedTxtId: string | null;
   mode: BooksMode;
+  users: UserSummary[];
+  shares: ShareEntry[];
   onSelectRow: (txtId: string | null) => void;
   onSetMode: (mode: BooksMode) => void;
+  onSharesChanged: () => void;
 }) {
   const { session, updateBookMetadata, syncBookInfo } = useVault();
   const { books } = useLibraryBooks();
@@ -272,6 +445,16 @@ export function BooksSection({
             await updateBookMetadata(selectedBook.txtId, edits, onProgress);
             onSetMode("none");
           }}
+          onClose={() => onSetMode("none")}
+        />
+      )}
+      {mode === "share" && selectedBook && session && (
+        <ShareBookPanel
+          session={session}
+          book={selectedBook.info}
+          users={users}
+          shares={shares}
+          onChanged={onSharesChanged}
           onClose={() => onSetMode("none")}
         />
       )}

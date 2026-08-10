@@ -240,6 +240,7 @@ describe("ManageScreen", () => {
     expect(screen.getByText("Book One")).toBeInTheDocument();
     expect(screen.getByText("Shared with Bob")).toBeInTheDocument();
     expect(screen.queryByText("Shared with Bob (user-2)")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Create" })).toBeNull();
   });
 
   it("edits book metadata from the Books toolbar", async () => {
@@ -509,21 +510,30 @@ describe("ManageScreen", () => {
     );
   });
 
-  it("grants a share from the Shares toolbar", async () => {
+  it("grants a share from the Books toolbar's Share button", async () => {
     vi.mocked(listShares).mockResolvedValue([]);
     setup();
     await waitFor(() => expect(screen.getByText("Bob")).toBeInTheDocument());
     const shareCallsBefore = vi.mocked(listShares).mock.calls.length;
 
-    await userEvent.click(screen.getByRole("button", { name: /^Shares/ }));
-    await userEvent.click(screen.getByRole("button", { name: "Create" }));
-    await userEvent.selectOptions(screen.getByLabelText("Book"), "txt-1");
-    expect(screen.getByRole("option", { name: "Bob" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /^Books/ }));
+    await userEvent.click(screen.getByRole("button", { name: /^Book One/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Share" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Share Book One" });
     expect(
-      screen.queryByRole("option", { name: "Bob (user-2)" }),
+      within(dialog).getByRole("option", { name: "Bob" }),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).queryByRole("option", { name: "Bob (user-2)" }),
     ).not.toBeInTheDocument();
-    await userEvent.selectOptions(screen.getByLabelText("Recipient"), "user-2");
-    await userEvent.click(screen.getByRole("button", { name: "Grant share" }));
+    await userEvent.selectOptions(
+      within(dialog).getByLabelText("Recipient"),
+      "user-2",
+    );
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Grant" }),
+    );
 
     await waitFor(() => expect(grantShare).toHaveBeenCalledOnce());
     expect(grantShare).toHaveBeenCalledWith(
@@ -532,6 +542,30 @@ describe("ManageScreen", () => {
       "txt-1",
       "user-2",
     );
+    await waitFor(() =>
+      expect(vi.mocked(listShares).mock.calls.length).toBeGreaterThan(
+        shareCallsBefore,
+      ),
+    );
+  });
+
+  it("revokes an existing recipient from the book's Share panel", async () => {
+    setup();
+    await waitFor(() => expect(screen.getByText("Bob")).toBeInTheDocument());
+    const shareCallsBefore = vi.mocked(listShares).mock.calls.length;
+
+    await userEvent.click(screen.getByRole("button", { name: /^Books/ }));
+    await userEvent.click(screen.getByRole("button", { name: /^Book One/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Share" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Share Book One" });
+    expect(within(dialog).getByText("Bob")).toBeInTheDocument();
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Revoke" }),
+    );
+
+    await waitFor(() => expect(revokeShare).toHaveBeenCalledOnce());
+    expect(revokeShare).toHaveBeenCalledWith(expect.anything(), "share-1");
     await waitFor(() =>
       expect(vi.mocked(listShares).mock.calls.length).toBeGreaterThan(
         shareCallsBefore,
