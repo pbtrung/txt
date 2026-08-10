@@ -67,7 +67,7 @@ umk -- once per share recipient:
 
 Every wrapped-key and content blob uses the blob format, AEAD, and KDF mechanics from [crypto.md](crypto.md) uniformly. `txtShares.txtKey` is the one value in this hierarchy wrapped via Encapsulate/Decapsulate (asymmetric) instead of a plain Encrypt/Decrypt under a key both sides already hold.
 
-A document mid `txt.ts --revoke-share` (docs/protocols.md's Revoking a share) carries a second, parallel key chain, rooted the same way as the first:
+**`txt.ts --revoke-share` is not yet implemented** (see docs/protocols.md's Revoking a share) — the fields below don't exist in `instant.schema.ts` yet. The chain is documented here as the intended design to build against. A document mid `--revoke-share`, once built, would carry a second, parallel key chain, rooted the same way as the first:
 
 ```
 txt.pendingTxtKey   (staged replacement txtKey, wrapped under owner's umk)
