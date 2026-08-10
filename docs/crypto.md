@@ -48,6 +48,8 @@ Bump major for breaking changes (different cipher/KDF, different field sizes/ord
 
 ## Additional Data (AD)
 
+**Not yet implemented.** `txt/crypto.ts`'s `blobEncrypt`/`blobDecrypt` currently build `AD = magic || version || salt` only, with no `context` input, and no caller passes one — everything below describes the intended design for the layer that will consume it (key_hierarchy.md's `<field>Context` columns), not current code.
+
 ```
 AD = magic (2) || version (2) || salt (64) || context (var)
 ```
