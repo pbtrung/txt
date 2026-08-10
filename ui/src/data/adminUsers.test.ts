@@ -97,7 +97,7 @@ beforeEach(() => {
 });
 
 describe("adminUsers", () => {
-  it("lists the current admin's display name and every other user's stored display name, falling back to email", async () => {
+  it("lists the current admin's display name and every other user's stored display name, falling back to email, excluding deleted users", async () => {
     const db = fakeDb((query) => {
       if (query.$users?.credStore) {
         return {
@@ -133,6 +133,13 @@ describe("adminUsers", () => {
             id: "user-3",
             email: "fallback@example.com",
             type: "user",
+          },
+          {
+            id: "user-4",
+            email: "gone@example.com",
+            type: "user",
+            umk: null,
+            deleted: true,
           },
         ],
       };
@@ -388,7 +395,9 @@ describe("adminUsers", () => {
       (chunk: { __ops?: unknown[] }) => chunk.__ops ?? [],
     );
     expect(ops).toEqual(
-      expect.arrayContaining([["update", "$users", "user-2", { umk: null }]]),
+      expect.arrayContaining([
+        ["update", "$users", "user-2", { umk: null, deleted: true }],
+      ]),
     );
     expect(ops).not.toEqual(
       expect.arrayContaining([["delete", "$users", "user-2", undefined]]),

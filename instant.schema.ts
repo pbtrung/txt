@@ -37,6 +37,14 @@ const _schema = i.schema({
       // isSelf branch at all), so self-promotion isn't possible through the
       // normal write path.
       type: i.string().optional(),
+      // Soft-delete marker, set true by deleteUser. InstantDB's own $users
+      // namespace refuses a real delete permission ("The $users namespace
+      // doesn't support permissions for delete" -- instant.perms.ts), so a
+      // "deleted" user's row is permanent; this is what lets Manage Users
+      // stop listing it. Optional/absent on every row predating this field
+      // and on every account never deleted -- both mean not deleted, same
+      // as an explicit false.
+      deleted: i.boolean().optional(),
     }),
     // Per-account lc_kyber_1024_x448 composite keypair (docs/data_model.md's
     // keyStore entity) -- lets the admin share a document with this account

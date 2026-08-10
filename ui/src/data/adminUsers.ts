@@ -17,6 +17,7 @@ interface UserRow {
   email?: string;
   type?: string | null;
   umk?: string | null;
+  deleted?: boolean | null;
 }
 
 interface EntityRow {
@@ -348,15 +349,17 @@ export async function listUsersWithInfo(
     displayNameByUserId(db, session),
   ]);
 
-  return users.map((row) => ({
-    id: row.id,
-    email: row.email,
-    displayName:
-      row.id === session.authId
-        ? (session.displayName ?? row.email)
-        : (names.get(row.id) ?? row.email),
-    isAdmin: row.type === "admin",
-  }));
+  return users
+    .filter((row) => row.deleted !== true)
+    .map((row) => ({
+      id: row.id,
+      email: row.email,
+      displayName:
+        row.id === session.authId
+          ? (session.displayName ?? row.email)
+          : (names.get(row.id) ?? row.email),
+      isAdmin: row.type === "admin",
+    }));
 }
 
 export async function getUserCreds(
@@ -537,7 +540,7 @@ export async function deleteUser(
   if (adminStored) {
     chunks.push(tx.credStore![adminStored.row.id]!.delete());
   }
-  chunks.push(tx.$users![targetUserId]!.update({ umk: null }));
+  chunks.push(tx.$users![targetUserId]!.update({ umk: null, deleted: true }));
 
   await transactIfAny(db, chunks);
 }
