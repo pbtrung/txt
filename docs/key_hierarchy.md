@@ -88,30 +88,30 @@ Every column wrapped by this design's Encrypt procedure has a matching `<field>C
 
 `<field>Context` is not itself sensitive — it needs to be unique per column, not secret — so storing it in plaintext costs nothing security-relevant. It is not a key-hierarchy edge (nothing is derived from it beyond being fed into HKDF's `info`/AD alongside the real IKM), and it is a different mechanism from `txt.prefixHash` below despite both being public: `prefixHash` binds one specific value to a document for the credential Worker to check against a client-supplied prefix, while `<field>Context` binds every wrapped column to itself so its ciphertext can never be substituted for another column's.
 
-| Column | Wrapped under | Context column |
-| --- | --- | --- |
-| `$users.umk` | `user_root_key` | `$users.umkContext` |
-| `keyStore.keyStoreKey` | owner's `umk` | `keyStore.keyStoreKeyContext` |
-| `keyStore.privKey` | `keyStoreKey` | `keyStore.privKeyContext` |
-| `credStore.credStoreKey` | owner's `umk` | `credStore.credStoreKeyContext` |
-| `credStore.content` | that row's `credStoreKey` | `credStore.contentContext` |
-| `txt.txtKey` | owner's `umk` | `txt.txtKeyContext` |
-| `txt.prefix` | that document's `txtKey` | `txt.prefixContext` |
-| `txt.pendingTxtKey` | owner's `umk` | `txt.pendingTxtKeyContext` |
-| `txt.pendingPrefix` | `pendingTxtKey` | `txt.pendingPrefixContext` |
-| `txt.staleR2Prefix` | owner's `umk` | `txt.staleR2PrefixContext` |
-| `txtMetadata.content` | that document's `txtKey` | `txtMetadata.contentContext` |
-| `txtMetadata.catalog` | that document's `txtKey` | `txtMetadata.catalogContext` |
-| `txtParts.txtPartKey` | that document's `txtKey` | `txtParts.txtPartKeyContext` |
-| `txtParts.path` | that part's own `txtPartKey` | `txtParts.pathContext` |
-| `txtParts` R2 object body | that part's own `txtPartKey` | `txtParts.bodyContext` |
-| `txtParts.pendingTxtPartKey` | `pendingTxtKey` | `txtParts.pendingTxtPartKeyContext` |
-| `txtParts.pendingPath` | `pendingTxtPartKey` | `txtParts.pendingPathContext` |
-| `txtShares.txtKey` | per-share `ss` (Encapsulate) | `txtShares.txtKeyContext` |
-| `txtAccess.txtAccessKey` | owner's `umk` | `txtAccess.txtAccessKeyContext` |
-| `txtAccess.content` | that row's `txtAccessKey` | `txtAccess.contentContext` |
-| `txtBookmarks.txtBookmarkKey` | owner's `umk` | `txtBookmarks.txtBookmarkKeyContext` |
-| `txtBookmarks.content` | that row's `txtBookmarkKey` | `txtBookmarks.contentContext` |
+| Column                        | Wrapped under                | Context column                       |
+| ----------------------------- | ---------------------------- | ------------------------------------ |
+| `$users.umk`                  | `user_root_key`              | `$users.umkContext`                  |
+| `keyStore.keyStoreKey`        | owner's `umk`                | `keyStore.keyStoreKeyContext`        |
+| `keyStore.privKey`            | `keyStoreKey`                | `keyStore.privKeyContext`            |
+| `credStore.credStoreKey`      | owner's `umk`                | `credStore.credStoreKeyContext`      |
+| `credStore.content`           | that row's `credStoreKey`    | `credStore.contentContext`           |
+| `txt.txtKey`                  | owner's `umk`                | `txt.txtKeyContext`                  |
+| `txt.prefix`                  | that document's `txtKey`     | `txt.prefixContext`                  |
+| `txt.pendingTxtKey`           | owner's `umk`                | `txt.pendingTxtKeyContext`           |
+| `txt.pendingPrefix`           | `pendingTxtKey`              | `txt.pendingPrefixContext`           |
+| `txt.staleR2Prefix`           | owner's `umk`                | `txt.staleR2PrefixContext`           |
+| `txtMetadata.content`         | that document's `txtKey`     | `txtMetadata.contentContext`         |
+| `txtMetadata.catalog`         | that document's `txtKey`     | `txtMetadata.catalogContext`         |
+| `txtParts.txtPartKey`         | that document's `txtKey`     | `txtParts.txtPartKeyContext`         |
+| `txtParts.path`               | that part's own `txtPartKey` | `txtParts.pathContext`               |
+| `txtParts` R2 object body     | that part's own `txtPartKey` | `txtParts.bodyContext`               |
+| `txtParts.pendingTxtPartKey`  | `pendingTxtKey`              | `txtParts.pendingTxtPartKeyContext`  |
+| `txtParts.pendingPath`        | `pendingTxtPartKey`          | `txtParts.pendingPathContext`        |
+| `txtShares.txtKey`            | per-share `ss` (Encapsulate) | `txtShares.txtKeyContext`            |
+| `txtAccess.txtAccessKey`      | owner's `umk`                | `txtAccess.txtAccessKeyContext`      |
+| `txtAccess.content`           | that row's `txtAccessKey`    | `txtAccess.contentContext`           |
+| `txtBookmarks.txtBookmarkKey` | owner's `umk`                | `txtBookmarks.txtBookmarkKeyContext` |
+| `txtBookmarks.content`        | that row's `txtBookmarkKey`  | `txtBookmarks.contentContext`        |
 
 `txtParts.bodyContext` has no corresponding InstantDB "body" field to sit next to — the value it protects is the R2 object itself, not an InstantDB column — so it lives on the `txtParts` row alongside `txtPartKey`/`path`/their own context columns, the same place `txtPartKey` already lives despite also protecting something stored only in R2.
 

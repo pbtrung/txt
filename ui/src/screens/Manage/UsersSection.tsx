@@ -209,15 +209,19 @@ function CredentialFields({
             type="text"
             className="form-control themed-control"
             value={values.userRootKey}
-            onChange={(e) => update("userRootKey", e.target.value)}
-            required
+            disabled
           />
           <button
             type="button"
-            className="btn btn-outline-secondary border-primary"
+            className="btn btn-outline-danger"
             onClick={() => update("userRootKey", generateUserRootKey())}
+            aria-label="Regenerate user root key"
+            title="Regenerate user root key"
           >
-            Generate
+            <i
+              className="bi bi-arrow-clockwise text-danger"
+              aria-hidden="true"
+            />
           </button>
         </div>
       </FormField>
@@ -508,6 +512,7 @@ function EditUserPanel({
   const [reviewValues, setReviewValues] = useState<UserCredentialFields | null>(
     null,
   );
+  const [downloadConfirmed, setDownloadConfirmed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -554,11 +559,12 @@ function EditUserPanel({
     e.preventDefault();
     if (!values || !hasChanges) return;
     setError(null);
+    setDownloadConfirmed(false);
     setReviewValues({ ...values });
   }
 
   async function handleSave() {
-    if (!reviewValues || !reviewHasChanges) return;
+    if (!reviewValues || !reviewHasChanges || !downloadConfirmed) return;
     setBusy(true);
     setError(null);
     await yieldToPaint();
@@ -575,23 +581,42 @@ function EditUserPanel({
   if (reviewValues) {
     return (
       <CredentialReviewModal
-        title={`Review ${user.displayName ?? user.email ?? user.id}`}
+        title={`Review ${user.displayName || user.email}`}
         values={reviewValues}
         busy={busy}
         primaryLabel="Save"
-        primaryDisabled={!reviewHasChanges}
+        primaryDisabled={!reviewHasChanges || !downloadConfirmed}
         error={error}
         onPrimary={() => void handleSave()}
+        onEdit={() => {
+          setReviewValues(null);
+          setDownloadConfirmed(false);
+          setError(null);
+        }}
         onClose={onClose}
-      />
+      >
+        <div className="form-check mb-2">
+          <input
+            id="manage-edit-user-creds-confirm"
+            className="form-check-input"
+            type="checkbox"
+            checked={downloadConfirmed}
+            onChange={(e) => setDownloadConfirmed(e.target.checked)}
+            disabled={busy}
+          />
+          <label
+            className="form-check-label small"
+            htmlFor="manage-edit-user-creds-confirm"
+          >
+            I downloaded this JSON to a local file
+          </label>
+        </div>
+      </CredentialReviewModal>
     );
   }
 
   return (
-    <Modal
-      title={`Edit ${user.displayName ?? user.email ?? user.id}`}
-      onClose={onClose}
-    >
+    <Modal title={`Edit ${user.displayName || user.email}`} onClose={onClose}>
       {loading && <div className="text-body-secondary small">Loading...</div>}
       {!loading && values && (
         <form onSubmit={(e) => void handleSubmit(e)}>
@@ -612,7 +637,7 @@ function EditUserPanel({
                 aria-hidden="true"
               />
             )}
-            Save
+            Proceed
           </button>
         </form>
       )}

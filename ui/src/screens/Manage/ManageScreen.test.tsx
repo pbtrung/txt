@@ -439,8 +439,8 @@ describe("ManageScreen", () => {
       ),
     );
     expect(screen.queryByLabelText("Display name")).not.toBeInTheDocument();
-    const firstSave = screen.getByRole("button", { name: "Save" });
-    expect(firstSave).toBeDisabled();
+    const firstProceed = screen.getByRole("button", { name: "Proceed" });
+    expect(firstProceed).toBeDisabled();
     const password = screen.getByLabelText(
       "Firebase password",
     ) as HTMLInputElement;
@@ -451,15 +451,21 @@ describe("ManageScreen", () => {
     expect(password.type).toBe("text");
     await userEvent.clear(password);
     await userEvent.type(password, "pw2");
-    expect(firstSave).toBeEnabled();
-    await userEvent.click(firstSave);
+    expect(firstProceed).toBeEnabled();
+    await userEvent.click(firstProceed);
 
     const review = screen.getByRole("dialog", { name: "Review Bob" });
     const json = within(review).getByLabelText(
       "Credentials JSON",
     ) as HTMLTextAreaElement;
     expect(json.value).not.toContain("display_name");
-    await userEvent.click(within(review).getByRole("button", { name: "Save" }));
+    const save = within(review).getByRole("button", { name: "Save" });
+    expect(save).toBeDisabled();
+    await userEvent.click(
+      within(review).getByLabelText("I downloaded this JSON to a local file"),
+    );
+    expect(save).toBeEnabled();
+    await userEvent.click(save);
 
     await waitFor(() => expect(updateUserCreds).toHaveBeenCalledOnce());
     expect(updateUserCreds).toHaveBeenCalledWith(

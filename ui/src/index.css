@@ -116,9 +116,17 @@ body,
   }
 }
 
+/* Manage top bar's search field: same shell-60 + 16rem sidebar + px-3 cell
+   layout as Library's .search-bar-width above, so the same >=1180px
+   threshold before capping to half the cell's width applies here too. */
 .manage-search-bar-width {
   container-type: inline-size;
   width: 100%;
+}
+@media (min-width: 1180px) {
+  .manage-search-bar-width {
+    width: 50%;
+  }
 }
 
 .manage-toolbar-button {
