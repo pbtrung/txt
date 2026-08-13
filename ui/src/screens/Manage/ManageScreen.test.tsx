@@ -541,6 +541,7 @@ describe("ManageScreen", () => {
       expect.objectContaining({ authId: "auth-1" }),
       "txt-1",
       "user-2",
+      expect.any(Function),
     );
     await waitFor(() =>
       expect(vi.mocked(listShares).mock.calls.length).toBeGreaterThan(

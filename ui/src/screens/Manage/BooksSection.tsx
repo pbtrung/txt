@@ -213,6 +213,7 @@ function ShareBookPanel({
 }) {
   const [toUserId, setToUserId] = useState("");
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<string | null>(null);
   const [revokingId, setRevokingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -241,15 +242,23 @@ function ShareBookPanel({
     if (!toUserId) return;
     setBusy(true);
     setError(null);
+    setProgress(null);
     await yieldToPaint();
     try {
-      await grantShare(session.instantDb, session, book.txtId, toUserId);
+      await grantShare(
+        session.instantDb,
+        session,
+        book.txtId,
+        toUserId,
+        setProgress,
+      );
       setToUserId("");
       onChanged();
     } catch (err) {
       setError(errorMessage(err));
     } finally {
       setBusy(false);
+      setProgress(null);
     }
   }
 
@@ -340,6 +349,9 @@ function ShareBookPanel({
             )}
             Grant
           </button>
+          {busy && progress && (
+            <span className="small text-body-secondary ms-2">{progress}</span>
+          )}
         </form>
       ) : (
         <div className="small text-body-secondary">
