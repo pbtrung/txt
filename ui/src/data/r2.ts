@@ -1,18 +1,36 @@
-// R2 (S3-compatible) object GET, mirrors txt/r2.ts's own R2Client -- signed
-// with aws4fetch (built for exactly this Workers/browser + R2 use case, no
-// Node polyfills needed) instead of the AWS SDK. Nothing here ever builds a
-// client from a static key: every AwsClient this app uses comes from
-// tempR2Creds.ts's short-lived, prefix-scoped temporary credential instead
-// (docs/r2_credentials.md), for every account, admin included. GET-only:
-// only the CLI (txt.ts --ingest) ever writes a txtParts object to R2, using
-// the admin's own real, static credential directly, never through this
-// module or the Worker-brokered temporary credential this file's own
-// getObject always uses -- see docs/protocols.md's Ingest/write path.
+// R2 (S3-compatible) object GET/PUT, mirrors txt/r2.ts's own R2Client --
+// signed with aws4fetch (built for exactly this Workers/browser + R2 use
+// case, no Node polyfills needed) instead of the AWS SDK. getObject is used
+// by every account, admin included, against an AwsClient built from
+// tempR2Creds.ts's short-lived, prefix-scoped, read-only temporary
+// credential (docs/r2_credentials.md) -- never a static key. putObject is
+// the one exception: only adminShares.ts's grantShare ever calls it, against
+// an AwsClient built from the admin's own real, static read-write R2
+// credential (session.ts's adminR2WriteCreds, parsed from that account's own
+// credStore.r2_config) -- the one place this app's browser code writes to R2
+// directly, since creating a share means writing the recipient's own
+// re-encrypted copy of every part (docs/protocols.md's Sharing protocol).
 
-import type { AwsClient } from "aws4fetch";
+import { AwsClient } from "aws4fetch";
 
 import { isBrowser } from "../env";
-import type { R2Config } from "./r2Config";
+import type { AdminR2WriteCreds, R2Config } from "./r2Config";
+
+/** Builds a write-capable client from the admin's own real, static R2
+ * credential -- never a Worker-minted temporary one. Only ever used for the
+ * sharing flow (adminShares.ts); every other R2 access in this app reads
+ * through a short-lived credential instead. */
+export function buildAdminWriteClient(
+  creds: AdminR2WriteCreds,
+  region: string,
+): AwsClient {
+  return new AwsClient({
+    accessKeyId: creds.accessKeyId,
+    secretAccessKey: creds.secretAccessKey,
+    region,
+    service: "s3",
+  });
+}
 
 // Retries on failure with exponential backoff before giving up (mirrors
 // txt/r2.ts's own _RETRY_DELAYS/_MAX_ATTEMPTS).
@@ -85,4 +103,21 @@ export async function getObject(
     client.fetch(objectUrl(config, key)),
   );
   return new Uint8Array(await response.arrayBuffer());
+}
+
+/** Uploads one R2 object, retrying with backoff before giving up -- see this
+ * file's header comment for why this exists at all and who's allowed to
+ * call it. */
+export async function putObject(
+  client: AwsClient,
+  config: R2Config,
+  key: string,
+  body: Uint8Array,
+): Promise<void> {
+  await withRetries(`R2 PUT ${key}`, () =>
+    client.fetch(objectUrl(config, key), {
+      method: "PUT",
+      body: body as unknown as BodyInit,
+    }),
+  );
 }

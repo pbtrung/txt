@@ -6,12 +6,16 @@
 //
 // No dbMeta/pathKey/dbKey here anymore -- this design has no per-account
 // page store to resolve coordinates for at all (docs/data_model.md). What a
-// session actually needs is: this account's umk (unwraps everything else),
-// its keyStore.privKey (Decapsulates a txtShares grant -- the one thing a
-// share recipient needs beyond umk), its own credStore's r2_config/
-// display_name, and its txtAccess/txtBookmarks key + already-decoded content
-// (both one row per account, holding every document's data as a single
-// encrypted JSON blob -- see access.ts/bookmarks.ts).
+// session actually needs is: this account's umk (unwraps everything else,
+// including a shared document's own sharedTxt.userTxtKey -- a plain
+// symmetric wrap, not a KEM ciphertext, so reading a share needs nothing
+// beyond umk), its keyStore.privKey (currently unused, kept resolved against
+// a future feature), its own credStore's r2_config/display_name (plus, for
+// an admin session only, that same r2_config's real read-write R2 keys, for
+// the sharing flow's own R2 write), and its txtAccess/txtBookmarks key +
+// already-decoded content (both one row per account, holding every
+// document's data as a single encrypted JSON blob -- see
+// access.ts/bookmarks.ts).
 
 import * as blob from "../crypto/blob";
 import { base64ToBytes, randomBytes } from "../crypto/bytes";
@@ -19,7 +23,12 @@ import { RANDOM_KEY_LEN } from "../crypto/constants";
 import { decodeAccessContent, type AccessMap } from "./access";
 import { decodeBookmarksContent, type BookmarksMap } from "./bookmarks";
 import { optionalString, requireObject } from "./jsonObject";
-import { parseR2Config, type R2Config } from "./r2Config";
+import {
+  parseAdminR2WriteCreds,
+  parseR2Config,
+  type AdminR2WriteCreds,
+  type R2Config,
+} from "./r2Config";
 
 export class SessionError extends Error {}
 
@@ -45,17 +54,25 @@ export interface Session {
    * already enforce server-side. */
   isAdmin: boolean;
   umk: Uint8Array;
-  /** Unwrapped lc_kyber_1024_x448 composite private key -- Decapsulates a
-   * txtShares grant's txtKey (docs/protocols.md's Sharing protocol); the one
-   * KEM operation every session needs client-side. An admin session also
-   * uses the matching keyStore.pubKey (fetched fresh per grant, not kept
-   * here) to Encapsulate when granting a new share (adminShares.ts). */
+  /** Unwrapped lc_kyber_1024_x448 composite private key. Unused by sharing
+   * today (a sharedTxt row's userTxtKey is a plain symmetric wrap under this
+   * account's own umk, not a KEM ciphertext) -- kept resolved because
+   * keyStore itself is kept provisioned for every account, against a future
+   * feature that does need an asymmetric wrap (docs/data_model.md). */
   keyStorePrivKey: Uint8Array;
   /** Unwrapped key for this account's own credStore self row. Other
    * credStore rows owned by this account still have their own independent
    * credStoreKey values; decrypt those per row under umk. */
   credStoreKey: Uint8Array;
   r2Config: R2Config;
+  /** The admin's own real, static read-write R2 credential, present only
+   * for an isAdmin session (a `user`-role self row's r2_config never has
+   * one) -- used only to build a write-capable client for the sharing flow
+   * (adminShares.ts's grantShare). Every other frontend R2 access, for
+   * every role, still goes exclusively through worker/r2Creds.ts's
+   * short-lived, read-only temporary credentials (docs/r2_credentials.md);
+   * this is the one deliberate exception. */
+  adminR2WriteCreds?: AdminR2WriteCreds;
   /** This account's own display_name, as stored in credStore.content --
    * sourced from creds.json's own display_name field at provisioning time
    * (docs/data_model.md), so this follows the account itself rather than
@@ -112,6 +129,7 @@ async function resolveOwnCredStore(
   credStoreKey: Uint8Array;
   content: Record<string, unknown>;
   r2Config: R2Config;
+  adminR2WriteCreds: AdminR2WriteCreds | null;
 }> {
   const allRows = linkedRows(rows, "credStore row");
   for (const row of allRows) {
@@ -120,6 +138,7 @@ async function resolveOwnCredStore(
     return {
       ...decoded,
       r2Config: parseR2Config(decoded.content.r2_config),
+      adminR2WriteCreds: parseAdminR2WriteCreds(decoded.content.r2_config),
     };
   }
   throw new SessionError("missing linked credStore row with r2_config");
@@ -221,10 +240,8 @@ export async function resolveSession(
     base64ToBytes(keyStoreRow.privKey),
   );
 
-  const { credStoreKey, content, r2Config } = await resolveOwnCredStore(
-    umk,
-    authRow.credStore,
-  );
+  const { credStoreKey, content, r2Config, adminR2WriteCreds } =
+    await resolveOwnCredStore(umk, authRow.credStore);
 
   const [txtAccess, txtBookmarks] = await Promise.all([
     resolveKeyedContent(
@@ -250,6 +267,7 @@ export async function resolveSession(
     keyStorePrivKey,
     credStoreKey,
     r2Config,
+    adminR2WriteCreds: adminR2WriteCreds ?? undefined,
     displayName: optionalString(content, "display_name"),
     txtAccess,
     txtBookmarks,

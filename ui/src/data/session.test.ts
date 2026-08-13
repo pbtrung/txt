@@ -81,6 +81,8 @@ describe("resolveSession", () => {
     expect(Array.from(session.credStoreKey)).toEqual(Array.from(credStoreKey));
     expect(session.r2Config.bucket).toBe("my-bucket");
     expect(session.r2Config).not.toHaveProperty("readWriteAccessKeyId");
+    // A user-role self row's r2_config never carries real R2 keys at all.
+    expect(session.adminR2WriteCreds).toBeUndefined();
     expect(session.displayName).toBeUndefined();
     // No existing row -- a fresh key was minted, content is empty, id is null.
     expect(session.txtAccess.id).toBeNull();
@@ -110,6 +112,39 @@ describe("resolveSession", () => {
     const session = await resolveSession(db, "auth-1", userRootKey);
 
     expect(session.isAdmin).toBe(true);
+  });
+
+  it("resolves the admin's own real read-write R2 credential from its self row", async () => {
+    const authRow = await buildAuthRow("admin");
+    const keyStoreRow = await buildKeyStoreRow();
+    const credStoreRow = await buildCredStoreRowWithContent({
+      r2_config: {
+        endpoint: "https://acct.r2.cloudflarestorage.com",
+        region: "auto",
+        bucket: "my-bucket",
+        read_write_access_key_id: "rw-id",
+        read_write_secret_access_key: "rw-secret",
+      },
+    });
+    const db = fakeDb({
+      $users: [
+        {
+          id: "auth-1",
+          ...authRow,
+          keyStore: [{ id: "keystore-1", ...keyStoreRow }],
+          credStore: [{ id: "credstore-1", ...credStoreRow }],
+          txtAccess: [],
+          txtBookmarks: [],
+        },
+      ],
+    });
+
+    const session = await resolveSession(db, "auth-1", userRootKey);
+
+    expect(session.adminR2WriteCreds).toEqual({
+      accessKeyId: "rw-id",
+      secretAccessKey: "rw-secret",
+    });
   });
 
   it("skips admin-owned credential escrow rows when resolving its own R2 config", async () => {
