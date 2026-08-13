@@ -2,29 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 
 import * as blob from "../crypto/blob";
 import { bytesToBase64, randomBytes } from "../crypto/bytes";
-import { kemEncapsulate, kemKeypair } from "./leancrypto";
-import { loadLibrary } from "./library";
+import { loadLibrary, type LibrarySession } from "./library";
 import { wrapMetadataCatalog } from "./metadata";
-import type { Session } from "./session";
 
 const umk = randomBytes(128);
 
-function fakeSession(overrides: Partial<Session> = {}): Session {
-  return {
-    authId: "auth-1",
-    isAdmin: false,
-    umk,
-    keyStorePrivKey: new Uint8Array(3224),
-    credStoreKey: randomBytes(128),
-    r2Config: {
-      endpoint: "https://acct.r2.cloudflarestorage.com",
-      region: "auto",
-      bucket: "my-bucket",
-    },
-    txtAccess: { id: null, key: randomBytes(128), content: {} },
-    txtBookmarks: { id: null, key: randomBytes(128), content: {} },
-    ...overrides,
-  };
+function fakeSession(overrides: Partial<LibrarySession> = {}): LibrarySession {
+  return { authId: "auth-1", umk, ...overrides };
 }
 
 async function ownedTxtRow(
@@ -51,12 +35,9 @@ async function ownedTxtRow(
   };
 }
 
-async function sharedTxtSharesRow(txtId: string, name: string, title = name) {
-  const { pubKey, privKey } = await kemKeypair();
-  const txtKey = randomBytes(128);
-  const { ct, ss } = await kemEncapsulate(pubKey);
-  const txtKeyBlob = await blob.encrypt(ss, txtKey);
-
+async function sharedTxtRow(id: string, name: string, title = name) {
+  const rootKey = randomBytes(128);
+  const userTxtKeyBlob = await blob.encrypt(umk, rootKey);
   const catalogPayload = {
     name,
     title,
@@ -65,30 +46,24 @@ async function sharedTxtSharesRow(txtId: string, name: string, title = name) {
     publishers: [],
   };
   return {
-    row: {
-      kemCt: bytesToBase64(ct),
-      txtKey: bytesToBase64(txtKeyBlob),
-      txt: [
-        {
-          id: txtId,
-          txtMetadata: [
-            { catalog: await wrapMetadataCatalog(txtKey, catalogPayload) },
-          ],
-        },
-      ],
-    },
-    privKey,
+    id,
+    userTxtKey: bytesToBase64(userTxtKeyBlob),
+    sharedTxtMetadata: [
+      { catalog: await wrapMetadataCatalog(rootKey, catalogPayload) },
+    ],
   };
 }
 
-function fakeDb(txt: unknown[], txtShares: unknown[] = []) {
+function fakeDb(txt: unknown[], sharedTxt: unknown[] = []) {
   return {
     queryOnce: vi.fn(async (query: any) => {
       if (query.txt) {
         return { data: { txt: query.txt.$.offset === 0 ? txt : [] } };
       }
       return {
-        data: { txtShares: query.txtShares.$.offset === 0 ? txtShares : [] },
+        data: {
+          sharedTxt: query.sharedTxt.$.offset === 0 ? sharedTxt : [],
+        },
       };
     }),
   };
@@ -105,13 +80,14 @@ describe("loadLibrary", () => {
     const db = fakeDb([row]);
     const session = fakeSession();
 
-    const { metadataById, docKeys } = await loadLibrary(db, session);
+    const { metadataById, docKeys, docKinds } = await loadLibrary(db, session);
 
     expect(metadataById.get("txt-1")?.title).toBe("Doc One");
     expect(metadataById.get("txt-1")?.name).toBe("doc-one.txt");
     expect(metadataById.get("txt-1")?.author).toBe("Author One");
     expect(metadataById.get("txt-1")?.rawMetadata).toEqual([]);
     expect(docKeys.get("txt-1")).toBeInstanceOf(Uint8Array);
+    expect(docKinds.get("txt-1")).toBe("txt");
     expect(db.queryOnce.mock.calls[0]![0].txt.txtMetadata.$.fields).toEqual([
       "catalog",
     ]);
@@ -128,41 +104,36 @@ describe("loadLibrary", () => {
     expect(metadataById.get("txt-2")?.title).toBe("doc-two.txt");
   });
 
-  it("loads a shared document by Decapsulating txtShares' own txtKey", async () => {
-    const { row, privKey } = await sharedTxtSharesRow(
-      "txt-shared-1",
-      "shared.txt",
-    );
+  it("loads a shared document by decrypting sharedTxt's own userTxtKey under this account's umk", async () => {
+    const row = await sharedTxtRow("share-1", "shared.txt");
     const db = fakeDb([], [row]);
-    const session = fakeSession({ keyStorePrivKey: privKey });
+    const session = fakeSession();
 
-    const { metadataById, docKeys } = await loadLibrary(db, session);
+    const { metadataById, docKeys, docKinds } = await loadLibrary(db, session);
 
-    expect(metadataById.get("txt-shared-1")?.name).toBe("shared.txt");
-    expect(docKeys.get("txt-shared-1")).toBeInstanceOf(Uint8Array);
+    expect(metadataById.get("share-1")?.name).toBe("shared.txt");
+    expect(docKeys.get("share-1")).toBeInstanceOf(Uint8Array);
+    expect(docKinds.get("share-1")).toBe("sharedTxt");
   });
 
   it("combines owned and shared documents into one snapshot", async () => {
     const ownedRow = await ownedTxtRow("txt-owned", "owned.txt");
-    const { row: sharedRow, privKey } = await sharedTxtSharesRow(
-      "txt-shared",
-      "shared.txt",
-    );
+    const sharedRow = await sharedTxtRow("share-1", "shared.txt");
     const db = fakeDb([ownedRow], [sharedRow]);
-    const session = fakeSession({ keyStorePrivKey: privKey });
+    const session = fakeSession();
 
     const { metadataById } = await loadLibrary(db, session);
 
     expect(Array.from(metadataById.keys()).sort()).toEqual([
+      "share-1",
       "txt-owned",
-      "txt-shared",
     ]);
   });
 
-  it("skips a shared txtShares row whose own txt is inaccessible/gone rather than throwing", async () => {
-    const { row } = await sharedTxtSharesRow("txt-shared", "shared.txt");
-    const rowWithNoTxt = { ...row, txt: [] };
-    const db = fakeDb([], [rowWithNoTxt]);
+  it("skips a sharedTxt row missing its own sharedTxtMetadata rather than throwing", async () => {
+    const row = await sharedTxtRow("share-1", "shared.txt");
+    const rowWithNoMetadata = { ...row, sharedTxtMetadata: [] };
+    const db = fakeDb([], [rowWithNoMetadata]);
 
     const { metadataById } = await loadLibrary(db, fakeSession());
 

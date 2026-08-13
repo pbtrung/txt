@@ -14,12 +14,13 @@ afterEach(() => {
 });
 
 describe("fetchTempR2Credential", () => {
-  it("POSTs instantToken/txtId/prefix and builds an AwsClient from the response", async () => {
+  it("POSTs instantToken/kind/id/prefix and builds an AwsClient from the response", async () => {
     const fetchMock = vi.fn(async (url: string, init: RequestInit) => {
       expect(url).toBe("/api/r2-creds");
       expect(JSON.parse(init.body as string)).toEqual({
         instantToken: "instant-token-1",
-        txtId: "txt-1",
+        kind: "txt",
+        id: "txt-1",
         prefix: "doc-prefix-1",
       });
       return new Response(
@@ -36,6 +37,7 @@ describe("fetchTempR2Credential", () => {
 
     const cred = await fetchTempR2Credential(
       "instant-token-1",
+      "txt",
       "txt-1",
       "doc-prefix-1",
       r2Config,
@@ -45,6 +47,35 @@ describe("fetchTempR2Credential", () => {
     expect(cred.client.accessKeyId).toBe("temp-id");
     expect(cred.client.secretAccessKey).toBe("temp-secret");
     expect(cred.client.sessionToken).toBe("temp-session");
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("POSTs kind:sharedTxt for a shared document", async () => {
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+      expect(JSON.parse(init.body as string)).toMatchObject({
+        kind: "sharedTxt",
+        id: "share-1",
+      });
+      return new Response(
+        JSON.stringify({
+          accessKeyId: "temp-id",
+          secretAccessKey: "temp-secret",
+          sessionToken: "temp-session",
+          expiresAtMs: 12345,
+        }),
+        { status: 200 },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fetchTempR2Credential(
+      "instant-token-1",
+      "sharedTxt",
+      "share-1",
+      "doc-prefix-1",
+      r2Config,
+    );
+
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
@@ -62,6 +93,7 @@ describe("fetchTempR2Credential", () => {
     await expect(
       fetchTempR2Credential(
         "instant-token-1",
+        "txt",
         "txt-1",
         "doc-prefix-1",
         r2Config,
@@ -78,6 +110,7 @@ describe("fetchTempR2Credential", () => {
     await expect(
       fetchTempR2Credential(
         "instant-token-1",
+        "txt",
         "txt-1",
         "doc-prefix-1",
         r2Config,

@@ -47,7 +47,7 @@ import { loadCredsFromFile } from "../data/creds";
 import type { Creds } from "../data/creds";
 import * as firebaseAuth from "../data/firebaseAuth";
 import { createInstantClient } from "../data/instantClient";
-import { loadLibrary } from "../data/library";
+import { loadLibrary, type LibraryDocKind } from "../data/library";
 import type { BookInfo } from "../data/metadata";
 import type { AdminR2WriteCreds, R2Config } from "../data/r2Config";
 import { reloadKeyedMaps, resolveSession, type Session } from "../data/session";
@@ -109,6 +109,9 @@ export interface VaultSession {
   /** This account's own unwrapped txtKey for every document it can read --
    * reader.ts's only way to get one (see library.ts). */
   docKeys: Map<string, Uint8Array>;
+  /** Which table each docKeys entry's row actually lives in -- see
+   * library.ts's own LibrarySnapshot.docKinds. */
+  docKinds: Map<string, LibraryDocKind>;
   txtAccess: { id: string | null; key: Uint8Array };
   txtBookmarks: { id: string | null; key: Uint8Array };
 }
@@ -268,7 +271,10 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       setProgress(phaseProgress(UNLOCK_PHASES, 1));
       verbose("unlock: loading library");
       const libraryStart = performance.now();
-      const { metadataById, docKeys } = await loadLibrary(instantDb, keys);
+      const { metadataById, docKeys, docKinds } = await loadLibrary(
+        instantDb,
+        keys,
+      );
       verbose(`unlock: loadLibrary() done in ${elapsed(libraryStart)}`);
 
       setAccessMap(keys.txtAccess.content);
@@ -289,6 +295,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         adminR2WriteCreds: keys.adminR2WriteCreds,
         metadataById,
         docKeys,
+        docKinds,
         txtAccess: { id: keys.txtAccess.id, key: keys.txtAccess.key },
         txtBookmarks: { id: keys.txtBookmarks.id, key: keys.txtBookmarks.key },
       });
@@ -337,12 +344,11 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     setProgress(phaseProgress(REFRESH_PHASES, 0));
     try {
       verbose("refresh: reloading library");
-      const [{ metadataById, docKeys }, { txtAccess, txtBookmarks }] =
+      const [{ metadataById, docKeys, docKinds }, { txtAccess, txtBookmarks }] =
         await Promise.all([
           loadLibrary(session.instantDb, {
             authId: session.authId,
             umk: session.umk,
-            keyStorePrivKey: session.keyStorePrivKey,
           }),
           reloadKeyedMaps(session.instantDb, session.authId, session.umk),
         ]);
@@ -360,6 +366,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           ...prev,
           metadataById,
           docKeys,
+          docKinds,
           txtAccess: { id: txtAccess.id, key: txtAccess.key },
           txtBookmarks: { id: txtBookmarks.id, key: txtBookmarks.key },
         };

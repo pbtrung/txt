@@ -75,7 +75,8 @@ function fakeLibrary(
     entries.map(([txtId, title]) => [txtId, fakeBookInfo(txtId, title)]),
   );
   const docKeys = new Map(entries.map(([txtId]) => [txtId, randomBytes(128)]));
-  return { metadataById, docKeys };
+  const docKinds = new Map(entries.map(([txtId]) => [txtId, "txt" as const]));
+  return { metadataById, docKeys, docKinds };
 }
 
 function installFakeAuth(sessionOverrides: Partial<Session> = {}) {

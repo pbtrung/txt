@@ -1,17 +1,18 @@
-// On-demand part fetch (docs/protocols.md's Read path): query txtParts for
-// the target document (already includes txtPartKey/path), decrypt the txt
-// row's prefix directly under docKey, decrypt each part's own txtPartKey
-// under that same docKey, then -- per part, on demand -- decrypt path under
-// txtPartKey to recover raw_key, GET "${prefix}/${raw_key}" from R2, and
-// decrypt the object body under that same txtPartKey. Two hops (one
-// InstantDB query, one R2 fetch) regardless of whether the reader owns the
-// document or reads it via a txtShares grant -- only how docKey itself was
-// obtained differs, already resolved by the caller (library.ts).
+// On-demand part fetch (docs/protocols.md's Read path): query txtParts (or,
+// for a share, sharedTxtParts) for the target document (already includes
+// txtPartKey/path), decrypt the row's own prefix directly under docKey,
+// decrypt each part's own txtPartKey under that same docKey, then -- per
+// part, on demand -- decrypt path under txtPartKey to recover raw_key, GET
+// "${prefix}/${raw_key}" from R2, and decrypt the object body under that
+// same txtPartKey. Two hops (one InstantDB query, one R2 fetch) either way
+// -- only which table is queried (kind, from library.ts's docKinds) and how
+// docKey itself was obtained differs, both already resolved by the caller.
 
 import type { AwsClient } from "aws4fetch";
 
 import * as blob from "../crypto/blob";
 import { base64ToBytes } from "../crypto/bytes";
+import type { LibraryDocKind } from "./library";
 import { getObject } from "./r2";
 import type { R2Config } from "./r2Config";
 import { unwrapToken } from "./randomToken";
@@ -24,6 +25,7 @@ interface OpenedPart {
 
 export interface OpenedDoc {
   txtId: string;
+  kind: LibraryDocKind;
   docKey: Uint8Array;
   prefix: string;
   parts: OpenedPart[];
@@ -35,25 +37,32 @@ interface TxtPartRow {
   path: string;
 }
 
+const PARTS_LINK: Record<LibraryDocKind, string> = {
+  txt: "txtParts",
+  sharedTxt: "sharedTxtParts",
+};
+
 /** Opens a document for reading: decrypts its own R2 prefix and every
  * part's own (still R2-address-wrapping) txtPartKey -- one query, not one
  * per part. Doesn't fetch any part's actual content yet (see partContent). */
 export async function openDoc(
   db: any,
   txtId: string,
+  kind: LibraryDocKind,
   docKey: Uint8Array,
 ): Promise<OpenedDoc> {
+  const partsLink = PARTS_LINK[kind];
   const result = await db.queryOnce({
-    txt: {
+    [kind]: {
       $: { where: { id: txtId } },
-      txtParts: {},
+      [partsLink]: {},
     },
   });
-  const txtRow = result.data.txt?.[0];
-  if (!txtRow) throw new Error(`no txt row for txtId=${txtId}`);
+  const row = result.data[kind]?.[0];
+  if (!row) throw new Error(`no ${kind} row for id=${txtId}`);
 
-  const prefix = await unwrapToken(docKey, txtRow.prefix);
-  const rows = (txtRow.txtParts ?? []) as TxtPartRow[];
+  const prefix = await unwrapToken(docKey, row.prefix);
+  const rows = (row[partsLink] ?? []) as TxtPartRow[];
   const parts = await Promise.all(
     rows.map(async (row): Promise<OpenedPart> => {
       const txtPartKey = await blob.decrypt(
@@ -65,7 +74,7 @@ export async function openDoc(
   );
   parts.sort((a, b) => a.partNum - b.partNum);
 
-  return { txtId, docKey, prefix, parts };
+  return { txtId, kind, docKey, prefix, parts };
 }
 
 export function partCount(doc: OpenedDoc): number {

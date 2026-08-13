@@ -36,6 +36,7 @@ const fetchTempR2Credential = vi.mocked(
 
 const FAKE_DOC = {
   txtId: "txt-1",
+  kind: "txt" as const,
   docKey: new Uint8Array(),
   prefix: "prefix-1",
   parts: [],
@@ -87,16 +88,19 @@ function mockVault(
     docKeys: new Map(
       Array.from(metadataById.keys()).map((k) => [k, new Uint8Array()]),
     ),
+    docKinds: new Map(
+      Array.from(metadataById.keys()).map((k) => [k, "txt" as const]),
+    ),
     txtAccess: { id: null, key: new Uint8Array() },
     txtBookmarks: { id: null, key: new Uint8Array() },
   } as unknown as VaultContextModule.VaultSession;
 
-  // Every test's txtId needs a docKey entry even when metadataById is empty.
-  session.docKeys.set("txt-1", new Uint8Array());
-  session.docKeys.set("txt-3", new Uint8Array());
-  session.docKeys.set("txt-5", new Uint8Array());
-  session.docKeys.set("txt-7", new Uint8Array());
-  session.docKeys.set("txt-9", new Uint8Array());
+  // Every test's txtId needs a docKey/docKind entry even when metadataById
+  // is empty.
+  for (const id of ["txt-1", "txt-3", "txt-5", "txt-7", "txt-9"]) {
+    session.docKeys.set(id, new Uint8Array());
+    session.docKinds.set(id, "txt");
+  }
 
   vi.mocked(VaultContextModule.useVault).mockReturnValue({
     status: "unlocked",
@@ -191,12 +195,14 @@ describe("useReaderBook", () => {
     expect(fetchBookInfo).toHaveBeenCalledWith(
       expect.anything(),
       "txt-7",
+      "txt",
       session.docKeys.get("txt-7"),
     );
 
     await waitFor(() => expect(result.current.partText).toBe("part-14"));
     expect(fetchTempR2Credential).toHaveBeenCalledWith(
       "instant-token",
+      "txt",
       "txt-1",
       "prefix-1",
       session.r2Config,

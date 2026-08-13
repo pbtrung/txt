@@ -394,7 +394,7 @@ export function BooksSection({
       if (!session) throw new Error("vault is locked");
       const docKey = session.docKeys.get(txtId);
       if (!docKey) throw new Error(`missing document key for txt ${txtId}`);
-      return fetchBookInfo(session.instantDb, txtId, docKey);
+      return fetchBookInfo(session.instantDb, txtId, "txt", docKey);
     },
     [session],
   );
@@ -420,7 +420,7 @@ export function BooksSection({
           return;
         }
         if (!result.data?.txt?.[0]?.txtMetadata?.[0]) return;
-        fetchBookInfo(session.instantDb, selectedTxtId, docKey)
+        fetchBookInfo(session.instantDb, selectedTxtId, "txt", docKey)
           .then((info) => {
             if (!cancelled) syncBookInfo(selectedTxtId, info);
           })

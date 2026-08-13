@@ -79,6 +79,7 @@ async function ensureR2Credential(
   }
   return fetchTempR2Credential(
     session.instantToken,
+    doc.kind,
     doc.txtId,
     doc.prefix,
     session.r2Config,
@@ -151,10 +152,16 @@ export function useReaderBook(txtId: string): UseReaderBookResult {
 
     (async () => {
       const docKey = session.docKeys.get(txtId);
-      if (!docKey) {
+      const kind = session.docKinds.get(txtId);
+      if (!docKey || !kind) {
         throw new Error(`you don't have access to txtId=${txtId}`);
       }
-      const bookInfoPromise = fetchBookInfo(session.instantDb, txtId, docKey)
+      const bookInfoPromise = fetchBookInfo(
+        session.instantDb,
+        txtId,
+        kind,
+        docKey,
+      )
         .then((bookInfo) => bookInfo)
         .catch((err: unknown) => {
           verbose("useReaderBook: fetchBookInfo failed", err);
@@ -162,7 +169,7 @@ export function useReaderBook(txtId: string): UseReaderBookResult {
         });
       const [bookInfo, doc] = await Promise.all([
         bookInfoPromise,
-        openDoc(session.instantDb, txtId, docKey),
+        openDoc(session.instantDb, txtId, kind, docKey),
       ]);
       if (cancelled) return;
       if (bookInfo) setFullInfo(bookInfo);

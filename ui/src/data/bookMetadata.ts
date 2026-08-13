@@ -1,3 +1,4 @@
+import type { LibraryDocKind } from "./library";
 import { parseMetadataContent, toBookInfo, type BookInfo } from "./metadata";
 
 export class BookMetadataError extends Error {}
@@ -6,20 +7,29 @@ interface TxtMetadataContentRow {
   content: string;
 }
 
-async function queryTxtMetadataContent(
+const METADATA_LINK: Record<LibraryDocKind, string> = {
+  txt: "txtMetadata",
+  sharedTxt: "sharedTxtMetadata",
+};
+
+async function queryMetadataContent(
   db: any,
   txtId: string,
+  kind: LibraryDocKind,
 ): Promise<TxtMetadataContentRow> {
+  const metadataLink = METADATA_LINK[kind];
   const result = await db.queryOnce({
-    txt: {
+    [kind]: {
       $: { where: { id: txtId }, fields: [] },
-      txtMetadata: { $: { fields: ["content"] } },
+      [metadataLink]: { $: { fields: ["content"] } },
     },
   });
-  const row = result.data.txt?.[0]?.txtMetadata?.[0];
+  const row = result.data[kind]?.[0]?.[metadataLink]?.[0];
   const content = row?.content;
   if (!content) {
-    throw new BookMetadataError(`missing txtMetadata.content for txt ${txtId}`);
+    throw new BookMetadataError(
+      `missing ${metadataLink}.content for ${kind} ${txtId}`,
+    );
   }
   return { content };
 }
@@ -27,9 +37,10 @@ async function queryTxtMetadataContent(
 export async function fetchBookInfo(
   db: any,
   txtId: string,
+  kind: LibraryDocKind,
   docKey: Uint8Array,
 ): Promise<BookInfo> {
-  const row = await queryTxtMetadataContent(db, txtId);
+  const row = await queryMetadataContent(db, txtId, kind);
   const content = await parseMetadataContent(docKey, row.content);
   return toBookInfo(txtId, content);
 }
