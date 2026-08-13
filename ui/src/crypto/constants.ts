@@ -25,3 +25,8 @@ export const RANDOM_KEY_LEN = 128;
 // Crockford-base32-lowercase encoding of this many random bytes -- mirrors
 // txt/constants.ts's own RAW_TOKEN_LEN.
 export const RAW_TOKEN_LEN = 32;
+
+// Bounded R2 upload concurrency for adminShares.ts's grantShare, mirroring
+// txt/constants.ts's own R2_BATCH_CONCURRENCY (ingest.ts's uploadParts) --
+// same reasoning, just running in the browser instead of the CLI.
+export const R2_BATCH_CONCURRENCY = 15;

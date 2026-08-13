@@ -49,7 +49,7 @@ import * as firebaseAuth from "../data/firebaseAuth";
 import { createInstantClient } from "../data/instantClient";
 import { loadLibrary } from "../data/library";
 import type { BookInfo } from "../data/metadata";
-import type { R2Config } from "../data/r2Config";
+import type { AdminR2WriteCreds, R2Config } from "../data/r2Config";
 import { reloadKeyedMaps, resolveSession, type Session } from "../data/session";
 import { verbose } from "../log";
 
@@ -99,6 +99,12 @@ export interface VaultSession {
   keyStorePrivKey: Uint8Array;
   credStoreKey: Uint8Array;
   r2Config: R2Config;
+  /** The admin's own real, static read-write R2 credential -- present only
+   * for an isAdmin session. Used only by adminShares.ts's grantShare to
+   * write the recipient's own re-encrypted copy of a shared document; every
+   * other R2 read still goes through a Worker-minted temporary credential
+   * (see session.ts). */
+  adminR2WriteCreds?: AdminR2WriteCreds;
   metadataById: Map<string, BookInfo>;
   /** This account's own unwrapped txtKey for every document it can read --
    * reader.ts's only way to get one (see library.ts). */
@@ -280,6 +286,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         keyStorePrivKey: keys.keyStorePrivKey,
         credStoreKey: keys.credStoreKey,
         r2Config: keys.r2Config,
+        adminR2WriteCreds: keys.adminR2WriteCreds,
         metadataById,
         docKeys,
         txtAccess: { id: keys.txtAccess.id, key: keys.txtAccess.key },
