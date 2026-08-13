@@ -47,38 +47,55 @@ txt.prefixHash is not another key-hierarchy edge: it is the plaintext Base64
 encoding of the SHA-256 digest of the decrypted txt.prefix, stored on the
 same txt row so the credential Worker can bind {txtId, prefix} before minting
 a read-only credential. The 32-random-byte prefix remains encrypted above.
-
-txt.txtKey, in parallel, is also wrapped a second way -- not under
-umk -- once per share recipient:
-
-    admin Encapsulates (crypto.md) against recipient's keyStore.pubKey
-        |
-        v
-    txtShares.{kemCt, txtKey}
-        (txtKey here is the same bytes as txt.txtKey, wrapped via
-        HKDF-SHA3-512(IKM=ss, blob salt) -> 128-byte OKM instead of umk;
-        kemCt stores only the KEM ciphertext)
-        |
-        |  recipient Decapsulates using their own keyStore.privKey
-        v
-    (recipient now holds txt.txtKey, unwrapped, without ever
-    learning the admin's umk)
 ```
 
-Every wrapped-key and content blob uses the blob format, AEAD, and KDF mechanics from [crypto.md](crypto.md) uniformly. `txtShares.txtKey` is the one value in this hierarchy wrapped via Encapsulate/Decapsulate (asymmetric) instead of a plain Encrypt/Decrypt under a key both sides already hold.
+Every wrapped-key and content blob uses the blob format, AEAD, and KDF mechanics from [crypto.md](crypto.md) uniformly.
 
-**`txt.ts --revoke-share` is not yet implemented** (see docs/protocols.md's Revoking a share) — the fields below don't exist in `instant.schema.ts` yet. The chain is documented here as the intended design to build against. A document mid `--revoke-share`, once built, would carry a second, parallel key chain, rooted the same way as the first:
+## Sharing a document: an independent, parallel chain
+
+**Not yet implemented** — `sharedTxt`/`sharedTxtParts` don't exist in `instant.schema.ts` yet; today's code shares by KEM-rewrapping `txt.txtKey` itself once per recipient (`txtShares.kemCt`/`txtShares.txtKey`), so the recipient reads the admin's own `txt`/`txtParts` directly. The chain below is the design to build against.
+
+Sharing a document does not rewrap `txt.txtKey` for the recipient at all — it mints an entirely independent root key for the share, rooted its own way, and copies the document's content under it:
 
 ```
-txt.pendingTxtKey   (staged replacement txtKey, wrapped under owner's umk)
-    |  used directly as IKM --
-    +--> txt.pendingPrefix              (replacement prefix)
-    +--> txtParts.pendingTxtPartKey     (per part, replacement txtPartKey)
+sharedTxt's own root txtKey   (per (document, recipient) share, 128 random
+    bytes -- independent of the source document's own txt.txtKey; never
+    itself stored -- only its two wraps below are)
+    |
+    |  wrapped TWO independent, purely symmetric ways, both recovering
+    |  the same plaintext -- sharing uses neither keyStore's KEM keypair
+    |  nor Encapsulate/Decapsulate at all --
+    |
+    +-- wrapped directly under fromUser's (the admin's) own umk
+    |       --> sharedTxt.adminTxtKey
+    |       (lets admin-side tooling, e.g. the orphan sweep, recover this
+    |       share's whole chain on demand, without re-deriving anything
+    |       about the recipient)
+    |
+    +-- wrapped directly under owner's (the recipient's) own umk
+    |       --> sharedTxt.userTxtKey
+    |       (the admin can produce this wrap because creating a share is
+    |       already an admin action with admin-level reach: the admin
+    |       decrypts its own admin-owned recovery credStore row for that
+    |       recipient to recover their user_root_key, then uses it to
+    |       decrypt the recipient's own $users.umk -- the same
+    |       user_root_key -> umk unwrap at the top of this file, just run
+    |       by the admin instead of the recipient's own client. A
+    |       recipient's own later read unwraps userTxtKey exactly like
+    |       any owner unwraps txt.txtKey: under their own umk, directly)
+    |
+    v  either unwrap yields the same plaintext bytes, used directly as IKM --
+    +--> sharedTxt.prefix              (this share's own, independent R2 prefix)
+    +--> sharedTxtMetadata.content     (copy of txtMetadata.content, re-encrypted at share time)
+    +--> sharedTxtMetadata.catalog     (copy of txtMetadata.catalog, re-encrypted at share time)
+    |
+    +--> sharedTxtParts.txtPartKey   (per part, 128 random bytes)
              |  used directly as IKM --
-             +--> txtParts.pendingPath  (replacement path)
+             +--> sharedTxtParts.path        (wraps the R2 raw_key)
+             +--> sharedTxtParts R2 object body (independent second wrap)
 ```
 
-`txt.staleR2Prefix` is not part of either chain: like `prefixHash`, it is wrapped directly under `owner`'s `umk`, never under any `txtKey` (current or pending) -- it exists only so a crashed-and-resumed rekey can still find and delete the retired prefix's R2 objects once cutover finishes, regardless of which `txtKey` happens to be live at the time. Nothing under `txt.pending*` gets its own share rewrap: only once cutover flips `txtKey`/`prefix`/`prefixHash` live does the existing Encapsulate/Decapsulate chain above apply to the new `txtKey`, for every recipient still holding a live `txtShares` row at that moment -- necessarily excluding the just-revoked recipient, whose row is already gone by the time reveal runs.
+`sharedTxt.adminTxtKey` and `sharedTxt.userTxtKey` wrap the identical plaintext bytes under two different accounts' `umk` — the same pattern `credStore.credStoreKey` already uses to let a user's own row and the admin's recovery copy of it exist independently (see this file's Design notes below), just applied to a single key instead of two. Nothing below this share's root `txtKey` cares which of the two unwraps produced it; both sides derive identical downstream keys. Revoking a share needs no parallel "pending" chain the way a same-key-for-every-recipient design would: deleting the `sharedTxt` row deletes the only copy of this whole chain's root key, for this recipient, without touching the source document or any other recipient's own independent share.
 
 ## Context columns
 
@@ -97,25 +114,27 @@ Every column wrapped by this design's Encrypt procedure has a matching `<field>C
 | `credStore.content`           | that row's `credStoreKey`    | `credStore.contentContext`           |
 | `txt.txtKey`                  | owner's `umk`                | `txt.txtKeyContext`                  |
 | `txt.prefix`                  | that document's `txtKey`     | `txt.prefixContext`                  |
-| `txt.pendingTxtKey`           | owner's `umk`                | `txt.pendingTxtKeyContext`           |
-| `txt.pendingPrefix`           | `pendingTxtKey`              | `txt.pendingPrefixContext`           |
-| `txt.staleR2Prefix`           | owner's `umk`                | `txt.staleR2PrefixContext`           |
 | `txtMetadata.content`         | that document's `txtKey`     | `txtMetadata.contentContext`         |
 | `txtMetadata.catalog`         | that document's `txtKey`     | `txtMetadata.catalogContext`         |
 | `txtParts.txtPartKey`         | that document's `txtKey`     | `txtParts.txtPartKeyContext`         |
 | `txtParts.path`               | that part's own `txtPartKey` | `txtParts.pathContext`               |
 | `txtParts` R2 object body     | that part's own `txtPartKey` | `txtParts.bodyContext`               |
-| `txtParts.pendingTxtPartKey`  | `pendingTxtKey`              | `txtParts.pendingTxtPartKeyContext`  |
-| `txtParts.pendingPath`        | `pendingTxtPartKey`          | `txtParts.pendingPathContext`        |
-| `txtShares.txtKey`            | per-share `ss` (Encapsulate) | `txtShares.txtKeyContext`            |
+| `sharedTxt.adminTxtKey`       | `fromUser`'s `umk`           | `sharedTxt.adminTxtKeyContext`       |
+| `sharedTxt.userTxtKey`        | `owner`'s `umk`              | `sharedTxt.userTxtKeyContext`        |
+| `sharedTxt.prefix`            | this share's own root key    | `sharedTxt.prefixContext`            |
+| `sharedTxtMetadata.content`   | this share's own root key    | `sharedTxtMetadata.contentContext`   |
+| `sharedTxtMetadata.catalog`   | this share's own root key    | `sharedTxtMetadata.catalogContext`   |
+| `sharedTxtParts.txtPartKey`   | this share's own root key    | `sharedTxtParts.txtPartKeyContext`   |
+| `sharedTxtParts.path`         | that part's own `txtPartKey` | `sharedTxtParts.pathContext`         |
+| `sharedTxtParts` R2 object body | that part's own `txtPartKey` | `sharedTxtParts.bodyContext`       |
 | `txtAccess.txtAccessKey`      | owner's `umk`                | `txtAccess.txtAccessKeyContext`      |
 | `txtAccess.content`           | that row's `txtAccessKey`    | `txtAccess.contentContext`           |
 | `txtBookmarks.txtBookmarkKey` | owner's `umk`                | `txtBookmarks.txtBookmarkKeyContext` |
 | `txtBookmarks.content`        | that row's `txtBookmarkKey`  | `txtBookmarks.contentContext`        |
 
-`txtParts.bodyContext` has no corresponding InstantDB "body" field to sit next to — the value it protects is the R2 object itself, not an InstantDB column — so it lives on the `txtParts` row alongside `txtPartKey`/`path`/their own context columns, the same place `txtPartKey` already lives despite also protecting something stored only in R2.
+`txtParts.bodyContext`/`sharedTxtParts.bodyContext` have no corresponding InstantDB "body" field to sit next to — the value each protects is the R2 object itself, not an InstantDB column — so each lives on its own `txtParts`/`sharedTxtParts` row alongside `txtPartKey`/`path`/their own context columns, the same place `txtPartKey` already lives despite also protecting something stored only in R2.
 
-Most of these columns exist for uniformity rather than necessity. `txtKey`, `txtPartKey`, `credStoreKey`, and a per-share `ss` are each already unique to one document, one part, one specific row, or one (document, recipient) pair, so a fixed per-field label would already prevent confusion between the different columns each one wraps, with no randomness required. The two spots where a random value is actually load-bearing are `credStore.credStoreKey` and `txt.txtKey`/`txt.pendingTxtKey`/`txt.staleR2Prefix`: an owner's single `umk` wraps many `credStore` rows and many `txt` rows at once, and nothing else about those rows tells one apart from another. Applying the same `<field>Context` column uniformly everywhere trades a small amount of storage for not having to re-derive, and keep correct as the schema evolves, exactly which columns need it.
+Most of these columns exist for uniformity rather than necessity. `txtKey`, `txtPartKey`, and `credStoreKey` are each already unique to one document, one part, or one specific row, so a fixed per-field label would already prevent confusion between the different columns each one wraps, with no randomness required. The two spots where a random value is actually load-bearing are `credStore.credStoreKey` and `txt.txtKey`/`sharedTxt.adminTxtKey`/`sharedTxt.userTxtKey`: an owner's single `umk` wraps many `credStore` rows and many `txt`/`sharedTxt` rows at once, and nothing else about those rows tells one apart from another. Applying the same `<field>Context` column uniformly everywhere trades a small amount of storage for not having to re-derive, and keep correct as the schema evolves, exactly which columns need it.
 
 ## Design notes
 
