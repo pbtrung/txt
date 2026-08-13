@@ -15,6 +15,7 @@
     "ui:test": "vitest run --config ui/vite.config.ts",
     "ui:test:watch": "vitest --config ui/vite.config.ts",
     "worker:typecheck": "wrangler types worker/worker-configuration.d.ts && tsc -b worker/tsconfig.json",
+    "worker:test": "vitest run worker",
     "worker:dev": "wrangler dev",
     "deploy": "sh scripts/deploy.sh"
   },

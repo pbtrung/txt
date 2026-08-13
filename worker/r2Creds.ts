@@ -1,10 +1,13 @@
 // Mints a short-lived, prefix-scoped, READ-ONLY R2 credential
 // (docs/r2_credentials.md). The caller presents its current InstantDB
-// session token plus the txt row id and already-decrypted prefix. Before
-// minting anything, this Worker queries InstantDB as that exact caller:
-// instant.perms.ts therefore decides whether the caller still owns the txt
-// or has a current share grant, while txt.prefixHash proves that the supplied
-// prefix is the one belonging to that authorized row.
+// session token, which entity to query (`kind`: an owned "txt" row, or a
+// "sharedTxt" row -- a share owned outright by the caller, not a grant onto
+// someone else's row), that row's own id, and its already-decrypted prefix.
+// Before minting anything, this Worker queries InstantDB as that exact
+// caller: instant.perms.ts's plain isAdmin||isOwner rule on whichever entity
+// `kind` names therefore decides whether the caller still owns that row,
+// while its own prefixHash proves that the supplied prefix is the one
+// belonging to that authorized row.
 //
 // Authorization happens once per opened document, not once per part. The
 // returned R2 credential is restricted to `${prefix}/` and
@@ -25,9 +28,12 @@ const INSTANT_API_ORIGIN = "https://api.instantdb.com";
 // ui/src/screens/Reader/useReaderBook.ts renews shortly before expiry.
 const TTL_SECONDS = 900;
 
+type R2CredsKind = "txt" | "sharedTxt";
+
 interface R2CredsRequestBody {
   instantToken: string;
-  txtId: string;
+  kind: R2CredsKind;
+  id: string;
   prefix: string;
 }
 
@@ -38,8 +44,8 @@ interface TemporaryCredential {
   expiresAtMs: number;
 }
 
-interface InstantTxtQueryResult {
-  txt?: Array<{ prefixHash?: unknown }>;
+interface InstantQueryResult {
+  [kind: string]: Array<{ prefixHash?: unknown }> | undefined;
 }
 
 export async function handleR2Creds(
@@ -61,6 +67,10 @@ export async function handleR2Creds(
   return jsonResponse(cred, 200);
 }
 
+function isR2CredsKind(value: unknown): value is R2CredsKind {
+  return value === "txt" || value === "sharedTxt";
+}
+
 async function parseBody(request: Request): Promise<R2CredsRequestBody | null> {
   let data: unknown;
   try {
@@ -70,26 +80,28 @@ async function parseBody(request: Request): Promise<R2CredsRequestBody | null> {
   }
   if (typeof data !== "object" || data === null) return null;
   const d = data as Record<string, unknown>;
-  const { instantToken, txtId, prefix } = d;
+  const { instantToken, kind, id, prefix } = d;
   if (
     typeof instantToken !== "string" ||
     instantToken.length === 0 ||
-    typeof txtId !== "string" ||
-    txtId.length === 0 ||
+    !isR2CredsKind(kind) ||
+    typeof id !== "string" ||
+    id.length === 0 ||
     typeof prefix !== "string" ||
     prefix.length === 0
   ) {
     return null;
   }
-  return { instantToken, txtId, prefix };
+  return { instantToken, kind, id, prefix };
 }
 
-/** Queries only the requested txt row while impersonating the caller. The
- * `As-Token` form intentionally omits an admin token: InstantDB applies the
- * ordinary `txt.view` rule, including current owner/share links, instead of
- * bypassing it. An absent row is indistinguishable from a denied row here.
- * The Worker hashes the supplied prefix itself; clients never get to submit
- * the commitment they want compared. */
+/** Queries only the requested row -- from whichever entity `kind` names --
+ * while impersonating the caller. The `As-Token` form intentionally omits
+ * an admin token: InstantDB applies that entity's own ordinary `view` rule
+ * (isAdmin||isOwner, for both txt and sharedTxt) instead of bypassing it.
+ * An absent row is indistinguishable from a denied row here. The Worker
+ * hashes the supplied prefix itself; clients never get to submit the
+ * commitment they want compared. */
 async function isAuthorizedPrefix(
   env: Env,
   body: R2CredsRequestBody,
@@ -105,9 +117,9 @@ async function isAuthorizedPrefix(
       },
       body: JSON.stringify({
         query: {
-          txt: {
+          [body.kind]: {
             $: {
-              where: { id: body.txtId },
+              where: { id: body.id },
               fields: ["prefixHash"],
             },
           },
@@ -121,8 +133,8 @@ async function isAuthorizedPrefix(
     throw new Error(`InstantDB query failed with HTTP ${response.status}`);
   }
 
-  const result = (await response.json()) as InstantTxtQueryResult;
-  const prefixHash = result.txt?.[0]?.prefixHash;
+  const result = (await response.json()) as InstantQueryResult;
+  const prefixHash = result[body.kind]?.[0]?.prefixHash;
   return (
     typeof prefixHash === "string" &&
     prefixHash === (await sha256Base64(body.prefix))

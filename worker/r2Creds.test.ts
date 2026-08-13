@@ -31,7 +31,7 @@ afterEach(() => {
 });
 
 describe("handleR2Creds", () => {
-  it("queries InstantDB as the caller and mints a prefix credential on a match", async () => {
+  it("queries InstantDB as the caller and mints a prefix credential on a match (txt)", async () => {
     const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
       expect(_url).toBe(
         "https://api.instantdb.com/admin/query?app_id=instant-app-id",
@@ -60,7 +60,8 @@ describe("handleR2Creds", () => {
     const response = await handleR2Creds(
       request({
         instantToken: "instant-token",
-        txtId: "txt-1",
+        kind: "txt",
+        id: "txt-1",
         prefix: "prefix-1",
       }),
       env,
@@ -77,6 +78,38 @@ describe("handleR2Creds", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
+  it("queries the sharedTxt entity instead when kind is sharedTxt", async () => {
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+      expect(JSON.parse(init.body as string)).toEqual({
+        query: {
+          sharedTxt: {
+            $: {
+              where: { id: "share-1" },
+              fields: ["prefixHash"],
+            },
+          },
+        },
+      });
+      return Response.json({
+        sharedTxt: [{ prefixHash: await sha256Base64("prefix-1") }],
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await handleR2Creds(
+      request({
+        instantToken: "instant-token",
+        kind: "sharedTxt",
+        id: "share-1",
+        prefix: "prefix-1",
+      }),
+      env,
+    );
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it("denies an authorized row when the supplied prefix does not match", async () => {
     vi.stubGlobal(
       "fetch",
@@ -90,7 +123,8 @@ describe("handleR2Creds", () => {
     const response = await handleR2Creds(
       request({
         instantToken: "instant-token",
-        txtId: "txt-1",
+        kind: "txt",
+        id: "txt-1",
         prefix: "wrong-prefix",
       }),
       env,
@@ -100,7 +134,7 @@ describe("handleR2Creds", () => {
     expect(await response.json()).toEqual({ error: "document access denied" });
   });
 
-  it("denies an absent or permission-filtered txt row", async () => {
+  it("denies an absent or permission-filtered row", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => Response.json({ txt: [] })),
@@ -109,7 +143,8 @@ describe("handleR2Creds", () => {
     const response = await handleR2Creds(
       request({
         instantToken: "instant-token",
-        txtId: "txt-1",
+        kind: "txt",
+        id: "txt-1",
         prefix: "prefix-1",
       }),
       env,
@@ -127,7 +162,8 @@ describe("handleR2Creds", () => {
     const response = await handleR2Creds(
       request({
         instantToken: "expired-token",
-        txtId: "txt-1",
+        kind: "txt",
+        id: "txt-1",
         prefix: "prefix-1",
       }),
       env,
@@ -145,7 +181,8 @@ describe("handleR2Creds", () => {
     const response = await handleR2Creds(
       request({
         instantToken: "instant-token",
-        txtId: "txt-1",
+        kind: "txt",
+        id: "txt-1",
         prefix: "prefix-1",
       }),
       env,
@@ -163,6 +200,24 @@ describe("handleR2Creds", () => {
 
     const response = await handleR2Creds(
       request({ instantToken: "instant-token", prefix: "prefix-1" }),
+      env,
+    );
+
+    expect(response.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a kind that is neither txt nor sharedTxt, before querying InstantDB", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await handleR2Creds(
+      request({
+        instantToken: "instant-token",
+        kind: "txtShares",
+        id: "txt-1",
+        prefix: "prefix-1",
+      }),
       env,
     );
 
