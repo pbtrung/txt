@@ -5,6 +5,7 @@ import type { ObjectInfo } from "./r2.ts";
 export interface RunStats {
   dryRun: boolean;
   txtCount: number;
+  sharedCount: number;
   totalKnownPaths: number;
   totalObjects: number;
   orphanCount: number;
@@ -58,6 +59,7 @@ export class Reporter {
     return [
       `mode:               ${mode}`,
       `txt documents:      ${stats.txtCount}`,
+      `shared copies:      ${stats.sharedCount}`,
       `known paths (kept): ${stats.totalKnownPaths}`,
       `objects in bucket:  ${stats.totalObjects}`,
       `orphaned objects:   ${stats.orphanCount} (${formatBytes(stats.orphanBytes)})`,

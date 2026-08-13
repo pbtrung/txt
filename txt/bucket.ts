@@ -1,9 +1,13 @@
 // Orchestrator for --clean-bucket: deletes every R2 object not referenced by
-// any admin-owned txtParts row currently in InstantDB. This lists the whole
-// bucket once and diffs it against the union of every owned document's own
-// known raw_paths -- the tool for "is there anything at all left in this
-// bucket that InstantDB doesn't know about," not scoped to any one
-// document's own prefix.
+// any admin-owned txtParts row, or any sharedTxtParts row for a share this
+// admin created, currently in InstantDB. This lists the whole bucket once
+// and diffs it against the union of every owned document's and every
+// share's own known raw_paths -- the tool for "is there anything at all
+// left in this bucket that InstantDB doesn't know about," not scoped to any
+// one document's own prefix. A share's own R2 objects are swept the same
+// way an owned document's are, via adminTxtKey (never the recipient's own
+// userTxtKey, which this admin-only tool has no need for and no way to
+// recover) -- see docs/protocols.md's Deletion and R2 cleanup.
 import { init } from "@instantdb/admin";
 import * as C from "./constants.ts";
 import { loadReadWriteR2Config, type R2ConfigResolved } from "./creds.ts";
@@ -73,10 +77,14 @@ export class TxtBucketCleaner {
       adminToken: this.creds.instantAdminToken,
     });
     const admin = await this.resolveAdmin(db, crypto);
-    const targets = await this.resolveOwnedDocuments(db, crypto, admin);
+    const [ownedTargets, sharedTargets] = await Promise.all([
+      this.resolveOwnedDocuments(db, crypto, admin),
+      this.resolveSharedDocuments(db, crypto, admin),
+    ]);
+    const targets = [...ownedTargets, ...sharedTargets];
     const known = knownPathSet(targets);
     this.log.info(
-      `Found ${known.size} known object path(s) in InstantDB across ${targets.length} document(s)`,
+      `Found ${known.size} known object path(s) in InstantDB across ${ownedTargets.length} document(s) and ${sharedTargets.length} share(s)`,
     );
     const objects = await admin.r2.listAllObjects();
     const orphans = computeOrphans(objects, known);
@@ -86,7 +94,8 @@ export class TxtBucketCleaner {
     const deleteResult = await this.maybeDelete(admin.r2, orphans, opts);
     const stats = this.buildStats(
       opts.dryRun,
-      targets.length,
+      ownedTargets.length,
+      sharedTargets.length,
       known.size,
       objects,
       orphans,
@@ -237,6 +246,66 @@ export class TxtBucketCleaner {
     });
   }
 
+  // Every share (`sharedTxt` row) this admin created, with every one of its
+  // own sharedTxtParts' raw_key already decrypted -- same paginated shape as
+  // resolveOwnedDocuments above, but ordered by shareKey (unique/indexed)
+  // rather than seq, since sharedTxt has no admin-assigned ordinal to page
+  // by. Decrypts adminTxtKey, never userTxtKey -- the admin never needs the
+  // recipient's own umk to sweep its own share's R2 objects.
+  private async resolveSharedDocuments(
+    db: any,
+    crypto: CryptoEngine,
+    admin: AdminIdentity,
+  ): Promise<OrphanSweepTarget[]> {
+    const rows = await collectAllPages<{
+      id: string;
+      adminTxtKey: string;
+      prefix: string;
+      sharedTxtParts: { txtPartKey: string; path: string }[];
+    }>(async (after) => {
+      const offset = (after as number | undefined) ?? 0;
+      const result = await db.query({
+        sharedTxt: {
+          $: {
+            where: { "fromUser.id": admin.authId },
+            order: { shareKey: "asc" },
+            limit: C.INSTAQL_QUERY_PAGE_SIZE,
+            offset,
+          },
+          sharedTxtParts: {},
+        },
+      });
+      const page = result.sharedTxt ?? [];
+      this.log.info(
+        `Fetched ${offset + page.length} sharedTxt row(s) so far...`,
+      );
+      return {
+        rows: page,
+        hasNextPage: page.length === C.INSTAQL_QUERY_PAGE_SIZE,
+        endCursor: offset + page.length,
+      };
+    });
+    return rows.map((row) => {
+      const rootKey = crypto.blobDecrypt(
+        admin.umk,
+        Buffer.from(row.adminTxtKey, "base64"),
+        false,
+      );
+      const prefix = unwrapToken(crypto, rootKey, row.prefix);
+      const knownRawKeys = new Set(
+        (row.sharedTxtParts ?? []).map((p) => {
+          const txtPartKey = crypto.blobDecrypt(
+            rootKey,
+            Buffer.from(p.txtPartKey, "base64"),
+            false,
+          );
+          return unwrapToken(crypto, txtPartKey, p.path);
+        }),
+      );
+      return { label: `sharedTxt=${row.id}`, prefix, knownRawKeys };
+    });
+  }
+
   private async maybeDelete(
     r2: R2Client,
     orphans: ObjectInfo[],
@@ -263,6 +332,7 @@ export class TxtBucketCleaner {
   private buildStats(
     dryRun: boolean,
     txtCount: number,
+    sharedCount: number,
     totalKnownPaths: number,
     objects: ObjectInfo[],
     orphans: ObjectInfo[],
@@ -273,6 +343,7 @@ export class TxtBucketCleaner {
     return {
       dryRun,
       txtCount,
+      sharedCount,
       totalKnownPaths,
       totalObjects: objects.length,
       orphanCount: orphans.length,
