@@ -5,19 +5,18 @@
 // `npx instant-cli@latest push perms` before treating this as final.
 //
 // There's no separate app-level profile entity in this design -- type lives
-// directly on $users, and every other entity's owner/forUser/fromUser/toUser
-// link points at $users directly. auth.id already equals a $users row's own
-// id, so every isOwner check below is a single-hop data.ref('owner.id'), not
-// a two-hop ref through an intermediate profile row -- the one exception is
-// isSharedReader on txtParts/txtMetadata, a genuine two-hop
-// data.ref('txt.txtShares.toUser.id'), since a share grants access to a
-// document, not to its individual parts or metadata row (docs/data_model.md's
+// directly on $users, and every other entity's owner/forUser/fromUser link
+// points at $users directly. auth.id already equals a $users row's own id,
+// so every isOwner check below is a single-hop data.ref('owner.id') -- there
+// is no two-hop check anywhere in this file, since sharing a document
+// creates an independent, directly-owned sharedTxt/sharedTxtMetadata/
+// sharedTxtParts row for the recipient rather than granting them a path onto
+// the admin's own txt/txtParts/txtMetadata rows (docs/data_model.md's
 // Permission rules).
 //
 // $users.type 'admin' can act on any user's data; 'user' can only read/write
-// its own (or, for txt/txtMetadata/txtParts, read-only what's been shared to
-// it) -- see docs/data_model.md's Permission rules table for the exact rule
-// per entity. isAdmin reads auth's own $users row's type directly via
+// its own rows -- see docs/data_model.md's Permission rules table for the
+// exact rule per entity. isAdmin reads auth's own $users row's type directly via
 // auth.ref('$user.type') -- UNVERIFIED whether this resolves a plain,
 // non-linked attribute the same way auth.ref/data.ref resolve one reached
 // across a real link (a prior design routed type through a separate profile
@@ -114,37 +113,23 @@ const rules = {
   },
   // One row per document (docs/data_model.md's txt entity). create/update/
   // delete are admin-only (docs/data_model.md's Operating model: only the
-  // admin ever owns/writes documents) -- isSharedReader extends view only,
-  // never write, to whoever a txtShares row names as toUser. The R2 broker
-  // queries this row with the caller's Instant token and no admin token, so
-  // this same view rule is also the credential-mint authorization boundary.
+  // admin ever owns/writes documents). The R2 broker queries this row with
+  // the caller's Instant token and no admin token, so this same view rule
+  // is also the credential-mint authorization boundary for an owned read.
   txt: {
-    bind: [
-      ...ADMIN_BIND,
-      ...OWNER_BIND,
-      "isSharedReader",
-      "auth.id in data.ref('txtShares.toUser.id')",
-    ],
+    bind: [...ADMIN_BIND, ...OWNER_BIND],
     allow: {
-      view: "isAdmin || isOwner || isSharedReader",
+      view: "isAdmin || isOwner",
       create: "isAdmin",
       update: "isAdmin",
       delete: "isAdmin",
     },
   },
   // One row per document (docs/data_model.md's txtMetadata entity).
-  // isSharedReader here is the one genuine two-hop check in this file --
-  // txtMetadata links to txt, not directly to txtShares, so a share grants
-  // access by way of the document it names, not the metadata row itself.
   txtMetadata: {
-    bind: [
-      ...ADMIN_BIND,
-      ...OWNER_BIND,
-      "isSharedReader",
-      "auth.id in data.ref('txt.txtShares.toUser.id')",
-    ],
+    bind: [...ADMIN_BIND, ...OWNER_BIND],
     allow: {
-      view: "isAdmin || isOwner || isSharedReader",
+      view: "isAdmin || isOwner",
       create: "isAdmin",
       update: "isAdmin",
       delete: "isAdmin",
@@ -152,34 +137,49 @@ const rules = {
   },
   // A document's content, chunked into ordered parts (docs/data_model.md's
   // txtParts entity). Carries its own owner link (instant.schema.ts), so
-  // isOwner stays single-hop; isSharedReader is the two-hop check here, same
-  // reasoning as txtMetadata -- a share grants access to the parent txt, not
-  // to any one part directly.
+  // isOwner stays single-hop.
   txtParts: {
-    bind: [
-      ...ADMIN_BIND,
-      ...OWNER_BIND,
-      "isSharedReader",
-      "auth.id in data.ref('txt.txtShares.toUser.id')",
-    ],
+    bind: [...ADMIN_BIND, ...OWNER_BIND],
     allow: {
-      view: "isAdmin || isOwner || isSharedReader",
+      view: "isAdmin || isOwner",
       create: "isAdmin",
       update: "isAdmin",
       delete: "isAdmin",
     },
   },
-  // One row per (document, recipient) share grant (docs/data_model.md's
-  // txtShares entity). view deliberately includes the recipient
-  // (auth.id in data.ref('toUser.id')) -- without it, a recipient could
-  // never discover which documents have been shared to them, or fetch the
-  // kemCt/txtKey values they need to Decapsulate. Every write stays
-  // admin-only: only the admin ever grants or revokes a share
-  // (docs/protocols.md's Sharing protocol).
-  txtShares: {
-    bind: [...ADMIN_BIND, "isRecipient", "auth.id in data.ref('toUser.id')"],
+  // One row per (document, recipient) share (docs/data_model.md's sharedTxt
+  // entity) -- owner here is the recipient, so this is the exact same
+  // isOwner-gated shape as txt/txtMetadata/txtParts above, not a special
+  // case: a share is an independent, directly-owned copy, not a grant onto
+  // someone else's rows. Every write stays admin-only: only the admin ever
+  // creates or revokes a share (docs/protocols.md's Sharing protocol) --
+  // the recipient never writes their own share.
+  sharedTxt: {
+    bind: [...ADMIN_BIND, ...OWNER_BIND],
     allow: {
-      view: "isAdmin || isRecipient",
+      view: "isAdmin || isOwner",
+      create: "isAdmin",
+      update: "isAdmin",
+      delete: "isAdmin",
+    },
+  },
+  // One row per share (docs/data_model.md's sharedTxtMetadata entity), same
+  // shape as sharedTxt above.
+  sharedTxtMetadata: {
+    bind: [...ADMIN_BIND, ...OWNER_BIND],
+    allow: {
+      view: "isAdmin || isOwner",
+      create: "isAdmin",
+      update: "isAdmin",
+      delete: "isAdmin",
+    },
+  },
+  // A share's content, chunked into ordered parts (docs/data_model.md's
+  // sharedTxtParts entity), same shape as sharedTxt above.
+  sharedTxtParts: {
+    bind: [...ADMIN_BIND, ...OWNER_BIND],
+    allow: {
+      view: "isAdmin || isOwner",
       create: "isAdmin",
       update: "isAdmin",
       delete: "isAdmin",

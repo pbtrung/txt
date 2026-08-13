@@ -116,7 +116,7 @@ There's no app-level profile entity in this design — `$users` (InstantDB's own
 
 - **`txtParts`** — a document's content, chunked into ordered parts. Fields: `txt` (link to `txt`), `owner` (link to `$users`, same account as `txt.owner` — kept as its own single-hop link for permission rules rather than traversing `txt.owner`, same reasoning as `txtMetadata` above), `partNum` (1-based), `txtPartKey` (128 random bytes, wrapped under this document's own `txtKey`), `path` — wrapped under this row's own `txtPartKey`, not `txtKey` directly — Crockford-base32-lowercase encoding of 32 random bytes, and a synthetic `partKey = "${txtId}:${partNum}"` (`unique().indexed()` — see "The composite-uniqueness problem" below). The actual part content is **not** in InstantDB: `path`, once decrypted, is a fresh random key `raw_key`, and the real R2 object lives at `raw_path = "${prefix}/${raw_key}"`, where `prefix` is this document's own `txt` row's `prefix` field, decrypted directly under `txtKey` (unaffected by any one part's own `txtPartKey`). The R2 object body is `Blob.encrypt(txtPartKey, brotli(cleaned part text))` — the same `txtPartKey` that wraps `path`, a second independent application of it. Giving every part its own key (rather than reusing the document's `txtKey` directly for `path`/the object body) means a single part's `txtPartKey` being compromised exposes only that one part — never another part of the same document, and never the document-level `prefix`, both of which stay under `txtKey` alone.
 
-- **`sharedTxt`** — one row per (document, recipient) share, and a `user` account's *only* path to any document's content: not a grant to read the admin's own `txt`/`txtParts`/`txtMetadata` rows, but an independent, admin-made copy of that document — its own `txtKey`, its own R2 `prefix`, its own `sharedTxtParts`/`sharedTxtMetadata` (below). **Not yet implemented:** this entity is not in `instant.schema.ts` yet; today's code shares by KEM-rewrapping the source document's own `txtKey` via a `txtShares` row instead, granting the recipient direct (two-hop) read access to the admin's original `txt`/`txtParts` rows. This section documents the design to build against.
+- **`sharedTxt`** — one row per (document, recipient) share, and a `user` account's _only_ path to any document's content: not a grant to read the admin's own `txt`/`txtParts`/`txtMetadata` rows, but an independent, admin-made copy of that document — its own `txtKey`, its own R2 `prefix`, its own `sharedTxtParts`/`sharedTxtMetadata` (below). **Not yet implemented:** this entity is not in `instant.schema.ts` yet; today's code shares by KEM-rewrapping the source document's own `txtKey` via a `txtShares` row instead, granting the recipient direct (two-hop) read access to the admin's original `txt`/`txtParts` rows. This section documents the design to build against.
 
   Fields: `txt` (link to the source `txt` row, for provenance — e.g. an admin UI listing every current recipient of a document), `owner` (link to `$users`, the recipient — this row's permission owner, same role `owner` plays on `txt` itself), `fromUser` (link to `$users` — always the admin, since only the admin can create a share), and a synthetic `shareKey = "${txtId}:${fromUserId}:${toUserId}"` (`unique().indexed()`, same purpose and shape as `txtShares.shareKey` today).
 
@@ -143,18 +143,18 @@ Two predicates, all evaluated in `instant.perms.ts`:
 - `isAdmin` — `'admin' in auth.ref('$user.type')`.
 - `isOwner` — `auth.id in data.ref('owner.id')`, single-hop off this row's own `owner` link. Every entity below is gated this same single-hop way — there is no two-hop or cross-entity predicate anywhere in this design, since a share is its own independent, directly-owned row (`sharedTxt`/`sharedTxtParts`) rather than a grant to read someone else's.
 
-| Entity            | read                    | create                 | update                 | delete                 |
-| ----------------- | ----------------------- | ---------------------- | ---------------------- | ---------------------- |
-| `keyStore`        | `isAdmin \|\| isOwner`  | `isAdmin`              | `isAdmin`              | `isAdmin`              |
-| `credStore`       | `isAdmin \|\| isOwner`  | `isAdmin`              | `isAdmin`              | `isAdmin`              |
-| `txt`             | `isAdmin \|\| isOwner`  | `isAdmin`              | `isAdmin`              | `isAdmin`              |
-| `txtMetadata`     | `isAdmin \|\| isOwner`  | `isAdmin`              | `isAdmin`              | `isAdmin`              |
-| `txtParts`        | `isAdmin \|\| isOwner`  | `isAdmin`              | `isAdmin`              | `isAdmin`              |
-| `sharedTxt`         | `isAdmin \|\| isOwner`  | `isAdmin`              | `isAdmin`              | `isAdmin`              |
-| `sharedTxtMetadata` | `isAdmin \|\| isOwner`  | `isAdmin`              | `isAdmin`              | `isAdmin`              |
-| `sharedTxtParts`    | `isAdmin \|\| isOwner`  | `isAdmin`              | `isAdmin`              | `isAdmin`              |
-| `txtAccess`         | `isAdmin \|\| isOwner`  | `isAdmin \|\| isOwner` | `isAdmin \|\| isOwner` | `isAdmin \|\| isOwner` |
-| `txtBookmarks`      | `isAdmin \|\| isOwner`  | `isAdmin \|\| isOwner` | `isAdmin \|\| isOwner` | `isAdmin \|\| isOwner` |
+| Entity              | read                   | create                 | update                 | delete                 |
+| ------------------- | ---------------------- | ---------------------- | ---------------------- | ---------------------- |
+| `keyStore`          | `isAdmin \|\| isOwner` | `isAdmin`              | `isAdmin`              | `isAdmin`              |
+| `credStore`         | `isAdmin \|\| isOwner` | `isAdmin`              | `isAdmin`              | `isAdmin`              |
+| `txt`               | `isAdmin \|\| isOwner` | `isAdmin`              | `isAdmin`              | `isAdmin`              |
+| `txtMetadata`       | `isAdmin \|\| isOwner` | `isAdmin`              | `isAdmin`              | `isAdmin`              |
+| `txtParts`          | `isAdmin \|\| isOwner` | `isAdmin`              | `isAdmin`              | `isAdmin`              |
+| `sharedTxt`         | `isAdmin \|\| isOwner` | `isAdmin`              | `isAdmin`              | `isAdmin`              |
+| `sharedTxtMetadata` | `isAdmin \|\| isOwner` | `isAdmin`              | `isAdmin`              | `isAdmin`              |
+| `sharedTxtParts`    | `isAdmin \|\| isOwner` | `isAdmin`              | `isAdmin`              | `isAdmin`              |
+| `txtAccess`         | `isAdmin \|\| isOwner` | `isAdmin \|\| isOwner` | `isAdmin \|\| isOwner` | `isAdmin \|\| isOwner` |
+| `txtBookmarks`      | `isAdmin \|\| isOwner` | `isAdmin \|\| isOwner` | `isAdmin \|\| isOwner` | `isAdmin \|\| isOwner` |
 
 `owner` on a `sharedTxt`/`sharedTxtMetadata`/`sharedTxtParts` row is the recipient, not the admin who created it — the same role `owner` plays on every other entity above, just filled by a different account than the one that wrote the row. `isAdmin` alone covers the `create`/`update`/`delete` columns for all three, since the recipient never writes their own share. This is the whole point of the operating model: a recipient gets **read-only** access to their own `sharedTxt`/`sharedTxtMetadata`/`sharedTxtParts` — `isOwner` never appears in a `create`/`update`/`delete` rule on any of the three — but **full read/write** on their own `txtAccess`/`txtBookmarks` rows regardless of which document those entries reference. Tracking your own read position and bookmarks for a document is not the same permission as writing the document (or the share) itself.
 
@@ -169,9 +169,9 @@ Two predicates, all evaluated in `instant.perms.ts`:
 InstantDB's `unique()` constraint is per-attribute, whole-namespace — it cannot express "unique per (a, b, c)" directly. Three entities above need a composite key for exactly this reason, and each follows the same fix: compute a synthetic key client-side and mark it `unique().indexed()`, so a concurrent duplicate insert fails outright rather than needing a hand-rolled existence check first.
 
 | Entity           | Synthetic key                                     | Guards against                                             |
-| ---------------- | -------------------------------------------------- | ----------------------------------------------------------- |
-| `txtParts`       | `partKey = "${txtId}:${partNum}"`                 | two concurrent ingests writing the same part twice          |
-| `sharedTxt`      | `shareKey = "${txtId}:${fromUserId}:${toUserId}"` | double-sharing the same document to the same recipient      |
-| `sharedTxtParts` | `partKey = "${sharedTxtId}:${partNum}"`           | two concurrent share-copy runs writing the same part twice   |
+| ---------------- | ------------------------------------------------- | ---------------------------------------------------------- |
+| `txtParts`       | `partKey = "${txtId}:${partNum}"`                 | two concurrent ingests writing the same part twice         |
+| `sharedTxt`      | `shareKey = "${txtId}:${fromUserId}:${toUserId}"` | double-sharing the same document to the same recipient     |
+| `sharedTxtParts` | `partKey = "${sharedTxtId}:${partNum}"`           | two concurrent share-copy runs writing the same part twice |
 
 Every synthetic key is deterministic and plaintext by design (it only needs to be unique and computable, never secret). The values it helps guard have their own appropriate representation: `txtParts.path`, `sharedTxtParts.path`, and `sharedTxt.adminTxtKey`/`userTxtKey` are wrapped because they contain a real R2 address or real key material. `txtMetadata`/`sharedTxtMetadata` and `txtAccess` don't need a synthetic key: both metadata entities are one row per parent (a plain unique link), and `txtAccess` is one row per user (`unique()` on the link to `$users` alone).

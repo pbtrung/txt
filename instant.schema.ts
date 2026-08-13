@@ -6,12 +6,14 @@
 // `npx instant-cli@latest push schema` before treating schema changes as
 // final.
 //
-// Only the admin account ever creates txt/txtMetadata/txtParts/txtShares
-// rows (docs/data_model.md's Operating model) -- a `user`-role account only
-// ever reads them via a txtShares grant, and otherwise only ever
-// creates/reads/writes its own keyStore/credStore/txtAccess/txtBookmarks
-// rows. See instant.perms.ts for the isAdmin/isOwner/isSharedReader rules
-// this schema's links exist to support.
+// Only the admin account ever creates txt/txtMetadata/txtParts rows
+// (docs/data_model.md's Operating model) -- a `user`-role account never
+// reads those rows at all. Instead, sharing a document makes an
+// independent, admin-re-encrypted copy of it -- sharedTxt/sharedTxtMetadata/
+// sharedTxtParts, owned outright by the recipient -- and a `user`-role
+// account only ever reads its own such rows, plus its own
+// keyStore/credStore/txtAccess/txtBookmarks rows. See instant.perms.ts for
+// the isAdmin/isOwner rules this schema's links exist to support.
 
 import { i } from "@instantdb/core";
 
@@ -20,7 +22,7 @@ const _schema = i.schema({
     // $users is InstantDB's own built-in auth entity, but custom attributes
     // on it are allowed like any other -- there's no separate app-level
     // profile entity in this design, so $users is also the one thing every
-    // other entity's owner/forUser/fromUser/toUser link points at directly.
+    // other entity's owner/forUser/fromUser link points at directly.
     // Never readable/writable except by isSelf/isAdmin (instant.perms.ts).
     $users: i.entity({
       email: i.string().unique().indexed(),
@@ -47,9 +49,12 @@ const _schema = i.schema({
       deleted: i.boolean().optional(),
     }),
     // Per-account lc_kyber_1024_x448 composite keypair (docs/data_model.md's
-    // keyStore entity) -- lets the admin share a document with this account
-    // without ever needing that account's own umk (see txtShares below).
-    // One row per user; provisioned for every account, admin included.
+    // keyStore entity). Sharing (see sharedTxt below) doesn't use this
+    // keypair -- the admin can already recover any user's umk via that
+    // user's own admin-owned recovery credStore row, so a share's key is
+    // wrapped symmetrically instead. Kept provisioned for every account,
+    // admin included, against a future feature that needs an asymmetric
+    // wrap without the admin recovering the target's umk.
     keyStore: i.entity({
       // Raw 1624-byte composite public key -- not sensitive, stored as-is.
       pubKey: i.string(),
@@ -82,8 +87,10 @@ const _schema = i.schema({
     // owned by the admin today (docs/data_model.md's Operating model).
     txt: i.entity({
       // 128 random bytes, wrapped under owner's umk. Root of this
-      // document's own key chain (docs/key_hierarchy.md) -- also rewrapped
-      // per share recipient via Encapsulate/Decapsulate, see txtShares.
+      // document's own key chain (docs/key_hierarchy.md). Sharing this
+      // document never rewraps this key for a recipient -- it mints an
+      // entirely independent root key for a new sharedTxt row instead, see
+      // sharedTxt below.
       txtKey: i.string(),
       // This document's own R2 prefix: Crockford-base32-lowercase encoding
       // of 32 random bytes, wrapped under txtKey. Random rather than
@@ -124,8 +131,7 @@ const _schema = i.schema({
     // A document's content, chunked into ordered parts (docs/data_model.md's
     // txtParts entity). Like txtMetadata, carries its own owner link (same
     // account as txt.owner) so instant.perms.ts's isOwner check stays a
-    // single-hop data.ref('owner.id') instead of traversing txt.owner --
-    // isSharedReader is the only two-hop check either entity needs.
+    // single-hop data.ref('owner.id') instead of traversing txt.owner.
     // partKey is the synthetic composite-uniqueness guard
     // (docs/data_model.md's composite-uniqueness problem) -- InstantDB's
     // unique() is per-attribute, whole-namespace, so "unique per (txt,
@@ -143,20 +149,52 @@ const _schema = i.schema({
       path: i.string(),
       partKey: i.string().unique().indexed(), // `${txtId}:${partNum}`
     }),
-    // One row per (document, recipient) share grant (docs/data_model.md's
-    // txtShares entity). Only the admin ever creates one (fromUser is
-    // always the admin's own $users row) -- see docs/protocols.md's Sharing
-    // protocol.
-    txtShares: i.entity({
-      // Raw/public lc_kyber_1024_x448 KEM ciphertext (1624 bytes) -- what
-      // the recipient needs to Decapsulate. The wrapping salt is already
-      // embedded in txtKey's standard blob.
-      kemCt: i.string(),
-      // The same txt.txtKey bytes, rewrapped for this recipient via
-      // HKDF-SHA3-512(IKM=ss, salt) -> 128-byte OKM (crypto.md's
-      // Encapsulate/Decapsulate) instead of the owner's umk.
-      txtKey: i.string(),
+    // One row per (document, recipient) share (docs/data_model.md's
+    // sharedTxt entity) -- and a `user` account's *only* path to any
+    // document's content: not a grant to read the admin's own
+    // txt/txtParts/txtMetadata, but an independent, admin-made copy of that
+    // document under its own fresh root key and R2 prefix, owned outright by
+    // the recipient (owner, below). Only the admin ever creates one
+    // (fromUser is always the admin's own $users row) -- see
+    // docs/protocols.md's Sharing protocol.
+    sharedTxt: i.entity({
+      // This share's own root key (128 random bytes, independent of the
+      // source document's own txt.txtKey), wrapped two purely symmetric
+      // ways -- no KEM/Encapsulate involved. adminTxtKey is wrapped under
+      // fromUser's (the admin's) own umk, exactly like txt.txtKey is under
+      // its owner's umk -- this is what lets admin-side tooling (the orphan
+      // sweep) recover this share's whole chain on demand. userTxtKey is
+      // the same bytes wrapped under owner's (the recipient's) own umk,
+      // which the admin can produce because creating a share already
+      // recovers the recipient's umk via that recipient's own admin-owned
+      // recovery credStore row (docs/key_hierarchy.md).
+      adminTxtKey: i.string(),
+      userTxtKey: i.string(),
+      // This share's own, independent R2 prefix -- never the source
+      // document's own prefix, and never shared with any other recipient's
+      // share of the same document. Wrapped under this row's own root key,
+      // same shape as txt.prefix.
+      prefix: i.string(),
+      prefixHash: i.string().optional(), // same purpose as txt.prefixHash
       shareKey: i.string().unique().indexed(), // `${txtId}:${fromUserId}:${toUserId}`
+    }),
+    // One row per share (docs/data_model.md's sharedTxtMetadata entity) --
+    // the sharedTxt analogue of txtMetadata, same split and same reasoning:
+    // a recipient's library view loads only catalog, never full content.
+    sharedTxtMetadata: i.entity({
+      content: i.string(),
+      catalog: i.string().optional(),
+    }),
+    // A share's content, chunked into ordered parts (docs/data_model.md's
+    // sharedTxtParts entity) -- the sharedTxt analogue of txtParts, same
+    // reasoning throughout. A share's R2 content is a full, independent
+    // copy, never the same object the source document's own txtParts point
+    // at.
+    sharedTxtParts: i.entity({
+      partNum: i.number().indexed(),
+      txtPartKey: i.string(), // wrapped under this share's own root key
+      path: i.string(), // wrapped under this row's own txtPartKey
+      partKey: i.string().unique().indexed(), // `${sharedTxtId}:${partNum}`
     }),
     // One row per user (docs/data_model.md's txtAccess entity), holding that
     // user's read position across every document they've opened -- owner or
@@ -182,7 +220,7 @@ const _schema = i.schema({
     }),
   },
   links: {
-    // Every owner/forUser/fromUser/toUser link below targets $users directly
+    // Every owner/forUser/fromUser link below targets $users directly
     // -- auth.id already equals a $users row's own id, so
     // instant.perms.ts's isOwner checks are a single-hop
     // data.ref('owner.id'), never a two-hop traversal through an
@@ -274,39 +312,89 @@ const _schema = i.schema({
       },
       reverse: { on: "$users", has: "many", label: "txtPartsAsOwner" },
     },
-    // reverse label "txtShares" here is what instant.perms.ts's
-    // isSharedReader traverses from txt itself
-    // (data.ref('txtShares.toUser.id')) and, one hop further, from
-    // txtParts/txtMetadata (data.ref('txt.txtShares.toUser.id')).
-    txtSharesTxt: {
+    // sharedTxt's own link back to the source document -- provenance only
+    // (e.g. an admin UI listing every current recipient of a document), not
+    // a permission grant. Deleting the source txt row cascades to every
+    // sharedTxt row sharing it, which in turn cascades to that row's own
+    // sharedTxtMetadata/sharedTxtParts below.
+    sharedTxtTxt: {
       forward: {
-        on: "txtShares",
+        on: "sharedTxt",
         has: "one",
         label: "txt",
         onDelete: "cascade",
       },
-      reverse: { on: "txt", has: "many", label: "txtShares" },
+      reverse: { on: "txt", has: "many", label: "sharedTxt" },
     },
-    txtSharesFromUser: {
+    // owner here is the recipient -- instant.perms.ts's isOwner check for
+    // sharedTxt (and, one hop down, sharedTxtMetadata/sharedTxtParts) is a
+    // single-hop data.ref('owner.id'), same shape as every owner-gated
+    // entity above, just filled by a different account than the one that
+    // wrote the row.
+    sharedTxtOwner: {
       forward: {
-        on: "txtShares",
+        on: "sharedTxt",
+        has: "one",
+        label: "owner",
+        onDelete: "cascade",
+      },
+      reverse: { on: "$users", has: "many", label: "sharedTxtAsOwner" },
+    },
+    // fromUser is always the admin -- this is what lets sharedTxt.adminTxtKey
+    // above resolve to "fromUser's own umk" rather than "owner's own umk".
+    sharedTxtFromUser: {
+      forward: {
+        on: "sharedTxt",
         has: "one",
         label: "fromUser",
         onDelete: "cascade",
       },
-      reverse: { on: "$users", has: "many", label: "txtSharesFrom" },
+      reverse: { on: "$users", has: "many", label: "sharedTxtFrom" },
     },
-    // forward label "toUser" here is what instant.perms.ts's txtShares.view
-    // rule checks directly (data.ref('toUser.id')), and what isSharedReader
-    // checks one or two hops away from txt/txtParts/txtMetadata.
-    txtSharesToUser: {
+    // sharedTxtMetadata's own single-hop owner link, same rationale as
+    // txtMetadataOwner above -- has: "one" on both sides, exactly one
+    // sharedTxtMetadata row per sharedTxt row.
+    sharedTxtMetadataSharedTxt: {
       forward: {
-        on: "txtShares",
+        on: "sharedTxtMetadata",
         has: "one",
-        label: "toUser",
+        label: "sharedTxt",
         onDelete: "cascade",
       },
-      reverse: { on: "$users", has: "many", label: "txtSharesTo" },
+      reverse: { on: "sharedTxt", has: "one", label: "sharedTxtMetadata" },
+    },
+    sharedTxtMetadataOwner: {
+      forward: {
+        on: "sharedTxtMetadata",
+        has: "one",
+        label: "owner",
+        onDelete: "cascade",
+      },
+      reverse: {
+        on: "$users",
+        has: "many",
+        label: "sharedTxtMetadataAsOwner",
+      },
+    },
+    sharedTxtPartsSharedTxt: {
+      forward: {
+        on: "sharedTxtParts",
+        has: "one",
+        label: "sharedTxt",
+        onDelete: "cascade",
+      },
+      reverse: { on: "sharedTxt", has: "many", label: "sharedTxtParts" },
+    },
+    // sharedTxtParts' own single-hop owner link, same rationale as
+    // txtPartsOwner above.
+    sharedTxtPartsOwner: {
+      forward: {
+        on: "sharedTxtParts",
+        has: "one",
+        label: "owner",
+        onDelete: "cascade",
+      },
+      reverse: { on: "$users", has: "many", label: "sharedTxtPartsAsOwner" },
     },
     // has: "one" on both sides -- exactly one txtAccess row per $users row.
     txtAccessOwner: {
