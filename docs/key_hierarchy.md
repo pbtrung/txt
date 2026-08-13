@@ -53,8 +53,6 @@ Every wrapped-key and content blob uses the blob format, AEAD, and KDF mechanics
 
 ## Sharing a document: an independent, parallel chain
 
-**Not yet implemented** — `sharedTxt`/`sharedTxtParts` don't exist in `instant.schema.ts` yet; today's code shares by KEM-rewrapping `txt.txtKey` itself once per recipient (`txtShares.kemCt`/`txtShares.txtKey`), so the recipient reads the admin's own `txt`/`txtParts` directly. The chain below is the design to build against.
-
 Sharing a document does not rewrap `txt.txtKey` for the recipient at all — it mints an entirely independent root key for the share, rooted its own way, and copies the document's content under it:
 
 ```
