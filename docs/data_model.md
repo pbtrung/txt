@@ -45,9 +45,7 @@ Object bodies are the exact bytes handed to the writer: application-encrypted pa
 
 ## 3. AA schema
 
-Every statement is issued over the HTTP API in batches.
-
-`PRAGMA page_size = 32768;` is set once, before any `CREATE TABLE`, matching BB's own page size — `page_versions.data` holds a full BB page's ciphertext per row (§3.2), and AA's default 4096-byte page would otherwise fragment every one of those rows across roughly eight overflow pages.
+Every statement is issued over the HTTP API in batches. AA's own on-disk page size is Turso's concern, not this design's — it's a managed service, and how it actually stores a row's bytes internally isn't something this client tunes or assumes.
 
 ### 3.1 Singleton
 
