@@ -40,4 +40,5 @@ venv/
 *.json
 *.db
 txt_*/
+replaced_txt_*/
 creds/
