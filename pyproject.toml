@@ -9,6 +9,9 @@ description = "CLI for administering the txt document-storage system"
 requires-python = ">=3.14"
 dependencies = ["requests", "click", "wasmtime", "brotli"]
 
+[project.optional-dependencies]
+dev = ["pytest"]
+
 [project.scripts]
 txt = "txt.cli:run"
 
