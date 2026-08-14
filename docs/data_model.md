@@ -1,6 +1,6 @@
 # Data model — Design
 
-A SQLite database whose pages live as immutable objects in R2/S3, mapped by a per-user Turso Cloud database, with a small derived catalogue the client downloads for its library UI.
+A SQLite database whose pages live as immutable blobs directly inside a per-user Turso Cloud database, with document parts and a small derived catalogue kept as objects in R2/S3.
 
 ---
 
@@ -8,13 +8,13 @@ A SQLite database whose pages live as immutable objects in R2/S3, mapped by a pe
 
 | name | what it is | where |
 |---|---|---|
-| **AA** | container database: the page map, version history, snapshot pins, bundle and library-index pointers | Turso Cloud, one database per user, HTTP API only |
-| **BB** | inside database: the application's SQLCipher-keyed SQLite database | pages are objects in R2/S3; no local file |
+| **AA** | container database: the page map, version history, snapshot pins, bundle and library-index pointers, and every page's own ciphertext | Turso Cloud, one database per user, HTTP API only |
+| **BB** | inside database: the application's SQLCipher-keyed SQLite database | pages are blobs in AA's own `page_versions` rows; no local file, no R2/S3 object |
 | **library index** | a small SQLite file holding BB's bibliographic data, rebuilt from BB and downloaded whole by the client | one object in R2/S3, pointed at by a row in AA |
 
 One user owns one AA, one BB, one `db_prefix`, and one library index. Nothing in AA or BB carries a user identifier. AA holds no encryption keys.
 
-The application opens a normal SQLCipher connection to BB and issues normal SQL. Underneath, page reads are HTTP GETs against R2/S3 and the commit point is one HTTP request to AA.
+The application opens a normal SQLCipher connection to BB and issues normal SQL. Underneath, a page read and the commit point are both just AA requests — one store holds the page map and the page bytes together, so a page costs one round trip instead of a map lookup plus a separate object GET.
 
 Invariants:
 
@@ -28,16 +28,16 @@ Invariants:
 ## 2. Object storage
 
 ```
-s3://{bucket}/{db_prefix}/p/{key[0:2]}/{key}     -- BB page versions      (AA-owned)
-s3://{bucket}/{db_prefix}/t/{key[0:2]}/{key}     -- document part payloads (BB-owned)
-s3://{bucket}/{db_prefix}/i/{key[0:2]}/{key}     -- the library index     (AA-owned)
+s3://{bucket}/{db_prefix}/t/{txt.prefix}/{key}     -- document part payloads (BB-owned)
+s3://{bucket}/{db_prefix}/b/{key}     -- bundles               (AA-owned)
+s3://{bucket}/{db_prefix}/i/{key}     -- the library index     (AA-owned)
 ```
 
-`db_prefix` and every `key` are 32 random bytes rendered as 52 lowercase base32-Crockford characters. `db_prefix` is minted once at creation; page keys are minted once per upload and never reused. `{key[0:2]}` is a shard directory for navigability during cleanup only — lookup never goes through it.
+`db_prefix`, `txt.prefix`, and every `key` are 32 random bytes rendered as 52 lowercase base32-Crockford characters. `db_prefix` is minted once at creation; `txt.prefix` is minted once per document (§7); part keys are minted once per upload and never reused. BB page versions carry no R2/S3 object of their own — their ciphertext lives inline in AA's `page_versions.data` (§3.2), which is what removes a round trip from both the read and commit paths.
 
-The three populations have different lifecycle owners, so they are separated by prefix: the page garbage collector lists `p/` only, the application's document-delete path lists `t/` only.
+The remaining populations have different lifecycle owners, so they are separated by prefix: a document's own parts all live under its own `t/{txt.prefix}/`, so deleting a document is a scoped prefix delete rather than a listing over the whole `t/` population (§7.2); bundles are AA-owned derived artefacts, retired and swept independently (§6.3–6.4).
 
-Object bodies are the exact bytes handed to the writer: SQLCipher ciphertext for pages, application-encrypted payloads for parts and the library index. No wrapping header, no S3 tags, no user metadata.
+Object bodies are the exact bytes handed to the writer: application-encrypted payloads for parts, bundles, and the library index. No wrapping header, no S3 tags, no user metadata.
 
 ---
 
@@ -78,21 +78,20 @@ CREATE TABLE page_versions (
   page_no         INTEGER NOT NULL,
   version_created INTEGER NOT NULL,
   version_deleted INTEGER,                 -- NULL = current
-  object_key      TEXT    NOT NULL,
-  checksum        BLOB    NOT NULL,        -- 16 bytes, BLAKE3-128 of the object body
+  data            BLOB    NOT NULL,        -- SQLCipher ciphertext of this page version
   PRIMARY KEY (page_no, version_created)
 ) WITHOUT ROWID;
 
 CREATE INDEX idx_pv_live
-  ON page_versions(page_no, object_key, checksum) WHERE version_deleted IS NULL;
+  ON page_versions(page_no, version_created) WHERE version_deleted IS NULL;
 CREATE INDEX idx_pv_created ON page_versions(version_created);
 CREATE INDEX idx_pv_deleted ON page_versions(version_deleted);
 ```
 
-A row is visible at version `V` when `version_created <= V AND (version_deleted IS NULL OR version_deleted > V)`. The clustered primary key groups a page's versions in ascending order, so the as-of lookup for a single page needs no secondary structure:
+A row is visible at version `V` when `version_created <= V AND (version_deleted IS NULL OR version_deleted > V)`. The clustered primary key groups a page's versions in ascending order, so the as-of lookup for a single page needs no secondary structure — and, since `data` lives right there, this single query is the entire page read, map lookup and bytes together:
 
 ```sql
-SELECT object_key, checksum
+SELECT data
   FROM page_versions
  WHERE page_no = :pgno
    AND version_created <= :v
@@ -101,7 +100,7 @@ SELECT object_key, checksum
  LIMIT 1;
 ```
 
-`idx_pv_live` is covering, so the bulk map load at open is an index-only scan.
+`idx_pv_live` deliberately excludes `data`: the bulk map load at open (§6.1) only needs to know which `(page_no, version_created)` pairs are current, not their bytes, so this index stays small and index-only regardless of how large BB gets.
 
 ### 3.3 Snapshots
 
@@ -123,7 +122,7 @@ A live, heartbeated snapshot row prevents garbage collection of anything visible
 
 ```sql
 CREATE TABLE bundles (
-  bundle_key       TEXT PRIMARY KEY,       -- object key under p/
+  bundle_key       TEXT PRIMARY KEY,       -- object key under b/
   built_at_version INTEGER NOT NULL,
   byte_size        INTEGER NOT NULL,
   map_rows         INTEGER NOT NULL,
@@ -192,12 +191,12 @@ Per open BB, held in memory only:
 
 | structure | contents | bound |
 |---|---|---|
-| `page_map` | `page_no → (object_key, checksum)` at the pinned version | ~48 bytes per live page |
-| `page_cache` | `object_key → bytes` | configured byte budget, LRU eviction |
+| `page_map` | `page_no → version_created` at the pinned version | ~16 bytes per live page |
+| `page_cache` | `(page_no, version_created) → bytes` | configured byte budget, LRU eviction |
 | `staged` | `page_no → bytes` for the open write transaction | transaction size |
 | `pinned_version`, `snapshot_id`, `page_count` | scalars | — |
 
-Object keys name one immutable version of one page, so a cached page never needs invalidation — only eviction. The same holds for map entries: a `(page_no → object_key)` pair for a pinned version is a permanent fact about that version.
+A `(page_no, version_created)` pair names one immutable version of one page, so a cached page never needs invalidation — only eviction. The same holds for map entries: a `(page_no → version_created)` pair for a pinned version is a permanent fact about that version.
 
 A multi-database process runs one memory governor across all open BBs, evicting from the largest cache when the process budget is exceeded.
 
@@ -208,7 +207,7 @@ A multi-database process runs one memory governor across all open BBs, evicting 
 | call | behaviour |
 |---|---|
 | `xOpen` | main database only; journal and temp files are in-memory |
-| `xRead` | serve from `staged`, then `page_cache`, then GET the object named by `page_map`; verify checksum |
+| `xRead` | serve from `staged`, then `page_cache`, then `SELECT data FROM page_versions` by the `(page_no, version_created)` named in `page_map` |
 | `xWrite` | write into `staged`; never touches the network |
 | `xFileSize` | `page_count * page_size` from the pinned version |
 | `xSync` | no-op |
@@ -235,44 +234,42 @@ One AA batch:
 
 Then warm the map:
 
-- **Bundle present.** GET the bundle, load its map section into `page_map`, insert its hot pages into `page_cache` keyed by object key, then apply the delta from AA: all `page_versions` rows with `version_created > built_at_version` and visible at the pinned version, plus rows whose `version_deleted` falls in that range.
+- **Bundle present.** GET the bundle, load its map section into `page_map`, insert its hot pages into `page_cache` keyed by `(page_no, version_created)`, then apply the delta from AA: all `page_versions` rows with `version_created > built_at_version` and visible at the pinned version, plus rows whose `version_deleted` falls in that range.
 - **No bundle.** Paginated scan of `idx_pv_live` at the pinned version.
 
-After warmup the map is complete: steady-state reads make no AA calls at all, only GETs for uncached pages.
+After warmup the map is complete: steady-state reads make no AA calls for the map itself; an uncached page costs one AA point query by `(page_no, version_created)`, returning its bytes directly.
 
 ### 6.2 Commit
 
 `COMMIT` runs a checkpoint. `staged` holds every dirtied page, including page 1.
 
-1. Mint a fresh random key per dirtied page.
-2. PUT all page objects concurrently. Retrying a PUT is unconditionally safe: the key is new and nothing references it yet.
-3. Send one AA batch:
+1. Send one AA batch:
    - `INSERT INTO versions (version, parent_version, committed_at, page_count)` with `version = pinned + 1`;
-   - `INSERT INTO page_versions` one row per uploaded page, `version_created = version`;
+   - `INSERT INTO page_versions (page_no, version_created, data)` one row per dirtied page, its ciphertext inline, `version_created = version`;
    - `UPDATE page_versions SET version_deleted = version` for the superseded rows of those page numbers;
    - `UPDATE meta SET head_version = version`.
-4. On success: advance `pinned_version`, apply the new keys to `page_map`, move `staged` bytes into `page_cache`, clear `staged`.
+2. On success: advance `pinned_version`, apply the new `(page_no, version_created)` pairs to `page_map`, move `staged` bytes into `page_cache`, clear `staged`.
 
-The batch is one server-side transaction, so the commit is atomic. `versions.version` is the primary key, which makes it the write fence: two writers that both allocated `N+1` cannot both succeed. The loser gets a primary-key violation, discards its local state, and reopens its connection at the new head. Its uploaded objects are unreferenced and are reclaimed by the orphan sweep.
+The batch is one server-side transaction, so the commit is atomic. `versions.version` is the primary key, which makes it the write fence: two writers that both allocated `N+1` cannot both succeed. The loser gets a primary-key violation, discards its local state, and reopens its connection at the new head — its page bytes never left the batch that failed to commit, so nothing needs an orphan sweep.
 
 If the response is lost, the writer re-reads `versions` for its intended version and `committed_at`: present means the commit landed.
 
-A checkpoint larger than the configured limit (default 20,000 pages) is split into batches of page uploads followed by one final AA batch; the AA batch is still single and still atomic.
+A checkpoint larger than the configured limit (default 20,000 pages) is split into multiple AA batches, each inserting its share of `page_versions` rows; only the final batch also advances `meta.head_version`, so a crash mid-split leaves `head_version` describing a self-consistent earlier state.
 
 ### 6.3 Bundles
 
-A bundle is one object under `p/`:
+A bundle is one object under `b/`:
 
 ```
 [ header ]     magic, format version, page_size, built_at_version,
                section offsets and lengths, per-section checksums
-[ page map ]   (page_no, object_key, checksum) for every live page at built_at_version
+[ page map ]   (page_no, version_created) for every live page at built_at_version
 [ hot pages ]  raw bytes of page 1, of every btree interior page, and of every
                btree small enough to carry whole
-[ index ]      (object_key, offset, length) per hot page
+[ index ]      (page_no, version_created, offset, length) per hot page
 ```
 
-The hot-page index is keyed by object key, not page number, so a bundle of any age is correct: it seeds the cache with immutable `key → bytes` facts, and `page_map` remains the sole arbiter of which keys a reader wants. Nothing about a bundle is ever validated, only superseded.
+The hot-page index is keyed by `(page_no, version_created)`, not page number alone, so a bundle of any age is correct: it seeds the cache with immutable `(page_no, version_created) → bytes` facts, and `page_map` remains the sole arbiter of which version a reader wants. Nothing about a bundle is ever validated, only superseded.
 
 Membership of the hot-pages section is decided at build time by a `dbstat` scan on a connection holding the key. Rebuild when the count of distinct page numbers changed since `built_at_version` exceeds 25% of the live page count. Set `retired_at` on the previous bundle and let GC delete it after a grace window longer than a slow download.
 
@@ -281,9 +278,9 @@ Membership of the hot-pages section is decided at build time by a `dbstat` scan 
 Runs periodically on the writer.
 
 1. `gc_horizon = MIN(version)` over live `snapshots`, or `head_version` if there are none.
-2. Delete objects for `page_versions` rows with `version_deleted <= gc_horizon`, then delete the rows.
+2. Delete `page_versions` rows with `version_deleted <= gc_horizon` — a single DELETE, since a page's bytes live in the row itself rather than a separate object.
 3. Delete retired bundles past their grace window.
-4. Orphan sweep: list `p/`, delete objects that appear in neither `page_versions` nor `bundles` and are older than the longest possible in-flight checkpoint.
+4. Bundle orphan sweep: list `b/`, delete objects that appear in neither `bundles` nor a currently-live `bundle_key`, older than the longest possible in-flight bundle build.
 
 A snapshot whose `heartbeat_at` is older than three heartbeat intervals is deleted; readers heartbeat every 30 seconds and re-pin on failure.
 
@@ -293,15 +290,16 @@ Pinning and the horizon check are two halves of one invariant: a reader pins in 
 
 ## 7. BB schema
 
-BB stores document structure and user state. Document text lives in the `t/` object population, one object per part, referenced by `txt_parts.path`.
+BB stores document structure and user state. Document text lives in the `t/` object population, one object per part under the document's own prefix, addressed together by `txt.prefix` and `txt_parts.path`.
 
-Tables are grouped by write frequency, because the page is the unit of versioning: any byte changed rewrites the whole 4 KiB page as a new object and a new AA row. `txt` is written once, `txt_meta` changes when the user edits metadata, `txt_access` changes continuously.
+Tables are grouped by write frequency, because the page is the unit of versioning: any byte changed rewrites the whole 4 KiB page as a new `page_versions` row (§3.2). `txt` is written once, `txt_meta` changes when the user edits metadata, `txt_access` changes continuously.
 
 ```sql
 -- Documents. Written at import, then immutable.
 CREATE TABLE txt (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,  -- ids are never recycled
     txt_key    BLOB    NOT NULL,                   -- 128 random bytes
+    prefix     BLOB    NOT NULL,                   -- 32 random bytes, this document's own R2 prefix under t/
     name       TEXT    NOT NULL,                   -- original filename
     n_parts    INTEGER NOT NULL,
     created_at INTEGER NOT NULL                    -- unix ms
@@ -315,7 +313,8 @@ CREATE TABLE txt_meta (
 
 -- One row per part. WITHOUT ROWID: table and index are one btree, and a
 -- document's parts are physically adjacent in read order. path is the raw
--- 32 random bytes; base32-Crockford is applied when forming the object URL.
+-- 32 random bytes; base32-Crockford is applied to both txt.prefix and path
+-- when forming the object URL (t/{txt.prefix}/{path}).
 CREATE TABLE txt_parts (
     txt_id   INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
     part_num INTEGER NOT NULL,
@@ -365,7 +364,7 @@ Every commit dirties at least two pages — the changed leaf and page 1, whose c
 
 ### 7.2 Document delete
 
-One BB transaction deletes the `txt` row and cascades to `txt_meta`, `txt_parts`, `txt_access`, `txt_bookmarks`; the part keys are collected before the delete and their `t/` objects are deleted afterwards. A crash between the two leaves orphaned part objects, reclaimed by a sweep of `t/` against `txt_parts`.
+One BB transaction deletes the `txt` row and cascades to `txt_meta`, `txt_parts`, `txt_access`, `txt_bookmarks`; `txt.prefix` is read before the delete, and every object under that document's own `t/{txt.prefix}/` is then listed and deleted — a scoped prefix delete, not a listing over the whole `t/` population. A crash between the two leaves that one prefix's objects orphaned, reclaimed by a sweep of `t/` against the `prefix` values still present in `txt`.
 
 ---
 
@@ -449,11 +448,11 @@ Across devices, concurrent reading is fully supported. Concurrent writing is not
 ## 10. Properties and limits
 
 - **Point-in-time reads.** A reader pinned at any retained version sees a stable view; the horizon is set by `gc_horizon`.
-- **An opaque bucket.** R2/S3 holds unlabelled ciphertext at random keys, with no manifest object and no structure recoverable from a listing.
-- **Durability.** `COMMIT` returns after the page objects are durable in R2/S3 and the AA batch is acknowledged. AA acknowledges only after its own durable write.
-- **Latency.** Commit latency is bounded below by one round of PUTs plus one AA round trip. Steady-state reads are local map lookups plus a GET on cache miss.
-- **Availability.** Writers require AA. Readers with a warm map continue serving cached and fetchable pages while AA is unreachable, and clients can render the library from OPFS.
-- **AA sees metadata.** Page numbers, version numbers, random keys, sizes, and commit timing are visible to the provider; page content is not.
+- **An opaque bucket.** R2/S3 holds unlabelled ciphertext at random keys (parts, bundles, the library index), with no manifest object and no structure recoverable from a listing.
+- **Durability.** `COMMIT` returns once the single AA batch is acknowledged, and AA acknowledges only after its own durable write — a page's bytes and its version row land together, with no separate object-durability step to wait on.
+- **Latency.** Commit latency is bounded below by one AA round trip, with no separate object PUTs. Steady-state reads are local map lookups plus one AA point query on cache miss.
+- **Availability.** Both writers and readers require AA: it now holds the page bytes themselves, not just the map. Readers with a warm cache continue serving already-fetched pages while AA is unreachable, and clients can render the library from OPFS.
+- **AA sees metadata plus ciphertext.** Page numbers, version numbers, sizes, commit timing, and each page's SQLCipher ciphertext are visible to the provider; plaintext is not — the same confidentiality boundary as when pages lived in R2/S3, just one fewer place bytes travel through.
 - **Metering.** AA bills rows read and written. The map load dominates per-session reads, so long-lived connections are strongly preferred over per-request ones.
 - **Size ceiling.** Practical BB size is set by `page_map` memory and map-load time, in the low tens of gigabytes.
 
@@ -467,7 +466,7 @@ Across devices, concurrent reading is fully supported. Concurrent writing is not
 4. The fence: two writers at `N+1`, exactly one succeeds, the loser reopens.
 5. Snapshot pinning and GC together, including the pin/GC race.
 6. Bundles: map section first, then hot pages, then the rebuild trigger.
-7. BB schema and the `p/`, `t/`, `i/` prefix separation, with a test that the page orphan sweep leaves part objects untouched.
+7. BB schema and the `t/`, `b/`, `i/` prefix separation, with a test that the bundle orphan sweep leaves part objects untouched.
 8. Read-position coalescing, with a dirty-page count assertion per commit as a regression test.
 9. Library index: full rebuild on a pinned version, then the AA pointer and the client's version comparison.
 10. Multi-database process concerns: memory governor, staggered GC and bundle rebuilds.
