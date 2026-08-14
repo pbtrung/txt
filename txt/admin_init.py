@@ -5,7 +5,7 @@ from .firebase_auth import FirebaseAuth
 from .libsql_client import LibsqlClient
 from .logger import Logger
 from .random_token import generate_db_path
-from .turso_api import TursoClient
+from .turso_api import TursoClient, extract_db_name
 
 CREATE_USERS_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS users (
@@ -33,7 +33,9 @@ class AdminInitializer:
         ctl = self._ensure_users_table()
         existing_db_path = self._find_existing(ctl, uid)
         if existing_db_path:
-            self.logger.info(f"Admin {uid} already provisioned with database {existing_db_path}")
+            self.logger.info(
+                f"Admin {uid} already provisioned with database {existing_db_path}"
+            )
             return
         db_path = generate_db_path()
         self.logger.verbose(f"Generated db_path={db_path}")
@@ -54,9 +56,10 @@ class AdminInitializer:
         return uid
 
     def _ensure_users_table(self) -> LibsqlClient:
-        self.logger.verbose("Minting a database token for ctl...")
-        ctl_token = self.turso.mint_db_token("ctl")
-        self.logger.verbose("Minted ctl token, ensuring users table exists...")
+        db_name = extract_db_name(self.creds.turso_ctl_db_url, self.creds.turso_org)
+        self.logger.verbose(f"Minting a database token for {db_name}...")
+        ctl_token = self.turso.mint_db_token(db_name)
+        self.logger.verbose(f"Minted {db_name} token, ensuring users table exists...")
         ctl = LibsqlClient(self.creds.turso_ctl_db_url, ctl_token)
         ctl.execute(CREATE_USERS_TABLE_SQL)
         self.logger.verbose("users table ready in ctl.")

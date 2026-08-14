@@ -3,6 +3,11 @@ import requests
 PLATFORM_API_BASE = "https://api.turso.tech/v1"
 
 
+def extract_db_name(db_url: str, account_name: str) -> str:
+    host = db_url.removeprefix("libsql://")
+    return host.split(f"-{account_name}.", 1)[0]
+
+
 class TursoClient:
     def __init__(self, org_token: str, org: str):
         self.org_token = org_token

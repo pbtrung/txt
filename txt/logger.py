@@ -7,9 +7,12 @@ class Logger:
 
     def verbose(self, message: str) -> None:
         if self.verbose_enabled:
-            print(f"{self._timestamp()}  {message}")
+            self._log(message)
 
     def info(self, message: str) -> None:
+        self._log(message)
+
+    def _log(self, message: str) -> None:
         print(f"{self._timestamp()}  {message}")
 
     def _timestamp(self) -> str:
