@@ -305,6 +305,8 @@ A snapshot whose `heartbeat_at` is older than three heartbeat intervals is delet
 
 Pinning and the horizon check are two halves of one invariant: a reader pins in the same batch that reads `head_version`, so a reader either pins a version at or above the horizon or fails and retries.
 
+`--collect-garbage` (`txt/gc.py`) is this account's implementation: steps 1–2 run as written above; steps 3–4 skip the grace window entirely and delete every retired bundle's row and object immediately, plus sweep `t/` for parts whose prefix matches no live `txt.prefix` and `i/` for anything but the current `object_key` (§7.2, §8). The grace window exists to protect a reader mid-download of a bundle that's about to be superseded; this CLI has no such reader in flight, so immediate deletion is safe here and keeps every population down to just its current live state, at the cost of not being safe to run in the presence of a real concurrent reader once one exists. Every SELECT/DELETE round trip is capped and looped (`GC_BATCH_SIZE`), the same reasoning as commit's `MAX_PAGES_PER_BATCH` (§6.2): an unbounded SELECT or a DELETE matching an unbounded row count both risk timing out Turso's Hrana endpoint on a long-uncollected backlog.
+
 ---
 
 ## 7. BB schema

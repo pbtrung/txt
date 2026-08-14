@@ -16,3 +16,22 @@ class R2Client:
 
     def put_object(self, key: str, body: bytes) -> None:
         self._s3.put_object(Bucket=self.bucket, Key=key, Body=body)
+
+    def list_keys(self, prefix: str) -> list[str]:
+        keys, token = [], None
+        while True:
+            kwargs = {"Bucket": self.bucket, "Prefix": prefix}
+            if token:
+                kwargs["ContinuationToken"] = token
+            resp = self._s3.list_objects_v2(**kwargs)
+            keys.extend(obj["Key"] for obj in resp.get("Contents", []))
+            if not resp.get("IsTruncated"):
+                return keys
+            token = resp["NextContinuationToken"]
+
+    def delete_keys(self, keys: list[str]) -> None:
+        for i in range(0, len(keys), 1000):
+            batch = keys[i : i + 1000]
+            self._s3.delete_objects(
+                Bucket=self.bucket, Delete={"Objects": [{"Key": k} for k in batch]}
+            )

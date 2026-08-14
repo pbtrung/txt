@@ -4,6 +4,7 @@ import click
 
 from .admin_init import AdminInitializer
 from .creds import load_creds
+from .gc import GarbageCollector
 from .ingest import TxtIngester
 from .init_db import DbInitializer
 from .logger import Logger
@@ -39,7 +40,16 @@ from .replace_images import ImageReplacer
     help="Ingest every *.epub in DIR into BB and R2 (needs --creds)",
 )
 @click.option(
-    "--creds", "ingest_creds_path", metavar="CREDS_JSON", help="creds.json for --ingest"
+    "--collect-garbage",
+    "collect_garbage",
+    is_flag=True,
+    help="Reclaim superseded BB pages and orphaned R2 objects (needs --creds)",
+)
+@click.option(
+    "--creds",
+    "creds_path",
+    metavar="CREDS_JSON",
+    help="creds.json for --ingest/--collect-garbage",
 )
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose progress logging")
 @click.pass_context
@@ -49,7 +59,8 @@ def cli(
     db_creds_path: str | None,
     replace_images_dirs: tuple[str, str],
     ingest_dir: str | None,
-    ingest_creds_path: str | None,
+    collect_garbage: bool,
+    creds_path: str | None,
     verbose: bool,
 ) -> None:
     logger = Logger(verbose)
@@ -60,7 +71,9 @@ def cli(
     elif replace_images_dirs:
         _run_replace_images(replace_images_dirs, logger)
     elif ingest_dir:
-        _run_ingest(ingest_dir, ingest_creds_path, logger)
+        _run_ingest(ingest_dir, creds_path, logger)
+    elif collect_garbage:
+        _run_collect_garbage(creds_path, logger)
     else:
         click.echo(ctx.get_help())
 
@@ -78,6 +91,16 @@ def _run_ingest(ingest_dir: str, creds_path: str | None, logger: Logger) -> None
         ingester.run()
     finally:
         ingester.bb.close()
+
+
+def _run_collect_garbage(creds_path: str | None, logger: Logger) -> None:
+    if not creds_path:
+        raise click.UsageError("--collect-garbage requires --creds CREDS_JSON")
+    collector = GarbageCollector(load_creds(creds_path), logger)
+    try:
+        collector.run()
+    finally:
+        collector.bb.close()
 
 
 def run(argv: list | None = None) -> None:
