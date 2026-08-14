@@ -14,7 +14,7 @@ from .turso_api import TursoClient, extract_db_name
 SCHEMA_SQL = [
     """CREATE TABLE IF NOT EXISTS meta (
         id INTEGER PRIMARY KEY CHECK (id = 1), schema_version INTEGER NOT NULL,
-        db_prefix TEXT NOT NULL, page_size INTEGER NOT NULL,
+        db_prefix BLOB NOT NULL, page_size INTEGER NOT NULL,
         head_version INTEGER NOT NULL DEFAULT 0, gc_horizon INTEGER NOT NULL DEFAULT 0,
         index_dirty_at INTEGER, created_at INTEGER NOT NULL)""",
     """CREATE TABLE IF NOT EXISTS versions (
@@ -34,11 +34,11 @@ SCHEMA_SQL = [
     "CREATE INDEX IF NOT EXISTS idx_snapshots_version ON snapshots(version)",
     "CREATE INDEX IF NOT EXISTS idx_snapshots_heartbeat ON snapshots(heartbeat_at)",
     """CREATE TABLE IF NOT EXISTS bundles (
-        bundle_key TEXT PRIMARY KEY, built_at_version INTEGER NOT NULL,
+        bundle_key BLOB PRIMARY KEY, built_at_version INTEGER NOT NULL,
         byte_size INTEGER NOT NULL, map_rows INTEGER NOT NULL, page_count INTEGER NOT NULL,
         built_at INTEGER NOT NULL, retired_at INTEGER)""",
     """CREATE TABLE IF NOT EXISTS library_index (
-        id INTEGER PRIMARY KEY CHECK (id = 1), object_key TEXT NOT NULL,
+        id INTEGER PRIMARY KEY CHECK (id = 1), object_key BLOB NOT NULL,
         built_at_version INTEGER NOT NULL, byte_size INTEGER NOT NULL,
         doc_count INTEGER NOT NULL, content_hash BLOB NOT NULL, built_at INTEGER NOT NULL)""",
 ]
@@ -74,10 +74,10 @@ class DbInitializer:
         db_path, account_type = self._lookup_user(uid)
         aa = self._connect_aa(db_path)
         self._ensure_schema(aa, account_type)
-        db_prefix = self._ensure_meta(aa)
         self.creds = ensure_user_root_key(self.creds_path, self.creds)
         ikm = base64.b64decode(self.creds.user_root_key)
         umk = self._ensure_umk(aa, account_type, ikm)
+        db_prefix = self._ensure_meta(aa, umk)
         self._ensure_cred_store(aa, uid, account_type, umk)
         self.logger.info(
             f"Initialized database for {uid} (type={account_type}, db_prefix={db_prefix})"
@@ -121,16 +121,18 @@ class DbInitializer:
         aa.execute(CRED_STORE_ADMIN_SQL if is_admin else CRED_STORE_USER_SQL)
         self.logger.verbose("AA schema ready.")
 
-    def _ensure_meta(self, aa: LibsqlClient) -> str:
+    def _ensure_meta(self, aa: LibsqlClient, umk: bytes) -> str:
         rows = aa.query("SELECT db_prefix FROM meta WHERE id = 1")
         if rows:
-            self.logger.verbose(f"meta already initialized, db_prefix={rows[0][0]}")
-            return rows[0][0]
+            db_prefix = self.blob.decrypt(rows[0][0], umk).decode()
+            self.logger.verbose(f"meta already initialized, db_prefix={db_prefix}")
+            return db_prefix
         db_prefix = generate_random_prefix()
         self.logger.verbose(f"Generated db_prefix={db_prefix}, inserting meta row...")
+        wrapped_db_prefix = self.blob.encrypt(db_prefix.encode(), umk)
         aa.execute(
             "INSERT INTO meta (id, schema_version, db_prefix, page_size, created_at) VALUES (1, ?, ?, ?, ?)",
-            [SCHEMA_VERSION, db_prefix, PAGE_SIZE, int(time.time() * 1000)],
+            [SCHEMA_VERSION, wrapped_db_prefix, PAGE_SIZE, int(time.time() * 1000)],
         )
         return db_prefix
 

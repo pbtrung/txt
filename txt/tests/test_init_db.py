@@ -123,11 +123,12 @@ def test_second_run_is_idempotent(tmp_path, engine):
     path = tmp_path / "creds.json"
     path.write_text(json.dumps(data))
 
-    wrapped_umk = CryptoBlob(engine).encrypt(
-        secrets.token_bytes(128), base64.b64decode(root_key)
-    )
+    blob = CryptoBlob(engine)
+    umk = secrets.token_bytes(128)
+    wrapped_umk = blob.encrypt(umk, base64.b64decode(root_key))
+    wrapped_db_prefix = blob.encrypt(b"existing-prefix", umk)
     FakeLibsqlClient.preset[AA_URL] = {
-        "SELECT db_prefix": [["existing-prefix"]],
+        "SELECT db_prefix": [[wrapped_db_prefix]],
         "SELECT umk FROM key_store": [[wrapped_umk]],
         "SELECT content FROM cred_store": [[b"already-there"]],
     }
@@ -152,3 +153,12 @@ def test_user_account_key_store_has_no_kem_keypair(creds_path):
         c for c in aa.calls if c[0] == "execute" and "INSERT INTO key_store" in c[1]
     )
     assert "pubkey" not in key_store_insert[1]
+
+
+def test_db_prefix_is_stored_wrapped_not_plaintext(creds_path):
+    DbInitializer(load_creds(creds_path), creds_path, NullLogger()).run()
+    aa = FakeLibsqlClient.instances[AA_URL]
+    meta_insert = next(c for c in aa.calls if c[0] == "execute" and "INSERT INTO meta" in c[1])
+    wrapped_db_prefix = meta_insert[2][1]
+    assert isinstance(wrapped_db_prefix, bytes)
+    assert wrapped_db_prefix[0:2] == b"\x54\x58"
