@@ -13,14 +13,18 @@ from pathlib import Path
 import brotli
 
 from .account_session import AccountSession
-from .bb_engine import BBEngine
+from .bb_engine import PAGE_SIZE, BBEngine
+from .bundle import BundleBuilder
 from .creds import Creds
 from .crypto_blob import CryptoBlob
 from .libsql_client import LibsqlClient
+from .library_index import LibraryIndexBuilder
 from .logger import Logger
 from .opf import find_opf_sidecar, parse_opf_metadata
 from .r2_client import R2Client
 from .random_token import generate_random_prefix
+
+BUNDLE_STALE_FRACTION = 0.25
 
 MIN_PART_SIZE = 49999
 MAX_PART_SIZE = 99999
@@ -67,17 +71,20 @@ class TxtIngester:
         self.r2 = None
         self.db_prefix = None
         self.head_version = 0
+        self.umk = None
+        self.db_master_key = None
 
     def run(self) -> None:
         self._validate_creds()
         self.r2 = R2Client(self.creds.r2_config)
         uid, account_type, aa = self.session.connect()
         ikm = self._decode_user_root_key()
-        umk = self._require_umk(aa, ikm)
-        db_master_key = self._require_db_master_key(aa, uid, account_type, umk)
-        self.db_prefix = self._require_db_prefix(aa, umk)
-        self._open_bb(aa, db_master_key)
+        self.umk = self._require_umk(aa, ikm)
+        self.db_master_key = self._require_db_master_key(aa, uid, account_type, self.umk)
+        self.db_prefix = self._require_db_prefix(aa, self.umk)
+        self._open_bb(aa, self.db_master_key)
         self._ingest_all(aa)
+        self._rebuild_derived_artifacts(aa)
         self.logger.info(f"Ingest complete: {self.input_dir}")
 
     def _validate_creds(self) -> None:
@@ -219,3 +226,83 @@ class TxtIngester:
     def _insert_page_stmt(self, page_no: int, version: int, data: bytes) -> tuple:
         sql = "INSERT INTO page_versions (page_no, version_created, data) VALUES (?, ?, ?)"
         return sql, [page_no, version, data]
+
+    def _rebuild_derived_artifacts(self, aa: LibsqlClient) -> None:
+        self._try_rebuild(aa, self._rebuild_bundle, "bundle")
+        self._try_rebuild(aa, self._rebuild_library_index, "library index")
+
+    def _try_rebuild(self, aa: LibsqlClient, rebuild: callable, label: str) -> None:
+        # Both are derived, best-effort artifacts (docs/data_model.md §6.3, §8.2):
+        # their AA row is only written after a successful R2 PUT, so a failure
+        # here leaves no partial state and is safe to retry on the next run.
+        try:
+            rebuild(aa)
+        except Exception as exc:
+            self.logger.info(f"{label} rebuild failed, will retry next run: {exc}")
+
+    def _rebuild_bundle(self, aa: LibsqlClient) -> None:
+        live_page_count = self.bb.page_count()
+        current = aa.query("SELECT bundle_key, built_at_version FROM bundles WHERE retired_at IS NULL")
+        if current and not self._bundle_stale(aa, current[0][1], live_page_count):
+            return
+        self._build_and_write_bundle(aa, current)
+
+    def _bundle_stale(self, aa: LibsqlClient, built_at_version: int, live_page_count: int) -> bool:
+        rows = aa.query(
+            "SELECT COUNT(DISTINCT page_no) FROM page_versions WHERE version_created > ? OR version_deleted > ?",
+            [built_at_version, built_at_version],
+        )
+        changed = rows[0][0] if rows else 0
+        return live_page_count > 0 and changed > BUNDLE_STALE_FRACTION * live_page_count
+
+    def _build_and_write_bundle(self, aa: LibsqlClient, current: list) -> None:
+        live_pages = self._load_live_pages_with_version(aa)
+        builder = BundleBuilder(self.blob, self.db_master_key)
+        encrypted, map_rows, hot_page_count = builder.build(live_pages, PAGE_SIZE, self.head_version)
+        key = generate_random_prefix()
+        self.r2.put_object(f"{self.db_prefix}/b/{key}", encrypted)
+        if current:
+            aa.execute("UPDATE bundles SET retired_at = ? WHERE bundle_key = ?", [int(time.time() * 1000), current[0][0]])
+        self._insert_bundle_row(aa, key, len(encrypted), map_rows, hot_page_count)
+
+    def _insert_bundle_row(self, aa: LibsqlClient, key: str, byte_size: int, map_rows: int, page_count: int) -> None:
+        wrapped_key = self.blob.encrypt(key.encode(), self.umk)
+        aa.execute(
+            "INSERT INTO bundles (bundle_key, built_at_version, byte_size, map_rows, page_count, built_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            [wrapped_key, self.head_version, byte_size, map_rows, page_count, int(time.time() * 1000)],
+        )
+
+    def _load_live_pages_with_version(self, aa: LibsqlClient) -> dict:
+        rows = aa.query(
+            "SELECT page_no, version_created, data FROM page_versions WHERE version_created <= ? "
+            "AND (version_deleted IS NULL OR version_deleted > ?)",
+            [self.head_version, self.head_version],
+        )
+        return {page_no: (version_created, data) for page_no, version_created, data in rows}
+
+    def _rebuild_library_index(self, aa: LibsqlClient) -> None:
+        rows = aa.query("SELECT object_key, built_at_version FROM library_index WHERE id = 1")
+        if rows and rows[0][1] == self.head_version:
+            return
+        key = self.blob.decrypt(rows[0][0], self.umk).decode() if rows else generate_random_prefix()
+        builder = LibraryIndexBuilder(self.bb, self.blob, self.db_master_key)
+        encrypted, doc_count, content_hash = builder.build(self.head_version)
+        self.r2.put_object(f"{self.db_prefix}/i/{key}", encrypted)
+        self._upsert_library_index_row(aa, rows, key, len(encrypted), doc_count, content_hash)
+
+    def _upsert_library_index_row(self, aa: LibsqlClient, rows: list, key: str, byte_size: int, doc_count: int, content_hash: bytes) -> None:
+        now = int(time.time() * 1000)
+        if rows:
+            aa.execute(
+                "UPDATE library_index SET built_at_version = ?, byte_size = ?, doc_count = ?, "
+                "content_hash = ?, built_at = ? WHERE id = 1",
+                [self.head_version, byte_size, doc_count, content_hash, now],
+            )
+            return
+        wrapped_key = self.blob.encrypt(key.encode(), self.umk)
+        aa.execute(
+            "INSERT INTO library_index (id, object_key, built_at_version, byte_size, doc_count, content_hash, built_at) "
+            "VALUES (1, ?, ?, ?, ?, ?, ?)",
+            [wrapped_key, self.head_version, byte_size, doc_count, content_hash, now],
+        )

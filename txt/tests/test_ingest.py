@@ -52,6 +52,8 @@ class FakeAaState:
     def __init__(self):
         self.head_version = 0
         self.pages = {}  # page_no -> (version_created, version_deleted, data)
+        self.bundles = []  # list of dicts, newest last
+        self.library_index = None  # dict or None
 
     def apply(self, sql: str, args: list) -> None:
         if "UPDATE meta SET head_version" in sql:
@@ -64,6 +66,23 @@ class FakeAaState:
             if page_no in self.pages:
                 vc, _vd, data = self.pages[page_no]
                 self.pages[page_no] = (vc, version, data)
+        elif "INSERT INTO bundles" in sql:
+            keys = ["bundle_key", "built_at_version", "byte_size", "map_rows", "page_count", "built_at"]
+            self.bundles.append({**dict(zip(keys, args)), "retired_at": None})
+        elif "UPDATE bundles SET retired_at" in sql:
+            retired_at, bundle_key = args
+            for bundle in self.bundles:
+                if bundle["bundle_key"] == bundle_key:
+                    bundle["retired_at"] = retired_at
+        elif "INSERT INTO library_index" in sql:
+            keys = ["object_key", "built_at_version", "byte_size", "doc_count", "content_hash", "built_at"]
+            self.library_index = dict(zip(keys, args))
+        elif "UPDATE library_index SET built_at_version" in sql:
+            built_at_version, byte_size, doc_count, content_hash, built_at = args
+            self.library_index.update(
+                built_at_version=built_at_version, byte_size=byte_size,
+                doc_count=doc_count, content_hash=content_hash, built_at=built_at,
+            )
 
     def live_pages(self) -> list:
         hv = self.head_version
@@ -72,6 +91,28 @@ class FakeAaState:
             for page_no, (vc, vd, data) in self.pages.items()
             if vc <= hv and (vd is None or vd > hv)
         ]
+
+    def live_pages_with_version(self) -> list:
+        hv = self.head_version
+        return [
+            [page_no, vc, data]
+            for page_no, (vc, vd, data) in self.pages.items()
+            if vc <= hv and (vd is None or vd > hv)
+        ]
+
+    def live_bundle(self) -> list:
+        for bundle in self.bundles:
+            if bundle["retired_at"] is None:
+                return [[bundle["bundle_key"], bundle["built_at_version"]]]
+        return []
+
+    def changed_page_count(self, since_version: int) -> int:
+        return sum(1 for _pn, (vc, vd, _d) in self.pages.items() if vc > since_version or (vd or 0) > since_version)
+
+    def library_index_row(self) -> list:
+        if self.library_index is None:
+            return []
+        return [[self.library_index["object_key"], self.library_index["built_at_version"]]]
 
 
 class FakeLibsqlClient:
@@ -98,10 +139,19 @@ class FakeLibsqlClient:
     def query(self, sql, args=None):
         normalized = " ".join(sql.split())
         self.calls.append(("query", normalized, args))
+        state = FakeLibsqlClient.states[self.url]
         if "SELECT head_version FROM meta" in normalized:
-            return [[FakeLibsqlClient.states[self.url].head_version]]
+            return [[state.head_version]]
         if "SELECT page_no, data FROM page_versions" in normalized:
-            return FakeLibsqlClient.states[self.url].live_pages()
+            return state.live_pages()
+        if "SELECT page_no, version_created, data FROM page_versions" in normalized:
+            return state.live_pages_with_version()
+        if "SELECT bundle_key, built_at_version FROM bundles" in normalized:
+            return state.live_bundle()
+        if "SELECT COUNT(DISTINCT page_no) FROM page_versions" in normalized:
+            return [[state.changed_page_count(args[0])]]
+        if "SELECT object_key, built_at_version FROM library_index" in normalized:
+            return state.library_index_row()
         for needle, rows in FakeLibsqlClient.preset.get(self.url, {}).items():
             if needle in normalized:
                 return rows
@@ -178,6 +228,10 @@ def _write_epub(directory, name, size):
     return path
 
 
+def _calls_under(r2, db_prefix, population):
+    return [c for c in r2.put_calls if c[0].startswith(f"{db_prefix}/{population}/")]
+
+
 def test_split_parts_within_range_for_large_file():
     for size in (100_000, 250_000, 1_000_000, 3_333_333):
         parts = split_parts(size)
@@ -197,8 +251,9 @@ def test_ingest_uploads_part_and_writes_bb_row(account, tmp_path):
     TxtIngester(src, load_creds(creds_path), NullLogger()).run()
 
     r2 = FakeR2Client.instances[-1]
-    assert len(r2.put_calls) == 1
-    key, body = r2.put_calls[0]
+    part_calls = _calls_under(r2, db_prefix, "t")
+    assert len(part_calls) == 1
+    key, body = part_calls[0]
     assert key.startswith(f"{db_prefix}/t/")
     assert body != b"\x00" * len(body)  # actually encrypted, not the zero-filled buffer
 
@@ -210,15 +265,15 @@ def test_ingest_uploads_part_and_writes_bb_row(account, tmp_path):
 
 
 def test_ingest_skips_already_ingested_filename(account, tmp_path):
-    creds_path, _ = account
+    creds_path, db_prefix = account
     src = tmp_path / "src"
     _write_epub(src, "book1.epub", 1000)
 
     TxtIngester(src, load_creds(creds_path), NullLogger()).run()
-    first_upload_count = len(FakeR2Client.instances[-1].put_calls)
+    first_upload_count = len(_calls_under(FakeR2Client.instances[-1], db_prefix, "t"))
 
     TxtIngester(src, load_creds(creds_path), NullLogger()).run()
-    second_upload_count = len(FakeR2Client.instances[-1].put_calls)
+    second_upload_count = len(_calls_under(FakeR2Client.instances[-1], db_prefix, "t"))
 
     assert first_upload_count == 1
     assert second_upload_count == 0
@@ -254,11 +309,57 @@ def test_ingest_writes_opf_metadata(account, tmp_path):
 
 
 def test_ingest_splits_large_file_into_multiple_parts(account, tmp_path):
-    creds_path, _ = account
+    creds_path, db_prefix = account
     src = tmp_path / "src"
     _write_epub(src, "big.epub", 150_000)
 
     TxtIngester(src, load_creds(creds_path), NullLogger()).run()
 
     r2 = FakeR2Client.instances[-1]
-    assert len(r2.put_calls) == len(split_parts(150_000))
+    assert len(_calls_under(r2, db_prefix, "t")) == len(split_parts(150_000))
+
+
+def test_ingest_builds_bundle_and_library_index(account, tmp_path):
+    creds_path, db_prefix = account
+    src = tmp_path / "src"
+    _write_epub(src, "book1.epub", 1000)
+
+    TxtIngester(src, load_creds(creds_path), NullLogger()).run()
+
+    r2 = FakeR2Client.instances[-1]
+    assert len(_calls_under(r2, db_prefix, "b")) == 1
+    assert len(_calls_under(r2, db_prefix, "i")) == 1
+
+    aa = FakeLibsqlClient.instances[AA_URL]
+    state = FakeLibsqlClient.states[AA_URL]
+    assert len(state.bundles) == 1
+    assert state.bundles[0]["built_at_version"] == state.head_version
+    assert state.library_index["built_at_version"] == state.head_version
+    bundle_inserts = [c for c in aa.calls if c[0] == "execute" and "INSERT INTO bundles" in c[1]]
+    assert len(bundle_inserts) == 1
+
+
+def test_ingest_rerun_with_no_new_files_skips_derived_rebuild(account, tmp_path):
+    creds_path, db_prefix = account
+    src = tmp_path / "src"
+    _write_epub(src, "book1.epub", 1000)
+
+    TxtIngester(src, load_creds(creds_path), NullLogger()).run()
+    TxtIngester(src, load_creds(creds_path), NullLogger()).run()
+
+    r2 = FakeR2Client.instances[-1]
+    assert len(_calls_under(r2, db_prefix, "b")) == 0
+    assert len(_calls_under(r2, db_prefix, "i")) == 0
+    assert len(FakeLibsqlClient.states[AA_URL].bundles) == 1
+
+
+def test_library_index_derived_rebuild_failure_does_not_crash_ingest(account, tmp_path):
+    creds_path, _ = account
+    src = tmp_path / "src"
+    _write_epub(src, "book1.epub", 1000)
+    FakeR2Client.should_fail = True
+
+    ingester = TxtIngester(src, load_creds(creds_path), NullLogger())
+    ingester.run()  # must not raise: derived-artifact failures are logged, not fatal
+
+    assert ingester.bb.query("SELECT name FROM txt") == []
