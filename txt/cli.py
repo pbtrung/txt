@@ -21,7 +21,12 @@ from .logger import Logger
 )
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose progress logging")
 @click.pass_context
-def cli(ctx: click.Context, admin_creds_path: str | None, db_creds_path: str | None, verbose: bool) -> None:
+def cli(
+    ctx: click.Context,
+    admin_creds_path: str | None,
+    db_creds_path: str | None,
+    verbose: bool,
+) -> None:
     logger = Logger(verbose)
     if admin_creds_path:
         AdminInitializer(load_creds(admin_creds_path), logger).run()

@@ -1,4 +1,8 @@
-from txt.random_token import generate_db_path, generate_random_prefix, to_base32_crockford
+from txt.random_token import (
+    generate_db_path,
+    generate_random_prefix,
+    to_base32_crockford,
+)
 
 CROCKFORD_CHARS = set("0123456789abcdefghjkmnpqrstvwxyz")
 

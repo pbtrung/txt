@@ -27,9 +27,13 @@ def test_aead_decrypt_rejects_tampering(engine, field):
     ciphertext, tag = engine.aead_encrypt(key, nonce, aad, plaintext)
     tampered = {"ciphertext": ciphertext, "aad": aad, "tag": tag}
     original = tampered[field]
-    tampered[field] = bytes([original[0] ^ 0xFF]) + original[1:] if original else b"\x01"
+    tampered[field] = (
+        bytes([original[0] ^ 0xFF]) + original[1:] if original else b"\x01"
+    )
     with pytest.raises(ValueError):
-        engine.aead_decrypt(key, nonce, tampered["aad"], tampered["ciphertext"], tampered["tag"])
+        engine.aead_decrypt(
+            key, nonce, tampered["aad"], tampered["ciphertext"], tampered["tag"]
+        )
 
 
 def test_aead_decrypt_rejects_wrong_key(engine):

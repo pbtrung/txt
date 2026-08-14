@@ -77,7 +77,9 @@ class DbInitializer:
         ikm = base64.b64decode(self.creds.user_root_key)
         umk = self._ensure_umk(aa, account_type, ikm)
         self._ensure_cred_store(aa, uid, account_type, umk)
-        self.logger.info(f"Initialized database for {uid} (type={account_type}, db_prefix={db_prefix})")
+        self.logger.info(
+            f"Initialized database for {uid} (type={account_type}, db_prefix={db_prefix})"
+        )
 
     def _sign_in(self) -> str:
         self.logger.verbose(f"Signing in to Firebase as {self.creds.firebase_email}...")
@@ -93,7 +95,9 @@ class DbInitializer:
         ctl = LibsqlClient(self.creds.turso_ctl_db_url, ctl_token)
         rows = ctl.query("SELECT db_path, type FROM users WHERE id = ?", [uid])
         if not rows:
-            raise ValueError(f"uid={uid} has no users row in ctl; run --init-admin first")
+            raise ValueError(
+                f"uid={uid} has no users row in ctl; run --init-admin first"
+            )
         self.logger.verbose(f"Found db_path={rows[0][0]}, type={rows[0][1]}")
         return rows[0][0], rows[0][1]
 
@@ -127,7 +131,9 @@ class DbInitializer:
 
     def _ensure_umk(self, aa: LibsqlClient, account_type: str, ikm: bytes) -> bytes:
         if account_type != "admin":
-            self.logger.verbose("Deriving umk for a non-admin account (never persisted)...")
+            self.logger.verbose(
+                "Deriving umk for a non-admin account (never persisted)..."
+            )
             return self.engine.hkdf_sha3_512(ikm, b"", UMK_INFO, 128)
         rows = aa.query("SELECT umk FROM key_store WHERE id = 1")
         if rows:
@@ -148,24 +154,36 @@ class DbInitializer:
         self.logger.verbose("key_store initialized.")
         return umk
 
-    def _ensure_cred_store(self, aa: LibsqlClient, uid: str, account_type: str, umk: bytes) -> None:
+    def _ensure_cred_store(
+        self, aa: LibsqlClient, uid: str, account_type: str, umk: bytes
+    ) -> None:
         existing = self._existing_cred_store(aa, uid, account_type)
         if existing:
             self.logger.verbose("cred_store already has a backup row for this account.")
             return
         self._insert_cred_store(aa, uid, account_type, umk)
 
-    def _existing_cred_store(self, aa: LibsqlClient, uid: str, account_type: str) -> list:
+    def _existing_cred_store(
+        self, aa: LibsqlClient, uid: str, account_type: str
+    ) -> list:
         if account_type == "admin":
             return aa.query("SELECT content FROM cred_store WHERE user_id = ?", [uid])
         return aa.query("SELECT content FROM cred_store WHERE id = 1")
 
-    def _insert_cred_store(self, aa: LibsqlClient, uid: str, account_type: str, umk: bytes) -> None:
+    def _insert_cred_store(
+        self, aa: LibsqlClient, uid: str, account_type: str, umk: bytes
+    ) -> None:
         db_master_key = base64.b64encode(secrets.token_bytes(256)).decode()
-        payload = {"display_name": self.creds.display_name, "db_master_key": db_master_key}
+        payload = {
+            "display_name": self.creds.display_name,
+            "db_master_key": db_master_key,
+        }
         content = self.blob.encrypt_json(payload, umk)
         if account_type == "admin":
-            aa.execute("INSERT INTO cred_store (user_id, content) VALUES (?, ?)", [uid, content])
+            aa.execute(
+                "INSERT INTO cred_store (user_id, content) VALUES (?, ?)",
+                [uid, content],
+            )
         else:
             aa.execute("INSERT INTO cred_store (id, content) VALUES (1, ?)", [content])
         self.logger.verbose("cred_store row inserted.")

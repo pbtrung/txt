@@ -3,7 +3,9 @@ import time
 
 import wasmtime
 
-WASM_PATH = pathlib.Path(__file__).resolve().parent.parent / "sqlcipher" / "sqlcipher.wasm"
+WASM_PATH = (
+    pathlib.Path(__file__).resolve().parent.parent / "sqlcipher" / "sqlcipher.wasm"
+)
 
 # Composite ML-KEM-1024 + X448 sizes (docs/crypto.md's Composite KEM Key Sizes).
 KEM_PK_SIZE = 1624
@@ -46,15 +48,23 @@ _ENV_STUB_SIGNATURES = {
     "_tzset_js": (["i32", "i32", "i32", "i32"], []),
 }
 
-_VALTYPE = {"i32": wasmtime.ValType.i32(), "i64": wasmtime.ValType.i64(), "f64": wasmtime.ValType.f64()}
+_VALTYPE = {
+    "i32": wasmtime.ValType.i32(),
+    "i64": wasmtime.ValType.i64(),
+    "f64": wasmtime.ValType.f64(),
+}
 
 
 def _stub_functype(params, results):
-    return wasmtime.FuncType([_VALTYPE[p] for p in params], [_VALTYPE[r] for r in results])
+    return wasmtime.FuncType(
+        [_VALTYPE[p] for p in params], [_VALTYPE[r] for r in results]
+    )
 
 
 def _define(linker, store, name, params, results, fn):
-    linker.define(store, "env", name, wasmtime.Func(store, _stub_functype(params, results), fn))
+    linker.define(
+        store, "env", name, wasmtime.Func(store, _stub_functype(params, results), fn)
+    )
 
 
 def _define_env_stubs(linker, store):
@@ -71,7 +81,9 @@ def _define_env_abort(linker, store):
         raise RuntimeError("sqlcipher.wasm assertion failed")
 
     _define(linker, store, "_abort_js", [], [], abort_js)
-    _define(linker, store, "__assert_fail", ["i32", "i32", "i32", "i32"], [], assert_fail)
+    _define(
+        linker, store, "__assert_fail", ["i32", "i32", "i32", "i32"], [], assert_fail
+    )
 
 
 def _define_env_lifecycle(linker, store):
@@ -161,32 +173,89 @@ class LeancryptoEngine:
             self._free(ptr)
 
     def hkdf_sha3_512(self, ikm: bytes, salt: bytes, info: bytes, dlen: int) -> bytes:
-        ikm_ptr, salt_ptr, info_ptr, out_ptr = self._write(ikm), self._write(salt), self._write(info), self._malloc(dlen)
+        ikm_ptr, salt_ptr, info_ptr, out_ptr = (
+            self._write(ikm),
+            self._write(salt),
+            self._write(info),
+            self._malloc(dlen),
+        )
         try:
-            self._call("lc_wasm_hkdf_sha3_512", ikm_ptr, len(ikm), salt_ptr, len(salt), info_ptr, len(info), out_ptr, dlen)
+            self._call(
+                "lc_wasm_hkdf_sha3_512",
+                ikm_ptr,
+                len(ikm),
+                salt_ptr,
+                len(salt),
+                info_ptr,
+                len(info),
+                out_ptr,
+                dlen,
+            )
             return self._read(out_ptr, dlen)
         finally:
             self._free_all(ikm_ptr, salt_ptr, info_ptr, out_ptr)
 
-    def aead_encrypt(self, key: bytes, nonce: bytes, aad: bytes, plaintext: bytes) -> tuple[bytes, bytes]:
-        key_ptr, nonce_ptr, aad_ptr = self._write(key), self._write(nonce), self._write(aad)
-        pt_ptr, ct_ptr, tag_ptr = self._write(plaintext), self._malloc(len(plaintext) or 1), self._malloc(self.tag_size)
+    def aead_encrypt(
+        self, key: bytes, nonce: bytes, aad: bytes, plaintext: bytes
+    ) -> tuple[bytes, bytes]:
+        key_ptr, nonce_ptr, aad_ptr = (
+            self._write(key),
+            self._write(nonce),
+            self._write(aad),
+        )
+        pt_ptr, ct_ptr, tag_ptr = (
+            self._write(plaintext),
+            self._malloc(len(plaintext) or 1),
+            self._malloc(self.tag_size),
+        )
         try:
             self._call(
-                "lc_wasm_aead_encrypt", key_ptr, self.key_size, nonce_ptr, self.nonce_size,
-                aad_ptr, len(aad), pt_ptr, len(plaintext), ct_ptr, tag_ptr, self.tag_size,
+                "lc_wasm_aead_encrypt",
+                key_ptr,
+                self.key_size,
+                nonce_ptr,
+                self.nonce_size,
+                aad_ptr,
+                len(aad),
+                pt_ptr,
+                len(plaintext),
+                ct_ptr,
+                tag_ptr,
+                self.tag_size,
             )
-            return self._read(ct_ptr, len(plaintext)), self._read(tag_ptr, self.tag_size)
+            return self._read(ct_ptr, len(plaintext)), self._read(
+                tag_ptr, self.tag_size
+            )
         finally:
             self._free_all(key_ptr, nonce_ptr, aad_ptr, pt_ptr, ct_ptr, tag_ptr)
 
-    def aead_decrypt(self, key: bytes, nonce: bytes, aad: bytes, ciphertext: bytes, tag: bytes) -> bytes:
-        key_ptr, nonce_ptr, aad_ptr = self._write(key), self._write(nonce), self._write(aad)
-        ct_ptr, tag_ptr, pt_ptr = self._write(ciphertext), self._write(tag), self._malloc(len(ciphertext) or 1)
+    def aead_decrypt(
+        self, key: bytes, nonce: bytes, aad: bytes, ciphertext: bytes, tag: bytes
+    ) -> bytes:
+        key_ptr, nonce_ptr, aad_ptr = (
+            self._write(key),
+            self._write(nonce),
+            self._write(aad),
+        )
+        ct_ptr, tag_ptr, pt_ptr = (
+            self._write(ciphertext),
+            self._write(tag),
+            self._malloc(len(ciphertext) or 1),
+        )
         try:
             self._call(
-                "lc_wasm_aead_decrypt", key_ptr, self.key_size, nonce_ptr, self.nonce_size,
-                aad_ptr, len(aad), ct_ptr, len(ciphertext), pt_ptr, tag_ptr, self.tag_size,
+                "lc_wasm_aead_decrypt",
+                key_ptr,
+                self.key_size,
+                nonce_ptr,
+                self.nonce_size,
+                aad_ptr,
+                len(aad),
+                ct_ptr,
+                len(ciphertext),
+                pt_ptr,
+                tag_ptr,
+                self.tag_size,
             )
             return self._read(pt_ptr, len(ciphertext))
         finally:
@@ -201,7 +270,11 @@ class LeancryptoEngine:
             self._free_all(pk_ptr, sk_ptr)
 
     def kem_encapsulate(self, pk: bytes) -> tuple[bytes, bytes]:
-        ct_ptr, ss_ptr, pk_ptr = self._malloc(KEM_CT_SIZE), self._malloc(KEM_SS_SIZE), self._write(pk)
+        ct_ptr, ss_ptr, pk_ptr = (
+            self._malloc(KEM_CT_SIZE),
+            self._malloc(KEM_SS_SIZE),
+            self._write(pk),
+        )
         try:
             self._call("lc_kyber_1024_x448_enc", ct_ptr, ss_ptr, pk_ptr)
             return self._read(ct_ptr, KEM_CT_SIZE), self._read(ss_ptr, KEM_SS_SIZE)
@@ -209,7 +282,11 @@ class LeancryptoEngine:
             self._free_all(ct_ptr, ss_ptr, pk_ptr)
 
     def kem_decapsulate(self, ct: bytes, sk: bytes) -> bytes:
-        ss_ptr, ct_ptr, sk_ptr = self._malloc(KEM_SS_SIZE), self._write(ct), self._write(sk)
+        ss_ptr, ct_ptr, sk_ptr = (
+            self._malloc(KEM_SS_SIZE),
+            self._write(ct),
+            self._write(sk),
+        )
         try:
             self._call("lc_kyber_1024_x448_dec", ss_ptr, ct_ptr, sk_ptr)
             return self._read(ss_ptr, KEM_SS_SIZE)

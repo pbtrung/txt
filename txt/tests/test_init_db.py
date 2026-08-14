@@ -70,9 +70,15 @@ def patch_clients(monkeypatch, engine):
 @pytest.fixture
 def creds_path(tmp_path):
     data = {
-        "turso_org_token": "tok", "turso_ctl_db_url": CTL_URL, "turso_group": "g", "turso_org": "x",
-        "firebase_email": "a@b.com", "firebase_password": "pw", "firebase_api_key": "key",
-        "display_name": "Trung", "user_root_key": "",
+        "turso_org_token": "tok",
+        "turso_ctl_db_url": CTL_URL,
+        "turso_group": "g",
+        "turso_org": "x",
+        "firebase_email": "a@b.com",
+        "firebase_password": "pw",
+        "firebase_api_key": "key",
+        "display_name": "Trung",
+        "user_root_key": "",
     }
     path = tmp_path / "creds.json"
     path.write_text(json.dumps(data))
