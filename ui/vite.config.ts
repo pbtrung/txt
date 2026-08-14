@@ -1,4 +1,6 @@
 /// <reference types="vitest/config" />
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -8,6 +10,14 @@ import { defineConfig } from "vite";
 const UI_DIR = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(UI_DIR, "..");
 const DIST_DIR = join(REPO_ROOT, "dist");
+const SQLCIPHER_DIR = join(REPO_ROOT, "sqlcipher");
+
+// Baked into ui/src/crypto/sqlcipherLoader.ts's dynamically-injected
+// <script> tag as its SRI `integrity` attribute.
+function sqlcipherJsIntegrity(): string {
+  const bytes = readFileSync(join(SQLCIPHER_DIR, "sqlcipher.js"));
+  return `sha512-${createHash("sha512").update(bytes).digest("base64")}`;
+}
 
 export default defineConfig({
   // Explicit, not left to default to process.cwd(): there's a single
@@ -16,6 +26,14 @@ export default defineConfig({
   // from the repo root, not from inside ui/ itself.
   root: UI_DIR,
   plugins: [react()],
+  // sqlcipher/ is served as-is at the site root (/sqlcipher.js,
+  // /sqlcipher.wasm) so the browser loader can fetch it directly. The other
+  // files living there (test scripts, the .symbols list) get copied along
+  // too -- harmless build noise, not worth a custom copy step to exclude.
+  publicDir: SQLCIPHER_DIR,
+  define: {
+    __SQLCIPHER_JS_INTEGRITY__: JSON.stringify(sqlcipherJsIntegrity()),
+  },
   build: {
     outDir: DIST_DIR,
     emptyOutDir: true,
