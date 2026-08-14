@@ -37,6 +37,8 @@ s3://{bucket}/{db_prefix}/i/{key}     -- the library index     (AA-owned)
 
 `db_prefix` (`meta`, §3.1), `bundle_key` (`bundles`, §3.4), and `object_key` (`library_index`, §3.5) are stored in AA wrapped by `umk` (docs/crypto.md), not as plaintext strings — AA never holds a readable R2/S3 address, only whoever can unwrap `umk` (via `user_root_key`) can reconstruct one. The base32-Crockford rendering happens client-side, after unwrapping.
 
+`txt.prefix` and `txt_parts.path` (§7) get no such second wrap: they live inside BB, and BB's own SQLCipher page encryption (keyed by `db_master_key`) is already the protection layer for everything stored in it. The `umk` wrap is only needed for fields AA would otherwise hold in the clear.
+
 The remaining populations have different lifecycle owners, so they are separated by prefix: a document's own parts all live under its own `t/{txt.prefix}/`, so deleting a document is a scoped prefix delete rather than a listing over the whole `t/` population (§7.2); bundles are AA-owned derived artefacts, retired and swept independently (§6.3–6.4).
 
 Object bodies are the exact bytes handed to the writer: application-encrypted payloads for parts, bundles, and the library index. No wrapping header, no S3 tags, no user metadata.
@@ -365,7 +367,9 @@ BEGIN
 END;
 ```
 
-`txt_access` carries no index on `last_accessed`; recency ordering is a client-side sort. `last_part_num` is clamped to `txt.n_parts` when a document is opened, which also covers a re-import that shortened the document.
+`txt_access` carries no index on `last_accessed`; recency ordering is a client-side sort. `last_part_num` is clamped to `txt.n_parts` when a document is opened, which also covers a re-import that shortened the document. `part_num` is 1-indexed (1..`n_parts`).
+
+Each part is 49999–99999 bytes: `n = ceil(size / 99999)` parts of `ceil(size / n)` bytes each (a file under 49999 bytes is one undersized part — unavoidable for content that small). Already-compressed source content (an EPUB is itself a ZIP) is split and encrypted as-is, never brotli-compressed a second time; brotli only applies where docs/crypto.md's Encrypt procedure already calls for it (structured JSON payloads, e.g. `txt_meta.metadata`).
 
 ### 7.1 Read position writes
 
