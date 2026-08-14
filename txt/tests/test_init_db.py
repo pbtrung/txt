@@ -110,14 +110,22 @@ def test_second_run_is_idempotent(tmp_path, engine):
 
     root_key = base64.b64encode(secrets.token_bytes(256)).decode()
     data = {
-        "turso_org_token": "tok", "turso_ctl_db_url": CTL_URL, "turso_group": "g", "turso_org": "x",
-        "firebase_email": "a@b.com", "firebase_password": "pw", "firebase_api_key": "key",
-        "display_name": "Trung", "user_root_key": root_key,
+        "turso_org_token": "tok",
+        "turso_ctl_db_url": CTL_URL,
+        "turso_group": "g",
+        "turso_org": "x",
+        "firebase_email": "a@b.com",
+        "firebase_password": "pw",
+        "firebase_api_key": "key",
+        "display_name": "Trung",
+        "user_root_key": root_key,
     }
     path = tmp_path / "creds.json"
     path.write_text(json.dumps(data))
 
-    wrapped_umk = CryptoBlob(engine).encrypt(secrets.token_bytes(128), base64.b64decode(root_key))
+    wrapped_umk = CryptoBlob(engine).encrypt(
+        secrets.token_bytes(128), base64.b64decode(root_key)
+    )
     FakeLibsqlClient.preset[AA_URL] = {
         "SELECT db_prefix": [["existing-prefix"]],
         "SELECT umk FROM key_store": [[wrapped_umk]],
@@ -131,12 +139,16 @@ def test_admin_account_creates_key_store_with_kem_keypair(creds_path):
     FakeLibsqlClient.preset[CTL_URL] = {"SELECT db_path, type": [[DB_PATH, "admin"]]}
     DbInitializer(load_creds(creds_path), creds_path, NullLogger()).run()
     aa = FakeLibsqlClient.instances[AA_URL]
-    key_store_insert = next(c for c in aa.calls if c[0] == "execute" and "INSERT INTO key_store" in c[1])
+    key_store_insert = next(
+        c for c in aa.calls if c[0] == "execute" and "INSERT INTO key_store" in c[1]
+    )
     assert "pubkey" in key_store_insert[1] and "privkey" in key_store_insert[1]
 
 
 def test_user_account_key_store_has_no_kem_keypair(creds_path):
     DbInitializer(load_creds(creds_path), creds_path, NullLogger()).run()
     aa = FakeLibsqlClient.instances[AA_URL]
-    key_store_insert = next(c for c in aa.calls if c[0] == "execute" and "INSERT INTO key_store" in c[1])
+    key_store_insert = next(
+        c for c in aa.calls if c[0] == "execute" and "INSERT INTO key_store" in c[1]
+    )
     assert "pubkey" not in key_store_insert[1]
