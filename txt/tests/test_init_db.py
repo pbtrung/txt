@@ -3,6 +3,7 @@ import json
 import secrets
 
 import pytest
+import requests
 
 import txt.init_db as init_db_module
 from txt.creds import load_creds
@@ -31,11 +32,17 @@ class FakeFirebaseAuth:
 
 class FakeTursoClient:
     created_databases = []
+    missing_until_created = set()
 
     def __init__(self, org_token, org):
         pass
 
     def mint_db_token(self, db_name, authorization="full-access"):
+        already_created = db_name in {name for name, _ in FakeTursoClient.created_databases}
+        if db_name in FakeTursoClient.missing_until_created and not already_created:
+            resp = requests.Response()
+            resp.status_code = 404
+            raise requests.exceptions.HTTPError(response=resp)
         return f"token-for-{db_name}"
 
     def create_database(self, name, group):
@@ -73,6 +80,7 @@ def patch_clients(monkeypatch, engine):
     FakeLibsqlClient.preset = {CTL_URL: {"SELECT db_path, type": [[DB_PATH, "user"]]}}
     FakeLibsqlClient.instances = {}
     FakeTursoClient.created_databases = []
+    FakeTursoClient.missing_until_created = set()
     yield
 
 
@@ -173,19 +181,13 @@ def test_db_prefix_is_stored_wrapped_not_plaintext(creds_path):
     assert wrapped_db_prefix[0:2] == b"\x54\x58"
 
 
-def test_creates_database_when_db_path_is_null(creds_path):
-    FakeLibsqlClient.preset[CTL_URL] = {"SELECT db_path, type": [[None, "user"]]}
+def test_creates_database_when_mint_token_404s(creds_path):
+    FakeTursoClient.missing_until_created = {DB_PATH}
     DbInitializer(load_creds(creds_path), creds_path, NullLogger()).run()
-    assert len(FakeTursoClient.created_databases) == 1
-    created_name, created_group = FakeTursoClient.created_databases[0]
-    assert created_group == "g"
-    ctl = FakeLibsqlClient.instances[CTL_URL]
-    update = next(c for c in ctl.calls if c[0] == "execute" and "UPDATE users SET db_path" in c[1])
-    assert update[2] == [created_name, "uid-123"]
-    aa_url = f"libsql://{created_name}-x.aws-us-east-1.turso.io"
-    assert aa_url in FakeLibsqlClient.instances
+    assert FakeTursoClient.created_databases == [(DB_PATH, "g")]
+    assert AA_URL in FakeLibsqlClient.instances
 
 
-def test_reuses_existing_db_path_without_creating_database(creds_path):
+def test_does_not_create_database_when_mint_succeeds(creds_path):
     DbInitializer(load_creds(creds_path), creds_path, NullLogger()).run()
     assert FakeTursoClient.created_databases == []
