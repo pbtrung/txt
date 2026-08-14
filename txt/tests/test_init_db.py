@@ -5,6 +5,7 @@ import secrets
 import pytest
 import requests
 
+import txt.account_session as account_session_module
 import txt.init_db as init_db_module
 from txt.creds import load_creds
 from txt.init_db import DbInitializer
@@ -75,9 +76,9 @@ class FakeLibsqlClient:
 
 @pytest.fixture(autouse=True)
 def patch_clients(monkeypatch, engine):
-    monkeypatch.setattr(init_db_module, "FirebaseAuth", FakeFirebaseAuth)
-    monkeypatch.setattr(init_db_module, "TursoClient", FakeTursoClient)
-    monkeypatch.setattr(init_db_module, "LibsqlClient", FakeLibsqlClient)
+    monkeypatch.setattr(account_session_module, "FirebaseAuth", FakeFirebaseAuth)
+    monkeypatch.setattr(account_session_module, "TursoClient", FakeTursoClient)
+    monkeypatch.setattr(account_session_module, "LibsqlClient", FakeLibsqlClient)
     monkeypatch.setattr(init_db_module, "LeancryptoEngine", lambda: engine)
     FakeLibsqlClient.preset = {CTL_URL: {"SELECT db_path, type": [[DB_PATH, "user"]]}}
     FakeLibsqlClient.instances = {}

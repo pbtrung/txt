@@ -2,16 +2,13 @@ import base64
 import secrets
 import time
 
-import requests
-
+from .account_session import AccountSession, cred_store_rows
 from .creds import Creds, ensure_user_root_key
 from .crypto_blob import CryptoBlob
-from .firebase_auth import FirebaseAuth
 from .leancrypto_wasm import LeancryptoEngine
 from .libsql_client import LibsqlClient
 from .logger import Logger
 from .random_token import generate_random_prefix
-from .turso_api import TursoClient, extract_db_name
 
 SCHEMA_SQL = [
     """CREATE TABLE IF NOT EXISTS meta (
@@ -67,14 +64,12 @@ class DbInitializer:
         self.creds = creds
         self.creds_path = creds_path
         self.logger = logger
-        self.turso = TursoClient(creds.turso_org_token, creds.turso_org)
+        self.session = AccountSession(creds, logger)
         self.engine = LeancryptoEngine()
         self.blob = CryptoBlob(self.engine)
 
     def run(self) -> None:
-        uid = self._sign_in()
-        db_path, account_type = self._lookup_user(uid)
-        aa = self._connect_aa(db_path)
+        uid, account_type, aa = self.session.connect()
         self._ensure_schema(aa, account_type)
         self.creds = ensure_user_root_key(self.creds_path, self.creds)
         ikm = base64.b64decode(self.creds.user_root_key)
@@ -84,44 +79,6 @@ class DbInitializer:
         self.logger.info(
             f"Initialized database for {uid} (type={account_type}, db_prefix={db_prefix})"
         )
-
-    def _sign_in(self) -> str:
-        self.logger.verbose(f"Signing in to Firebase as {self.creds.firebase_email}...")
-        auth = FirebaseAuth(self.creds.firebase_api_key)
-        uid = auth.sign_in(self.creds.firebase_email, self.creds.firebase_password)
-        self.logger.verbose(f"Firebase sign-in succeeded, uid={uid}")
-        return uid
-
-    def _lookup_user(self, uid: str) -> tuple[str, str]:
-        self.logger.verbose("Looking up this user's db_path in ctl...")
-        db_name = extract_db_name(self.creds.turso_ctl_db_url, self.creds.turso_org)
-        ctl_token = self.turso.mint_db_token(db_name)
-        ctl = LibsqlClient(self.creds.turso_ctl_db_url, ctl_token)
-        rows = ctl.query("SELECT db_path, type FROM users WHERE id = ?", [uid])
-        if not rows:
-            raise ValueError(
-                f"uid={uid} has no users row in ctl; run --init-admin first"
-            )
-        self.logger.verbose(f"Found db_path={rows[0][0]}, type={rows[0][1]}")
-        return rows[0][0], rows[0][1]
-
-    def _connect_aa(self, db_path: str) -> LibsqlClient:
-        token = self._mint_or_create(db_path)
-        url = f"libsql://{db_path}-{self.creds.turso_org}.aws-us-east-1.turso.io"
-        return LibsqlClient(url, token)
-
-    def _mint_or_create(self, db_path: str) -> str:
-        self.logger.verbose(f"Minting a database token for {db_path}...")
-        try:
-            return self.turso.mint_db_token(db_path)
-        except requests.exceptions.HTTPError as err:
-            if err.response is None or err.response.status_code != 404:
-                raise
-            self.logger.verbose(
-                f"Database {db_path} does not exist yet, creating it..."
-            )
-            self.turso.create_database(db_path, self.creds.turso_group)
-            return self.turso.mint_db_token(db_path)
 
     def _ensure_schema(self, aa: LibsqlClient, account_type: str) -> None:
         self.logger.verbose("Ensuring AA schema exists...")
@@ -148,15 +105,13 @@ class DbInitializer:
         return db_prefix
 
     def _ensure_umk(self, aa: LibsqlClient, account_type: str, ikm: bytes) -> bytes:
-        rows = aa.query("SELECT umk FROM key_store WHERE id = 1")
-        if rows:
+        umk = self.session.read_umk(aa, self.blob, ikm)
+        if umk is not None:
             self.logger.verbose("key_store already initialized, unwrapping umk...")
-            return self.blob.decrypt(rows[0][0], ikm)
+            return umk
         return self._create_key_store(aa, ikm, account_type)
 
-    def _create_key_store(
-        self, aa: LibsqlClient, ikm: bytes, account_type: str
-    ) -> bytes:
+    def _create_key_store(self, aa: LibsqlClient, ikm: bytes, account_type: str) -> bytes:
         self.logger.verbose("Generating umk for key_store...")
         umk = secrets.token_bytes(128)
         wrapped_umk = self.blob.encrypt(umk, ikm)
@@ -167,9 +122,7 @@ class DbInitializer:
         self.logger.verbose("key_store initialized.")
         return umk
 
-    def _insert_admin_key_store(
-        self, aa: LibsqlClient, umk: bytes, wrapped_umk: bytes
-    ) -> None:
+    def _insert_admin_key_store(self, aa: LibsqlClient, umk: bytes, wrapped_umk: bytes) -> None:
         self.logger.verbose("Generating composite KEM keypair for key_store...")
         pk, sk = self.engine.kem_keypair()
         wrapped_privkey = self.blob.encrypt(sk, umk)
@@ -178,41 +131,21 @@ class DbInitializer:
             [wrapped_umk, pk, wrapped_privkey],
         )
 
-    def _ensure_cred_store(
-        self, aa: LibsqlClient, uid: str, account_type: str, umk: bytes
-    ) -> None:
-        existing = self._existing_cred_store(aa, uid, account_type)
-        if existing:
+    def _ensure_cred_store(self, aa: LibsqlClient, uid: str, account_type: str, umk: bytes) -> None:
+        if cred_store_rows(aa, uid, account_type):
             self.logger.verbose("cred_store already has a backup row for this account.")
             return
         self._insert_cred_store(aa, uid, account_type, umk)
 
-    def _existing_cred_store(
-        self, aa: LibsqlClient, uid: str, account_type: str
-    ) -> list:
-        if account_type == "admin":
-            return aa.query("SELECT content FROM cred_store WHERE user_id = ?", [uid])
-        return aa.query("SELECT content FROM cred_store WHERE id = 1")
-
-    def _insert_cred_store(
-        self, aa: LibsqlClient, uid: str, account_type: str, umk: bytes
-    ) -> None:
+    def _insert_cred_store(self, aa: LibsqlClient, uid: str, account_type: str, umk: bytes) -> None:
         db_master_key = base64.b64encode(secrets.token_bytes(256)).decode()
-        payload = {
-            "display_name": self.creds.display_name,
-            "db_master_key": db_master_key,
-        }
+        payload = {"display_name": self.creds.display_name, "db_master_key": db_master_key}
         content = self.blob.encrypt_json(payload, umk)
         self._write_cred_store(aa, uid, account_type, content)
         self.logger.verbose("cred_store row inserted.")
 
-    def _write_cred_store(
-        self, aa: LibsqlClient, uid: str, account_type: str, content: bytes
-    ) -> None:
+    def _write_cred_store(self, aa: LibsqlClient, uid: str, account_type: str, content: bytes) -> None:
         if account_type == "admin":
-            aa.execute(
-                "INSERT INTO cred_store (user_id, content) VALUES (?, ?)",
-                [uid, content],
-            )
+            aa.execute("INSERT INTO cred_store (user_id, content) VALUES (?, ?)", [uid, content])
         else:
             aa.execute("INSERT INTO cred_store (id, content) VALUES (1, ?)", [content])
