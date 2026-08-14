@@ -17,19 +17,33 @@ def _cell_value(cell: dict):
     return cell.get("value")
 
 
+def _build_stmt(sql: str, args: list | None) -> dict:
+    return {"sql": sql, "args": [_to_arg(a) for a in (args or [])]}
+
+
 class LibsqlClient:
     def __init__(self, db_url: str, token: str):
         self.base = db_url.replace("libsql://", "https://", 1)
         self.token = token
 
     def execute(self, sql: str, args: list | None = None) -> dict:
-        stmt = {"sql": sql, "args": [_to_arg(a) for a in (args or [])]}
-        body = {"requests": [{"type": "execute", "stmt": stmt}, {"type": "close"}]}
+        return self._pipeline([_build_stmt(sql, args)])[0]
+
+    def query(self, sql: str, args: list | None = None) -> list:
+        result = self.execute(sql, args)["response"]["result"]
+        return [[_cell_value(cell) for cell in row] for row in result["rows"]]
+
+    def batch(self, statements: list) -> None:
+        """Run every (sql, args) pair as one pipeline HTTP call -- one round
+        trip instead of one per statement, so a caller can bound how many
+        statements land in a single request (Turso's Hrana endpoint can
+        time out on an oversized batch).
+        """
+        self._pipeline([_build_stmt(sql, args) for sql, args in statements])
+
+    def _pipeline(self, stmts: list) -> list:
+        body = {"requests": [{"type": "execute", "stmt": s} for s in stmts] + [{"type": "close"}]}
         headers = {"Authorization": f"Bearer {self.token}"}
         resp = requests.post(f"{self.base}/v2/pipeline", headers=headers, json=body)
         resp.raise_for_status()
-        return resp.json()
-
-    def query(self, sql: str, args: list | None = None) -> list:
-        result = self.execute(sql, args)["results"][0]["response"]["result"]
-        return [[_cell_value(cell) for cell in row] for row in result["rows"]]
+        return resp.json()["results"]
