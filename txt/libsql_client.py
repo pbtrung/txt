@@ -19,3 +19,7 @@ class LibsqlClient:
         resp = requests.post(f"{self.base}/v2/pipeline", headers=headers, json=body)
         resp.raise_for_status()
         return resp.json()
+
+    def query(self, sql: str, args: list | None = None) -> list:
+        result = self.execute(sql, args)["results"][0]["response"]["result"]
+        return [[cell["value"] for cell in row] for row in result["rows"]]

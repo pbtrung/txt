@@ -31,11 +31,20 @@ class AdminInitializer:
         self.logger.verbose("Starting admin provisioning...")
         uid = self._sign_in()
         ctl = self._ensure_users_table()
+        existing_db_path = self._find_existing(ctl, uid)
+        if existing_db_path:
+            self.logger.info(f"Admin {uid} already provisioned with database {existing_db_path}")
+            return
         db_path = generate_db_path()
         self.logger.verbose(f"Generated db_path={db_path}")
         self._create_database(db_path)
         self._insert_user(ctl, uid, db_path)
         self.logger.verbose("Admin provisioning finished.")
+
+    def _find_existing(self, ctl: LibsqlClient, uid: str) -> str | None:
+        self.logger.verbose(f"Checking for an existing users row for uid={uid}...")
+        rows = ctl.query("SELECT db_path FROM users WHERE id = ?", [uid])
+        return rows[0][0] if rows else None
 
     def _sign_in(self) -> str:
         self.logger.verbose(f"Signing in to Firebase as {self.creds.firebase_email}...")
