@@ -17,6 +17,17 @@ OPTIONAL_FIELDS = ["display_name", "user_root_key"]
 
 
 @dataclass
+class R2Config:
+    endpoint: str
+    read_only_access_key_id: str
+    read_only_secret_access_key: str
+    read_write_access_key_id: str
+    read_write_secret_access_key: str
+    region: str
+    bucket: str
+
+
+@dataclass
 class Creds:
     turso_org_token: str
     turso_ctl_db_url: str
@@ -27,6 +38,7 @@ class Creds:
     firebase_api_key: str
     display_name: str = ""
     user_root_key: str = ""
+    r2_config: R2Config | None = None
 
 
 def load_creds(path: str) -> Creds:
@@ -35,7 +47,13 @@ def load_creds(path: str) -> Creds:
     if missing:
         raise ValueError(f"Missing fields in creds.json: {', '.join(missing)}")
     fields = REQUIRED_FIELDS + OPTIONAL_FIELDS
-    return Creds(**{k: data.get(k, "") for k in fields})
+    creds = Creds(**{k: data.get(k, "") for k in fields})
+    creds.r2_config = _parse_r2_config(data.get("r2_config"))
+    return creds
+
+
+def _parse_r2_config(value: dict | None) -> R2Config | None:
+    return R2Config(**value) if value else None
 
 
 def ensure_user_root_key(path: str, creds: Creds) -> Creds:
