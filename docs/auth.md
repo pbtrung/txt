@@ -40,9 +40,12 @@ Worker secrets:
 CREATE TABLE users (
   id         TEXT PRIMARY KEY,       -- Firebase uid (the ID token's sub claim)
   db_path    TEXT NOT NULL UNIQUE,   -- 32 random bytes, 52 chars base32-Crockford
+  type       TEXT NOT NULL CHECK (type IN ('admin', 'user')),
   created_at INTEGER NOT NULL        -- unix ms
 );
 ```
+
+`type` distinguishes the one administrator account from every ordinary user. It decides which tables exist in that account's own database: `key_store` only for `admin`, and the shape of `cred_store` (data_model.md §3.6–3.7).
 
 How the Worker reaches it, and where each half comes from:
 
@@ -97,7 +100,7 @@ Done by an administrator, never by the Worker:
 
 1. Generate `db_path`: 32 random bytes, base32-Crockford.
 2. `POST /v1/organizations/{org}/databases` with `{ "name": "{db_path}", "group": "{group}" }` using the Platform API token.
-3. `INSERT INTO users (id, db_path, created_at) VALUES (?, ?, ?)` in `ctl`, with the uid from §3.1.
+3. `INSERT INTO users (id, db_path, type, created_at) VALUES (?, ?, ?, ?)` in `ctl`, with the uid from §3.1.
 
 Order matters: insert the row last. A row without a database yields 503s for that user until the database exists; a database without a row is inert and costs storage only.
 
