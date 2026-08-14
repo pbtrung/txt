@@ -81,6 +81,7 @@ class TxtIngester:
         self.db_master_key = None
 
     def run(self) -> None:
+        self.logger.info(f"Starting ingest from {self.input_dir}...")
         self._validate_creds()
         self.r2 = R2Client(self.creds.r2_config)
         uid, account_type, aa = self.session.connect()
@@ -126,7 +127,10 @@ class TxtIngester:
 
     def _open_bb(self, aa: LibsqlClient, db_master_key: bytes) -> None:
         self.head_version = self._read_head_version(aa)
-        self.bb.load_pages(self._load_existing_pages(aa, self.head_version))
+        self.logger.verbose(f"AA head_version={self.head_version}, loading existing pages...")
+        pages = self._load_existing_pages(aa, self.head_version)
+        self.logger.verbose(f"loaded {len(pages)} existing page(s) into BB")
+        self.bb.load_pages(pages)
         self.bb.open(db_master_key)
         self.bb.exec_sql(CREATE_TXT_SQL)
         self.bb.exec_sql(CREATE_TXT_META_SQL)
@@ -156,11 +160,13 @@ class TxtIngester:
             self._ingest_file(aa, epub_path)
 
     def _ingest_file(self, aa: LibsqlClient, epub_path: Path) -> None:
-        self.logger.verbose(f"Ingesting {epub_path.name}...")
         data = epub_path.read_bytes()
         txt_key = secrets.token_bytes(128)
         prefix = generate_random_prefix()
         parts = split_parts(len(data))
+        self.logger.info(
+            f"Ingesting {epub_path.name} ({len(data)} byte(s), {len(parts)} part(s))..."
+        )
         part_paths = self._upload_parts(data, parts, txt_key, prefix)
         if part_paths is None:
             self.logger.info(
@@ -179,18 +185,34 @@ class TxtIngester:
         # multiple threads. Only the network upload itself is parallelized.
         part_paths = [generate_random_prefix() for _ in parts]
         ciphertexts = [self.blob.encrypt(data[o : o + n], txt_key) for o, n in parts]
-        failed = False
+        self.logger.verbose(
+            f"uploading {len(parts)} part(s), up to {MAX_UPLOAD_WORKERS} at a time..."
+        )
         jobs = list(zip(part_paths, ciphertexts))
+        failures = self._upload_jobs(prefix, jobs)
+        if failures:
+            self.logger.info(f"{failures}/{len(jobs)} part upload(s) failed")
+            return None
+        return part_paths
+
+    def _upload_jobs(self, prefix: str, jobs: list) -> int:
+        failures = 0
         with ThreadPoolExecutor(max_workers=min(MAX_UPLOAD_WORKERS, len(jobs))) as pool:
-            futures = [
-                pool.submit(self._upload_one_part, prefix, path, ct)
-                for path, ct in jobs
-            ]
+            futures = {
+                pool.submit(self._upload_one_part, prefix, path, ct): (i, path)
+                for i, (path, ct) in enumerate(jobs, start=1)
+            }
             for future in as_completed(futures):
-                if future.exception() is not None:
-                    self.logger.verbose(f"part upload failed: {future.exception()}")
-                    failed = True
-        return None if failed else part_paths
+                index, path = futures[future]
+                failures += self._log_upload_result(future, index, len(jobs), path)
+        return failures
+
+    def _log_upload_result(self, future, index: int, total: int, path: str) -> int:
+        if future.exception() is not None:
+            self.logger.verbose(f"part {index}/{total} ({path}) failed: {future.exception()}")
+            return 1
+        self.logger.verbose(f"part {index}/{total} ({path}) uploaded")
+        return 0
 
     def _upload_one_part(self, prefix: str, path: str, ciphertext: bytes) -> None:
         self.r2.put_object(f"{self.db_prefix}/t/{prefix}/{path}", ciphertext)
@@ -232,10 +254,15 @@ class TxtIngester:
             items[i : i + MAX_PAGES_PER_BATCH]
             for i in range(0, len(items), MAX_PAGES_PER_BATCH)
         ]
+        self.logger.verbose(
+            f"committing {len(items)} dirty page(s) to AA as version {version} "
+            f"in {len(chunks)} batch(es)..."
+        )
         for i, chunk in enumerate(chunks):
             self._flush_chunk(
                 aa, chunk, version, first=(i == 0), last=(i == len(chunks) - 1)
             )
+        self.logger.verbose(f"version {version} committed")
 
     def _flush_chunk(
         self, aa: LibsqlClient, chunk: list, version: int, first: bool, last: bool
@@ -249,6 +276,7 @@ class TxtIngester:
                 ("UPDATE meta SET head_version = ? WHERE id = 1", [version])
             )
         aa.batch(statements)
+        self.logger.verbose(f"  batch: {len(chunk)} page(s)" + (" (final)" if last else ""))
 
     def _version_stmt(self, version: int) -> tuple:
         sql = "INSERT INTO versions (version, parent_version, committed_at, page_count) VALUES (?, ?, ?, ?)"
@@ -286,7 +314,9 @@ class TxtIngester:
             "SELECT bundle_key, built_at_version FROM bundles WHERE retired_at IS NULL"
         )
         if current and not self._bundle_stale(aa, current[0][1], live_page_count):
+            self.logger.verbose("bundle is up to date, skipping rebuild")
             return
+        self.logger.info("Rebuilding bundle...")
         self._build_and_write_bundle(aa, current)
 
     def _bundle_stale(
@@ -308,6 +338,10 @@ class TxtIngester:
             live_pages, hot_page_nos, PAGE_SIZE, self.head_version
         )
         key = generate_random_prefix()
+        self.logger.verbose(
+            f"bundle: {map_rows} live page(s), {hot_page_count} hot, "
+            f"{len(encrypted)} byte(s) encrypted, uploading..."
+        )
         self.r2.put_object(f"{self.db_prefix}/b/{key}", encrypted)
         if current:
             aa.execute(
@@ -316,6 +350,9 @@ class TxtIngester:
             )
         self._insert_bundle_row(
             aa, key, bundle_enc_key, len(encrypted), map_rows, hot_page_count
+        )
+        self.logger.info(
+            f"Bundle rebuilt: {map_rows} page(s) mapped, {hot_page_count} carried hot"
         )
 
     def _insert_bundle_row(
@@ -373,14 +410,18 @@ class TxtIngester:
             "SELECT object_key, lib_idx_key, built_at_version FROM library_index WHERE id = 1"
         )
         if rows and rows[0][2] == self.head_version:
+            self.logger.verbose("library index is up to date, skipping rebuild")
             return
+        self.logger.info("Rebuilding library index...")
         key, lib_idx_key = self._existing_or_new_index_keys(rows)
         builder = LibraryIndexBuilder(self.bb, self.blob, lib_idx_key)
         encrypted, doc_count, content_hash = builder.build(self.head_version)
+        self.logger.verbose(f"library index: {doc_count} doc(s), {len(encrypted)} byte(s), uploading...")
         self.r2.put_object(f"{self.db_prefix}/i/{key}", encrypted)
         self._upsert_library_index_row(
             aa, rows, key, lib_idx_key, len(encrypted), doc_count, content_hash
         )
+        self.logger.info(f"Library index rebuilt: {doc_count} doc(s)")
 
     def _existing_or_new_index_keys(self, rows: list) -> tuple:
         if rows:
