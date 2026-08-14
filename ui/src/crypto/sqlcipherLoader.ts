@@ -23,10 +23,38 @@ import { isBrowser } from "../env";
 // computed at build time).
 declare const __SQLCIPHER_JS_INTEGRITY__: string;
 
+// SQLCipher IS SQLite: opening a database without ever calling
+// sqlite3_key() (below, used for the library index -- not SQLCipher-
+// encrypted internally, only its outer CryptoBlob wrapper is) just works as
+// a plain SQLite file. No separate sql.js dependency needed for that.
 export interface SqlcipherWasmModule {
   HEAPU8: Uint8Array;
+  FS: {
+    writeFile(path: string, data: Uint8Array): void;
+    readFile(path: string): Uint8Array;
+    unlink(path: string): void;
+  };
   _malloc(size: number): number;
   _free(ptr: number): void;
+  getValue(ptr: number, type: string): number;
+  setValue(ptr: number, value: number, type: string): void;
+  lengthBytesUTF8(str: string): number;
+  stringToUTF8(str: string, outPtr: number, maxBytes: number): void;
+  UTF8ToString(ptr: number): string;
+  _sqlite3_open(filename: number, ppDb: number): number;
+  _sqlite3_close(db: number): number;
+  _sqlite3_errmsg(db: number): number;
+  _sqlite3_exec(db: number, sql: number, callback: number, arg: number, errmsg: number): number;
+  _sqlite3_prepare_v2(db: number, sql: number, nBytes: number, ppStmt: number, pzTail: number): number;
+  _sqlite3_step(stmt: number): number;
+  _sqlite3_finalize(stmt: number): number;
+  _sqlite3_column_count(stmt: number): number;
+  _sqlite3_column_name(stmt: number, col: number): number;
+  _sqlite3_column_type(stmt: number, col: number): number;
+  _sqlite3_column_int(stmt: number, col: number): number;
+  _sqlite3_column_text(stmt: number, col: number): number;
+  _sqlite3_column_bytes(stmt: number, col: number): number;
+  _sqlite3_column_blob(stmt: number, col: number): number;
   _lc_wasm_key_size(): number;
   _lc_wasm_nonce_size(): number;
   _lc_wasm_tag_size(): number;
