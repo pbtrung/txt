@@ -16,7 +16,9 @@ CREATE TABLE IF NOT EXISTS users (
 )
 """
 
-INSERT_USER_SQL = "INSERT INTO users (id, db_path, type, created_at) VALUES (?, ?, ?, ?)"
+INSERT_USER_SQL = (
+    "INSERT INTO users (id, db_path, type, created_at) VALUES (?, ?, ?, ?)"
+)
 
 
 class AdminInitializer:
@@ -47,7 +49,9 @@ class AdminInitializer:
         return ctl
 
     def _create_database(self, db_path: str) -> None:
-        self.logger.verbose(f"Creating database {db_path} in group {self.creds.turso_group}...")
+        self.logger.verbose(
+            f"Creating database {db_path} in group {self.creds.turso_group}..."
+        )
         self.turso.create_database(db_path, self.creds.turso_group)
 
     def _insert_user(self, ctl: LibsqlClient, uid: str, db_path: str) -> None:

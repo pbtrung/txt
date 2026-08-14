@@ -13,12 +13,19 @@ class TursoClient:
 
     def create_database(self, name: str, group: str) -> dict:
         url = f"{PLATFORM_API_BASE}/organizations/{self.org}/databases"
-        resp = requests.post(url, headers=self._headers(), json={"name": name, "group": group})
+        resp = requests.post(
+            url, headers=self._headers(), json={"name": name, "group": group}
+        )
         resp.raise_for_status()
         return resp.json()
 
     def mint_db_token(self, db_name: str, authorization: str = "full-access") -> str:
         url = f"{PLATFORM_API_BASE}/organizations/{self.org}/databases/{db_name}/auth/tokens"
-        resp = requests.post(url, headers=self._headers(), params={"authorization": authorization}, json={})
+        resp = requests.post(
+            url,
+            headers=self._headers(),
+            params={"authorization": authorization},
+            json={},
+        )
         resp.raise_for_status()
         return resp.json()["jwt"]
