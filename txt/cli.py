@@ -7,6 +7,7 @@ from .creds import load_creds
 from .gc import GarbageCollector
 from .ingest import TxtIngester
 from .init_db import DbInitializer
+from .init_user import UserInitializer
 from .logger import Logger
 from .replace_images import ImageReplacer
 
@@ -22,7 +23,26 @@ from .replace_images import ImageReplacer
     "--init-db",
     "db_creds_path",
     metavar="CREDS_JSON",
-    help="Initialize this user's own database (admin or otherwise)",
+    help="Initialize this user's own database (admin or otherwise); "
+    "with --admin-creds/--user-creds instead, also pushes the backup to the admin's AA",
+)
+@click.option(
+    "--init-user",
+    "init_user_flag",
+    is_flag=True,
+    help="Register an ordinary user's ctl.users row (needs --admin-creds/--user-creds)",
+)
+@click.option(
+    "--admin-creds",
+    "admin_only_creds_path",
+    metavar="CREDS_JSON",
+    help="Administrator's own creds.json, for --init-user or --init-db's cross-account form",
+)
+@click.option(
+    "--user-creds",
+    "user_only_creds_path",
+    metavar="CREDS_JSON",
+    help="Ordinary user's own creds.json, for --init-user or --init-db's cross-account form",
 )
 @click.option(
     "--replace-images",
@@ -57,6 +77,9 @@ def cli(
     ctx: click.Context,
     admin_creds_path: str | None,
     db_creds_path: str | None,
+    init_user_flag: bool,
+    admin_only_creds_path: str | None,
+    user_only_creds_path: str | None,
     replace_images_dirs: tuple[str, str],
     ingest_dir: str | None,
     collect_garbage: bool,
@@ -64,7 +87,11 @@ def cli(
     verbose: bool,
 ) -> None:
     logger = Logger(verbose)
-    if admin_creds_path:
+    if init_user_flag:
+        _run_init_user(admin_only_creds_path, user_only_creds_path, logger)
+    elif admin_only_creds_path and user_only_creds_path:
+        _run_init_db_cross_account(admin_only_creds_path, user_only_creds_path, logger)
+    elif admin_creds_path:
         AdminInitializer(load_creds(admin_creds_path), logger).run()
     elif db_creds_path:
         DbInitializer(load_creds(db_creds_path), db_creds_path, logger).run()
@@ -76,6 +103,27 @@ def cli(
         _run_collect_garbage(creds_path, logger)
     else:
         click.echo(ctx.get_help())
+
+
+def _run_init_user(
+    admin_creds_path: str | None, user_creds_path: str | None, logger: Logger
+) -> None:
+    if not admin_creds_path or not user_creds_path:
+        raise click.UsageError("--init-user requires --admin-creds and --user-creds")
+    UserInitializer(
+        load_creds(admin_creds_path), load_creds(user_creds_path), logger
+    ).run()
+
+
+def _run_init_db_cross_account(
+    admin_creds_path: str, user_creds_path: str, logger: Logger
+) -> None:
+    DbInitializer(
+        load_creds(user_creds_path),
+        user_creds_path,
+        logger,
+        admin_creds=load_creds(admin_creds_path),
+    ).run()
 
 
 def _run_replace_images(dirs: tuple[str, str], logger: Logger) -> None:
