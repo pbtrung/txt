@@ -10,6 +10,10 @@ from .logger import Logger
 from .turso_api import TursoClient, extract_db_name
 
 
+def build_aa_url(db_path: str, org: str) -> str:
+    return f"libsql://{db_path}-{org}.aws-us-east-1.turso.io"
+
+
 def cred_store_rows(aa: LibsqlClient, uid: str, account_type: str) -> list:
     if account_type == "admin":
         return aa.query("SELECT content FROM cred_store WHERE user_id = ?", [uid])
@@ -73,8 +77,7 @@ class AccountSession:
 
     def _connect_aa(self, db_path: str) -> LibsqlClient:
         token = self._mint_or_create(db_path)
-        url = f"libsql://{db_path}-{self.creds.turso_org}.aws-us-east-1.turso.io"
-        return LibsqlClient(url, token)
+        return LibsqlClient(build_aa_url(db_path, self.creds.turso_org), token)
 
     def _mint_or_create(self, db_path: str) -> str:
         self.logger.verbose(f"Minting a database token for {db_path}...")
