@@ -269,7 +269,7 @@ class TxtIngester:
     def _insert_bundle_row(
         self, aa: LibsqlClient, key: str, bundle_enc_key: bytes, byte_size: int, map_rows: int, page_count: int
     ) -> None:
-        wrapped_key = self.blob.encrypt(key.encode(), self.umk)
+        wrapped_key = self.blob.encrypt(key.encode(), bundle_enc_key)
         wrapped_enc_key = self.blob.encrypt(bundle_enc_key, self.umk)
         aa.execute(
             "INSERT INTO bundles (bundle_key, bundle_enc_key, built_at_version, byte_size, map_rows, page_count, built_at) "
