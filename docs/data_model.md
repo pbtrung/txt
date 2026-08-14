@@ -299,7 +299,7 @@ Pinning and the horizon check are two halves of one invariant: a reader pins in 
 
 BB stores document structure and user state. Document text lives in the `t/` object population, one object per part under the document's own prefix, addressed together by `txt.prefix` and `txt_parts.path`.
 
-Tables are grouped by write frequency, because the page is the unit of versioning: any byte changed rewrites the whole 4 KiB page as a new `page_versions` row (§3.2). `txt` is written once, `txt_meta` changes when the user edits metadata, `txt_access` changes continuously.
+Tables are grouped by write frequency, because the page is the unit of versioning: any byte changed rewrites the whole 32 KiB page as a new `page_versions` row (§3.2). `txt` is written once, `txt_meta` changes when the user edits metadata, `txt_access` changes continuously.
 
 ```sql
 -- Documents. Written at import, then immutable.
