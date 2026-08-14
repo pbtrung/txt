@@ -49,7 +49,11 @@ def test_parses_real_calibre_shaped_opf(tmp_path):
     opf_path.write_text(SAMPLE_OPF)
     assert parse_opf_metadata(opf_path) == {
         "title": "Sample Book & Co.",
-        "creator": {"text": "Sample Author", "role": "aut", "file-as": "Author, Sample"},
+        "creator": {
+            "text": "Sample Author",
+            "role": "aut",
+            "file-as": "Author, Sample",
+        },
         "date": "2020-01-01T00:00:00+00:00",
         "subject": ["Fiction", "Adventure"],
         "publisher": "Sample Publisher",
@@ -75,22 +79,22 @@ def test_drops_calibre_own_identifier_and_contributor(tmp_path):
 
 def test_keeps_non_calibre_identifier(tmp_path):
     opf_path = tmp_path / "isbn.opf"
-    opf_path.write_text(
-        """<package><metadata xmlns:dc="urn:dc" xmlns:opf="urn:opf">
+    opf_path.write_text("""<package><metadata xmlns:dc="urn:dc" xmlns:opf="urn:opf">
         <dc:identifier opf:scheme="ISBN">978-0-000-00000-0</dc:identifier>
-    </metadata></package>"""
-    )
-    assert parse_opf_metadata(opf_path) == {"identifier": {"text": "978-0-000-00000-0", "scheme": "ISBN"}}
+    </metadata></package>""")
+    assert parse_opf_metadata(opf_path) == {
+        "identifier": {"text": "978-0-000-00000-0", "scheme": "ISBN"}
+    }
 
 
 def test_treats_cdata_as_literal_text(tmp_path):
     opf_path = tmp_path / "cdata.opf"
-    opf_path.write_text(
-        """<package><metadata xmlns:dc="urn:dc">
+    opf_path.write_text("""<package><metadata xmlns:dc="urn:dc">
         <dc:description><![CDATA[Has <b>markup</b> & an ampersand]]></dc:description>
-    </metadata></package>"""
-    )
-    assert parse_opf_metadata(opf_path) == {"description": "Has <b>markup</b> & an ampersand"}
+    </metadata></package>""")
+    assert parse_opf_metadata(opf_path) == {
+        "description": "Has <b>markup</b> & an ampersand"
+    }
 
 
 def test_handles_attribute_value_containing_literal_gt(tmp_path):
@@ -100,15 +104,15 @@ def test_handles_attribute_value_containing_literal_gt(tmp_path):
         '    <dc:identifier opf:scheme="weird>scheme">value</dc:identifier>\n'
         "</metadata></package>"
     )
-    assert parse_opf_metadata(opf_path) == {"identifier": {"text": "value", "scheme": "weird>scheme"}}
+    assert parse_opf_metadata(opf_path) == {
+        "identifier": {"text": "value", "scheme": "weird>scheme"}
+    }
 
 
 def test_throws_on_malformed_xml(tmp_path):
     opf_path = tmp_path / "broken.opf"
-    opf_path.write_text(
-        """<package><metadata xmlns:dc="urn:dc">
+    opf_path.write_text("""<package><metadata xmlns:dc="urn:dc">
         <dc:title>Unclosed
-    </metadata></package>"""
-    )
+    </metadata></package>""")
     with pytest.raises(ET.ParseError):
         parse_opf_metadata(opf_path)

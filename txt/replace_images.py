@@ -121,7 +121,7 @@ def manifest_images(epub: zipfile.ZipFile) -> dict[str, str]:
             continue
         try:
             root = ElementTree.fromstring(epub.read(info.filename))
-        except (ElementTree.ParseError, KeyError):
+        except ElementTree.ParseError, KeyError:
             continue
 
         opf_dir = posixpath.dirname(info.filename)
@@ -146,7 +146,7 @@ def manifest_xhtml_documents(epub: zipfile.ZipFile) -> set[str]:
             continue
         try:
             root = ElementTree.fromstring(epub.read(info.filename))
-        except (ElementTree.ParseError, KeyError):
+        except ElementTree.ParseError, KeyError:
             continue
 
         opf_dir = posixpath.dirname(info.filename)
@@ -360,8 +360,10 @@ def replace_images(input_path: Path, output_path: Path) -> tuple[int, int, int]:
                         resized_tags += count
                         data, caption_count = strip_corrupted_captions(data)
                         stripped_captions += caption_count
-                    extension = None if info.is_dir() else placeholder_extension(
-                        info.filename, manifest
+                    extension = (
+                        None
+                        if info.is_dir()
+                        else placeholder_extension(info.filename, manifest)
                     )
                     if extension:
                         data = PLACEHOLDERS[extension]
@@ -389,7 +391,9 @@ class ImageReplacer:
     def _replace_epubs(self) -> None:
         for epub_path in sorted(self.src_dir.glob("*.epub")):
             self.logger.verbose(f"Replacing images in {epub_path.name}...")
-            replaced, resized, stripped = replace_images(epub_path, self.dst_dir / epub_path.name)
+            replaced, resized, stripped = replace_images(
+                epub_path, self.dst_dir / epub_path.name
+            )
             self.logger.verbose(
                 f"{epub_path.name}: replaced {replaced} image(s), resized {resized} tag(s), "
                 f"stripped {stripped} caption(s)"
