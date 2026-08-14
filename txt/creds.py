@@ -1,5 +1,7 @@
-from dataclasses import dataclass
+import base64
 import json
+import secrets
+from dataclasses import dataclass
 
 REQUIRED_FIELDS = [
     "turso_org_token",
@@ -11,6 +13,8 @@ REQUIRED_FIELDS = [
     "firebase_api_key",
 ]
 
+OPTIONAL_FIELDS = ["display_name", "user_root_key"]
+
 
 @dataclass
 class Creds:
@@ -21,12 +25,35 @@ class Creds:
     firebase_email: str
     firebase_password: str
     firebase_api_key: str
+    display_name: str = ""
+    user_root_key: str = ""
 
 
 def load_creds(path: str) -> Creds:
-    with open(path) as f:
-        data = json.load(f)
+    data = _read_json(path)
     missing = [k for k in REQUIRED_FIELDS if k not in data]
     if missing:
         raise ValueError(f"Missing fields in creds.json: {', '.join(missing)}")
-    return Creds(**{k: data[k] for k in REQUIRED_FIELDS})
+    fields = REQUIRED_FIELDS + OPTIONAL_FIELDS
+    return Creds(**{k: data.get(k, "") for k in fields})
+
+
+def ensure_user_root_key(path: str, creds: Creds) -> Creds:
+    if creds.user_root_key:
+        return creds
+    creds.user_root_key = base64.b64encode(secrets.token_bytes(256)).decode()
+    data = _read_json(path)
+    data["user_root_key"] = creds.user_root_key
+    _write_json(path, data)
+    return creds
+
+
+def _read_json(path: str) -> dict:
+    with open(path) as f:
+        return json.load(f)
+
+
+def _write_json(path: str, data: dict) -> None:
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2)
+        f.write("\n")
