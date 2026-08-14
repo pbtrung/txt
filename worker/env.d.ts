@@ -7,4 +7,8 @@
 // add ctl/Turso access and KV caching.
 interface Env {
   FIREBASE_PROJECT_ID: string;
+  CTL_DB_URL: string;
+  CTL_DB_TOKEN: string;
+  TURSO_ORG_TOKEN: string;
+  TURSO_ORG: string;
 }
