@@ -374,16 +374,28 @@ def replace_images(input_path: Path, output_path: Path) -> tuple[int, int, int]:
     return replaced, resized_tags, stripped_captions
 
 
-def replace_images_dir(src_dir: Path, dst_dir: Path, logger: Logger) -> None:
-    dst_dir.mkdir(parents=True, exist_ok=True)
-    for epub_path in sorted(src_dir.glob("*.epub")):
-        logger.verbose(f"Replacing images in {epub_path.name}...")
-        replaced, resized, stripped = replace_images(epub_path, dst_dir / epub_path.name)
-        logger.verbose(
-            f"{epub_path.name}: replaced {replaced} image(s), resized {resized} tag(s), "
-            f"stripped {stripped} caption(s)"
-        )
-    for opf_path in sorted(src_dir.glob("*.opf")):
-        logger.verbose(f"Copying {opf_path.name}...")
-        (dst_dir / opf_path.name).write_bytes(opf_path.read_bytes())
-    logger.info(f"Replaced images for {src_dir} -> {dst_dir}")
+class ImageReplacer:
+    def __init__(self, src_dir: Path, dst_dir: Path, logger: Logger):
+        self.src_dir = src_dir
+        self.dst_dir = dst_dir
+        self.logger = logger
+
+    def run(self) -> None:
+        self.dst_dir.mkdir(parents=True, exist_ok=True)
+        self._replace_epubs()
+        self._copy_opf_files()
+        self.logger.info(f"Replaced images for {self.src_dir} -> {self.dst_dir}")
+
+    def _replace_epubs(self) -> None:
+        for epub_path in sorted(self.src_dir.glob("*.epub")):
+            self.logger.verbose(f"Replacing images in {epub_path.name}...")
+            replaced, resized, stripped = replace_images(epub_path, self.dst_dir / epub_path.name)
+            self.logger.verbose(
+                f"{epub_path.name}: replaced {replaced} image(s), resized {resized} tag(s), "
+                f"stripped {stripped} caption(s)"
+            )
+
+    def _copy_opf_files(self) -> None:
+        for opf_path in sorted(self.src_dir.glob("*.opf")):
+            self.logger.verbose(f"Copying {opf_path.name}...")
+            (self.dst_dir / opf_path.name).write_bytes(opf_path.read_bytes())

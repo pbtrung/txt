@@ -6,7 +6,7 @@ from .admin_init import AdminInitializer
 from .creds import load_creds
 from .init_db import DbInitializer
 from .logger import Logger
-from .replace_images import replace_images_dir
+from .replace_images import ImageReplacer
 
 
 @click.command()
@@ -52,7 +52,7 @@ def cli(
 
 def _run_replace_images(dirs: tuple[str, str], logger: Logger) -> None:
     src, dst = dirs
-    replace_images_dir(Path(src), Path(dst), logger)
+    ImageReplacer(Path(src), Path(dst), logger).run()
 
 
 def run(argv: list | None = None) -> None:

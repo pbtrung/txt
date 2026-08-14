@@ -1,7 +1,7 @@
 import zipfile
 
 from txt.logger import Logger
-from txt.replace_images import PLACEHOLDERS, replace_images, replace_images_dir
+from txt.replace_images import PLACEHOLDERS, ImageReplacer, replace_images
 
 
 def _write_minimal_epub(path):
@@ -18,7 +18,7 @@ def test_replace_images_dir_processes_all_epubs_and_copies_opf(tmp_path):
     (src / "book1.opf").write_text("<package/>")
     (src / "book2.opf").write_text("<package/>")
 
-    replace_images_dir(src, dst, Logger(False))
+    ImageReplacer(src, dst, Logger(False)).run()
 
     assert (dst / "book1.epub").exists()
     assert (dst / "book2.epub").exists()
@@ -32,7 +32,7 @@ def test_replace_images_dir_creates_dst_dir(tmp_path):
     src = tmp_path / "src"
     src.mkdir()
     dst = tmp_path / "nested" / "dst"
-    replace_images_dir(src, dst, Logger(False))
+    ImageReplacer(src, dst, Logger(False)).run()
     assert dst.is_dir()
 
 
