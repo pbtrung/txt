@@ -1,4 +1,4 @@
-# Remote Page Store — Design
+# Data model — Design
 
 A SQLite database whose pages live as immutable objects in R2/S3, mapped by a per-user Turso Cloud database, with a small derived catalogue the client downloads for its library UI.
 
@@ -148,6 +148,41 @@ CREATE TABLE library_index (
 ```
 
 One row, one object key, updated in place on each rebuild.
+
+### 3.6 Admin key material
+
+`umk` is derived from `user_root_key` for every account, admin or not, but only an admin's AA persists it — an admin also holds a composite KEM keypair (docs/crypto.md), and this is where its wrapped private key lives:
+
+```sql
+CREATE TABLE key_store (
+  id      INTEGER PRIMARY KEY CHECK (id = 1),
+  umk     BLOB NOT NULL,      -- 128 random bytes, wrapped by user_root_key
+  pubkey  BLOB NOT NULL,      -- composite KEM public key (docs/crypto.md), raw
+  privkey BLOB NOT NULL       -- composite KEM private key, wrapped by umk (docs/crypto.md)
+);
+```
+
+One row, present only in the administrator's own AA (`users.type = 'admin'`, docs/auth.md). An ordinary user's AA has no `key_store`: its `umk` is derived each session and never persisted.
+
+### 3.7 Credential backups
+
+`cred_store` backs up the one piece of state a lost client can't otherwise recover: `display_name` and the 256-random-byte, base64-encoded `db_master_key`, wrapped as one JSON payload under `umk` (docs/crypto.md). Its shape depends on `users.type`:
+
+```sql
+-- Admin's own AA: one row per backed-up account — the admin's own and
+-- every user it provisioned — for backup and recovery.
+CREATE TABLE cred_store (
+  id      INTEGER PRIMARY KEY,
+  user_id TEXT NOT NULL UNIQUE,   -- ctl users.id: this admin's own id, or a user's
+  content BLOB NOT NULL           -- wrapped by umk; { display_name, db_master_key }
+);
+
+-- An ordinary user's own AA: exactly one row, its own backup.
+CREATE TABLE cred_store (
+  id      INTEGER PRIMARY KEY CHECK (id = 1),
+  content BLOB NOT NULL           -- wrapped by umk; { display_name, db_master_key }
+);
+```
 
 ---
 
