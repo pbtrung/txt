@@ -1,4 +1,6 @@
+import base64
 import json
+import secrets
 
 import pytest
 
@@ -90,10 +92,10 @@ def _aa_inserts():
     return [call for call in aa.calls if call[0] == "execute" and "INSERT" in call[1]]
 
 
-def test_first_run_inserts_meta_and_cred_store(creds_path):
+def test_first_run_inserts_meta_key_store_and_cred_store(creds_path):
     DbInitializer(load_creds(creds_path), creds_path, NullLogger()).run()
     inserted_tables = {call[1].split()[2] for call in _aa_inserts()}
-    assert inserted_tables == {"meta", "cred_store"}
+    assert inserted_tables == {"meta", "key_store", "cred_store"}
 
 
 def test_first_run_generates_and_persists_user_root_key(creds_path):
@@ -103,17 +105,38 @@ def test_first_run_generates_and_persists_user_root_key(creds_path):
     assert saved["user_root_key"] != ""
 
 
-def test_second_run_is_idempotent(creds_path):
+def test_second_run_is_idempotent(tmp_path, engine):
+    from txt.crypto_blob import CryptoBlob
+
+    root_key = base64.b64encode(secrets.token_bytes(256)).decode()
+    data = {
+        "turso_org_token": "tok", "turso_ctl_db_url": CTL_URL, "turso_group": "g", "turso_org": "x",
+        "firebase_email": "a@b.com", "firebase_password": "pw", "firebase_api_key": "key",
+        "display_name": "Trung", "user_root_key": root_key,
+    }
+    path = tmp_path / "creds.json"
+    path.write_text(json.dumps(data))
+
+    wrapped_umk = CryptoBlob(engine).encrypt(secrets.token_bytes(128), base64.b64decode(root_key))
     FakeLibsqlClient.preset[AA_URL] = {
         "SELECT db_prefix": [["existing-prefix"]],
+        "SELECT umk FROM key_store": [[wrapped_umk]],
         "SELECT content FROM cred_store": [[b"already-there"]],
     }
-    DbInitializer(load_creds(creds_path), creds_path, NullLogger()).run()
+    DbInitializer(load_creds(str(path)), str(path), NullLogger()).run()
     assert _aa_inserts() == []
 
 
-def test_admin_account_creates_key_store(creds_path):
+def test_admin_account_creates_key_store_with_kem_keypair(creds_path):
     FakeLibsqlClient.preset[CTL_URL] = {"SELECT db_path, type": [[DB_PATH, "admin"]]}
     DbInitializer(load_creds(creds_path), creds_path, NullLogger()).run()
-    inserted_tables = {call[1].split()[2] for call in _aa_inserts()}
-    assert "key_store" in inserted_tables
+    aa = FakeLibsqlClient.instances[AA_URL]
+    key_store_insert = next(c for c in aa.calls if c[0] == "execute" and "INSERT INTO key_store" in c[1])
+    assert "pubkey" in key_store_insert[1] and "privkey" in key_store_insert[1]
+
+
+def test_user_account_key_store_has_no_kem_keypair(creds_path):
+    DbInitializer(load_creds(creds_path), creds_path, NullLogger()).run()
+    aa = FakeLibsqlClient.instances[AA_URL]
+    key_store_insert = next(c for c in aa.calls if c[0] == "execute" and "INSERT INTO key_store" in c[1])
+    assert "pubkey" not in key_store_insert[1]
