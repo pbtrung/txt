@@ -35,6 +35,8 @@ s3://{bucket}/{db_prefix}/i/{key}     -- the library index     (AA-owned)
 
 `db_prefix`, `txt.prefix`, and every `key` are 32 random bytes rendered as 52 lowercase base32-Crockford characters. `db_prefix` is minted once at creation; `txt.prefix` is minted once per document (§7); part keys are minted once per upload and never reused. BB page versions carry no R2/S3 object of their own — their ciphertext lives inline in AA's `page_versions.data` (§3.2), which is what removes a round trip from both the read and commit paths.
 
+`db_prefix` (`meta`, §3.1), `bundle_key` (`bundles`, §3.4), and `object_key` (`library_index`, §3.5) are stored in AA wrapped by `umk` (docs/crypto.md), not as plaintext strings — AA never holds a readable R2/S3 address, only whoever can unwrap `umk` (via `user_root_key`) can reconstruct one. The base32-Crockford rendering happens client-side, after unwrapping.
+
 The remaining populations have different lifecycle owners, so they are separated by prefix: a document's own parts all live under its own `t/{txt.prefix}/`, so deleting a document is a scoped prefix delete rather than a listing over the whole `t/` population (§7.2); bundles are AA-owned derived artefacts, retired and swept independently (§6.3–6.4).
 
 Object bodies are the exact bytes handed to the writer: application-encrypted payloads for parts, bundles, and the library index. No wrapping header, no S3 tags, no user metadata.
@@ -53,7 +55,7 @@ Every statement is issued over the HTTP API in batches.
 CREATE TABLE meta (
   id                INTEGER PRIMARY KEY CHECK (id = 1),
   schema_version    INTEGER NOT NULL,
-  db_prefix         TEXT    NOT NULL,
+  db_prefix         BLOB    NOT NULL,      -- 32 random bytes, wrapped by umk (docs/crypto.md)
   page_size         INTEGER NOT NULL,      -- fixed for the life of BB
   head_version      INTEGER NOT NULL DEFAULT 0,
   gc_horizon        INTEGER NOT NULL DEFAULT 0,
@@ -124,7 +126,7 @@ A live, heartbeated snapshot row prevents garbage collection of anything visible
 
 ```sql
 CREATE TABLE bundles (
-  bundle_key       TEXT PRIMARY KEY,       -- object key under b/
+  bundle_key       BLOB PRIMARY KEY,       -- object key under b/, wrapped by umk (docs/crypto.md)
   built_at_version INTEGER NOT NULL,
   byte_size        INTEGER NOT NULL,
   map_rows         INTEGER NOT NULL,
@@ -139,7 +141,7 @@ CREATE TABLE bundles (
 ```sql
 CREATE TABLE library_index (
   id               INTEGER PRIMARY KEY CHECK (id = 1),
-  object_key       TEXT    NOT NULL,       -- fixed key under i/, minted once
+  object_key       BLOB    NOT NULL,       -- fixed key under i/, minted once, wrapped by umk (docs/crypto.md)
   built_at_version INTEGER NOT NULL,       -- BB version this file projects
   byte_size        INTEGER NOT NULL,       -- compressed and encrypted size
   doc_count        INTEGER NOT NULL,
