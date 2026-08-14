@@ -45,6 +45,8 @@ Object bodies are the exact bytes handed to the writer: application-encrypted pa
 
 Every statement is issued over the HTTP API in batches.
 
+`PRAGMA page_size = 32768;` is set once, before any `CREATE TABLE`, matching BB's own page size — `page_versions.data` holds a full BB page's ciphertext per row (§3.2), and AA's default 4096-byte page would otherwise fragment every one of those rows across roughly eight overflow pages.
+
 ### 3.1 Singleton
 
 ```sql
