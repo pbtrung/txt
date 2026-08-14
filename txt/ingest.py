@@ -26,6 +26,12 @@ from .random_token import generate_random_prefix
 
 BUNDLE_STALE_FRACTION = 0.25
 
+# A whole btree this small is "small enough to carry whole" (docs/data_model.md
+# §6.3) -- no numeric threshold is mandated there, so this is a judgment call,
+# same order of magnitude (~2MB at PAGE_SIZE) as the pre-dbstat heuristic it
+# replaces.
+HOT_BTREE_PAGE_BUDGET = 64
+
 MIN_PART_SIZE = 49999
 MAX_PART_SIZE = 99999
 MAX_UPLOAD_WORKERS = 20
@@ -295,10 +301,11 @@ class TxtIngester:
 
     def _build_and_write_bundle(self, aa: LibsqlClient, current: list) -> None:
         live_pages = self._load_live_pages_with_version(aa)
+        hot_page_nos = self._scan_hot_page_nos()
         bundle_enc_key = secrets.token_bytes(128)
         builder = BundleBuilder(self.blob, bundle_enc_key)
         encrypted, map_rows, hot_page_count = builder.build(
-            live_pages, PAGE_SIZE, self.head_version
+            live_pages, hot_page_nos, PAGE_SIZE, self.head_version
         )
         key = generate_random_prefix()
         self.r2.put_object(f"{self.db_prefix}/b/{key}", encrypted)
@@ -345,6 +352,21 @@ class TxtIngester:
         return {
             page_no: (version_created, data) for page_no, version_created, data in rows
         }
+
+    def _scan_hot_page_nos(self) -> set:
+        # docs/data_model.md §6.3: page 1, every btree interior page, and
+        # every btree small enough to carry whole -- a real dbstat scan on
+        # this open, keyed BB connection, now that the vendored wasm build
+        # supports SQLITE_ENABLE_DBSTAT_VTAB.
+        by_name = {}
+        for name, pageno, pagetype in self.bb.query("SELECT name, pageno, pagetype FROM dbstat"):
+            by_name.setdefault(name, []).append((pageno, pagetype))
+        hot = {1}
+        for pages in by_name.values():
+            hot.update(pageno for pageno, pagetype in pages if pagetype == "internal")
+            if len(pages) <= HOT_BTREE_PAGE_BUDGET:
+                hot.update(pageno for pageno, _pagetype in pages)
+        return hot
 
     def _rebuild_library_index(self, aa: LibsqlClient) -> None:
         rows = aa.query(

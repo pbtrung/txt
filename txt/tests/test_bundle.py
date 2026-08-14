@@ -14,7 +14,7 @@ from txt.crypto_blob import CryptoBlob
 PAGE_SIZE = 32768
 
 
-def test_bundle_round_trips_small_db_carries_every_page_whole(engine):
+def test_bundle_round_trips_and_carries_requested_hot_pages(engine):
     bundle_enc_key = secrets.token_bytes(128)
     live_pages = {
         1: (5, secrets.token_bytes(PAGE_SIZE)),
@@ -24,11 +24,11 @@ def test_bundle_round_trips_small_db_carries_every_page_whole(engine):
 
     builder = BundleBuilder(CryptoBlob(engine), bundle_enc_key)
     encrypted, map_rows, hot_page_count = builder.build(
-        live_pages, PAGE_SIZE, built_at_version=5
+        live_pages, {1, 2, 3}, PAGE_SIZE, built_at_version=5
     )
 
     assert map_rows == 3
-    assert hot_page_count == 3  # whole small DB carried
+    assert hot_page_count == 3
 
     raw = CryptoBlob(engine).decrypt(encrypted, bundle_enc_key)
     magic, fmt_version, page_size, built_at_version = struct.unpack_from(
@@ -60,24 +60,36 @@ def test_bundle_round_trips_small_db_carries_every_page_whole(engine):
         assert version_created == live_pages[page_no][0]
 
 
-def test_bundle_over_budget_only_carries_page_one(engine):
+def test_bundle_only_carries_requested_hot_pages(engine):
     bundle_enc_key = secrets.token_bytes(128)
     live_pages = {n: (1, secrets.token_bytes(64)) for n in range(1, 100)}
 
     builder = BundleBuilder(CryptoBlob(engine), bundle_enc_key)
     _encrypted, map_rows, hot_page_count = builder.build(
-        live_pages, PAGE_SIZE, built_at_version=1
+        live_pages, {1}, PAGE_SIZE, built_at_version=1
     )
 
     assert map_rows == 99
     assert hot_page_count == 1
 
 
+def test_bundle_ignores_hot_page_nos_not_in_live_pages(engine):
+    bundle_enc_key = secrets.token_bytes(128)
+    live_pages = {1: (1, secrets.token_bytes(64))}
+
+    builder = BundleBuilder(CryptoBlob(engine), bundle_enc_key)
+    _encrypted, _map_rows, hot_page_count = builder.build(
+        live_pages, {1, 2, 99}, PAGE_SIZE, built_at_version=1
+    )
+
+    assert hot_page_count == 1  # page numbers 2 and 99 don't exist in live_pages
+
+
 def test_bundle_wrong_key_fails_to_decrypt(engine):
     live_pages = {1: (1, secrets.token_bytes(PAGE_SIZE))}
     builder = BundleBuilder(CryptoBlob(engine), secrets.token_bytes(128))
     encrypted, _map_rows, _hot = builder.build(
-        live_pages, PAGE_SIZE, built_at_version=1
+        live_pages, {1}, PAGE_SIZE, built_at_version=1
     )
 
     try:

@@ -389,6 +389,25 @@ def test_ingest_builds_bundle_and_library_index(account, tmp_path):
     assert len(bundle_inserts) == 1
 
 
+def test_scan_hot_page_nos_matches_real_dbstat(account, tmp_path):
+    creds_path, _db_prefix = account
+    src = tmp_path / "src"
+    _write_epub(src, "book1.epub", 1000)
+
+    ingester = TxtIngester(src, load_creds(creds_path), NullLogger())
+    ingester.run()
+
+    hot = ingester._scan_hot_page_nos()
+    assert 1 in hot  # page 1 is always hot
+
+    internal_pages = {
+        pageno
+        for _name, pageno, pagetype in ingester.bb.query("SELECT name, pageno, pagetype FROM dbstat")
+        if pagetype == "internal"
+    }
+    assert internal_pages <= hot  # every btree interior page must be carried
+
+
 def test_ingest_rerun_with_no_new_files_skips_derived_rebuild(account, tmp_path):
     creds_path, db_prefix = account
     src = tmp_path / "src"
