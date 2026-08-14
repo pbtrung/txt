@@ -67,7 +67,7 @@ class FakeAaState:
                 vc, _vd, data = self.pages[page_no]
                 self.pages[page_no] = (vc, version, data)
         elif "INSERT INTO bundles" in sql:
-            keys = ["bundle_key", "built_at_version", "byte_size", "map_rows", "page_count", "built_at"]
+            keys = ["bundle_key", "bundle_enc_key", "built_at_version", "byte_size", "map_rows", "page_count", "built_at"]
             self.bundles.append({**dict(zip(keys, args)), "retired_at": None})
         elif "UPDATE bundles SET retired_at" in sql:
             retired_at, bundle_key = args

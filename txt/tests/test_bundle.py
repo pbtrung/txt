@@ -7,27 +7,21 @@ from txt.crypto_blob import CryptoBlob
 PAGE_SIZE = 32768
 
 
-def _decrypt(engine, encrypted, db_master_key):
-    blob = CryptoBlob(engine)
-    key = engine.hkdf_sha3_512(db_master_key, b"", b"bundle", 64)
-    return blob.decrypt(encrypted, key)
-
-
 def test_bundle_round_trips_small_db_carries_every_page_whole(engine):
-    db_master_key = secrets.token_bytes(256)
+    bundle_enc_key = secrets.token_bytes(128)
     live_pages = {
         1: (5, secrets.token_bytes(PAGE_SIZE)),
         2: (3, secrets.token_bytes(PAGE_SIZE)),
         3: (5, secrets.token_bytes(PAGE_SIZE)),
     }
 
-    builder = BundleBuilder(CryptoBlob(engine), db_master_key)
+    builder = BundleBuilder(CryptoBlob(engine), bundle_enc_key)
     encrypted, map_rows, hot_page_count = builder.build(live_pages, PAGE_SIZE, built_at_version=5)
 
     assert map_rows == 3
     assert hot_page_count == 3  # whole small DB carried
 
-    raw = _decrypt(engine, encrypted, db_master_key)
+    raw = CryptoBlob(engine).decrypt(encrypted, bundle_enc_key)
     magic, fmt_version, page_size, built_at_version = struct.unpack_from(HEADER_FMT, raw)[0:4]
     assert magic == MAGIC
     assert page_size == PAGE_SIZE
@@ -48,10 +42,10 @@ def test_bundle_round_trips_small_db_carries_every_page_whole(engine):
 
 
 def test_bundle_over_budget_only_carries_page_one(engine):
-    db_master_key = secrets.token_bytes(256)
+    bundle_enc_key = secrets.token_bytes(128)
     live_pages = {n: (1, secrets.token_bytes(64)) for n in range(1, 100)}
 
-    builder = BundleBuilder(CryptoBlob(engine), db_master_key)
+    builder = BundleBuilder(CryptoBlob(engine), bundle_enc_key)
     _encrypted, map_rows, hot_page_count = builder.build(live_pages, PAGE_SIZE, built_at_version=1)
 
     assert map_rows == 99
@@ -60,13 +54,11 @@ def test_bundle_over_budget_only_carries_page_one(engine):
 
 def test_bundle_wrong_key_fails_to_decrypt(engine):
     live_pages = {1: (1, secrets.token_bytes(PAGE_SIZE))}
-    builder = BundleBuilder(CryptoBlob(engine), secrets.token_bytes(256))
+    builder = BundleBuilder(CryptoBlob(engine), secrets.token_bytes(128))
     encrypted, _map_rows, _hot = builder.build(live_pages, PAGE_SIZE, built_at_version=1)
 
-    blob = CryptoBlob(engine)
-    wrong_key = engine.hkdf_sha3_512(secrets.token_bytes(256), b"", b"bundle", 64)
     try:
-        blob.decrypt(encrypted, wrong_key)
+        CryptoBlob(engine).decrypt(encrypted, secrets.token_bytes(128))
         assert False, "expected decryption to fail under the wrong key"
     except ValueError:
         pass

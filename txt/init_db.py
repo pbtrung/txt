@@ -33,8 +33,9 @@ SCHEMA_SQL = [
     "CREATE INDEX IF NOT EXISTS idx_snapshots_version ON snapshots(version)",
     "CREATE INDEX IF NOT EXISTS idx_snapshots_heartbeat ON snapshots(heartbeat_at)",
     """CREATE TABLE IF NOT EXISTS bundles (
-        bundle_key BLOB PRIMARY KEY, built_at_version INTEGER NOT NULL,
-        byte_size INTEGER NOT NULL, map_rows INTEGER NOT NULL, page_count INTEGER NOT NULL,
+        bundle_key BLOB PRIMARY KEY, bundle_enc_key BLOB NOT NULL,
+        built_at_version INTEGER NOT NULL, byte_size INTEGER NOT NULL,
+        map_rows INTEGER NOT NULL, page_count INTEGER NOT NULL,
         built_at INTEGER NOT NULL, retired_at INTEGER)""",
     """CREATE TABLE IF NOT EXISTS library_index (
         id INTEGER PRIMARY KEY CHECK (id = 1), object_key BLOB NOT NULL,

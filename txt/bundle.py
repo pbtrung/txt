@@ -1,5 +1,5 @@
 """Builds a bundle object (docs/data_model.md §6.3): header + page map + hot
-pages + index, encrypted under an HKDF subkey of db_master_key.
+pages + index, encrypted under a fresh, dedicated bundle_enc_key.
 """
 
 import hashlib
@@ -29,9 +29,9 @@ def _checksum(data: bytes) -> bytes:
 
 
 class BundleBuilder:
-    def __init__(self, blob: CryptoBlob, db_master_key: bytes):
+    def __init__(self, blob: CryptoBlob, bundle_enc_key: bytes):
         self.blob = blob
-        self.db_master_key = db_master_key
+        self.bundle_enc_key = bundle_enc_key
 
     def build(self, live_pages: dict, page_size: int, built_at_version: int) -> tuple[bytes, int, int]:
         """live_pages: page_no -> (version_created, data). Returns
@@ -40,11 +40,8 @@ class BundleBuilder:
         page_map = self._build_page_map(live_pages)
         hot_pages, index = self._build_hot_and_index(live_pages, hot_page_nos)
         header = self._build_header(page_size, built_at_version, page_map, hot_pages, index)
-        encrypted = self.blob.encrypt(header + page_map + hot_pages + index, self._derive_key())
+        encrypted = self.blob.encrypt(header + page_map + hot_pages + index, self.bundle_enc_key)
         return encrypted, len(live_pages), len(hot_page_nos)
-
-    def _derive_key(self) -> bytes:
-        return self.blob.engine.hkdf_sha3_512(self.db_master_key, b"", b"bundle", 64)
 
     def _hot_page_nos(self, live_pages: dict) -> list:
         if len(live_pages) <= HOT_PAGE_BUDGET:

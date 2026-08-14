@@ -127,6 +127,7 @@ A live, heartbeated snapshot row prevents garbage collection of anything visible
 ```sql
 CREATE TABLE bundles (
   bundle_key       BLOB PRIMARY KEY,       -- object key under b/, wrapped by umk (docs/crypto.md)
+  bundle_enc_key   BLOB NOT NULL,          -- 128 random bytes, minted fresh per bundle, wrapped by umk
   built_at_version INTEGER NOT NULL,
   byte_size        INTEGER NOT NULL,
   map_rows         INTEGER NOT NULL,
@@ -135,6 +136,8 @@ CREATE TABLE bundles (
   retired_at       INTEGER
 );
 ```
+
+`bundle_enc_key` is the IKM the bundle body is encrypted under; unlike `library_index.lib_idx_key` it isn't reused across rebuilds — each bundle is itself a brand-new object, so each gets its own fresh key rather than inheriting the retired bundle's.
 
 ### 3.5 Library index pointer
 
@@ -287,7 +290,7 @@ The hot-page index is keyed by `(page_no, version_created)`, not page number alo
 
 Membership of the hot-pages section is decided at build time by a `dbstat` scan on a connection holding the key. Rebuild when the count of distinct page numbers changed since `built_at_version` exceeds 25% of the live page count. Set `retired_at` on the previous bundle and let GC delete it after a grace window longer than a slow download.
 
-The vendored `sqlcipher.wasm` build has no `SQLITE_ENABLE_DBSTAT_VTAB`, so the ingest builder (`txt/bundle.py`) substitutes a heuristic for hot-page membership until a `dbstat`-capable build exists: page 1 is always hot, and the rest of the live pages join it only when the whole BB is small enough to carry outright (currently ≤64 pages). This is a strict subset of what a `dbstat` scan would select, so it never changes what a bundle means — only how much of it is prefetched — matching "nothing about a bundle is ever validated, only superseded" above. The bundle itself, like parts and the library index, is application-encrypted (§2) under `HKDF(db_master_key, "bundle")` — a derived subkey, not the SQLCipher page key and not `umk`. The library index instead uses its own dedicated `lib_idx_key` (§3.5, §8.3): 128 random bytes, minted once and wrapped by `umk`, the same way `object_key` is — `umk` wraps both the R2 address and the encryption key, but never the object body directly.
+The vendored `sqlcipher.wasm` build has no `SQLITE_ENABLE_DBSTAT_VTAB`, so the ingest builder (`txt/bundle.py`) substitutes a heuristic for hot-page membership until a `dbstat`-capable build exists: page 1 is always hot, and the rest of the live pages join it only when the whole BB is small enough to carry outright (currently ≤64 pages). This is a strict subset of what a `dbstat` scan would select, so it never changes what a bundle means — only how much of it is prefetched — matching "nothing about a bundle is ever validated, only superseded" above. The bundle itself, like parts and the library index, is application-encrypted (§2), under its own `bundle_enc_key` (§3.4): 128 random bytes, minted fresh for this bundle and wrapped by `umk`, the same way `object_key`/`lib_idx_key` are (§3.5, §8.3) — `umk` wraps both the R2 address and the encryption key, but never the object body directly. Unlike the library index's `lib_idx_key`, `bundle_enc_key` isn't reused across rebuilds: each bundle is a brand-new object, so each gets its own fresh key rather than inheriting the retired bundle's.
 
 ### 6.4 Garbage collection
 

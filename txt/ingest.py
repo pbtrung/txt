@@ -257,20 +257,24 @@ class TxtIngester:
 
     def _build_and_write_bundle(self, aa: LibsqlClient, current: list) -> None:
         live_pages = self._load_live_pages_with_version(aa)
-        builder = BundleBuilder(self.blob, self.db_master_key)
+        bundle_enc_key = secrets.token_bytes(128)
+        builder = BundleBuilder(self.blob, bundle_enc_key)
         encrypted, map_rows, hot_page_count = builder.build(live_pages, PAGE_SIZE, self.head_version)
         key = generate_random_prefix()
         self.r2.put_object(f"{self.db_prefix}/b/{key}", encrypted)
         if current:
             aa.execute("UPDATE bundles SET retired_at = ? WHERE bundle_key = ?", [int(time.time() * 1000), current[0][0]])
-        self._insert_bundle_row(aa, key, len(encrypted), map_rows, hot_page_count)
+        self._insert_bundle_row(aa, key, bundle_enc_key, len(encrypted), map_rows, hot_page_count)
 
-    def _insert_bundle_row(self, aa: LibsqlClient, key: str, byte_size: int, map_rows: int, page_count: int) -> None:
+    def _insert_bundle_row(
+        self, aa: LibsqlClient, key: str, bundle_enc_key: bytes, byte_size: int, map_rows: int, page_count: int
+    ) -> None:
         wrapped_key = self.blob.encrypt(key.encode(), self.umk)
+        wrapped_enc_key = self.blob.encrypt(bundle_enc_key, self.umk)
         aa.execute(
-            "INSERT INTO bundles (bundle_key, built_at_version, byte_size, map_rows, page_count, built_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            [wrapped_key, self.head_version, byte_size, map_rows, page_count, int(time.time() * 1000)],
+            "INSERT INTO bundles (bundle_key, bundle_enc_key, built_at_version, byte_size, map_rows, page_count, built_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [wrapped_key, wrapped_enc_key, self.head_version, byte_size, map_rows, page_count, int(time.time() * 1000)],
         )
 
     def _load_live_pages_with_version(self, aa: LibsqlClient) -> dict:
