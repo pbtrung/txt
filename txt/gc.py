@@ -50,12 +50,17 @@ class GarbageCollector:
             "cred_store",
         )
         self.db_prefix = self._require_db_prefix(aa)
+        self.logger.verbose(f"db_prefix={self.db_prefix}")
         self._expire_stale_snapshots(aa)
         head_version = self._read_head_version(aa)
         gc_horizon = self._compute_gc_horizon(aa, head_version)
+        self.logger.info("Collecting superseded page versions...")
         self._collect_page_versions(aa, gc_horizon)
+        self.logger.info("Collecting retired/orphaned bundles...")
         self._collect_bundles(aa)
+        self.logger.info("Collecting orphaned library index objects...")
         self._collect_library_index_orphans(aa)
+        self.logger.info("Collecting orphaned document part objects...")
         self._collect_part_orphans(aa, db_master_key)
         self.logger.info("Garbage collection complete")
 
@@ -82,6 +87,7 @@ class GarbageCollector:
 
     def _expire_stale_snapshots(self, aa: LibsqlClient) -> None:
         cutoff = int(time.time() * 1000) - SNAPSHOT_EXPIRY_MS
+        self.logger.verbose(f"expiring snapshots with heartbeat_at < {cutoff}...")
         count = self._delete_in_pages(
             aa,
             "SELECT snapshot_id FROM snapshots WHERE heartbeat_at < ?",
@@ -120,6 +126,7 @@ class GarbageCollector:
                 return total
             aa.batch([(delete_sql, list(row)) for row in rows])
             total += len(rows)
+            self.logger.verbose(f"  deleted batch of {len(rows)} row(s), {total} total so far...")
 
     def _delete_in_batches(self, aa: LibsqlClient, sql: str, key_rows: list) -> None:
         for i in range(0, len(key_rows), GC_BATCH_SIZE):
@@ -136,6 +143,7 @@ class GarbageCollector:
                 live_keys.add(key)
             else:
                 retired.append((wrapped_key, key))
+        self.logger.verbose(f"bundles: {len(live_keys)} live, {len(retired)} retired")
         self._delete_retired_bundles(aa, retired)
         self._sweep_orphans(f"{self.db_prefix}/b/", live_keys, "Bundle")
 
@@ -160,8 +168,11 @@ class GarbageCollector:
         self._sweep_orphans(f"{self.db_prefix}/i/", live_keys, "Library index")
 
     def _sweep_orphans(self, prefix: str, live_keys: set, label: str) -> None:
+        self.logger.verbose(f"listing {prefix}...")
+        listed = self.r2.list_keys(prefix)
         live_full = {f"{prefix}{key}" for key in live_keys}
-        orphans = [key for key in self.r2.list_keys(prefix) if key not in live_full]
+        orphans = [key for key in listed if key not in live_full]
+        self.logger.verbose(f"{prefix}: {len(listed)} object(s) listed, {len(orphans)} orphan(s)")
         if orphans:
             self.r2.delete_keys(orphans)
         self.logger.info(f"{label} cleanup: removed {len(orphans)} orphan object(s)")
@@ -171,10 +182,12 @@ class GarbageCollector:
         live_prefixes = {
             prefix.decode() for (prefix,) in self.bb.query("SELECT prefix FROM txt")
         }
+        self.logger.verbose(f"{len(live_prefixes)} live document prefix(es)")
         root = f"{self.db_prefix}/t/"
-        orphans = [
-            key for key in self.r2.list_keys(root) if self._doc_prefix(key, root) not in live_prefixes
-        ]
+        self.logger.verbose(f"listing {root}...")
+        listed = self.r2.list_keys(root)
+        orphans = [key for key in listed if self._doc_prefix(key, root) not in live_prefixes]
+        self.logger.verbose(f"{root}: {len(listed)} object(s) listed, {len(orphans)} orphan(s)")
         if orphans:
             self.r2.delete_keys(orphans)
         self.logger.info(f"Document parts cleanup: removed {len(orphans)} orphan object(s)")
@@ -184,11 +197,13 @@ class GarbageCollector:
 
     def _open_bb_readonly(self, aa: LibsqlClient, db_master_key: bytes) -> None:
         head_version = self._read_head_version(aa)
+        self.logger.verbose(f"opening BB read-only at head_version={head_version}...")
         rows = aa.query(
             "SELECT page_no, data FROM page_versions WHERE version_created <= ? "
             "AND (version_deleted IS NULL OR version_deleted > ?)",
             [head_version, head_version],
         )
+        self.logger.verbose(f"loaded {len(rows)} live page(s) into BB")
         self.bb.load_pages({page_no: data for page_no, data in rows})
         self.bb.open(db_master_key)
         self.bb.exec_sql(CREATE_TXT_SQL)
