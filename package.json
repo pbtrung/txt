@@ -7,14 +7,30 @@
     "worker:typecheck": "wrangler types worker/worker-configuration.d.ts && tsc -b worker/tsconfig.json",
     "worker:test": "vitest run worker",
     "worker:dev": "wrangler dev",
+    "ui:dev": "vite --config ui/vite.config.ts",
+    "ui:typecheck": "tsc -b ui/tsconfig.json",
+    "ui:build": "tsc -b ui/tsconfig.json && vite build --config ui/vite.config.ts",
+    "ui:test": "vitest run --config ui/vite.config.ts",
     "deploy": "sh scripts/deploy.sh"
   },
   "dependencies": {
-    "jose": "^6.2.8"
+    "jose": "^6.2.8",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-router-dom": "^7.18.2"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260814.1",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.4",
+    "@types/node": "^26.2.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^6.0.5",
+    "jsdom": "^30.0.1",
     "typescript": "^7.0.2",
+    "vite": "^8.2.1",
     "vitest": "^4.1.10",
     "wrangler": "^4.123.0"
   },
