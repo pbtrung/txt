@@ -49,4 +49,24 @@ describe("sqlite (real sqlcipher.wasm, unkeyed)", () => {
     expect(() => db.query("SELECT * FROM nonexistent;")).toThrow(/no such table/);
     db.close();
   });
+
+  it("binds integer, text, and blob parameters", async () => {
+    const bytes = await buildFixtureBytes(["CREATE TABLE t(a INTEGER, b TEXT, c BLOB);", "INSERT INTO t VALUES (1, 'x', x'01');"]);
+
+    const db = await openSqliteFromBytes(bytes);
+    const rows = db.query("SELECT b FROM t WHERE a = ? AND b = ? AND c = ?", [1, "x", new Uint8Array([1])]);
+    db.close();
+
+    expect(rows).toEqual([["x"]]);
+  });
+
+  it("binds a null parameter", async () => {
+    const bytes = await buildFixtureBytes(["CREATE TABLE t(a);", "INSERT INTO t VALUES (NULL), (1);"]);
+
+    const db = await openSqliteFromBytes(bytes);
+    const rows = db.query("SELECT a FROM t WHERE a IS ?", [null]);
+    db.close();
+
+    expect(rows).toEqual([[null]]);
+  });
 });

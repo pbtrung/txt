@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { cacheDbPath, cacheToken, checkRateLimit, getCachedDbPath, getCachedToken } from "./cache";
+import { cacheAccount, cacheToken, checkRateLimit, getCachedAccount, getCachedToken } from "./cache";
 import { lookupUser } from "./ctl";
 import { handleDbToken } from "./dbToken";
 import { verifyFirebaseIdToken } from "./firebaseAuth";
@@ -28,7 +28,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(checkRateLimit).mockResolvedValue(true);
   vi.mocked(getCachedToken).mockResolvedValue(null);
-  vi.mocked(getCachedDbPath).mockResolvedValue(null);
+  vi.mocked(getCachedAccount).mockResolvedValue(null);
 });
 
 describe("handleDbToken", () => {
@@ -73,7 +73,7 @@ describe("handleDbToken", () => {
 
   it("returns 503 when the user's database doesn't exist yet", async () => {
     vi.mocked(verifyFirebaseIdToken).mockResolvedValue({ uid: "uid-123" });
-    vi.mocked(lookupUser).mockResolvedValue("dbpath123");
+    vi.mocked(lookupUser).mockResolvedValue({ dbPath: "dbpath123", type: "user" });
     vi.mocked(mintDbToken).mockRejectedValue(new DatabaseNotFoundError("dbpath123"));
     const resp = await handleDbToken(makeRequest("good"), ENV);
     expect(resp.status).toBe(503);
@@ -86,9 +86,9 @@ describe("handleDbToken", () => {
     expect(resp.status).toBe(503);
   });
 
-  it("mints fresh, caches both the db_path and the token, and returns 200 on success", async () => {
+  it("mints fresh, caches both the account and the token, and returns 200 on success", async () => {
     vi.mocked(verifyFirebaseIdToken).mockResolvedValue({ uid: "uid-123" });
-    vi.mocked(lookupUser).mockResolvedValue("dbpath123");
+    vi.mocked(lookupUser).mockResolvedValue({ dbPath: "dbpath123", type: "user" });
     vi.mocked(mintDbToken).mockResolvedValue("minted-jwt");
 
     const resp = await handleDbToken(makeRequest("good"), ENV);
@@ -98,22 +98,22 @@ describe("handleDbToken", () => {
       db_token: "minted-jwt",
       db_url: "libsql://dbpath123-x.aws-us-east-1.turso.io",
     });
-    expect(cacheDbPath).toHaveBeenCalledWith(ENV.DB_TOKEN_CACHE, "uid-123", "dbpath123");
+    expect(cacheAccount).toHaveBeenCalledWith(ENV.DB_TOKEN_CACHE, "uid-123", { dbPath: "dbpath123", type: "user" });
     expect(cacheToken).toHaveBeenCalledWith(ENV.DB_TOKEN_CACHE, "uid-123", {
       dbToken: "minted-jwt",
       dbUrl: "libsql://dbpath123-x.aws-us-east-1.turso.io",
     });
   });
 
-  it("skips the ctl lookup when db_path is already cached", async () => {
+  it("skips the ctl lookup when the account is already cached", async () => {
     vi.mocked(verifyFirebaseIdToken).mockResolvedValue({ uid: "uid-123" });
-    vi.mocked(getCachedDbPath).mockResolvedValue("cached-dbpath");
+    vi.mocked(getCachedAccount).mockResolvedValue({ dbPath: "cached-dbpath", type: "user" });
     vi.mocked(mintDbToken).mockResolvedValue("minted-jwt");
 
     const resp = await handleDbToken(makeRequest("good"), ENV);
 
     expect(resp.status).toBe(200);
     expect(lookupUser).not.toHaveBeenCalled();
-    expect(cacheDbPath).not.toHaveBeenCalled();
+    expect(cacheAccount).not.toHaveBeenCalled();
   });
 });

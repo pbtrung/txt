@@ -27,12 +27,18 @@ export async function cacheToken(kv: KVNamespace, uid: string, token: CachedToke
   await kv.put(`token:${uid}`, JSON.stringify(token), { expirationTtl: TOKEN_TTL_SECONDS });
 }
 
-export async function getCachedDbPath(kv: KVNamespace, uid: string): Promise<string | null> {
-  return kv.get(`user:${uid}`);
+export interface CachedAccount {
+  dbPath: string;
+  type: "admin" | "user";
 }
 
-export async function cacheDbPath(kv: KVNamespace, uid: string, dbPath: string): Promise<void> {
-  await kv.put(`user:${uid}`, dbPath, { expirationTtl: USER_TTL_SECONDS });
+export async function getCachedAccount(kv: KVNamespace, uid: string): Promise<CachedAccount | null> {
+  const value = await kv.get(`user:${uid}`);
+  return value ? (JSON.parse(value) as CachedAccount) : null;
+}
+
+export async function cacheAccount(kv: KVNamespace, uid: string, account: CachedAccount): Promise<void> {
+  await kv.put(`user:${uid}`, JSON.stringify(account), { expirationTtl: USER_TTL_SECONDS });
 }
 
 export async function checkRateLimit(kv: KVNamespace, uid: string): Promise<boolean> {

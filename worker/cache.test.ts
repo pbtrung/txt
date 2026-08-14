@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { cacheDbPath, cacheToken, checkRateLimit, getCachedDbPath, getCachedToken } from "./cache";
+import { cacheAccount, cacheToken, checkRateLimit, getCachedAccount, getCachedToken } from "./cache";
 
 function fakeKv(): KVNamespace {
   const store = new Map<string, string>();
@@ -25,12 +25,17 @@ describe("token cache", () => {
   });
 });
 
-describe("db_path cache", () => {
-  it("round-trips a cached db_path with a 24-hour TTL", async () => {
+describe("account cache", () => {
+  it("round-trips a cached account with a 24-hour TTL", async () => {
     const kv = fakeKv();
-    await cacheDbPath(kv, "uid-123", "dbpath123");
-    expect(await getCachedDbPath(kv, "uid-123")).toBe("dbpath123");
-    expect(kv.put).toHaveBeenCalledWith("user:uid-123", "dbpath123", { expirationTtl: 24 * 60 * 60 });
+    await cacheAccount(kv, "uid-123", { dbPath: "dbpath123", type: "user" });
+    expect(await getCachedAccount(kv, "uid-123")).toEqual({ dbPath: "dbpath123", type: "user" });
+    expect(kv.put).toHaveBeenCalledWith("user:uid-123", expect.any(String), { expirationTtl: 24 * 60 * 60 });
+  });
+
+  it("misses for an uncached uid", async () => {
+    const kv = fakeKv();
+    expect(await getCachedAccount(kv, "uid-123")).toBeNull();
   });
 });
 

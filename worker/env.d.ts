@@ -11,4 +11,11 @@ interface Env {
   CTL_DB_TOKEN: string;
   TURSO_ORG_TOKEN: string;
   TURSO_ORG: string;
+  // r2Token.ts's parent credential -- the admin's own static R2 read-write
+  // key, held only here. Never sent to any client; every client-visible
+  // credential is a short-lived, scoped JWT minted from it.
+  R2_ENDPOINT: string;
+  R2_BUCKET: string;
+  R2_READ_WRITE_ACCESS_KEY_ID: string;
+  R2_READ_WRITE_SECRET_ACCESS_KEY: string;
 }

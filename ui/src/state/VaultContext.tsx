@@ -14,7 +14,7 @@ import { LibsqlClient } from "../data/libsql";
 import { loadLibraryIndex } from "../data/libraryIndex";
 import { R2Client } from "../data/r2";
 import { readCredStore, readDbPrefix, readUmk, type CredStorePayload } from "../data/session";
-import { fetchDbToken } from "../data/workerClient";
+import { fetchDbToken, fetchR2Token } from "../data/workerClient";
 import { fromBase64 } from "../util/base64";
 
 export type VaultStatus = "locked" | "unlocking" | "unlocked";
@@ -78,7 +78,8 @@ async function resolveSession(file: File, onPhase: (index: number) => void): Pro
   if (!umk) throw new Error("account not initialized yet -- run --init-db first");
   const [dbPrefix, credStore] = await Promise.all([readDbPrefix(aa, umk), readCredStore(aa, umk, ACCOUNT_TYPE, uid)]);
   onPhase(4);
-  const r2 = new R2Client(creds.r2_config);
+  const r2Credential = await fetchR2Token(WORKER_URL, idToken, dbPrefix);
+  const r2 = new R2Client(creds.r2_config, r2Credential);
   const [libraryIndexBytes, bundleBytes] = await Promise.all([
     loadLibraryIndex(aa, umk, dbPrefix, r2),
     loadBundle(aa, umk, dbPrefix, r2),

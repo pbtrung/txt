@@ -10,6 +10,7 @@ class FakeAa implements Aa {
   async query(): Promise<CellValue[][]> {
     return this.rows;
   }
+  async execute(): Promise<void> {}
 }
 
 class FakeR2 implements R2 {

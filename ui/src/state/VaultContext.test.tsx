@@ -7,7 +7,7 @@ import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../auth/firebaseSignIn", () => ({ signIn: vi.fn() }));
-vi.mock("../data/workerClient", () => ({ fetchDbToken: vi.fn() }));
+vi.mock("../data/workerClient", () => ({ fetchDbToken: vi.fn(), fetchR2Token: vi.fn() }));
 vi.mock("../data/session", () => ({ readUmk: vi.fn(), readDbPrefix: vi.fn(), readCredStore: vi.fn() }));
 vi.mock("../data/libraryIndex", () => ({ loadLibraryIndex: vi.fn() }));
 vi.mock("../data/bundle", () => ({ loadBundle: vi.fn() }));
@@ -16,7 +16,7 @@ import { signIn } from "../auth/firebaseSignIn";
 import { loadBundle } from "../data/bundle";
 import { loadLibraryIndex } from "../data/libraryIndex";
 import { readCredStore, readDbPrefix, readUmk } from "../data/session";
-import { fetchDbToken } from "../data/workerClient";
+import { fetchDbToken, fetchR2Token } from "../data/workerClient";
 import { useVault, VaultProvider } from "./VaultContext";
 
 const VALID_CREDS = {
@@ -26,8 +26,6 @@ const VALID_CREDS = {
   user_root_key: btoa("x".repeat(256)),
   r2_config: {
     endpoint: "https://example.r2.cloudflarestorage.com",
-    read_only_access_key_id: "a",
-    read_only_secret_access_key: "b",
     region: "auto",
     bucket: "bucket",
   },
@@ -40,6 +38,7 @@ function fakeFile(content: object): File {
 function mockHappyPath() {
   vi.mocked(signIn).mockResolvedValue({ idToken: "tok", uid: "uid-1" });
   vi.mocked(fetchDbToken).mockResolvedValue({ dbToken: "dbtok", dbUrl: "libsql://x" });
+  vi.mocked(fetchR2Token).mockResolvedValue({ accessKeyId: "ak", secretAccessKey: "sk", sessionToken: "st", expiresAtMs: Date.now() + 900_000 });
   vi.mocked(readUmk).mockResolvedValue(new Uint8Array([1]));
   vi.mocked(readDbPrefix).mockResolvedValue("prefix123");
   vi.mocked(readCredStore).mockResolvedValue({
@@ -68,6 +67,7 @@ describe("VaultContext", () => {
     expect(result.current.session?.libraryIndexBytes).toEqual(new Uint8Array([2]));
     expect(result.current.session?.bundleBytes).toEqual(new Uint8Array([3]));
     expect(result.current.error).toBeNull();
+    expect(fetchR2Token).toHaveBeenCalledWith(expect.any(String), "tok", "prefix123");
   });
 
   it("sets an error and stays locked when umk can't be unwrapped", async () => {

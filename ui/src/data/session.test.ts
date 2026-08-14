@@ -16,6 +16,8 @@ class FakeAa implements Aa {
     const match = this.rows.find(([needle]) => sql.includes(needle));
     return match ? match[1] : [];
   }
+
+  async execute(): Promise<void> {}
 }
 
 function randomBytes(length: number): Uint8Array {

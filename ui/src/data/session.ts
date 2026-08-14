@@ -2,14 +2,16 @@
 // txt/init_db.py, txt/ingest.py's own read side): user_root_key -> decrypt
 // key_store.umk -> decrypt meta.db_prefix / cred_store.content (JSON) /
 // library_index's object_key+lib_idx_key / the active bundle's
-// bundle_key+bundle_enc_key. Takes a minimal `{query}` interface rather
-// than the concrete LibsqlClient class, so tests can pass a fake AA without
-// a real Turso connection.
+// bundle_key+bundle_enc_key. Takes a minimal `{query, execute}` interface
+// rather than the concrete LibsqlClient class, so tests can pass a fake AA
+// without a real Turso connection. pageVersions.ts's pinSnapshot is the
+// only writer that needs `execute`.
 import { decrypt, decryptJson } from "../crypto/cryptoBlob";
 import type { CellValue } from "./libsql";
 
 export interface Aa {
   query(sql: string, args?: (Uint8Array | number | string)[]): Promise<CellValue[][]>;
+  execute(sql: string, args?: (Uint8Array | number | string)[]): Promise<void>;
 }
 
 export type AccountType = "admin" | "user";

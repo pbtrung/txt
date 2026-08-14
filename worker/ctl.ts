@@ -1,10 +1,11 @@
-// docs/auth.md §5 step 2: SELECT db_path FROM users WHERE id = ? against
-// ctl, over the same libsql HTTP /v2/pipeline protocol txt/libsql_client.py
-// uses server-side. This Worker mints a token for whatever database a uid
-// owns regardless of admin/user type, so unlike the CLI's own ctl queries
-// it never needs the `type` column. ctl.users has no BLOB columns either,
-// so no need to replicate that Python client's base64-blob or
-// decimal-string-integer cell handling here.
+// docs/auth.md §5 step 2: SELECT db_path, type FROM users WHERE id = ?
+// against ctl, over the same libsql HTTP /v2/pipeline protocol
+// txt/libsql_client.py uses server-side. `type` was dropped from this query
+// early on (this Worker used to mint a token for whatever database a uid
+// owns regardless of admin/user type), but r2Token.ts now needs it to
+// decide bucket-wide read-write vs prefix-scoped read-only. ctl.users has
+// no BLOB columns, so no need to replicate that Python client's base64-blob
+// or decimal-string-integer cell handling here.
 
 interface TextCell {
   value: string | null;
@@ -14,9 +15,16 @@ interface PipelineResponse {
   results: Array<{ response: { result: { rows: TextCell[][] } } }>;
 }
 
-export async function lookupUser(ctlDbUrl: string, ctlDbToken: string, uid: string): Promise<string | null> {
+export type AccountType = "admin" | "user";
+
+export interface Account {
+  dbPath: string;
+  type: AccountType;
+}
+
+export async function lookupUser(ctlDbUrl: string, ctlDbToken: string, uid: string): Promise<Account | null> {
   const rows = await queryUsers(ctlDbUrl, ctlDbToken, uid);
-  return rows.length === 0 ? null : rows[0][0];
+  return rows.length === 0 ? null : { dbPath: rows[0][0], type: rows[0][1] as AccountType };
 }
 
 async function queryUsers(ctlDbUrl: string, ctlDbToken: string, uid: string): Promise<string[][]> {
@@ -25,7 +33,7 @@ async function queryUsers(ctlDbUrl: string, ctlDbToken: string, uid: string): Pr
     requests: [
       {
         type: "execute",
-        stmt: { sql: "SELECT db_path FROM users WHERE id = ?", args: [{ type: "text", value: uid }] },
+        stmt: { sql: "SELECT db_path, type FROM users WHERE id = ?", args: [{ type: "text", value: uid }] },
       },
       { type: "close" },
     ],
