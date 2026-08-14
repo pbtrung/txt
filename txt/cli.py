@@ -3,6 +3,7 @@ from pathlib import Path
 import click
 
 from .admin_init import AdminInitializer
+from .clean_bucket import BucketCleaner
 from .creds import load_creds
 from .gc import GarbageCollector
 from .ingest import TxtIngester
@@ -66,10 +67,22 @@ from .replace_images import ImageReplacer
     help="Reclaim superseded BB pages and orphaned R2 objects (needs --creds)",
 )
 @click.option(
+    "--clean-bucket",
+    "clean_bucket",
+    is_flag=True,
+    help="Sweep R2 for whole account prefixes unknown to ctl.users (needs --creds)",
+)
+@click.option(
+    "--dry-run",
+    "dry_run",
+    is_flag=True,
+    help="With --clean-bucket, report what would be deleted without deleting anything",
+)
+@click.option(
     "--creds",
     "creds_path",
     metavar="CREDS_JSON",
-    help="creds.json for --ingest/--collect-garbage",
+    help="creds.json for --ingest/--collect-garbage/--clean-bucket",
 )
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose progress logging")
 @click.pass_context
@@ -83,6 +96,8 @@ def cli(
     replace_images_dirs: tuple[str, str],
     ingest_dir: str | None,
     collect_garbage: bool,
+    clean_bucket: bool,
+    dry_run: bool,
     creds_path: str | None,
     verbose: bool,
 ) -> None:
@@ -101,6 +116,8 @@ def cli(
         _run_ingest(ingest_dir, creds_path, logger)
     elif collect_garbage:
         _run_collect_garbage(creds_path, logger)
+    elif clean_bucket:
+        _run_clean_bucket(creds_path, dry_run, logger)
     else:
         click.echo(ctx.get_help())
 
@@ -149,6 +166,12 @@ def _run_collect_garbage(creds_path: str | None, logger: Logger) -> None:
         collector.run()
     finally:
         collector.bb.close()
+
+
+def _run_clean_bucket(creds_path: str | None, dry_run: bool, logger: Logger) -> None:
+    if not creds_path:
+        raise click.UsageError("--clean-bucket requires --creds CREDS_JSON")
+    BucketCleaner(load_creds(creds_path), dry_run, logger).run()
 
 
 def run(argv: list | None = None) -> None:
