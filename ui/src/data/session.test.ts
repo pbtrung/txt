@@ -59,16 +59,24 @@ describe("session key-unwrap chain (real cryptoBlob)", () => {
     expect(await readCredStore(aa, umk, "admin", "uid-admin")).toEqual(payload);
   });
 
-  it("readLibraryIndexKeys decrypts both object_key and lib_idx_key directly under umk", async () => {
+  it("readLibraryIndexKeys decrypts object_key/lib_idx_key and passes through built_at_version/content_hash", async () => {
     const umk = randomBytes(128);
     const libIdxKey = randomBytes(128);
+    const contentHash = randomBytes(16);
     const aa = new FakeAa().when("FROM library_index", [
-      [await encrypt(new TextEncoder().encode("some-object-key"), umk), await encrypt(libIdxKey, umk)],
+      [
+        await encrypt(new TextEncoder().encode("some-object-key"), umk),
+        await encrypt(libIdxKey, umk),
+        7,
+        contentHash,
+      ],
     ]);
 
     const result = await readLibraryIndexKeys(aa, umk);
     expect(result?.objectKey).toBe("some-object-key");
     expect([...result!.libIdxKey]).toEqual([...libIdxKey]);
+    expect(result?.builtAtVersion).toBe(7);
+    expect([...result!.contentHash]).toEqual([...contentHash]);
   });
 
   it("readLibraryIndexKeys returns null when no row exists yet", async () => {

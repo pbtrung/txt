@@ -24,6 +24,8 @@ export interface CredStorePayload {
 export interface LibraryIndexKeys {
   objectKey: string;
   libIdxKey: Uint8Array;
+  builtAtVersion: number;
+  contentHash: Uint8Array;
 }
 
 export interface BundleKeys {
@@ -61,12 +63,16 @@ export async function readCredStore(aa: Aa, umk: Uint8Array, accountType: Accoun
 }
 
 export async function readLibraryIndexKeys(aa: Aa, umk: Uint8Array): Promise<LibraryIndexKeys | null> {
-  const rows = await aa.query("SELECT object_key, lib_idx_key FROM library_index WHERE id = 1");
+  const rows = await aa.query(
+    "SELECT object_key, lib_idx_key, built_at_version, content_hash FROM library_index WHERE id = 1",
+  );
   if (rows.length === 0) return null;
-  const [objectKey, libIdxKey] = rows[0];
+  const [objectKey, libIdxKey, builtAtVersion, contentHash] = rows[0];
   return {
     objectKey: new TextDecoder().decode(await decrypt(asBytes(objectKey), umk)),
     libIdxKey: await decrypt(asBytes(libIdxKey), umk),
+    builtAtVersion: builtAtVersion as number,
+    contentHash: asBytes(contentHash),
   };
 }
 

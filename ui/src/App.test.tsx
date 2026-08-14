@@ -8,4 +8,10 @@ describe("App", () => {
     render(<App />);
     expect(screen.getByRole("heading", { name: "Unlock" })).toBeInTheDocument();
   });
+
+  it("redirects /library back to Unlock when locked", () => {
+    window.history.pushState(null, "", "/library");
+    render(<App />);
+    expect(screen.getByRole("heading", { name: "Unlock" })).toBeInTheDocument();
+  });
 });

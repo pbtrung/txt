@@ -5,6 +5,8 @@
 // CLAUDE.md's documented Hrana quirks. worker/ctl.ts talks the same
 // protocol but only ever needs text cells for ctl.users, so it doesn't
 // replicate this blob/integer handling.
+import { fromBase64, toBase64 } from "../util/base64";
+
 export type SqlArg = Uint8Array | number | string;
 export type CellValue = Uint8Array | number | string | null;
 
@@ -18,17 +20,6 @@ interface PipelineResult {
 }
 interface PipelineResponse {
   results: PipelineResult[];
-}
-
-function toBase64(bytes: Uint8Array): string {
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary);
-}
-
-function fromBase64(value: string): Uint8Array {
-  const padded = value + "=".repeat((4 - (value.length % 4)) % 4);
-  return Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
 }
 
 function toArg(value: SqlArg): Record<string, unknown> {
