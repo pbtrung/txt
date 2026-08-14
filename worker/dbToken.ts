@@ -37,9 +37,9 @@ async function respondForUid(uid: string, env: Env): Promise<Response> {
 }
 
 async function mintForUid(uid: string, env: Env): Promise<Response> {
-  const user = await lookupUser(env.CTL_DB_URL, env.CTL_DB_TOKEN, uid);
-  if (!user) return new Response("not provisioned", { status: 403 });
-  const dbToken = await mintDbToken(env.TURSO_ORG_TOKEN, env.TURSO_ORG, user.dbPath);
-  const dbUrl = `libsql://${user.dbPath}-${env.TURSO_ORG}.aws-us-east-1.turso.io`;
+  const dbPath = await lookupUser(env.CTL_DB_URL, env.CTL_DB_TOKEN, uid);
+  if (!dbPath) return new Response("not provisioned", { status: 403 });
+  const dbToken = await mintDbToken(env.TURSO_ORG_TOKEN, env.TURSO_ORG, dbPath);
+  const dbUrl = `libsql://${dbPath}-${env.TURSO_ORG}.aws-us-east-1.turso.io`;
   return Response.json({ db_token: dbToken, db_url: dbUrl });
 }

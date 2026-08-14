@@ -46,7 +46,7 @@ describe("handleDbToken", () => {
 
   it("returns 503 when the user's database doesn't exist yet", async () => {
     vi.mocked(verifyFirebaseIdToken).mockResolvedValue({ uid: "uid-123" });
-    vi.mocked(lookupUser).mockResolvedValue({ dbPath: "dbpath123", type: "user" });
+    vi.mocked(lookupUser).mockResolvedValue("dbpath123");
     vi.mocked(mintDbToken).mockRejectedValue(new DatabaseNotFoundError("dbpath123"));
     const resp = await handleDbToken(makeRequest("good"), ENV);
     expect(resp.status).toBe(503);
@@ -61,7 +61,7 @@ describe("handleDbToken", () => {
 
   it("returns 200 with db_token/db_url on success", async () => {
     vi.mocked(verifyFirebaseIdToken).mockResolvedValue({ uid: "uid-123" });
-    vi.mocked(lookupUser).mockResolvedValue({ dbPath: "dbpath123", type: "user" });
+    vi.mocked(lookupUser).mockResolvedValue("dbpath123");
     vi.mocked(mintDbToken).mockResolvedValue("minted-jwt");
     const resp = await handleDbToken(makeRequest("good"), ENV);
     expect(resp.status).toBe(200);
