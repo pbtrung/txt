@@ -182,7 +182,7 @@ One row either way (`users.type`, docs/auth.md decides the shape). `umk` is gene
 
 ### 3.7 Credential backups
 
-`cred_store` backs up the one piece of state a lost client can't otherwise recover: `display_name` and the 256-random-byte, base64-encoded `db_master_key`, wrapped as one JSON payload under `umk` (docs/crypto.md). Its shape depends on `users.type`:
+`cred_store` backs up the state a lost client can't otherwise recover: `display_name`, the 256-random-byte base64-encoded `db_master_key`, this row's own `user_id`, and `db_prefix`, wrapped as one JSON payload under `umk` (docs/crypto.md). Its shape depends on `users.type`:
 
 ```sql
 -- Admin's own AA: one row per backed-up account — the admin's own and
@@ -190,15 +190,21 @@ One row either way (`users.type`, docs/auth.md decides the shape). `umk` is gene
 CREATE TABLE cred_store (
   id      INTEGER PRIMARY KEY,
   user_id TEXT NOT NULL UNIQUE,   -- ctl users.id: this admin's own id, or a user's
-  content BLOB NOT NULL           -- wrapped by umk; { display_name, db_master_key }
+  content BLOB NOT NULL           -- wrapped by umk; { user_id, display_name, db_master_key, db_prefix }
 );
 
 -- An ordinary user's own AA: exactly one row, its own backup.
 CREATE TABLE cred_store (
   id      INTEGER PRIMARY KEY CHECK (id = 1),
-  content BLOB NOT NULL           -- wrapped by umk; { display_name, db_master_key }
+  content BLOB NOT NULL           -- wrapped by umk; { user_id, display_name, db_master_key, db_prefix }
 );
 ```
+
+Every row's payload carries its own `user_id`, checked against the row's `user_id` column on read: since every row in the admin's `cred_store` is wrapped under the same key (the admin's own `umk`), nothing about the wrap itself ties a payload to the row it's stored under, so a payload copied from one row into another would otherwise decrypt and parse cleanly under the wrong identity. Binding `user_id` into the plaintext makes that mismatch self-detecting — a reader that finds `payload["user_id"] != row.user_id` treats the row as unverifiable, the same as a decrypt failure (§6.5).
+
+`db_prefix` and `user_id` are recent additions to this payload — a row written before they existed has neither. Any code path that finds an existing row with a payload missing either key backfills it in place (decrypt, add the missing keys without touching `display_name`/`db_master_key`, re-encrypt, `UPDATE`) rather than leaving it incomplete, since `--clean-bucket` (§6.5) depends on every row actually having a `db_prefix` to check against.
+
+**How a user's row actually reaches the admin's AA.** Until this was built, nothing ever populated the admin's `cred_store` with anyone's row but the admin's own — the "one row per backed-up account" description above was aspirational. The real mechanism: an ordinary user's `--init-db` run, given both its own creds.json and the admin's (`--admin-creds`/`--user-creds`), does its normal local setup and then — in the same process, using the admin's own creds.json to sign in and unwrap the admin's own `umk` — wraps `{user_id, display_name, db_master_key, db_prefix}` under that `umk` and upserts it into the admin's `cred_store`. Nothing is embedded or persisted in the user's own creds.json; the trust boundary is simply that whoever runs that command holds both files for the duration of one process. `--init-user` (admin-run, also taking both creds files) is the separate, prerequisite step that registers the user's `ctl.users` row in the first place — sign in as the target user via their own Firebase credentials to get their real uid directly, no manual console lookup needed.
 
 ---
 
@@ -306,6 +312,17 @@ A snapshot whose `heartbeat_at` is older than three heartbeat intervals is delet
 Pinning and the horizon check are two halves of one invariant: a reader pins in the same batch that reads `head_version`, so a reader either pins a version at or above the horizon or fails and retries.
 
 `--collect-garbage` (`txt/gc.py`) is this account's implementation: steps 1–2 run as written above; steps 3–4 skip the grace window entirely and delete every retired bundle's row and object immediately, plus sweep `t/` for parts whose prefix matches no live `txt.prefix` and `i/` for anything but the current `object_key` (§7.2, §8). The grace window exists to protect a reader mid-download of a bundle that's about to be superseded; this CLI has no such reader in flight, so immediate deletion is safe here and keeps every population down to just its current live state, at the cost of not being safe to run in the presence of a real concurrent reader once one exists. Every SELECT/DELETE round trip is capped and looped (`GC_BATCH_SIZE`), the same reasoning as commit's `MAX_PAGES_PER_BATCH` (§6.2): an unbounded SELECT or a DELETE matching an unbounded row count both risk timing out Turso's Hrana endpoint on a long-uncollected backlog.
+
+### 6.5 Bucket-wide cleanup
+
+`--collect-garbage` cleans up *inside* one already-known account's own `db_prefix`. Nothing sweeps the bucket at the level of "does this top-level `{db_prefix}/...` tree belong to any account at all" — a document part upload that succeeded just before an ingest crashed, or an account that was only ever partly set up, can leave a whole prefix with no reference anywhere. `--clean-bucket` (`txt/clean_bucket.py`, admin-run only) is that sweep, and it only ever needs the admin's own AA to do it — never another account's AA or BB — because by the time it runs, every provisioned account's `db_prefix` already sits in the admin's own `cred_store` (§3.7).
+
+1. Read every `ctl.users` row — the authoritative list of accounts that are supposed to exist.
+2. Read every row in the admin's own `cred_store`, decrypting each under the admin's own `umk` and checking the payload's own `user_id` against the row's `user_id` column (§3.7). A row that fails to decrypt, or whose `user_id` doesn't match, is treated as unverifiable — not silently skipped, not trusted.
+3. **Safety gate**: if any uid from step 1 has no verified `db_prefix` from step 2, its storage can't be told apart from an orphan. Real (non-`--dry-run`) mode refuses to delete *anything* in that case and reports which uid(s) are unverifiable; `--dry-run` reports the same gap as a warning and keeps going, since it never deletes regardless.
+4. List the bucket's top-level `{db_prefix}/` segments (`R2Client.list_common_prefixes`, an S3 `Delimiter`-based listing — cheap, since it doesn't enumerate every object under every account) and delete everything under any segment that isn't in the verified set. `--dry-run` only reports counts.
+
+Deliberately out of scope: nothing here reclaims a *deprovisioned* account's storage — there's no path that removes a `db_prefix` from the known set once it's been backed up, only ones that add to it.
 
 ---
 
