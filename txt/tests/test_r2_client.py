@@ -14,19 +14,23 @@ CONFIG = R2Config(
 
 
 class FakeS3Client:
-    def __init__(self, pages=None):
+    def __init__(self, pages=None, prefix_pages=None):
         self.put_calls = []
         self.delete_calls = []
         self._pages = pages or []
+        self._prefix_pages = prefix_pages or []
 
     def put_object(self, Bucket, Key, Body):
         self.put_calls.append((Bucket, Key, Body))
 
-    def list_objects_v2(self, Bucket, Prefix, ContinuationToken=None):
+    def list_objects_v2(self, Bucket, Prefix, ContinuationToken=None, Delimiter=None):
         index = 0 if ContinuationToken is None else int(ContinuationToken)
-        page = self._pages[index]
-        resp = {"Contents": [{"Key": k} for k in page]}
-        if index + 1 < len(self._pages):
+        pages = self._prefix_pages if Delimiter else self._pages
+        page = pages[index]
+        key = "CommonPrefixes" if Delimiter else "Contents"
+        item_key = "Prefix" if Delimiter else "Key"
+        resp = {key: [{item_key: v} for v in page]}
+        if index + 1 < len(pages):
             resp["IsTruncated"] = True
             resp["NextContinuationToken"] = str(index + 1)
         return resp
@@ -95,3 +99,24 @@ def test_delete_keys_noop_for_empty_list(monkeypatch):
     R2Client(CONFIG).delete_keys([])
 
     assert fake.delete_calls == []
+
+
+def test_list_common_prefixes_follows_pagination(monkeypatch):
+    fake = FakeS3Client(prefix_pages=[["a/", "b/"], ["c/"]])
+    monkeypatch.setattr(r2_client_module.boto3, "client", lambda *a, **k: fake)
+
+    assert R2Client(CONFIG).list_common_prefixes() == ["a/", "b/", "c/"]
+
+
+def test_list_common_prefixes_single_page(monkeypatch):
+    fake = FakeS3Client(prefix_pages=[["only/"]])
+    monkeypatch.setattr(r2_client_module.boto3, "client", lambda *a, **k: fake)
+
+    assert R2Client(CONFIG).list_common_prefixes() == ["only/"]
+
+
+def test_list_common_prefixes_does_not_enumerate_individual_keys(monkeypatch):
+    fake = FakeS3Client(pages=[["should-not-appear"]], prefix_pages=[["real/"]])
+    monkeypatch.setattr(r2_client_module.boto3, "client", lambda *a, **k: fake)
+
+    assert R2Client(CONFIG).list_common_prefixes() == ["real/"]

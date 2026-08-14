@@ -29,6 +29,20 @@ class R2Client:
                 return keys
             token = resp["NextContinuationToken"]
 
+    def list_common_prefixes(self, prefix: str = "", delimiter: str = "/") -> list[str]:
+        # Cheap top-level enumeration (e.g. every {db_prefix}/ segment)
+        # without listing every object underneath each one.
+        prefixes, token = [], None
+        while True:
+            kwargs = {"Bucket": self.bucket, "Prefix": prefix, "Delimiter": delimiter}
+            if token:
+                kwargs["ContinuationToken"] = token
+            resp = self._s3.list_objects_v2(**kwargs)
+            prefixes.extend(p["Prefix"] for p in resp.get("CommonPrefixes", []))
+            if not resp.get("IsTruncated"):
+                return prefixes
+            token = resp["NextContinuationToken"]
+
     def delete_keys(self, keys: list[str]) -> None:
         for i in range(0, len(keys), 1000):
             batch = keys[i : i + 1000]
