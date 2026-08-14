@@ -38,8 +38,9 @@ SCHEMA_SQL = [
         built_at INTEGER NOT NULL, retired_at INTEGER)""",
     """CREATE TABLE IF NOT EXISTS library_index (
         id INTEGER PRIMARY KEY CHECK (id = 1), object_key BLOB NOT NULL,
-        built_at_version INTEGER NOT NULL, byte_size INTEGER NOT NULL,
-        doc_count INTEGER NOT NULL, content_hash BLOB NOT NULL, built_at INTEGER NOT NULL)""",
+        lib_idx_key BLOB NOT NULL, built_at_version INTEGER NOT NULL,
+        byte_size INTEGER NOT NULL, doc_count INTEGER NOT NULL,
+        content_hash BLOB NOT NULL, built_at INTEGER NOT NULL)""",
 ]
 
 KEY_STORE_ADMIN_SQL = """CREATE TABLE IF NOT EXISTS key_store (

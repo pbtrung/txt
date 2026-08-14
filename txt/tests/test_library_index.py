@@ -23,29 +23,28 @@ class FakeBB:
         ]
 
 
-def _decrypt_and_open(engine, encrypted, db_master_key):
+def _decrypt_and_open(engine, encrypted, lib_idx_key):
     blob = CryptoBlob(engine)
-    key = engine.hkdf_sha3_512(db_master_key, b"", b"library-index", 64)
-    raw = brotli.decompress(blob.decrypt(encrypted, key))
+    raw = brotli.decompress(blob.decrypt(encrypted, lib_idx_key))
     conn = sqlite3.connect(":memory:")
     conn.deserialize(raw)
     return conn
 
 
 def test_library_index_round_trips_docs_and_terms(engine):
-    db_master_key = secrets.token_bytes(256)
+    lib_idx_key = secrets.token_bytes(128)
     docs = [
         (1, {"title": "Book One", "creator": [{"text": "Author A"}, {"text": "Author B"}], "subject": "Fiction"}),
         (2, {"title": "Book Two", "calibre:title_sort": "Book Two Sorted", "publisher": "Acme"}),
         (3, None),
     ]
-    builder = LibraryIndexBuilder(FakeBB(docs), CryptoBlob(engine), db_master_key)
+    builder = LibraryIndexBuilder(FakeBB(docs), CryptoBlob(engine), lib_idx_key)
 
     encrypted, doc_count, content_hash = builder.build(built_at_version=7)
 
     assert doc_count == 3
     assert len(content_hash) == 16
-    conn = _decrypt_and_open(engine, encrypted, db_master_key)
+    conn = _decrypt_and_open(engine, encrypted, lib_idx_key)
 
     rows = conn.execute("SELECT txt_id, title, sort_key FROM doc ORDER BY txt_id").fetchall()
     assert rows == [(1, "Book One", "Book One"), (2, "Book Two", "Book Two Sorted"), (3, "", None)]
@@ -62,15 +61,26 @@ def test_library_index_round_trips_docs_and_terms(engine):
 
 
 def test_library_index_interns_shared_terms(engine):
-    db_master_key = secrets.token_bytes(256)
+    lib_idx_key = secrets.token_bytes(128)
     docs = [(1, {"creator": "Shared Author"}), (2, {"creator": "Shared Author"})]
-    builder = LibraryIndexBuilder(FakeBB(docs), CryptoBlob(engine), db_master_key)
+    builder = LibraryIndexBuilder(FakeBB(docs), CryptoBlob(engine), lib_idx_key)
 
     encrypted, _doc_count, _hash = builder.build(built_at_version=1)
-    conn = _decrypt_and_open(engine, encrypted, db_master_key)
+    conn = _decrypt_and_open(engine, encrypted, lib_idx_key)
 
     terms = conn.execute("SELECT id, kind, name FROM term").fetchall()
     assert len(terms) == 1
     doc_terms = conn.execute("SELECT doc_id, term_id FROM doc_term ORDER BY doc_id").fetchall()
     assert doc_terms == [(1, terms[0][0]), (2, terms[0][0])]
     conn.close()
+
+
+def test_library_index_wrong_key_fails_to_decrypt(engine):
+    builder = LibraryIndexBuilder(FakeBB([(1, {"title": "Book"})]), CryptoBlob(engine), secrets.token_bytes(128))
+    encrypted, _doc_count, _hash = builder.build(built_at_version=1)
+
+    try:
+        CryptoBlob(engine).decrypt(encrypted, secrets.token_bytes(128))
+        assert False, "expected decryption to fail under the wrong key"
+    except ValueError:
+        pass

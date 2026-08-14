@@ -75,7 +75,7 @@ class FakeAaState:
                 if bundle["bundle_key"] == bundle_key:
                     bundle["retired_at"] = retired_at
         elif "INSERT INTO library_index" in sql:
-            keys = ["object_key", "built_at_version", "byte_size", "doc_count", "content_hash", "built_at"]
+            keys = ["object_key", "lib_idx_key", "built_at_version", "byte_size", "doc_count", "content_hash", "built_at"]
             self.library_index = dict(zip(keys, args))
         elif "UPDATE library_index SET built_at_version" in sql:
             built_at_version, byte_size, doc_count, content_hash, built_at = args
@@ -112,7 +112,8 @@ class FakeAaState:
     def library_index_row(self) -> list:
         if self.library_index is None:
             return []
-        return [[self.library_index["object_key"], self.library_index["built_at_version"]]]
+        li = self.library_index
+        return [[li["object_key"], li["lib_idx_key"], li["built_at_version"]]]
 
 
 class FakeLibsqlClient:
@@ -150,7 +151,7 @@ class FakeLibsqlClient:
             return state.live_bundle()
         if "SELECT COUNT(DISTINCT page_no) FROM page_versions" in normalized:
             return [[state.changed_page_count(args[0])]]
-        if "SELECT object_key, built_at_version FROM library_index" in normalized:
+        if "SELECT object_key, lib_idx_key, built_at_version FROM library_index" in normalized:
             return state.library_index_row()
         for needle, rows in FakeLibsqlClient.preset.get(self.url, {}).items():
             if needle in normalized:

@@ -282,16 +282,23 @@ class TxtIngester:
         return {page_no: (version_created, data) for page_no, version_created, data in rows}
 
     def _rebuild_library_index(self, aa: LibsqlClient) -> None:
-        rows = aa.query("SELECT object_key, built_at_version FROM library_index WHERE id = 1")
-        if rows and rows[0][1] == self.head_version:
+        rows = aa.query("SELECT object_key, lib_idx_key, built_at_version FROM library_index WHERE id = 1")
+        if rows and rows[0][2] == self.head_version:
             return
-        key = self.blob.decrypt(rows[0][0], self.umk).decode() if rows else generate_random_prefix()
-        builder = LibraryIndexBuilder(self.bb, self.blob, self.db_master_key)
+        key, lib_idx_key = self._existing_or_new_index_keys(rows)
+        builder = LibraryIndexBuilder(self.bb, self.blob, lib_idx_key)
         encrypted, doc_count, content_hash = builder.build(self.head_version)
         self.r2.put_object(f"{self.db_prefix}/i/{key}", encrypted)
-        self._upsert_library_index_row(aa, rows, key, len(encrypted), doc_count, content_hash)
+        self._upsert_library_index_row(aa, rows, key, lib_idx_key, len(encrypted), doc_count, content_hash)
 
-    def _upsert_library_index_row(self, aa: LibsqlClient, rows: list, key: str, byte_size: int, doc_count: int, content_hash: bytes) -> None:
+    def _existing_or_new_index_keys(self, rows: list) -> tuple:
+        if rows:
+            return self.blob.decrypt(rows[0][0], self.umk).decode(), self.blob.decrypt(rows[0][1], self.umk)
+        return generate_random_prefix(), secrets.token_bytes(128)
+
+    def _upsert_library_index_row(
+        self, aa: LibsqlClient, rows: list, key: str, lib_idx_key: bytes, byte_size: int, doc_count: int, content_hash: bytes
+    ) -> None:
         now = int(time.time() * 1000)
         if rows:
             aa.execute(
@@ -301,8 +308,10 @@ class TxtIngester:
             )
             return
         wrapped_key = self.blob.encrypt(key.encode(), self.umk)
+        wrapped_lib_idx_key = self.blob.encrypt(lib_idx_key, self.umk)
         aa.execute(
-            "INSERT INTO library_index (id, object_key, built_at_version, byte_size, doc_count, content_hash, built_at) "
-            "VALUES (1, ?, ?, ?, ?, ?, ?)",
-            [wrapped_key, self.head_version, byte_size, doc_count, content_hash, now],
+            "INSERT INTO library_index "
+            "(id, object_key, lib_idx_key, built_at_version, byte_size, doc_count, content_hash, built_at) "
+            "VALUES (1, ?, ?, ?, ?, ?, ?, ?)",
+            [wrapped_key, wrapped_lib_idx_key, self.head_version, byte_size, doc_count, content_hash, now],
         )

@@ -1,6 +1,7 @@
 """Builds the library index (docs/data_model.md §8): a small stdlib-sqlite3
-file projecting BB's txt/txt_meta, brotli-compressed and encrypted under an
-HKDF subkey of db_master_key -- never the SQLCipher page key.
+file projecting BB's txt/txt_meta, brotli-compressed and encrypted under its
+own dedicated lib_idx_key (library_index.lib_idx_key, wrapped by umk) --
+never the SQLCipher page key.
 """
 
 import hashlib
@@ -43,10 +44,10 @@ def _title(metadata: dict) -> str:
 
 
 class LibraryIndexBuilder:
-    def __init__(self, bb, blob: CryptoBlob, db_master_key: bytes):
+    def __init__(self, bb, blob: CryptoBlob, lib_idx_key: bytes):
         self.bb = bb
         self.blob = blob
-        self.db_master_key = db_master_key
+        self.lib_idx_key = lib_idx_key
 
     def build(self, built_at_version: int) -> tuple[bytes, int, bytes]:
         conn = sqlite3.connect(":memory:")
@@ -58,11 +59,8 @@ class LibraryIndexBuilder:
         finally:
             conn.close()
         compressed = brotli.compress(raw, quality=5)
-        encrypted = self.blob.encrypt(compressed, self._derive_key())
+        encrypted = self.blob.encrypt(compressed, self.lib_idx_key)
         return encrypted, doc_count, hashlib.blake2b(encrypted, digest_size=16).digest()
-
-    def _derive_key(self) -> bytes:
-        return self.blob.engine.hkdf_sha3_512(self.db_master_key, b"", b"library-index", 64)
 
     def _populate(self, conn: sqlite3.Connection, built_at_version: int) -> int:
         conn.executescript(SCHEMA_SQL)
