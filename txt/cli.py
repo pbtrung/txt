@@ -38,7 +38,9 @@ from .replace_images import ImageReplacer
     metavar="DIR",
     help="Ingest every *.epub in DIR into BB and R2 (needs --creds)",
 )
-@click.option("--creds", "ingest_creds_path", metavar="CREDS_JSON", help="creds.json for --ingest")
+@click.option(
+    "--creds", "ingest_creds_path", metavar="CREDS_JSON", help="creds.json for --ingest"
+)
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose progress logging")
 @click.pass_context
 def cli(

@@ -38,7 +38,9 @@ _VALTYPE = {"i32": wasmtime.ValType.i32(), "i64": wasmtime.ValType.i64()}
 
 
 def _functype(params, results):
-    return wasmtime.FuncType([_VALTYPE[p] for p in params], [_VALTYPE[r] for r in results])
+    return wasmtime.FuncType(
+        [_VALTYPE[p] for p in params], [_VALTYPE[r] for r in results]
+    )
 
 
 def _add_function(engine, callback, params, results):
@@ -64,15 +66,21 @@ def _write_cstring(engine, s: str, ptr: int, max_len: int) -> None:
 
 
 def _read_i32(engine, ptr: int) -> int:
-    return int.from_bytes(engine.memory.read(engine.store, ptr, ptr + 4), "little", signed=True)
+    return int.from_bytes(
+        engine.memory.read(engine.store, ptr, ptr + 4), "little", signed=True
+    )
 
 
 def _write_i32(engine, ptr: int, value: int) -> None:
-    engine.memory.write(engine.store, int(value).to_bytes(4, "little", signed=True), ptr)
+    engine.memory.write(
+        engine.store, int(value).to_bytes(4, "little", signed=True), ptr
+    )
 
 
 def _write_i64(engine, ptr: int, value: int) -> None:
-    engine.memory.write(engine.store, int(value).to_bytes(8, "little", signed=False), ptr)
+    engine.memory.write(
+        engine.store, int(value).to_bytes(8, "little", signed=False), ptr
+    )
 
 
 def _resize_file(files: dict, name: str, new_len: int) -> None:
@@ -152,7 +160,10 @@ def _make_vfs_methods(engine, files: dict, open_files: dict, state: dict):
             state["temp_counter"] += 1
         files.setdefault(fname, bytearray())
         _write_i32(engine, p_file, state["io_methods_ptr"])
-        open_files[p_file] = {"name": fname, "delete_on_close": bool(flags & SQLITE_OPEN_DELETEONCLOSE)}
+        open_files[p_file] = {
+            "name": fname,
+            "delete_on_close": bool(flags & SQLITE_OPEN_DELETEONCLOSE),
+        }
         if p_out_flags:
             _write_i32(engine, p_out_flags, flags)
         return SQLITE_OK
@@ -223,14 +234,19 @@ def _method_specs(vfs: dict, io: dict) -> list:
     ]
 
 
-def register_js_vfs(engine, name: str = "jsvfs", make_default: bool = True, on_write=None) -> dict:
+def register_js_vfs(
+    engine, name: str = "jsvfs", make_default: bool = True, on_write=None
+) -> dict:
     files: dict[str, bytearray] = {}
     open_files: dict[int, dict] = {}
     state = {"io_methods_ptr": 0, "temp_counter": 0}
     io = _make_io_methods(engine, files, open_files, on_write)
     vfs = _make_vfs_methods(engine, files, open_files, state)
 
-    method_ptrs = [_add_function(engine, fn, params, ["i32"]) for fn, params in _method_specs(vfs, io)]
+    method_ptrs = [
+        _add_function(engine, fn, params, ["i32"])
+        for fn, params in _method_specs(vfs, io)
+    ]
     ptr_buf = engine._malloc(len(method_ptrs) * 4)
     for i, ptr in enumerate(method_ptrs):
         _write_i32(engine, ptr_buf + i * 4, ptr)
@@ -341,7 +357,9 @@ class BBEngine(LeancryptoEngine):
     def _prepare(self, sql: str, params: list) -> int:
         sql_ptr = self._write(sql.encode() + b"\x00")
         pp_stmt = self._malloc(4)
-        rc = self._exports["sqlite3_prepare_v2"](self.store, self.db, sql_ptr, -1, pp_stmt, 0)
+        rc = self._exports["sqlite3_prepare_v2"](
+            self.store, self.db, sql_ptr, -1, pp_stmt, 0
+        )
         stmt = _read_i32(self, pp_stmt)
         self._free_all(sql_ptr, pp_stmt)
         if rc != SQLITE_OK:
@@ -355,11 +373,15 @@ class BBEngine(LeancryptoEngine):
             self._exports["sqlite3_bind_int64"](self.store, stmt, idx, int(value))
         elif isinstance(value, (bytes, bytearray)):
             ptr = self._write(bytes(value))
-            self._exports["sqlite3_bind_blob"](self.store, stmt, idx, ptr, len(value), SQLITE_TRANSIENT)
+            self._exports["sqlite3_bind_blob"](
+                self.store, stmt, idx, ptr, len(value), SQLITE_TRANSIENT
+            )
         elif isinstance(value, str):
             encoded = value.encode("utf-8")
             ptr = self._write(encoded)
-            self._exports["sqlite3_bind_text"](self.store, stmt, idx, ptr, len(encoded), SQLITE_TRANSIENT)
+            self._exports["sqlite3_bind_text"](
+                self.store, stmt, idx, ptr, len(encoded), SQLITE_TRANSIENT
+            )
         elif value is None:
             self._exports["sqlite3_bind_null"](self.store, stmt, idx)
         else:
@@ -374,7 +396,9 @@ class BBEngine(LeancryptoEngine):
         if col_type == SQLITE_INTEGER:
             return self._exports["sqlite3_column_int64"](self.store, stmt, i)
         if col_type == SQLITE_TEXT:
-            return _read_cstring(self, self._exports["sqlite3_column_text"](self.store, stmt, i))
+            return _read_cstring(
+                self, self._exports["sqlite3_column_text"](self.store, stmt, i)
+            )
         if col_type == SQLITE_BLOB:
             return self._column_blob(stmt, i)
         return None

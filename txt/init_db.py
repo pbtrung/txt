@@ -113,7 +113,9 @@ class DbInitializer:
             return umk
         return self._create_key_store(aa, ikm, account_type)
 
-    def _create_key_store(self, aa: LibsqlClient, ikm: bytes, account_type: str) -> bytes:
+    def _create_key_store(
+        self, aa: LibsqlClient, ikm: bytes, account_type: str
+    ) -> bytes:
         self.logger.verbose("Generating umk for key_store...")
         umk = secrets.token_bytes(128)
         wrapped_umk = self.blob.encrypt(umk, ikm)
@@ -124,7 +126,9 @@ class DbInitializer:
         self.logger.verbose("key_store initialized.")
         return umk
 
-    def _insert_admin_key_store(self, aa: LibsqlClient, umk: bytes, wrapped_umk: bytes) -> None:
+    def _insert_admin_key_store(
+        self, aa: LibsqlClient, umk: bytes, wrapped_umk: bytes
+    ) -> None:
         self.logger.verbose("Generating composite KEM keypair for key_store...")
         pk, sk = self.engine.kem_keypair()
         wrapped_privkey = self.blob.encrypt(sk, umk)
@@ -133,21 +137,33 @@ class DbInitializer:
             [wrapped_umk, pk, wrapped_privkey],
         )
 
-    def _ensure_cred_store(self, aa: LibsqlClient, uid: str, account_type: str, umk: bytes) -> None:
+    def _ensure_cred_store(
+        self, aa: LibsqlClient, uid: str, account_type: str, umk: bytes
+    ) -> None:
         if cred_store_rows(aa, uid, account_type):
             self.logger.verbose("cred_store already has a backup row for this account.")
             return
         self._insert_cred_store(aa, uid, account_type, umk)
 
-    def _insert_cred_store(self, aa: LibsqlClient, uid: str, account_type: str, umk: bytes) -> None:
+    def _insert_cred_store(
+        self, aa: LibsqlClient, uid: str, account_type: str, umk: bytes
+    ) -> None:
         db_master_key = base64.b64encode(secrets.token_bytes(256)).decode()
-        payload = {"display_name": self.creds.display_name, "db_master_key": db_master_key}
+        payload = {
+            "display_name": self.creds.display_name,
+            "db_master_key": db_master_key,
+        }
         content = self.blob.encrypt_json(payload, umk)
         self._write_cred_store(aa, uid, account_type, content)
         self.logger.verbose("cred_store row inserted.")
 
-    def _write_cred_store(self, aa: LibsqlClient, uid: str, account_type: str, content: bytes) -> None:
+    def _write_cred_store(
+        self, aa: LibsqlClient, uid: str, account_type: str, content: bytes
+    ) -> None:
         if account_type == "admin":
-            aa.execute("INSERT INTO cred_store (user_id, content) VALUES (?, ?)", [uid, content])
+            aa.execute(
+                "INSERT INTO cred_store (user_id, content) VALUES (?, ?)",
+                [uid, content],
+            )
         else:
             aa.execute("INSERT INTO cred_store (id, content) VALUES (1, ?)", [content])

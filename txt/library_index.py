@@ -79,7 +79,10 @@ class LibraryIndexBuilder:
         metadata = self._decode_metadata(metadata_blob)
         title = _title(metadata)
         sort_key = metadata.get("calibre:title_sort", title or None)
-        conn.execute("INSERT INTO doc (txt_id, title, sort_key) VALUES (?, ?, ?)", (txt_id, title, sort_key))
+        conn.execute(
+            "INSERT INTO doc (txt_id, title, sort_key) VALUES (?, ?, ?)",
+            (txt_id, title, sort_key),
+        )
         self._insert_terms(conn, txt_id, AUTHOR, metadata.get("creator"))
         self._insert_terms(conn, txt_id, SUBJECT, metadata.get("subject"))
         self._insert_terms(conn, txt_id, PUBLISHER, metadata.get("publisher"))
@@ -89,7 +92,9 @@ class LibraryIndexBuilder:
             return {}
         return json.loads(brotli.decompress(metadata_blob))
 
-    def _insert_terms(self, conn: sqlite3.Connection, txt_id: int, kind: int, value) -> None:
+    def _insert_terms(
+        self, conn: sqlite3.Connection, txt_id: int, kind: int, value
+    ) -> None:
         for ord_, name in enumerate(_text(v) for v in _as_list(value)):
             term_id = self._intern_term(conn, kind, name)
             conn.execute(
@@ -98,5 +103,9 @@ class LibraryIndexBuilder:
             )
 
     def _intern_term(self, conn: sqlite3.Connection, kind: int, name: str) -> int:
-        conn.execute("INSERT OR IGNORE INTO term (kind, name) VALUES (?, ?)", (kind, name))
-        return conn.execute("SELECT id FROM term WHERE kind = ? AND name = ?", (kind, name)).fetchone()[0]
+        conn.execute(
+            "INSERT OR IGNORE INTO term (kind, name) VALUES (?, ?)", (kind, name)
+        )
+        return conn.execute(
+            "SELECT id FROM term WHERE kind = ? AND name = ?", (kind, name)
+        ).fetchone()[0]

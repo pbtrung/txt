@@ -16,7 +16,10 @@ class FakeResponse:
 
 
 def _ok_result(rows=None):
-    return {"type": "ok", "response": {"type": "execute", "result": {"cols": [], "rows": rows or []}}}
+    return {
+        "type": "ok",
+        "response": {"type": "execute", "result": {"cols": [], "rows": rows or []}},
+    }
 
 
 def test_to_arg_int():

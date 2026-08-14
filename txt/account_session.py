@@ -38,7 +38,12 @@ class AccountSession:
         return blob.decrypt(rows[0][0], ikm) if rows else None
 
     def read_db_master_key(
-        self, aa: LibsqlClient, uid: str, account_type: str, blob: CryptoBlob, umk: bytes
+        self,
+        aa: LibsqlClient,
+        uid: str,
+        account_type: str,
+        blob: CryptoBlob,
+        umk: bytes,
     ) -> bytes | None:
         rows = cred_store_rows(aa, uid, account_type)
         if not rows:
@@ -60,7 +65,9 @@ class AccountSession:
         ctl = LibsqlClient(self.creds.turso_ctl_db_url, ctl_token)
         rows = ctl.query("SELECT db_path, type FROM users WHERE id = ?", [uid])
         if not rows:
-            raise ValueError(f"uid={uid} has no users row in ctl; run --init-admin first")
+            raise ValueError(
+                f"uid={uid} has no users row in ctl; run --init-admin first"
+            )
         self.logger.verbose(f"Found db_path={rows[0][0]}, type={rows[0][1]}")
         return rows[0][0], rows[0][1]
 
@@ -76,6 +83,8 @@ class AccountSession:
         except requests.exceptions.HTTPError as err:
             if err.response is None or err.response.status_code != 404:
                 raise
-            self.logger.verbose(f"Database {db_path} does not exist yet, creating it...")
+            self.logger.verbose(
+                f"Database {db_path} does not exist yet, creating it..."
+            )
             self.turso.create_database(db_path, self.creds.turso_group)
             return self.turso.mint_db_token(db_path)

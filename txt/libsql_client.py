@@ -42,7 +42,10 @@ class LibsqlClient:
         self._pipeline([_build_stmt(sql, args) for sql, args in statements])
 
     def _pipeline(self, stmts: list) -> list:
-        body = {"requests": [{"type": "execute", "stmt": s} for s in stmts] + [{"type": "close"}]}
+        body = {
+            "requests": [{"type": "execute", "stmt": s} for s in stmts]
+            + [{"type": "close"}]
+        }
         headers = {"Authorization": f"Bearer {self.token}"}
         resp = requests.post(f"{self.base}/v2/pipeline", headers=headers, json=body)
         resp.raise_for_status()

@@ -33,14 +33,20 @@ class BundleBuilder:
         self.blob = blob
         self.bundle_enc_key = bundle_enc_key
 
-    def build(self, live_pages: dict, page_size: int, built_at_version: int) -> tuple[bytes, int, int]:
+    def build(
+        self, live_pages: dict, page_size: int, built_at_version: int
+    ) -> tuple[bytes, int, int]:
         """live_pages: page_no -> (version_created, data). Returns
         (encrypted_bytes, map_rows, hot_page_count)."""
         hot_page_nos = self._hot_page_nos(live_pages)
         page_map = self._build_page_map(live_pages)
         hot_pages, index = self._build_hot_and_index(live_pages, hot_page_nos)
-        header = self._build_header(page_size, built_at_version, page_map, hot_pages, index)
-        encrypted = self.blob.encrypt(header + page_map + hot_pages + index, self.bundle_enc_key)
+        header = self._build_header(
+            page_size, built_at_version, page_map, hot_pages, index
+        )
+        encrypted = self.blob.encrypt(
+            header + page_map + hot_pages + index, self.bundle_enc_key
+        )
         return encrypted, len(live_pages), len(hot_page_nos)
 
     def _hot_page_nos(self, live_pages: dict) -> list:
@@ -54,21 +60,43 @@ class BundleBuilder:
             for page_no, (version_created, _data) in sorted(live_pages.items())
         )
 
-    def _build_hot_and_index(self, live_pages: dict, hot_page_nos: list) -> tuple[bytes, bytes]:
+    def _build_hot_and_index(
+        self, live_pages: dict, hot_page_nos: list
+    ) -> tuple[bytes, bytes]:
         hot_pages, index, offset = bytearray(), bytearray(), 0
         for page_no in hot_page_nos:
             version_created, data = live_pages[page_no]
             hot_pages += data
-            index += struct.pack(INDEX_ENTRY_FMT, page_no, version_created, offset, len(data))
+            index += struct.pack(
+                INDEX_ENTRY_FMT, page_no, version_created, offset, len(data)
+            )
             offset += len(data)
         return bytes(hot_pages), bytes(index)
 
-    def _build_header(self, page_size: int, built_at_version: int, page_map: bytes, hot_pages: bytes, index: bytes) -> bytes:
+    def _build_header(
+        self,
+        page_size: int,
+        built_at_version: int,
+        page_map: bytes,
+        hot_pages: bytes,
+        index: bytes,
+    ) -> bytes:
         map_off = HEADER_LEN
         hot_off = map_off + len(page_map)
         index_off = hot_off + len(hot_pages)
         return struct.pack(
-            HEADER_FMT, MAGIC, FORMAT_VERSION, page_size, built_at_version,
-            map_off, len(page_map), hot_off, len(hot_pages), index_off, len(index),
-            _checksum(page_map), _checksum(hot_pages), _checksum(index),
+            HEADER_FMT,
+            MAGIC,
+            FORMAT_VERSION,
+            page_size,
+            built_at_version,
+            map_off,
+            len(page_map),
+            hot_off,
+            len(hot_pages),
+            index_off,
+            len(index),
+            _checksum(page_map),
+            _checksum(hot_pages),
+            _checksum(index),
         )

@@ -23,9 +23,13 @@ class FakeAa:
 @pytest.fixture
 def creds_path(tmp_path):
     data = {
-        "turso_org_token": "tok", "turso_ctl_db_url": "libsql://ctl-x.aws-us-east-1.turso.io",
-        "turso_group": "g", "turso_org": "x", "firebase_email": "a@b.com",
-        "firebase_password": "pw", "firebase_api_key": "key",
+        "turso_org_token": "tok",
+        "turso_ctl_db_url": "libsql://ctl-x.aws-us-east-1.turso.io",
+        "turso_group": "g",
+        "turso_org": "x",
+        "firebase_email": "a@b.com",
+        "firebase_password": "pw",
+        "firebase_api_key": "key",
     }
     path = tmp_path / "creds.json"
     path.write_text(json.dumps(data))
@@ -58,7 +62,10 @@ def test_read_db_master_key_decodes_from_cred_store(creds_path, engine):
     blob = CryptoBlob(engine)
     umk = secrets.token_bytes(128)
     db_master_key = secrets.token_bytes(256)
-    payload = {"display_name": "Trung", "db_master_key": base64.b64encode(db_master_key).decode()}
+    payload = {
+        "display_name": "Trung",
+        "db_master_key": base64.b64encode(db_master_key).decode(),
+    }
     wrapped = blob.encrypt_json(payload, umk)
     session = AccountSession(load_creds(creds_path), None)
     aa = FakeAa({"SELECT content FROM cred_store WHERE id = 1": [[wrapped]]})
@@ -69,7 +76,10 @@ def test_read_db_master_key_uses_user_id_lookup_for_admin(creds_path, engine):
     blob = CryptoBlob(engine)
     umk = secrets.token_bytes(128)
     db_master_key = secrets.token_bytes(256)
-    payload = {"display_name": "Trung", "db_master_key": base64.b64encode(db_master_key).decode()}
+    payload = {
+        "display_name": "Trung",
+        "db_master_key": base64.b64encode(db_master_key).decode(),
+    }
     wrapped = blob.encrypt_json(payload, umk)
     session = AccountSession(load_creds(creds_path), None)
     aa = FakeAa({"SELECT content FROM cred_store WHERE user_id = ?": [[wrapped]]})

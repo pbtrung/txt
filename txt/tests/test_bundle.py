@@ -1,7 +1,14 @@
 import secrets
 import struct
 
-from txt.bundle import HEADER_FMT, HEADER_LEN, INDEX_ENTRY_FMT, MAGIC, MAP_ENTRY_FMT, BundleBuilder
+from txt.bundle import (
+    HEADER_FMT,
+    HEADER_LEN,
+    INDEX_ENTRY_FMT,
+    MAGIC,
+    MAP_ENTRY_FMT,
+    BundleBuilder,
+)
 from txt.crypto_blob import CryptoBlob
 
 PAGE_SIZE = 32768
@@ -16,28 +23,40 @@ def test_bundle_round_trips_small_db_carries_every_page_whole(engine):
     }
 
     builder = BundleBuilder(CryptoBlob(engine), bundle_enc_key)
-    encrypted, map_rows, hot_page_count = builder.build(live_pages, PAGE_SIZE, built_at_version=5)
+    encrypted, map_rows, hot_page_count = builder.build(
+        live_pages, PAGE_SIZE, built_at_version=5
+    )
 
     assert map_rows == 3
     assert hot_page_count == 3  # whole small DB carried
 
     raw = CryptoBlob(engine).decrypt(encrypted, bundle_enc_key)
-    magic, fmt_version, page_size, built_at_version = struct.unpack_from(HEADER_FMT, raw)[0:4]
+    magic, fmt_version, page_size, built_at_version = struct.unpack_from(
+        HEADER_FMT, raw
+    )[0:4]
     assert magic == MAGIC
     assert page_size == PAGE_SIZE
     assert built_at_version == 5
 
-    map_off, map_len, hot_off, hot_len, index_off, index_len = struct.unpack_from(HEADER_FMT, raw)[4:10]
+    map_off, map_len, hot_off, hot_len, index_off, index_len = struct.unpack_from(
+        HEADER_FMT, raw
+    )[4:10]
     map_entries = [
-        struct.unpack_from(MAP_ENTRY_FMT, raw, map_off + i * struct.calcsize(MAP_ENTRY_FMT))
+        struct.unpack_from(
+            MAP_ENTRY_FMT, raw, map_off + i * struct.calcsize(MAP_ENTRY_FMT)
+        )
         for i in range(map_len // struct.calcsize(MAP_ENTRY_FMT))
     ]
     assert sorted(map_entries) == [(1, 5), (2, 3), (3, 5)]
 
     entry_size = struct.calcsize(INDEX_ENTRY_FMT)
     for i in range(index_len // entry_size):
-        page_no, version_created, offset, length = struct.unpack_from(INDEX_ENTRY_FMT, raw, index_off + i * entry_size)
-        assert raw[hot_off + offset : hot_off + offset + length] == live_pages[page_no][1]
+        page_no, version_created, offset, length = struct.unpack_from(
+            INDEX_ENTRY_FMT, raw, index_off + i * entry_size
+        )
+        assert (
+            raw[hot_off + offset : hot_off + offset + length] == live_pages[page_no][1]
+        )
         assert version_created == live_pages[page_no][0]
 
 
@@ -46,7 +65,9 @@ def test_bundle_over_budget_only_carries_page_one(engine):
     live_pages = {n: (1, secrets.token_bytes(64)) for n in range(1, 100)}
 
     builder = BundleBuilder(CryptoBlob(engine), bundle_enc_key)
-    _encrypted, map_rows, hot_page_count = builder.build(live_pages, PAGE_SIZE, built_at_version=1)
+    _encrypted, map_rows, hot_page_count = builder.build(
+        live_pages, PAGE_SIZE, built_at_version=1
+    )
 
     assert map_rows == 99
     assert hot_page_count == 1
@@ -55,7 +76,9 @@ def test_bundle_over_budget_only_carries_page_one(engine):
 def test_bundle_wrong_key_fails_to_decrypt(engine):
     live_pages = {1: (1, secrets.token_bytes(PAGE_SIZE))}
     builder = BundleBuilder(CryptoBlob(engine), secrets.token_bytes(128))
-    encrypted, _map_rows, _hot = builder.build(live_pages, PAGE_SIZE, built_at_version=1)
+    encrypted, _map_rows, _hot = builder.build(
+        live_pages, PAGE_SIZE, built_at_version=1
+    )
 
     try:
         CryptoBlob(engine).decrypt(encrypted, secrets.token_bytes(128))

@@ -67,7 +67,15 @@ class FakeAaState:
                 vc, _vd, data = self.pages[page_no]
                 self.pages[page_no] = (vc, version, data)
         elif "INSERT INTO bundles" in sql:
-            keys = ["bundle_key", "bundle_enc_key", "built_at_version", "byte_size", "map_rows", "page_count", "built_at"]
+            keys = [
+                "bundle_key",
+                "bundle_enc_key",
+                "built_at_version",
+                "byte_size",
+                "map_rows",
+                "page_count",
+                "built_at",
+            ]
             self.bundles.append({**dict(zip(keys, args)), "retired_at": None})
         elif "UPDATE bundles SET retired_at" in sql:
             retired_at, bundle_key = args
@@ -75,13 +83,24 @@ class FakeAaState:
                 if bundle["bundle_key"] == bundle_key:
                     bundle["retired_at"] = retired_at
         elif "INSERT INTO library_index" in sql:
-            keys = ["object_key", "lib_idx_key", "built_at_version", "byte_size", "doc_count", "content_hash", "built_at"]
+            keys = [
+                "object_key",
+                "lib_idx_key",
+                "built_at_version",
+                "byte_size",
+                "doc_count",
+                "content_hash",
+                "built_at",
+            ]
             self.library_index = dict(zip(keys, args))
         elif "UPDATE library_index SET built_at_version" in sql:
             built_at_version, byte_size, doc_count, content_hash, built_at = args
             self.library_index.update(
-                built_at_version=built_at_version, byte_size=byte_size,
-                doc_count=doc_count, content_hash=content_hash, built_at=built_at,
+                built_at_version=built_at_version,
+                byte_size=byte_size,
+                doc_count=doc_count,
+                content_hash=content_hash,
+                built_at=built_at,
             )
 
     def live_pages(self) -> list:
@@ -107,7 +126,11 @@ class FakeAaState:
         return []
 
     def changed_page_count(self, since_version: int) -> int:
-        return sum(1 for _pn, (vc, vd, _d) in self.pages.items() if vc > since_version or (vd or 0) > since_version)
+        return sum(
+            1
+            for _pn, (vc, vd, _d) in self.pages.items()
+            if vc > since_version or (vd or 0) > since_version
+        )
 
     def library_index_row(self) -> list:
         if self.library_index is None:
@@ -151,7 +174,10 @@ class FakeLibsqlClient:
             return state.live_bundle()
         if "SELECT COUNT(DISTINCT page_no) FROM page_versions" in normalized:
             return [[state.changed_page_count(args[0])]]
-        if "SELECT object_key, lib_idx_key, built_at_version FROM library_index" in normalized:
+        if (
+            "SELECT object_key, lib_idx_key, built_at_version FROM library_index"
+            in normalized
+        ):
             return state.library_index_row()
         for needle, rows in FakeLibsqlClient.preset.get(self.url, {}).items():
             if needle in normalized:
@@ -197,17 +223,30 @@ def account(engine, tmp_path):
 
     wrapped_umk = blob.encrypt(umk, root_key)
     wrapped_db_prefix = blob.encrypt(db_prefix.encode(), umk)
-    payload = {"display_name": "Trung", "db_master_key": base64.b64encode(db_master_key).decode()}
+    payload = {
+        "display_name": "Trung",
+        "db_master_key": base64.b64encode(db_master_key).decode(),
+    }
     wrapped_cred = blob.encrypt_json(payload, umk)
 
     data = {
-        "turso_org_token": "tok", "turso_ctl_db_url": CTL_URL, "turso_group": "g", "turso_org": "x",
-        "firebase_email": "a@b.com", "firebase_password": "pw", "firebase_api_key": "key",
-        "display_name": "Trung", "user_root_key": base64.b64encode(root_key).decode(),
+        "turso_org_token": "tok",
+        "turso_ctl_db_url": CTL_URL,
+        "turso_group": "g",
+        "turso_org": "x",
+        "firebase_email": "a@b.com",
+        "firebase_password": "pw",
+        "firebase_api_key": "key",
+        "display_name": "Trung",
+        "user_root_key": base64.b64encode(root_key).decode(),
         "r2_config": {
-            "endpoint": "https://x.r2.cloudflarestorage.com", "read_only_access_key_id": "ro",
-            "read_only_secret_access_key": "ro-secret", "read_write_access_key_id": "rw",
-            "read_write_secret_access_key": "rw-secret", "region": "auto", "bucket": "my-bucket",
+            "endpoint": "https://x.r2.cloudflarestorage.com",
+            "read_only_access_key_id": "ro",
+            "read_only_secret_access_key": "ro-secret",
+            "read_write_access_key_id": "rw",
+            "read_write_secret_access_key": "rw-secret",
+            "region": "auto",
+            "bucket": "my-bucket",
         },
     }
     creds_path = tmp_path / "creds.json"
@@ -259,8 +298,14 @@ def test_ingest_uploads_part_and_writes_bb_row(account, tmp_path):
     assert body != b"\x00" * len(body)  # actually encrypted, not the zero-filled buffer
 
     aa = FakeLibsqlClient.instances[AA_URL]
-    version_inserts = [c for c in aa.calls if c[0] == "execute" and "INSERT INTO versions" in c[1]]
-    head_updates = [c for c in aa.calls if c[0] == "execute" and "UPDATE meta SET head_version" in c[1]]
+    version_inserts = [
+        c for c in aa.calls if c[0] == "execute" and "INSERT INTO versions" in c[1]
+    ]
+    head_updates = [
+        c
+        for c in aa.calls
+        if c[0] == "execute" and "UPDATE meta SET head_version" in c[1]
+    ]
     assert len(version_inserts) == 1
     assert len(head_updates) == 1
 
@@ -291,7 +336,9 @@ def test_failed_upload_leaves_no_bb_row_or_aa_flush(account, tmp_path):
 
     assert ingester.bb.query("SELECT name FROM txt") == []
     aa = FakeLibsqlClient.instances[AA_URL]
-    assert [c for c in aa.calls if c[0] == "execute" and "INSERT INTO versions" in c[1]] == []
+    assert [
+        c for c in aa.calls if c[0] == "execute" and "INSERT INTO versions" in c[1]
+    ] == []
 
 
 def test_ingest_writes_opf_metadata(account, tmp_path):
@@ -336,7 +383,9 @@ def test_ingest_builds_bundle_and_library_index(account, tmp_path):
     assert len(state.bundles) == 1
     assert state.bundles[0]["built_at_version"] == state.head_version
     assert state.library_index["built_at_version"] == state.head_version
-    bundle_inserts = [c for c in aa.calls if c[0] == "execute" and "INSERT INTO bundles" in c[1]]
+    bundle_inserts = [
+        c for c in aa.calls if c[0] == "execute" and "INSERT INTO bundles" in c[1]
+    ]
     assert len(bundle_inserts) == 1
 
 
