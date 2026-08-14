@@ -62,10 +62,17 @@ SCHEMA_VERSION = 1
 
 
 class DbInitializer:
-    def __init__(self, creds: Creds, creds_path: str, logger: Logger):
+    def __init__(
+        self,
+        creds: Creds,
+        creds_path: str,
+        logger: Logger,
+        admin_creds: Creds | None = None,
+    ):
         self.creds = creds
         self.creds_path = creds_path
         self.logger = logger
+        self.admin_creds = admin_creds
         self.session = AccountSession(creds, logger)
         self.engine = LeancryptoEngine()
         self.blob = CryptoBlob(self.engine)
@@ -77,7 +84,9 @@ class DbInitializer:
         ikm = base64.b64decode(self.creds.user_root_key)
         umk = self._ensure_umk(aa, account_type, ikm)
         db_prefix = self._ensure_meta(aa, umk)
-        self._ensure_cred_store(aa, uid, account_type, umk)
+        payload = self._ensure_cred_store(aa, uid, account_type, umk, db_prefix)
+        if self.admin_creds is not None:
+            self._push_backup_to_admin(payload)
         self.logger.info(
             f"Initialized database for {uid} (type={account_type}, db_prefix={db_prefix})"
         )
@@ -138,24 +147,49 @@ class DbInitializer:
         )
 
     def _ensure_cred_store(
-        self, aa: LibsqlClient, uid: str, account_type: str, umk: bytes
-    ) -> None:
-        if cred_store_rows(aa, uid, account_type):
-            self.logger.verbose("cred_store already has a backup row for this account.")
-            return
-        self._insert_cred_store(aa, uid, account_type, umk)
+        self, aa: LibsqlClient, uid: str, account_type: str, umk: bytes, db_prefix: str
+    ) -> dict:
+        rows = cred_store_rows(aa, uid, account_type)
+        if rows:
+            return self._backfill_cred_store(
+                aa, uid, account_type, umk, db_prefix, rows[0][0]
+            )
+        return self._insert_cred_store(aa, uid, account_type, umk, db_prefix)
 
     def _insert_cred_store(
-        self, aa: LibsqlClient, uid: str, account_type: str, umk: bytes
-    ) -> None:
+        self, aa: LibsqlClient, uid: str, account_type: str, umk: bytes, db_prefix: str
+    ) -> dict:
         db_master_key = base64.b64encode(secrets.token_bytes(256)).decode()
         payload = {
+            "user_id": uid,
             "display_name": self.creds.display_name,
             "db_master_key": db_master_key,
+            "db_prefix": db_prefix,
         }
         content = self.blob.encrypt_json(payload, umk)
         self._write_cred_store(aa, uid, account_type, content)
         self.logger.verbose("cred_store row inserted.")
+        return payload
+
+    def _backfill_cred_store(
+        self,
+        aa: LibsqlClient,
+        uid: str,
+        account_type: str,
+        umk: bytes,
+        db_prefix: str,
+        wrapped_content: bytes,
+    ) -> dict:
+        payload = self.blob.decrypt_json(wrapped_content, umk)
+        if "user_id" in payload and "db_prefix" in payload:
+            self.logger.verbose("cred_store already has a backup row for this account.")
+            return payload
+        payload.setdefault("user_id", uid)
+        payload.setdefault("db_prefix", db_prefix)
+        content = self.blob.encrypt_json(payload, umk)
+        self._update_cred_store(aa, uid, account_type, content)
+        self.logger.verbose("cred_store backup backfilled with user_id/db_prefix.")
+        return payload
 
     def _write_cred_store(
         self, aa: LibsqlClient, uid: str, account_type: str, content: bytes
@@ -167,3 +201,42 @@ class DbInitializer:
             )
         else:
             aa.execute("INSERT INTO cred_store (id, content) VALUES (1, ?)", [content])
+
+    def _update_cred_store(
+        self, aa: LibsqlClient, uid: str, account_type: str, content: bytes
+    ) -> None:
+        if account_type == "admin":
+            aa.execute(
+                "UPDATE cred_store SET content = ? WHERE user_id = ?", [content, uid]
+            )
+        else:
+            aa.execute("UPDATE cred_store SET content = ? WHERE id = 1", [content])
+
+    def _push_backup_to_admin(self, payload: dict) -> None:
+        try:
+            self._do_push_backup_to_admin(payload)
+        except Exception as exc:
+            self.logger.info(f"Could not push backup to admin AA, will retry next run: {exc}")
+
+    def _do_push_backup_to_admin(self, payload: dict) -> None:
+        if not self.admin_creds.user_root_key:
+            raise ValueError(
+                "admin creds.json has no user_root_key; run --init-db for the admin account first"
+            )
+        admin_session = AccountSession(self.admin_creds, self.logger)
+        _admin_uid, admin_type, admin_aa = admin_session.connect()
+        if admin_type != "admin":
+            raise ValueError("--admin-creds must be the administrator's own creds.json")
+        admin_ikm = base64.b64decode(self.admin_creds.user_root_key)
+        admin_umk = admin_session.read_umk(admin_aa, self.blob, admin_ikm)
+        if admin_umk is None:
+            raise ValueError(
+                "admin account has no key_store; run --init-db for the admin account first"
+            )
+        content = self.blob.encrypt_json(payload, admin_umk)
+        admin_aa.execute(
+            "INSERT INTO cred_store (user_id, content) VALUES (?, ?) "
+            "ON CONFLICT(user_id) DO UPDATE SET content = excluded.content",
+            [payload["user_id"], content],
+        )
+        self.logger.info(f"Backup pushed to admin AA for uid={payload['user_id']}")
