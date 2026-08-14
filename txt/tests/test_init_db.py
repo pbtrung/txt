@@ -158,7 +158,9 @@ def test_user_account_key_store_has_no_kem_keypair(creds_path):
 def test_db_prefix_is_stored_wrapped_not_plaintext(creds_path):
     DbInitializer(load_creds(creds_path), creds_path, NullLogger()).run()
     aa = FakeLibsqlClient.instances[AA_URL]
-    meta_insert = next(c for c in aa.calls if c[0] == "execute" and "INSERT INTO meta" in c[1])
+    meta_insert = next(
+        c for c in aa.calls if c[0] == "execute" and "INSERT INTO meta" in c[1]
+    )
     wrapped_db_prefix = meta_insert[2][1]
     assert isinstance(wrapped_db_prefix, bytes)
     assert wrapped_db_prefix[0:2] == b"\x54\x58"
