@@ -9,8 +9,15 @@
   "name": "unused-placeholder-set-worker-name-via-env-var",
   "compatibility_date": "2026-08-14",
   "main": "worker/index.ts",
-  // No [vars]/[[kv_namespaces]] block for secrets here on purpose -- see
-  // worker/env.d.ts. KV namespace bindings are added in a later step, once
-  // there's a real binding ID to reference (created via `wrangler kv
-  // namespace create`, not something to fabricate in this file up front).
+  // No [vars] block for secrets here on purpose -- see worker/env.d.ts.
+  "kv_namespaces": [
+    {
+      "binding": "DB_TOKEN_CACHE",
+      // Placeholder -- replace with the real id after running
+      // `wrangler kv namespace create db-token-cache` once, then commit
+      // the real id (KV namespace ids aren't secret, just per-account
+      // resource identifiers).
+      "id": "REPLACE_WITH_REAL_KV_NAMESPACE_ID",
+    },
+  ],
 }
