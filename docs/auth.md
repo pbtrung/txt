@@ -39,7 +39,7 @@ Worker secrets:
 ```sql
 CREATE TABLE users (
   id         TEXT PRIMARY KEY,       -- Firebase uid (the ID token's sub claim)
-  db_path    TEXT UNIQUE,            -- 32 random bytes, 52 chars base32-Crockford; NULL until the database is created (§3.2)
+  db_path    TEXT NOT NULL UNIQUE,   -- 32 random bytes, 52 chars base32-Crockford
   type       TEXT NOT NULL CHECK (type IN ('admin', 'user')),
   created_at INTEGER NOT NULL        -- unix ms
 );
@@ -47,7 +47,7 @@ CREATE TABLE users (
 
 `type` distinguishes the one administrator account from every ordinary user. It decides which tables exist in that account's own database: `key_store` only for `admin`, and the shape of `cred_store` (data_model.md §3.6–3.7).
 
-A row can exist with `db_path` still `NULL`: registering an account (creating its `users` row) and creating its database are two separate steps (§3.2), so an account can be registered well before its database is actually provisioned.
+`db_path` is assigned the moment the row is created, but that's only a name — registering an account and creating the Turso database at that name are two separate steps (§3.2), so a row's database may not exist yet. The Worker's mint-token call is what actually discovers this (a 404, §5 step 3), not a `NULL` check.
 
 How the Worker reaches it, and where each half comes from:
 
@@ -100,21 +100,20 @@ An administrator who wants provisioning to feel immediate needs the uid earlier,
 
 Done by an administrator, never by the Worker, in two independent phases:
 
-**Register** — creates the mapping row, `db_path` left `NULL`:
+**Register** — mints `db_path` and creates the mapping row, but not the database itself:
 
-1. `INSERT INTO users (id, type, created_at) VALUES (?, ?, ?)` in `ctl`, with the uid from §3.1.
+1. Generate `db_path`: 32 random bytes, base32-Crockford.
+2. `INSERT INTO users (id, db_path, type, created_at) VALUES (?, ?, ?, ?)` in `ctl`, with the uid from §3.1.
 
-**Create the database** — whenever the account actually needs one, which can be well after registration:
+**Create the database** — lazily, the first time the account is actually used, which can be well after registration:
 
-2. Generate `db_path`: 32 random bytes, base32-Crockford.
-3. `POST /v1/organizations/{org}/databases` with `{ "name": "{db_path}", "group": "{group}" }` using the Platform API token.
-4. `UPDATE users SET db_path = ? WHERE id = ?`.
+3. `POST /v1/organizations/{org}/databases` with `{ "name": "{db_path}", "group": "{group}" }` using the Platform API token, if it doesn't already exist — discovered by a mint-token call 404ing (§5 step 3), not by any column on the row.
 
-Order matters within the create phase: create the database before setting `db_path` on the row. A row whose `db_path` points at a database that doesn't exist yet yields 503s for that user; a database with no row referencing it is inert and costs storage only.
+A row's `db_path` is a name assigned upfront; nothing about it guarantees the database behind that name exists yet. That's a deliberate choice: creating the row is cheap and instant, and the database — the expensive, quota-consuming resource — is only ever created on demand.
 
 The database's own schema is applied by the client on first connect, guarded by a schema-version row.
 
-A Firebase account with no `users` row, or a `users` row whose `db_path` is still `NULL`, is authenticated but not (fully) provisioned, and the endpoint returns 403 either way. The Worker never creates the row or the database, so a valid Firebase signup grants no access on its own.
+A Firebase account with no `users` row is authenticated but not provisioned, and the endpoint returns 403. The Worker never creates the row, so a valid Firebase signup grants no access on its own. A row whose database doesn't exist yet is a different case entirely (503, not 403) — see §5 step 3.
 
 ---
 
@@ -136,7 +135,7 @@ Authorization: Bearer <Firebase ID token>
 |---|---|
 | 200 | token minted |
 | 401 | ID token missing, malformed, expired, or wrong issuer or audience |
-| 403 | no `users` row for this uid, or its `db_path` is `NULL` — the account has no database yet |
+| 403 | no `users` row for this uid — the account is not provisioned |
 | 429 | per-uid rate limit exceeded |
 | 503 | `ctl` or the Turso Platform API unavailable, or the user's database does not exist |
 
@@ -146,7 +145,7 @@ Authorization: Bearer <Firebase ID token>
 
 **1. Verify the Firebase ID token.** RS256 signature against Google's published keys for `securetoken@system.gserviceaccount.com`, fetched with WebCrypto and cached in the Worker for the lifetime given by the response's `Cache-Control`. Assert `iss = https://securetoken.google.com/{FIREBASE_PROJECT_ID}`, `aud = {FIREBASE_PROJECT_ID}`, `exp` in the future, `iat` and `auth_time` not in the future, and `sub` non-empty. `uid = sub`.
 
-**2. Look up the user.** `SELECT db_path FROM users WHERE id = ?` against `ctl` (§2). No row, or a row with `db_path IS NULL` → 403, and nothing is created.
+**2. Look up the user.** `SELECT db_path FROM users WHERE id = ?` against `ctl` (§2). No row → 403, and nothing is created.
 
 **3. Mint the database token**, scoped to that one database, valid for 60 minutes:
 
@@ -206,6 +205,6 @@ The database URL is not a secret. `db_path` is unguessable, but access control r
 
 1. Firebase ID token verification with cached signing keys, including the negative cases: expired, wrong audience, wrong issuer, tampered signature.
 2. The `ctl` query and the mint call, against an administrator-created user row.
-3. The unprovisioned path: valid Firebase token, no `users` row or a `NULL` `db_path`, 403, and nothing written anywhere.
+3. The unprovisioned path: valid Firebase token, no `users` row, 403, and nothing written anywhere.
 4. KV caching and the per-uid rate limits.
 5. Rotation and deprovisioning runbooks.
