@@ -28,34 +28,43 @@ class AdminInitializer:
         self.turso = TursoClient(creds.turso_org_token, creds.turso_org)
 
     def run(self) -> None:
+        self.logger.verbose("Starting admin provisioning...")
         uid = self._sign_in()
         ctl = self._ensure_users_table()
         db_path = generate_db_path()
+        self.logger.verbose(f"Generated db_path={db_path}")
         self._create_database(db_path)
         self._insert_user(ctl, uid, db_path)
+        self.logger.verbose("Admin provisioning finished.")
 
     def _sign_in(self) -> str:
-        self.logger.verbose("Signing in to Firebase...")
+        self.logger.verbose(f"Signing in to Firebase as {self.creds.firebase_email}...")
         auth = FirebaseAuth(self.creds.firebase_api_key)
         uid = auth.sign_in(self.creds.firebase_email, self.creds.firebase_password)
-        self.logger.verbose(f"Signed in as uid={uid}")
+        self.logger.verbose(f"Firebase sign-in succeeded, uid={uid}")
         return uid
 
     def _ensure_users_table(self) -> LibsqlClient:
-        self.logger.verbose("Ensuring users table exists in ctl...")
+        self.logger.verbose("Minting a database token for ctl...")
         ctl_token = self.turso.mint_db_token("ctl")
+        self.logger.verbose("Minted ctl token, ensuring users table exists...")
         ctl = LibsqlClient(self.creds.turso_ctl_db_url, ctl_token)
         ctl.execute(CREATE_USERS_TABLE_SQL)
+        self.logger.verbose("users table ready in ctl.")
         return ctl
 
     def _create_database(self, db_path: str) -> None:
         self.logger.verbose(
-            f"Creating database {db_path} in group {self.creds.turso_group}..."
+            f"Requesting Turso database creation: name={db_path}, group={self.creds.turso_group}..."
         )
         self.turso.create_database(db_path, self.creds.turso_group)
+        self.logger.verbose(f"Database {db_path} created.")
 
     def _insert_user(self, ctl: LibsqlClient, uid: str, db_path: str) -> None:
-        self.logger.verbose(f"Inserting users row for uid={uid}, db_path={db_path}...")
         created_at = int(time.time() * 1000)
+        self.logger.verbose(
+            f"Inserting users row: id={uid}, db_path={db_path}, type=admin, created_at={created_at}..."
+        )
         ctl.execute(INSERT_USER_SQL, [uid, db_path, "admin", created_at])
+        self.logger.verbose("users row inserted.")
         self.logger.info(f"Provisioned admin {uid} with database {db_path}")

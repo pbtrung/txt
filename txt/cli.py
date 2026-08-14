@@ -6,7 +6,12 @@ from .logger import Logger
 
 
 @click.command()
-@click.option("--init-admin", "creds_path", metavar="CREDS_JSON", help="Provision the administrator account")
+@click.option(
+    "--init-admin",
+    "creds_path",
+    metavar="CREDS_JSON",
+    help="Provision the administrator account",
+)
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose progress logging")
 @click.pass_context
 def cli(ctx: click.Context, creds_path: str | None, verbose: bool) -> None:
