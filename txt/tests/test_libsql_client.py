@@ -52,6 +52,15 @@ def test_cell_value_null():
     assert _cell_value({"type": "null"}) is None
 
 
+def test_cell_value_decodes_unpadded_base64():
+    # Turso's own HTTP API returns blob cells without trailing '=' padding
+    # in practice, which Python's strict b64decode otherwise rejects with
+    # "Incorrect padding" -- confirmed against real infra, not guessed.
+    data = bytes(range(20))
+    unpadded = base64.b64encode(data).decode().rstrip("=")
+    assert _cell_value({"type": "blob", "base64": unpadded}) == data
+
+
 def test_execute_sends_one_statement_and_close(monkeypatch):
     captured = {}
 

@@ -13,7 +13,8 @@ def _to_arg(value) -> dict:
 
 def _cell_value(cell: dict):
     if cell.get("type") == "blob":
-        return base64.b64decode(cell["base64"])
+        data = cell["base64"]
+        return base64.b64decode(data + "=" * (-len(data) % 4))
     return cell.get("value")
 
 
