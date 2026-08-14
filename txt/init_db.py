@@ -111,6 +111,9 @@ class DbInitializer:
 
     def _ensure_schema(self, aa: LibsqlClient, account_type: str) -> None:
         self.logger.verbose("Ensuring AA schema exists...")
+        # Must run before any CREATE TABLE: SQLite only honors page_size on an
+        # empty database. Matches BB's own page size (docs/data_model.md §3).
+        aa.execute(f"PRAGMA page_size = {PAGE_SIZE}")
         for stmt in SCHEMA_SQL:
             aa.execute(stmt)
         is_admin = account_type == "admin"
