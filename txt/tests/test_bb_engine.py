@@ -18,6 +18,23 @@ def test_open_sets_pragmas(bb):
     assert bb.query("PRAGMA journal_mode;") == [("memory",)]
 
 
+def test_last_insert_rowid(bb):
+    bb.exec_sql("CREATE TABLE t(a INTEGER PRIMARY KEY, b TEXT);")
+    bb.execute("INSERT INTO t(b) VALUES (?)", ["x"])
+    first = bb.last_insert_rowid()
+    bb.execute("INSERT INTO t(b) VALUES (?)", ["y"])
+    second = bb.last_insert_rowid()
+    assert (first, second) == (1, 2)
+
+
+def test_page_count_grows_with_data(bb):
+    before = bb.page_count()
+    bb.exec_sql("CREATE TABLE t(a BLOB);")
+    bb.execute("INSERT INTO t(a) VALUES (?)", [secrets.token_bytes(60000)])
+    after = bb.page_count()
+    assert after > before
+
+
 def test_create_and_query_round_trip(bb):
     bb.exec_sql("CREATE TABLE t(a INTEGER PRIMARY KEY, b TEXT, c BLOB);")
     bb.execute("INSERT INTO t(a, b, c) VALUES (?, ?, ?)", [1, "hello", b"\x00\x01\x02"])

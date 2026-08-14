@@ -287,6 +287,12 @@ class BBEngine(LeancryptoEngine):
         self._exports["sqlite3_close"](self.store, self.db)
         self.db = 0
 
+    def last_insert_rowid(self) -> int:
+        return self._exports["sqlite3_last_insert_rowid"](self.store, self.db)
+
+    def page_count(self) -> int:
+        return int(self.query("PRAGMA page_count;")[0][0])
+
     def _sqlite3_open(self, key: bytes) -> int:
         fn_ptr = self._write(DB_FILENAME.encode() + b"\x00")
         pp_db = self._malloc(4)
