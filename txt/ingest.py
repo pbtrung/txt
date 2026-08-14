@@ -204,14 +204,15 @@ class TxtIngester:
             }
             for future in as_completed(futures):
                 index, path = futures[future]
-                failures += self._log_upload_result(future, index, len(jobs), path)
+                failures += self._log_upload_result(future, index, len(jobs), prefix, path)
         return failures
 
-    def _log_upload_result(self, future, index: int, total: int, path: str) -> int:
+    def _log_upload_result(self, future, index: int, total: int, prefix: str, path: str) -> int:
+        key = f"{self.db_prefix}/t/{prefix}/{path}"
         if future.exception() is not None:
-            self.logger.verbose(f"part {index}/{total} ({path}) failed: {future.exception()}")
+            self.logger.verbose(f"part {index}/{total} ({key}) failed: {future.exception()}")
             return 1
-        self.logger.verbose(f"part {index}/{total} ({path}) uploaded")
+        self.logger.verbose(f"part {index}/{total} ({key}) uploaded")
         return 0
 
     def _upload_one_part(self, prefix: str, path: str, ciphertext: bytes) -> None:
@@ -338,11 +339,12 @@ class TxtIngester:
             live_pages, hot_page_nos, PAGE_SIZE, self.head_version
         )
         key = generate_random_prefix()
+        object_path = f"{self.db_prefix}/b/{key}"
         self.logger.verbose(
             f"bundle: {map_rows} live page(s), {hot_page_count} hot, "
-            f"{len(encrypted)} byte(s) encrypted, uploading..."
+            f"{len(encrypted)} byte(s) encrypted, uploading to {object_path}..."
         )
-        self.r2.put_object(f"{self.db_prefix}/b/{key}", encrypted)
+        self.r2.put_object(object_path, encrypted)
         if current:
             aa.execute(
                 "UPDATE bundles SET retired_at = ? WHERE bundle_key = ?",
@@ -416,8 +418,12 @@ class TxtIngester:
         key, lib_idx_key = self._existing_or_new_index_keys(rows)
         builder = LibraryIndexBuilder(self.bb, self.blob, lib_idx_key)
         encrypted, doc_count, content_hash = builder.build(self.head_version)
-        self.logger.verbose(f"library index: {doc_count} doc(s), {len(encrypted)} byte(s), uploading...")
-        self.r2.put_object(f"{self.db_prefix}/i/{key}", encrypted)
+        object_path = f"{self.db_prefix}/i/{key}"
+        self.logger.verbose(
+            f"library index: {doc_count} doc(s), {len(encrypted)} byte(s), "
+            f"uploading to {object_path}..."
+        )
+        self.r2.put_object(object_path, encrypted)
         self._upsert_library_index_row(
             aa, rows, key, lib_idx_key, len(encrypted), doc_count, content_hash
         )
