@@ -1,9 +1,9 @@
 // Ports txt/crypto_blob.py's blob format exactly (docs/crypto.md's
 // Encrypt/Decrypt blob format): magic(2)||version(2)||salt(64)||
 // ciphertext||tag(64), AD = magic||version||salt (context isn't implemented
-// yet, so HKDF's info is always empty). encrypt_json/decrypt_json aren't
-// ported here -- nothing in this step needs them yet.
+// yet, so HKDF's info is always empty).
 import { aeadDecrypt, aeadEncrypt, hkdfSha3_512 } from "./aead";
+import { brotliCompress, brotliDecompress } from "./brotli";
 
 const MAGIC = new Uint8Array([0x54, 0x58]);
 const VERSION = new Uint8Array([0x01, 0x00]);
@@ -52,4 +52,14 @@ export async function decrypt(blob: Uint8Array, ikm: Uint8Array): Promise<Uint8A
   const { key, iv } = await derive(ikm, salt);
   const ad = concat(MAGIC, VERSION, salt);
   return aeadDecrypt(key, iv, ad, ciphertext, tag);
+}
+
+export async function encryptJson(payload: unknown, ikm: Uint8Array): Promise<Uint8Array> {
+  const compressed = await brotliCompress(new TextEncoder().encode(JSON.stringify(payload)));
+  return encrypt(compressed, ikm);
+}
+
+export async function decryptJson<T = unknown>(blob: Uint8Array, ikm: Uint8Array): Promise<T> {
+  const decompressed = await brotliDecompress(await decrypt(blob, ikm));
+  return JSON.parse(new TextDecoder().decode(decompressed)) as T;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decrypt, encrypt } from "./cryptoBlob";
+import { decrypt, decryptJson, encrypt, encryptJson } from "./cryptoBlob";
 
 describe("cryptoBlob (real sqlcipher.wasm)", () => {
   it("round-trips a plaintext blob under a fixed ikm", async () => {
@@ -40,5 +40,15 @@ describe("cryptoBlob (real sqlcipher.wasm)", () => {
     blob[0] ^= 0xff;
 
     await expect(decrypt(blob, ikm)).rejects.toThrow(/bad magic/);
+  });
+
+  it("round-trips a JSON payload (matching cred_store.content's shape)", async () => {
+    const ikm = crypto.getRandomValues(new Uint8Array(128));
+    const payload = { user_id: "uid-123", display_name: "Ada", db_master_key: "base64stuff", db_prefix: "abc" };
+
+    const blob = await encryptJson(payload, ikm);
+    const decoded = await decryptJson(blob, ikm);
+
+    expect(decoded).toEqual(payload);
   });
 });
