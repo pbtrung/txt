@@ -71,7 +71,9 @@ class DbInitializer:
 
     def run(self) -> None:
         uid = self._sign_in()
-        db_path, account_type = self._lookup_user(uid)
+        ctl, db_path, account_type = self._lookup_user(uid)
+        if db_path is None:
+            db_path = self._create_database(ctl, uid)
         aa = self._connect_aa(db_path)
         self._ensure_schema(aa, account_type)
         self.creds = ensure_user_root_key(self.creds_path, self.creds)
@@ -90,7 +92,7 @@ class DbInitializer:
         self.logger.verbose(f"Firebase sign-in succeeded, uid={uid}")
         return uid
 
-    def _lookup_user(self, uid: str) -> tuple[str, str]:
+    def _lookup_user(self, uid: str) -> tuple[LibsqlClient, str | None, str]:
         self.logger.verbose("Looking up this user's db_path in ctl...")
         db_name = extract_db_name(self.creds.turso_ctl_db_url, self.creds.turso_org)
         ctl_token = self.turso.mint_db_token(db_name)
@@ -101,7 +103,15 @@ class DbInitializer:
                 f"uid={uid} has no users row in ctl; run --init-admin first"
             )
         self.logger.verbose(f"Found db_path={rows[0][0]}, type={rows[0][1]}")
-        return rows[0][0], rows[0][1]
+        return ctl, rows[0][0], rows[0][1]
+
+    def _create_database(self, ctl: LibsqlClient, uid: str) -> str:
+        db_path = generate_random_prefix()
+        self.logger.verbose(f"Creating Turso database {db_path} in group {self.creds.turso_group}...")
+        self.turso.create_database(db_path, self.creds.turso_group)
+        ctl.execute("UPDATE users SET db_path = ? WHERE id = ?", [db_path, uid])
+        self.logger.verbose(f"db_path={db_path} recorded in ctl.")
+        return db_path
 
     def _connect_aa(self, db_path: str) -> LibsqlClient:
         self.logger.verbose(f"Minting a database token for {db_path}...")

@@ -30,11 +30,17 @@ class FakeFirebaseAuth:
 
 
 class FakeTursoClient:
+    created_databases = []
+
     def __init__(self, org_token, org):
         pass
 
     def mint_db_token(self, db_name, authorization="full-access"):
         return f"token-for-{db_name}"
+
+    def create_database(self, name, group):
+        FakeTursoClient.created_databases.append((name, group))
+        return {}
 
 
 class FakeLibsqlClient:
@@ -66,6 +72,7 @@ def patch_clients(monkeypatch, engine):
     monkeypatch.setattr(init_db_module, "LeancryptoEngine", lambda: engine)
     FakeLibsqlClient.preset = {CTL_URL: {"SELECT db_path, type": [[DB_PATH, "user"]]}}
     FakeLibsqlClient.instances = {}
+    FakeTursoClient.created_databases = []
     yield
 
 
@@ -164,3 +171,21 @@ def test_db_prefix_is_stored_wrapped_not_plaintext(creds_path):
     wrapped_db_prefix = meta_insert[2][1]
     assert isinstance(wrapped_db_prefix, bytes)
     assert wrapped_db_prefix[0:2] == b"\x54\x58"
+
+
+def test_creates_database_when_db_path_is_null(creds_path):
+    FakeLibsqlClient.preset[CTL_URL] = {"SELECT db_path, type": [[None, "user"]]}
+    DbInitializer(load_creds(creds_path), creds_path, NullLogger()).run()
+    assert len(FakeTursoClient.created_databases) == 1
+    created_name, created_group = FakeTursoClient.created_databases[0]
+    assert created_group == "g"
+    ctl = FakeLibsqlClient.instances[CTL_URL]
+    update = next(c for c in ctl.calls if c[0] == "execute" and "UPDATE users SET db_path" in c[1])
+    assert update[2] == [created_name, "uid-123"]
+    aa_url = f"libsql://{created_name}-x.aws-us-east-1.turso.io"
+    assert aa_url in FakeLibsqlClient.instances
+
+
+def test_reuses_existing_db_path_without_creating_database(creds_path):
+    DbInitializer(load_creds(creds_path), creds_path, NullLogger()).run()
+    assert FakeTursoClient.created_databases == []
