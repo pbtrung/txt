@@ -82,13 +82,14 @@ def creds_path(tmp_path):
     return str(path)
 
 
-def test_registers_admin_without_creating_a_database(creds_path):
+def test_registers_admin_with_db_path_but_no_database(creds_path):
     AdminInitializer(load_creds(creds_path), NullLogger()).run()
     ctl = FakeLibsqlClient.instances[CTL_URL]
     insert = next(c for c in ctl.calls if c[0] == "execute" and "INSERT INTO users" in c[1])
-    assert insert[2][0] == "uid-123"
-    assert insert[2][1] == "admin"
-    assert "db_path" not in insert[1]
+    uid, db_path, account_type, _created_at = insert[2]
+    assert uid == "uid-123"
+    assert account_type == "admin"
+    assert len(db_path) == 52
     assert FakeTursoClient.created_databases == []
 
 
