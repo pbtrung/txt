@@ -12,9 +12,15 @@ def _to_arg(value) -> dict:
 
 
 def _cell_value(cell: dict):
-    if cell.get("type") == "blob":
+    cell_type = cell.get("type")
+    if cell_type == "blob":
         data = cell["base64"]
         return base64.b64decode(data + "=" * (-len(data) % 4))
+    if cell_type == "integer":
+        # Hrana encodes integers as decimal strings to preserve full 64-bit
+        # precision across JSON (a plain JSON number would lose it) --
+        # confirmed against real infra, not guessed.
+        return int(cell["value"])
     return cell.get("value")
 
 

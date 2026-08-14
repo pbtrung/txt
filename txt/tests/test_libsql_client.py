@@ -45,7 +45,7 @@ def test_cell_value_roundtrips_blob():
 
 def test_cell_value_text_and_integer():
     assert _cell_value({"type": "text", "value": "hi"}) == "hi"
-    assert _cell_value({"type": "integer", "value": "7"}) == "7"
+    assert _cell_value({"type": "integer", "value": "7"}) == 7
 
 
 def test_cell_value_null():
@@ -101,4 +101,4 @@ def test_query_extracts_rows_from_execute_result(monkeypatch):
     monkeypatch.setattr(libsql_client_module.requests, "post", fake_post)
     result = LibsqlClient("libsql://x.turso.io", "tok").query("SELECT a, b FROM t")
 
-    assert result == [["1", "hi"]]
+    assert result == [[1, "hi"]]
