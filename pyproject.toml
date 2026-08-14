@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "txt"
+version = "0.9999"
+description = "CLI for administering the txt document-storage system"
+requires-python = ">=3.14"
+dependencies = ["requests"]
+
+[project.scripts]
+txt = "txt.cli:run"
+
+[tool.setuptools]
+packages = ["txt"]
