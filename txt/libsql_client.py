@@ -1,10 +1,20 @@
+import base64
+
 import requests
 
 
 def _to_arg(value) -> dict:
+    if isinstance(value, (bytes, bytearray)):
+        return {"type": "blob", "base64": base64.b64encode(value).decode()}
     if isinstance(value, int):
         return {"type": "integer", "value": str(value)}
     return {"type": "text", "value": value}
+
+
+def _cell_value(cell: dict):
+    if cell.get("type") == "blob":
+        return base64.b64decode(cell["base64"])
+    return cell.get("value")
 
 
 class LibsqlClient:
@@ -22,4 +32,4 @@ class LibsqlClient:
 
     def query(self, sql: str, args: list | None = None) -> list:
         result = self.execute(sql, args)["results"][0]["response"]["result"]
-        return [[cell["value"] for cell in row] for row in result["rows"]]
+        return [[_cell_value(cell) for cell in row] for row in result["rows"]]

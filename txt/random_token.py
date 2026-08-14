@@ -18,3 +18,8 @@ def to_base32_crockford(data: bytes) -> str:
 
 def generate_db_path() -> str:
     return to_base32_crockford(secrets.token_bytes(32))
+
+
+# Same recipe (docs/data_model.md §2), reused for db_prefix and any other
+# 32-random-byte, base32-Crockford R2 prefix — not just ctl's db_path.
+generate_random_prefix = generate_db_path
