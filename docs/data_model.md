@@ -148,20 +148,27 @@ CREATE TABLE library_index (
 
 One row, one object key, updated in place on each rebuild.
 
-### 3.6 Admin key material
+### 3.6 Key material
 
-`umk` is derived from `user_root_key` for every account, admin or not, but only an admin's AA persists it — an admin also holds a composite KEM keypair (docs/crypto.md), and this is where its wrapped private key lives:
+Every account, admin or not, has a `key_store` holding its own `umk` — 128 random bytes, wrapped by `user_root_key` (docs/crypto.md). An admin also holds a composite KEM keypair (docs/crypto.md), and this is where its wrapped private key lives:
 
 ```sql
+-- Admin's own AA.
 CREATE TABLE key_store (
   id      INTEGER PRIMARY KEY CHECK (id = 1),
   umk     BLOB NOT NULL,      -- 128 random bytes, wrapped by user_root_key
   pubkey  BLOB NOT NULL,      -- composite KEM public key (docs/crypto.md), raw
   privkey BLOB NOT NULL       -- composite KEM private key, wrapped by umk (docs/crypto.md)
 );
+
+-- An ordinary user's own AA: no KEM keypair, only the wrapped umk.
+CREATE TABLE key_store (
+  id  INTEGER PRIMARY KEY CHECK (id = 1),
+  umk BLOB NOT NULL           -- 128 random bytes, wrapped by user_root_key
+);
 ```
 
-One row, present only in the administrator's own AA (`users.type = 'admin'`, docs/auth.md). An ordinary user's AA has no `key_store`: its `umk` is derived each session and never persisted.
+One row either way (`users.type`, docs/auth.md decides the shape). `umk` is generated once and persisted wrapped, never re-derived — every session unwraps the same value with `user_root_key`.
 
 ### 3.7 Credential backups
 
