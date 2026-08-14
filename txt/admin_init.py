@@ -16,7 +16,9 @@ CREATE TABLE IF NOT EXISTS users (
 )
 """
 
-INSERT_USER_SQL = "INSERT INTO users (id, db_path, type, created_at) VALUES (?, ?, ?, ?)"
+INSERT_USER_SQL = (
+    "INSERT INTO users (id, db_path, type, created_at) VALUES (?, ?, ?, ?)"
+)
 
 
 class AdminInitializer:
@@ -60,7 +62,11 @@ class AdminInitializer:
 
     def _insert_user(self, ctl: LibsqlClient, uid: str, db_path: str) -> None:
         created_at = int(time.time() * 1000)
-        self.logger.verbose(f"Inserting users row: id={uid}, db_path={db_path}, type=admin...")
+        self.logger.verbose(
+            f"Inserting users row: id={uid}, db_path={db_path}, type=admin..."
+        )
         ctl.execute(INSERT_USER_SQL, [uid, db_path, "admin", created_at])
         self.logger.verbose("users row inserted.")
-        self.logger.info(f"Registered admin {uid} with db_path={db_path} (database not yet created)")
+        self.logger.info(
+            f"Registered admin {uid} with db_path={db_path} (database not yet created)"
+        )

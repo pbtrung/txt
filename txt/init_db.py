@@ -117,7 +117,9 @@ class DbInitializer:
         except requests.exceptions.HTTPError as err:
             if err.response is None or err.response.status_code != 404:
                 raise
-            self.logger.verbose(f"Database {db_path} does not exist yet, creating it...")
+            self.logger.verbose(
+                f"Database {db_path} does not exist yet, creating it..."
+            )
             self.turso.create_database(db_path, self.creds.turso_group)
             return self.turso.mint_db_token(db_path)
 

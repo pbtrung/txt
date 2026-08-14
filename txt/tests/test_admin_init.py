@@ -74,8 +74,13 @@ def patch_clients(monkeypatch):
 @pytest.fixture
 def creds_path(tmp_path):
     data = {
-        "turso_org_token": "tok", "turso_ctl_db_url": CTL_URL, "turso_group": "g", "turso_org": "x",
-        "firebase_email": "a@b.com", "firebase_password": "pw", "firebase_api_key": "key",
+        "turso_org_token": "tok",
+        "turso_ctl_db_url": CTL_URL,
+        "turso_group": "g",
+        "turso_org": "x",
+        "firebase_email": "a@b.com",
+        "firebase_password": "pw",
+        "firebase_api_key": "key",
     }
     path = tmp_path / "creds.json"
     path.write_text(json.dumps(data))
@@ -85,7 +90,9 @@ def creds_path(tmp_path):
 def test_registers_admin_with_db_path_but_no_database(creds_path):
     AdminInitializer(load_creds(creds_path), NullLogger()).run()
     ctl = FakeLibsqlClient.instances[CTL_URL]
-    insert = next(c for c in ctl.calls if c[0] == "execute" and "INSERT INTO users" in c[1])
+    insert = next(
+        c for c in ctl.calls if c[0] == "execute" and "INSERT INTO users" in c[1]
+    )
     uid, db_path, account_type, _created_at = insert[2]
     assert uid == "uid-123"
     assert account_type == "admin"

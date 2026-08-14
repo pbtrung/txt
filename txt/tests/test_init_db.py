@@ -38,7 +38,9 @@ class FakeTursoClient:
         pass
 
     def mint_db_token(self, db_name, authorization="full-access"):
-        already_created = db_name in {name for name, _ in FakeTursoClient.created_databases}
+        already_created = db_name in {
+            name for name, _ in FakeTursoClient.created_databases
+        }
         if db_name in FakeTursoClient.missing_until_created and not already_created:
             resp = requests.Response()
             resp.status_code = 404
