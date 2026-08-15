@@ -13,11 +13,8 @@ function fakeR2(objects: Record<string, Uint8Array>): R2Client {
   } as unknown as R2Client;
 }
 
-async function metadataBlob(
-  name: string,
-  metadata: Record<string, unknown>,
-): Promise<Uint8Array> {
-  return brotliCompress(new TextEncoder().encode(JSON.stringify({ name, metadata })));
+async function catalogBlob(catalog: Record<string, unknown>): Promise<Uint8Array> {
+  return brotliCompress(new TextEncoder().encode(JSON.stringify(catalog)));
 }
 
 describe("loadReaderDocument (real sqlcipher.wasm + real crypto)", () => {
@@ -30,17 +27,18 @@ describe("loadReaderDocument (real sqlcipher.wasm + real crypto)", () => {
     const path = crypto.getRandomValues(new Uint8Array(32));
     const epubBytes = new TextEncoder().encode("fake epub content");
     const encrypted = await encrypt(epubBytes, txtKey);
-    const metadata = await metadataBlob("dune.epub", {
+    const catalog = await catalogBlob({
+      name: "dune.epub",
       title: "Dune",
-      creator: "Frank Herbert",
-      subject: ["Science Fiction", "Adventure"],
+      authors: ["Frank Herbert"],
+      subjects: ["Science Fiction", "Adventure"],
       publisher: "Ace",
     });
 
     db.query(
-      "INSERT INTO txt (txt_key, txt_prefix, path, metadata, last_accessed, created_at) " +
+      "INSERT INTO txt (txt_key, txt_prefix, path, catalog, last_accessed, created_at) " +
         "VALUES (?, ?, ?, ?, 0, 0)",
-      [txtKey, txtPrefix, path, metadata],
+      [txtKey, txtPrefix, path, catalog],
     );
 
     const key = `the-db-prefix/${toBase32Crockford(txtPrefix)}/${toBase32Crockford(path)}`;
@@ -57,7 +55,7 @@ describe("loadReaderDocument (real sqlcipher.wasm + real crypto)", () => {
     expect(new TextDecoder().decode(doc!.epubBytes)).toBe("fake epub content");
   });
 
-  it("defaults authors/subjects to [] and publisher to null when absent", async () => {
+  it("passes through an empty authors/subjects and a null publisher", async () => {
     const db = await SqliteDatabase.openUnkeyed();
     ensureSchema(db);
 
@@ -65,12 +63,18 @@ describe("loadReaderDocument (real sqlcipher.wasm + real crypto)", () => {
     const txtPrefix = crypto.getRandomValues(new Uint8Array(32));
     const path = crypto.getRandomValues(new Uint8Array(32));
     const encrypted = await encrypt(new TextEncoder().encode("content"), txtKey);
-    const metadata = await metadataBlob("untitled.epub", {});
+    const catalog = await catalogBlob({
+      name: "untitled.epub",
+      title: "untitled.epub",
+      authors: [],
+      subjects: [],
+      publisher: null,
+    });
 
     db.query(
-      "INSERT INTO txt (txt_key, txt_prefix, path, metadata, last_accessed, created_at) " +
+      "INSERT INTO txt (txt_key, txt_prefix, path, catalog, last_accessed, created_at) " +
         "VALUES (?, ?, ?, ?, 0, 0)",
-      [txtKey, txtPrefix, path, metadata],
+      [txtKey, txtPrefix, path, catalog],
     );
     const key = `the-db-prefix/${toBase32Crockford(txtPrefix)}/${toBase32Crockford(path)}`;
     const r2 = fakeR2({ [key]: encrypted });
@@ -99,11 +103,17 @@ describe("loadReaderDocument (real sqlcipher.wasm + real crypto)", () => {
     const txtKey = crypto.getRandomValues(new Uint8Array(128));
     const txtPrefix = crypto.getRandomValues(new Uint8Array(32));
     const path = crypto.getRandomValues(new Uint8Array(32));
-    const metadata = await metadataBlob("x.epub", {});
+    const catalog = await catalogBlob({
+      name: "x.epub",
+      title: "x.epub",
+      authors: [],
+      subjects: [],
+      publisher: null,
+    });
     db.query(
-      "INSERT INTO txt (txt_key, txt_prefix, path, metadata, last_accessed, created_at) " +
+      "INSERT INTO txt (txt_key, txt_prefix, path, catalog, last_accessed, created_at) " +
         "VALUES (?, ?, ?, ?, 0, 0)",
-      [txtKey, txtPrefix, path, metadata],
+      [txtKey, txtPrefix, path, catalog],
     );
 
     expect(await loadReaderDocument(db, fakeR2({}), "the-db-prefix", 1)).toBeNull();

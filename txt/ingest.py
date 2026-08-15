@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS txt (
   txt_key BLOB NOT NULL,
   txt_prefix BLOB NOT NULL,
   path BLOB NOT NULL,
-  metadata BLOB NOT NULL,
+  catalog BLOB NOT NULL,
   last_accessed INTEGER NOT NULL,
   created_at INTEGER NOT NULL
 )
@@ -60,6 +60,17 @@ BEGIN
     );
 END
 """
+
+
+def _field_strings(value) -> list:
+    """Normalizes one parse_opf_metadata() field into a flat list of
+    strings: absent -> [], a bare string or an attributed {"text": ...}
+    dict -> a single-item list, a list of either -> itself, flattened.
+    """
+    if value is None:
+        return []
+    items = value if isinstance(value, list) else [value]
+    return [item["text"] if isinstance(item, dict) else item for item in items]
 
 
 class TxtIngester:
@@ -120,7 +131,7 @@ class TxtIngester:
     def _existing_names(self) -> set:
         return {
             json.loads(brotli.decompress(row[0]))["name"]
-            for row in self.engine.query("SELECT metadata FROM txt")
+            for row in self.engine.query("SELECT catalog FROM txt")
         }
 
     def _ingest_all(self) -> None:
@@ -160,22 +171,31 @@ class TxtIngester:
         self, epub_path: Path, txt_key: bytes, txt_prefix: bytes, path: bytes
     ) -> None:
         now = int(time.time() * 1000)
-        payload = self._metadata_payload(epub_path)
-        metadata = brotli.compress(json.dumps(payload).encode())
+        payload = self._catalog_payload(epub_path)
+        catalog = brotli.compress(json.dumps(payload).encode())
         self.engine.execute(
-            "INSERT INTO txt (txt_key, txt_prefix, path, metadata, last_accessed, created_at) "
+            "INSERT INTO txt (txt_key, txt_prefix, path, catalog, last_accessed, created_at) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            [txt_key, txt_prefix, path, metadata, now, now],
+            [txt_key, txt_prefix, path, catalog, now, now],
         )
 
-    def _metadata_payload(self, epub_path: Path) -> dict:
-        payload = {"name": epub_path.name}
+    def _catalog_payload(self, epub_path: Path) -> dict:
+        """{name, title, authors, subjects, publisher} -- just what the
+        Library screen needs to search/browse (docs/data_model.md §3.1).
+        Full metadata for display comes from the EPUB's own internal OPF
+        instead, parsed client-side when a book is actually opened.
+        """
         opf_path = find_opf_sidecar(epub_path)
-        if opf_path is not None:
-            opf_metadata = parse_opf_metadata(opf_path)
-            if opf_metadata:
-                payload["metadata"] = opf_metadata
-        return payload
+        opf_metadata = parse_opf_metadata(opf_path) if opf_path is not None else {}
+        titles = _field_strings(opf_metadata.get("title"))
+        publishers = _field_strings(opf_metadata.get("publisher"))
+        return {
+            "name": epub_path.name,
+            "title": titles[0] if titles else epub_path.name,
+            "authors": _field_strings(opf_metadata.get("creator")),
+            "subjects": _field_strings(opf_metadata.get("subject")),
+            "publisher": publishers[0] if publishers else None,
+        }
 
     def _finish(self) -> None:
         self.logger.verbose("Vacuuming local db...")

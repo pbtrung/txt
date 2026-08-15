@@ -44,7 +44,7 @@ CREATE TABLE txt (
     txt_key       BLOB    NOT NULL,   -- 128 random bytes; the AEAD key for this document's content object
     txt_prefix    BLOB    NOT NULL,   -- 32 random bytes; first key segment of the content object (§1)
     path          BLOB    NOT NULL,   -- 32 random bytes; second key segment of the content object (§1)
-    metadata      BLOB    NOT NULL,   -- brotli(JSON): original filename plus opf sidecar passthrough (§3.1)
+    catalog       BLOB    NOT NULL,   -- brotli(JSON): {name, title, authors, subjects, publisher} (§3.1)
     last_accessed INTEGER NOT NULL,   -- unix ms
     created_at    INTEGER NOT NULL    -- unix ms
 );
@@ -75,18 +75,23 @@ BEGIN
 END;
 ```
 
-### 3.1 `metadata`
+### 3.1 `catalog`
 
-`name` is the original filename, not from the sidecar. The nested `metadata` key is the ingested document's OPF sidecar, parsed as-is when one exists — title, authors, subjects, publishers, and whatever else it carries all live there under the OPF format's own field names, rather than duplicated as separate columns:
+A fixed, flat shape — just what the Library screen needs to search and browse without opening every document:
 
 ```json
 {
   "name": "original filename",
-  "metadata": { "...": "opf sidecar fields, when present" }
+  "title": "the OPF sidecar's dc:title, or name if there wasn't one",
+  "authors": ["every dc:creator, in order"],
+  "subjects": ["every dc:subject, in order"],
+  "publisher": "the OPF sidecar's dc:publisher, or null"
 }
 ```
 
-The whole file is already encrypted by SQLCipher under `db_master_key`, so `metadata` is only brotli-compressed, not separately encrypted — there is no second key for it to be wrapped under.
+`name` is the original filename, not from the sidecar. Anything else the sidecar carries (description, language, series, whatever else Calibre wrote) isn't kept here — every valid EPUB already carries the same core fields in its own internal package document, so the Reader gets full metadata by parsing that directly once it has the document's bytes in hand, rather than this column duplicating it.
+
+The whole file is already encrypted by SQLCipher under `db_master_key`, so `catalog` is only brotli-compressed, not separately encrypted — there is no second key for it to be wrapped under.
 
 `txt_key` is unrelated to `db_master_key`: it is the AEAD key for one document's content object, generated fresh per document, so leaking one document's key exposes nothing about any other document or about the database file itself.
 
@@ -99,6 +104,6 @@ The whole file is already encrypted by SQLCipher under `db_master_key`, so `meta
 ## 4. Build order
 
 1. The SQLCipher round trip: download, open with `db_master_key`, read, close, re-upload only on change.
-2. `txt` and search/sort/browse over `metadata`.
+2. `txt` and search/sort/browse over `catalog`.
 3. Per-document content: `txt_key`/`txt_prefix`/`path`, fetching and decrypting one document's object from R2.
 4. `txt_bookmarks`, its cap trigger, and the supporting index.

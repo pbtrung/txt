@@ -17,11 +17,17 @@ describe("useLibraryBooks", () => {
     ensureSchema(db);
     const blob = await brotliCompress(
       new TextEncoder().encode(
-        JSON.stringify({ name: "dune.epub", metadata: { title: "Dune" } }),
+        JSON.stringify({
+          name: "dune.epub",
+          title: "Dune",
+          authors: [],
+          subjects: [],
+          publisher: null,
+        }),
       ),
     );
     db.query(
-      "INSERT INTO txt (txt_key, txt_prefix, path, metadata, last_accessed, created_at) " +
+      "INSERT INTO txt (txt_key, txt_prefix, path, catalog, last_accessed, created_at) " +
         "VALUES (x'00', x'00', x'00', ?, 0, 0)",
       [blob],
     );

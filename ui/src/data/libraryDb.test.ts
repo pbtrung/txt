@@ -4,35 +4,32 @@ import { ensureSchema } from "./schema";
 import { loadLibraryBooks } from "./libraryDb";
 import { SqliteDatabase } from "./sqlite";
 
-async function metadataBlob(
-  name: string,
-  metadata: Record<string, unknown>,
-): Promise<Uint8Array> {
-  return brotliCompress(new TextEncoder().encode(JSON.stringify({ name, metadata })));
+async function catalogBlob(catalog: Record<string, unknown>): Promise<Uint8Array> {
+  return brotliCompress(new TextEncoder().encode(JSON.stringify(catalog)));
 }
 
 async function insertTxt(
   db: SqliteDatabase,
   id: number,
-  name: string,
-  metadata: Record<string, unknown>,
+  catalog: Record<string, unknown>,
 ): Promise<void> {
-  const blob = await metadataBlob(name, metadata);
+  const blob = await catalogBlob(catalog);
   db.query(
-    "INSERT INTO txt (id, txt_key, txt_prefix, path, metadata, last_accessed, created_at) " +
+    "INSERT INTO txt (id, txt_key, txt_prefix, path, catalog, last_accessed, created_at) " +
       "VALUES (?, x'00', x'00', x'00', ?, 0, 0)",
     [id, blob],
   );
 }
 
 describe("loadLibraryBooks (real sqlcipher.wasm)", () => {
-  it("reads title/authors/subjects/publisher out of plain-string opf fields", async () => {
+  it("reads title/authors/subjects/publisher out of the catalog", async () => {
     const db = await SqliteDatabase.openUnkeyed();
     ensureSchema(db);
-    await insertTxt(db, 1, "dune.epub", {
+    await insertTxt(db, 1, {
+      name: "dune.epub",
       title: "Dune",
-      creator: "Frank Herbert",
-      subject: "Science Fiction",
+      authors: ["Frank Herbert"],
+      subjects: ["Science Fiction"],
       publisher: "Ace",
     });
 
@@ -49,16 +46,15 @@ describe("loadLibraryBooks (real sqlcipher.wasm)", () => {
     });
   });
 
-  it("normalizes repeated tags and attributed {text, ...} fields", async () => {
+  it("reads multiple authors and subjects", async () => {
     const db = await SqliteDatabase.openUnkeyed();
     ensureSchema(db);
-    await insertTxt(db, 2, "good-omens.epub", {
+    await insertTxt(db, 2, {
+      name: "good-omens.epub",
       title: "Good Omens",
-      creator: [
-        { text: "Terry Pratchett", role: "aut" },
-        { text: "Neil Gaiman", role: "aut" },
-      ],
-      subject: ["Fantasy", "Humor"],
+      authors: ["Terry Pratchett", "Neil Gaiman"],
+      subjects: ["Fantasy", "Humor"],
+      publisher: null,
     });
 
     const [book] = await loadLibraryBooks(db);
@@ -72,7 +68,13 @@ describe("loadLibraryBooks (real sqlcipher.wasm)", () => {
   it("falls back to the original filename when there's no opf title", async () => {
     const db = await SqliteDatabase.openUnkeyed();
     ensureSchema(db);
-    await insertTxt(db, 3, "untitled.epub", {});
+    await insertTxt(db, 3, {
+      name: "untitled.epub",
+      title: "untitled.epub",
+      authors: [],
+      subjects: [],
+      publisher: null,
+    });
 
     const [book] = await loadLibraryBooks(db);
     db.close();

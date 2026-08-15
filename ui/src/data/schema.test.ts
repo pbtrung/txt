@@ -17,7 +17,7 @@ describe("ensureSchema (real sqlcipher.wasm)", () => {
     const db = await SqliteDatabase.openUnkeyed();
     ensureSchema(db);
     db.execSql(
-      "INSERT INTO txt (txt_key, txt_prefix, path, metadata, last_accessed, created_at) " +
+      "INSERT INTO txt (txt_key, txt_prefix, path, catalog, last_accessed, created_at) " +
         "VALUES (x'00', x'00', x'00', x'00', 0, 0)",
     );
 
@@ -30,7 +30,7 @@ describe("ensureSchema (real sqlcipher.wasm)", () => {
     const db = await SqliteDatabase.openUnkeyed();
     ensureSchema(db);
     db.execSql(
-      "INSERT INTO txt (txt_key, txt_prefix, path, metadata, last_accessed, created_at) " +
+      "INSERT INTO txt (txt_key, txt_prefix, path, catalog, last_accessed, created_at) " +
         "VALUES (x'00', x'00', x'00', x'00', 0, 0)",
     );
     for (let line = 0; line < 25; line++) {

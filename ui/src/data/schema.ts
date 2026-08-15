@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS txt (
   txt_key BLOB NOT NULL,
   txt_prefix BLOB NOT NULL,
   path BLOB NOT NULL,
-  metadata BLOB NOT NULL,
+  catalog BLOB NOT NULL,
   last_accessed INTEGER NOT NULL,
   created_at INTEGER NOT NULL
 )

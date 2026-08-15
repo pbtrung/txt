@@ -1,4 +1,4 @@
-// The session-selector hook: loads the txt table's metadata out of the
+// The session-selector hook: loads the txt table's catalog out of the
 // already-unlocked session's open SqliteDatabase (VaultContext) into plain
 // LibraryBook records.
 import { useEffect, useState } from "react";

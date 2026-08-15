@@ -2,10 +2,12 @@
 // (docs/data_model.md §1: {db_prefix}/{txt_prefix}/{path}), keyed by that
 // row's own txt_key -- unrelated to db_master_key, so leaking one
 // document's key exposes nothing about any other document or the database
-// file itself.
+// file itself. Metadata comes from the txt row's own catalog for now
+// (title/authors/subjects/publisher only) -- richer detail is planned to
+// come from parsing the EPUB's own internal OPF once it's downloaded.
 import { decrypt } from "../crypto/cryptoBlob";
+import { brotliDecompress } from "../crypto/brotli";
 import { toBase32Crockford } from "../util/base32Crockford";
-import { fieldStrings, titleOf, parseOpfSidecar } from "./opfSidecar";
 import type { R2Client } from "./r2";
 import type { SqliteDatabase } from "./sqlite";
 
@@ -15,6 +17,14 @@ export interface ReaderDocument {
   subjects: string[];
   publisher: string | null;
   epubBytes: Uint8Array;
+}
+
+interface Catalog {
+  name: string;
+  title: string;
+  authors: string[];
+  subjects: string[];
+  publisher: string | null;
 }
 
 function contentKey(dbPrefix: string, txtPrefix: Uint8Array, path: Uint8Array): string {
@@ -28,11 +38,11 @@ export async function loadReaderDocument(
   txtId: number,
 ): Promise<ReaderDocument | null> {
   const rows = db.query(
-    "SELECT txt_key, txt_prefix, path, metadata FROM txt WHERE id = ?",
+    "SELECT txt_key, txt_prefix, path, catalog FROM txt WHERE id = ?",
     [txtId],
   );
   if (rows.length === 0) return null;
-  const [txtKey, txtPrefix, path, metadataBlob] = rows[0] as [
+  const [txtKey, txtPrefix, path, catalogBlob] = rows[0] as [
     Uint8Array,
     Uint8Array,
     Uint8Array,
@@ -43,12 +53,13 @@ export async function loadReaderDocument(
   if (!encrypted) return null;
 
   const epubBytes = await decrypt(encrypted, txtKey);
-  const sidecar = await parseOpfSidecar(metadataBlob);
+  const json = new TextDecoder().decode(await brotliDecompress(catalogBlob));
+  const catalog = JSON.parse(json) as Catalog;
   return {
-    title: titleOf(sidecar),
-    authors: fieldStrings(sidecar.metadata?.creator),
-    subjects: fieldStrings(sidecar.metadata?.subject),
-    publisher: fieldStrings(sidecar.metadata?.publisher)[0] ?? null,
+    title: catalog.title,
+    authors: catalog.authors,
+    subjects: catalog.subjects,
+    publisher: catalog.publisher,
     epubBytes,
   };
 }

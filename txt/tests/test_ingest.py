@@ -92,7 +92,7 @@ def _txt_rows_from_disk(local_path):
     try:
         return [
             json.loads(brotli.decompress(row[0]))
-            for row in engine.query("SELECT metadata FROM txt")
+            for row in engine.query("SELECT catalog FROM txt")
         ]
     finally:
         engine.close()
@@ -130,19 +130,53 @@ def test_ingest_fresh_directory(tmp_path):
     assert names == {"a.epub", "b.epub"}
 
 
-def test_ingest_records_opf_sidecar_metadata(tmp_path):
+def test_ingest_records_opf_sidecar_catalog_fields(tmp_path):
     src, local = tmp_path / "src", tmp_path / "local"
     src.mkdir()
     _write_epub(src / "a.epub")
     (src / "a.opf").write_text(
-        '<package><metadata xmlns:dc="urn:dc"><dc:title>Hello</dc:title></metadata></package>'
+        '<package><metadata xmlns:dc="urn:dc"><dc:title>Hello</dc:title>'
+        "<dc:creator>Frank Herbert</dc:creator>"
+        "<dc:publisher>Ace</dc:publisher>"
+        "</metadata></package>"
     )
 
     ingester = TxtIngester(src, local, CREDS, NullLogger())
     ingester.run()
 
     payloads = _txt_rows_from_disk(local / ACCOUNT.db_path)
-    assert payloads == [{"name": "a.epub", "metadata": {"title": "Hello"}}]
+    assert payloads == [
+        {
+            "name": "a.epub",
+            "title": "Hello",
+            "authors": ["Frank Herbert"],
+            "subjects": [],
+            "publisher": "Ace",
+        }
+    ]
+
+
+def test_ingest_collects_repeated_authors_and_subjects(tmp_path):
+    src, local = tmp_path / "src", tmp_path / "local"
+    src.mkdir()
+    _write_epub(src / "a.epub")
+    (src / "a.opf").write_text(
+        '<package><metadata xmlns:dc="urn:dc">'
+        "<dc:creator>Terry Pratchett</dc:creator>"
+        "<dc:creator>Neil Gaiman</dc:creator>"
+        "<dc:subject>Fantasy</dc:subject>"
+        "<dc:subject>Humor</dc:subject>"
+        "</metadata></package>"
+    )
+
+    ingester = TxtIngester(src, local, CREDS, NullLogger())
+    ingester.run()
+
+    [payload] = _txt_rows_from_disk(local / ACCOUNT.db_path)
+    assert payload["authors"] == ["Terry Pratchett", "Neil Gaiman"]
+    assert payload["subjects"] == ["Fantasy", "Humor"]
+    assert payload["publisher"] is None
+    assert payload["title"] == "a.epub"  # no dc:title -> falls back to the filename
 
 
 def test_ingest_uploads_one_object_per_epub_plus_final_db(tmp_path):

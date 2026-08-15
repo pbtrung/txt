@@ -1,4 +1,4 @@
-// Search + browse over the txt table's metadata: All books, plus
+// Search + browse over the txt table's catalog: All books, plus
 // browse-by-Author/Subject/Publisher. Two panes, bounded to the viewport
 // height so only the panes scroll, never the page; below Bootstrap's `md`
 // breakpoint the browse pane collapses into a drawer.
