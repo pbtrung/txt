@@ -3,6 +3,13 @@
 // URLs) behind a class ReaderScreen and its tests can mock, the same
 // pattern as R2Client wrapping aws4fetch.
 import ePub, { type Book, type NavItem, type Rendition } from "epubjs";
+import { READER_THEME_CSS } from "./readerTheme";
+
+// A 2-column spread only kicks in once there's room for two 80ch-ish
+// columns side by side -- otherwise setColumns(2) would just crush both
+// columns on a narrow viewport. Approximate, not exact: an actual 80ch
+// width depends on the rendered font's own metrics.
+const TWO_COLUMN_MIN_WIDTH_PX = 900;
 
 function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(
@@ -30,7 +37,19 @@ export class EpubRenderer {
       height: "100%",
       allowScriptedContent: true,
     });
+    this.rendition.themes.registerCss("default", READER_THEME_CSS);
     void this.rendition.display();
+  }
+
+  /** 1 = always a single column; 2 = a two-page spread once the viewport
+   * is wide enough, otherwise epub.js falls back to one column on its own. */
+  setColumns(count: 1 | 2): void {
+    const rendition = this.requireRendition();
+    if (count === 1) {
+      rendition.spread("none");
+    } else {
+      rendition.spread("auto", TWO_COLUMN_MIN_WIDTH_PX);
+    }
   }
 
   /** Jumps to an arbitrary TOC href or CFI -- unlike next()/prev(), which

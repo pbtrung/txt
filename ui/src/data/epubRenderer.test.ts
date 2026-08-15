@@ -10,7 +10,8 @@ const renditionMock = {
   next: vi.fn().mockResolvedValue(undefined),
   prev: vi.fn().mockResolvedValue(undefined),
   on: vi.fn(),
-  themes: { fontSize: vi.fn() },
+  spread: vi.fn(),
+  themes: { fontSize: vi.fn(), registerCss: vi.fn() },
 };
 const bookMock = {
   renderTo: vi.fn().mockReturnValue(renditionMock),
@@ -47,6 +48,21 @@ describe("EpubRenderer", () => {
       allowScriptedContent: true,
     });
     expect(renditionMock.display).toHaveBeenCalled();
+    expect(renditionMock.themes.registerCss).toHaveBeenCalledWith(
+      "default",
+      expect.stringContaining("Literata"),
+    );
+  });
+
+  it("setColumns(1) forces a single column, setColumns(2) allows a spread", () => {
+    const renderer = new EpubRenderer(new Uint8Array([1]));
+    renderer.renderTo(document.createElement("div"));
+
+    renderer.setColumns(1);
+    expect(renditionMock.spread).toHaveBeenCalledWith("none");
+
+    renderer.setColumns(2);
+    expect(renditionMock.spread).toHaveBeenCalledWith("auto", expect.any(Number));
   });
 
   it("destroys both the rendition and the book", () => {

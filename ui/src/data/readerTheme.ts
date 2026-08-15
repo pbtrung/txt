@@ -1,0 +1,85 @@
+// The reader's fixed visual defaults: Literata (self-hosted via
+// @fontsource, not a Google Fonts CDN link -- consistent with this app's
+// Bootstrap Icons being bundled too) for body text, and an 80-character
+// measure, centered, so lines don't run edge-to-edge on wide screens.
+// epub.js renders each section in its own iframe document, so this can't
+// just be a normal CSS import in main.tsx -- @font-face declarations
+// don't cross from the outer page into a child iframe's own document.
+// Injected instead as raw CSS via Rendition.themes.registerCss().
+//
+// One @font-face per subset (each with its own unicode-range) rather than
+// a single all-glyphs file: the browser only fetches the woff2 for a
+// range actually used by the rendered text, so a book that's plain Latin
+// never downloads the Cyrillic/Greek/Vietnamese files at all. This is the
+// same subset split @fontsource/literata's own combined 400.css ships --
+// covers the common Latin-script languages plus Cyrillic, Greek, and
+// Vietnamese explicitly (Vietnamese's own diacritics aren't covered by
+// latin-ext).
+import literataCyrillicExt from "@fontsource/literata/files/literata-cyrillic-ext-400-normal.woff2";
+import literataCyrillic from "@fontsource/literata/files/literata-cyrillic-400-normal.woff2";
+import literataGreekExt from "@fontsource/literata/files/literata-greek-ext-400-normal.woff2";
+import literataGreek from "@fontsource/literata/files/literata-greek-400-normal.woff2";
+import literataVietnamese from "@fontsource/literata/files/literata-vietnamese-400-normal.woff2";
+import literataLatinExt from "@fontsource/literata/files/literata-latin-ext-400-normal.woff2";
+import literataLatin from "@fontsource/literata/files/literata-latin-400-normal.woff2";
+
+interface Subset {
+  url: string;
+  unicodeRange: string;
+}
+
+const SUBSETS: Subset[] = [
+  {
+    url: literataCyrillicExt,
+    unicodeRange: "U+0460-052F,U+1C80-1C8A,U+20B4,U+2DE0-2DFF,U+A640-A69F,U+FE2E-FE2F",
+  },
+  {
+    url: literataCyrillic,
+    unicodeRange: "U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116",
+  },
+  { url: literataGreekExt, unicodeRange: "U+1F00-1FFF" },
+  {
+    url: literataGreek,
+    unicodeRange: "U+0370-0377,U+037A-037F,U+0384-038A,U+038C,U+038E-03A1,U+03A3-03FF",
+  },
+  {
+    url: literataVietnamese,
+    unicodeRange:
+      "U+0102-0103,U+0110-0111,U+0128-0129,U+0168-0169,U+01A0-01A1,U+01AF-01B0,U+0300-0301," +
+      "U+0303-0304,U+0308-0309,U+0323,U+0329,U+1EA0-1EF9,U+20AB",
+  },
+  {
+    url: literataLatinExt,
+    unicodeRange:
+      "U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329," +
+      "U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF",
+  },
+  {
+    url: literataLatin,
+    unicodeRange:
+      "U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329," +
+      "U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD",
+  },
+];
+
+const fontFaceRules = SUBSETS.map(
+  (subset) => `
+@font-face {
+  font-family: 'Literata';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(${subset.url}) format('woff2');
+  unicode-range: ${subset.unicodeRange};
+}`,
+).join("\n");
+
+export const READER_THEME_CSS = `
+${fontFaceRules}
+body {
+  font-family: 'Literata', serif;
+  max-width: 80ch;
+  margin-left: auto;
+  margin-right: auto;
+}
+`;

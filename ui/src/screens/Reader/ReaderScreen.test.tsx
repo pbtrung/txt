@@ -15,6 +15,7 @@ vi.mock("../../data/epubRenderer", () => ({
       next: vi.fn().mockResolvedValue(undefined),
       onKeyup: vi.fn(),
       setFontSize: vi.fn(),
+      setColumns: vi.fn(),
       getToc: vi.fn().mockResolvedValue([]),
     };
   }),
@@ -28,6 +29,7 @@ import { useReaderDocument } from "./useReaderDocument";
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
 });
 
 function mockVault() {
@@ -138,7 +140,33 @@ describe("ReaderScreen", () => {
     expect(instance.next).toHaveBeenCalledTimes(1);
   });
 
-  it("font size buttons call setFontSize with a clamped percentage", async () => {
+  it("applies the default (desktop) font size on mount", () => {
+    mockVault();
+    mockReadyDocument();
+    renderScreen();
+    const instance = vi.mocked(EpubRenderer).mock.results[0].value as {
+      setFontSize: (size: string) => void;
+    };
+
+    expect(instance.setFontSize).toHaveBeenCalledWith("18px");
+  });
+
+  it("applies the mobile default font size when matchMedia matches", () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn().mockImplementation((query: string) => ({ matches: true, media: query })),
+    );
+    mockVault();
+    mockReadyDocument();
+    renderScreen();
+    const instance = vi.mocked(EpubRenderer).mock.results[0].value as {
+      setFontSize: (size: string) => void;
+    };
+
+    expect(instance.setFontSize).toHaveBeenCalledWith("16px");
+  });
+
+  it("font size buttons adjust the size in 1px steps", async () => {
     mockVault();
     mockReadyDocument();
     renderScreen();
@@ -148,7 +176,35 @@ describe("ReaderScreen", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Increase font size" }));
 
-    expect(instance.setFontSize).toHaveBeenCalledWith("110%");
+    expect(instance.setFontSize).toHaveBeenLastCalledWith("19px");
+  });
+
+  it("the columns button toggles between 1 and 2 columns", async () => {
+    mockVault();
+    mockReadyDocument();
+    renderScreen();
+    const instance = vi.mocked(EpubRenderer).mock.results[0].value as {
+      setColumns: (count: 1 | 2) => void;
+    };
+    const button = screen.getByRole("button", { name: "Two-column layout" });
+    expect(instance.setColumns).toHaveBeenCalledWith(1);
+    expect(button).toHaveAttribute("aria-pressed", "false");
+
+    await userEvent.click(button);
+
+    expect(instance.setColumns).toHaveBeenLastCalledWith(2);
+    expect(button).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("has a back-to-library link", () => {
+    mockVault();
+    mockReadyDocument();
+    renderScreen();
+
+    expect(screen.getByRole("link", { name: "Back to library" })).toHaveAttribute(
+      "href",
+      "/library",
+    );
   });
 
   it("ArrowLeft/ArrowRight keyup on the window page/turn", async () => {
