@@ -21,7 +21,13 @@ describe("useReaderDocument", () => {
   });
 
   it("resolves to ready with the loaded document", async () => {
-    const document = { title: "Dune", epubBytes: new Uint8Array([1]) };
+    const document = {
+      title: "Dune",
+      authors: ["Frank Herbert"],
+      subjects: ["Science Fiction"],
+      publisher: "Ace",
+      epubBytes: new Uint8Array([1]),
+    };
     vi.mocked(loadReaderDocument).mockResolvedValue(document);
 
     const { result } = renderHook(() => useReaderDocument(SESSION, 1));

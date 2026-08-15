@@ -81,7 +81,13 @@ describe("ReaderScreen", () => {
     const epubBytes = new Uint8Array([1, 2, 3]);
     vi.mocked(useReaderDocument).mockReturnValue({
       status: "ready",
-      document: { title: "Dune", epubBytes },
+      document: {
+        title: "Dune",
+        authors: ["Frank Herbert"],
+        subjects: [],
+        publisher: null,
+        epubBytes,
+      },
       error: null,
     });
     renderScreen();
@@ -95,7 +101,13 @@ describe("ReaderScreen", () => {
     const epubBytes = new Uint8Array([1]);
     vi.mocked(useReaderDocument).mockReturnValue({
       status: "ready",
-      document: { title: "Dune", epubBytes },
+      document: {
+        title: "Dune",
+        authors: ["Frank Herbert"],
+        subjects: [],
+        publisher: null,
+        epubBytes,
+      },
       error: null,
     });
     const { unmount } = renderScreen();

@@ -8,6 +8,7 @@ npm-debug.log*
 .env
 .env.*
 *.tsbuildinfo
+.wrangler/
 
 # Python
 __pycache__/

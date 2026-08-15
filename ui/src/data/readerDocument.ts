@@ -5,12 +5,15 @@
 // file itself.
 import { decrypt } from "../crypto/cryptoBlob";
 import { toBase32Crockford } from "../util/base32Crockford";
-import { titleOf, parseOpfSidecar } from "./opfSidecar";
+import { fieldStrings, titleOf, parseOpfSidecar } from "./opfSidecar";
 import type { R2Client } from "./r2";
 import type { SqliteDatabase } from "./sqlite";
 
 export interface ReaderDocument {
   title: string;
+  authors: string[];
+  subjects: string[];
+  publisher: string | null;
   epubBytes: Uint8Array;
 }
 
@@ -40,6 +43,12 @@ export async function loadReaderDocument(
   if (!encrypted) return null;
 
   const epubBytes = await decrypt(encrypted, txtKey);
-  const title = titleOf(await parseOpfSidecar(metadataBlob));
-  return { title, epubBytes };
+  const sidecar = await parseOpfSidecar(metadataBlob);
+  return {
+    title: titleOf(sidecar),
+    authors: fieldStrings(sidecar.metadata?.creator),
+    subjects: fieldStrings(sidecar.metadata?.subject),
+    publisher: fieldStrings(sidecar.metadata?.publisher)[0] ?? null,
+    epubBytes,
+  };
 }

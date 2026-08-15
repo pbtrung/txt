@@ -30,7 +30,12 @@ describe("loadReaderDocument (real sqlcipher.wasm + real crypto)", () => {
     const path = crypto.getRandomValues(new Uint8Array(32));
     const epubBytes = new TextEncoder().encode("fake epub content");
     const encrypted = await encrypt(epubBytes, txtKey);
-    const metadata = await metadataBlob("dune.epub", { title: "Dune" });
+    const metadata = await metadataBlob("dune.epub", {
+      title: "Dune",
+      creator: "Frank Herbert",
+      subject: ["Science Fiction", "Adventure"],
+      publisher: "Ace",
+    });
 
     db.query(
       "INSERT INTO txt (txt_key, txt_prefix, path, metadata, last_accessed, created_at) " +
@@ -46,7 +51,37 @@ describe("loadReaderDocument (real sqlcipher.wasm + real crypto)", () => {
 
     expect(doc).not.toBeNull();
     expect(doc!.title).toBe("Dune");
+    expect(doc!.authors).toEqual(["Frank Herbert"]);
+    expect(doc!.subjects).toEqual(["Science Fiction", "Adventure"]);
+    expect(doc!.publisher).toBe("Ace");
     expect(new TextDecoder().decode(doc!.epubBytes)).toBe("fake epub content");
+  });
+
+  it("defaults authors/subjects to [] and publisher to null when absent", async () => {
+    const db = await SqliteDatabase.openUnkeyed();
+    ensureSchema(db);
+
+    const txtKey = crypto.getRandomValues(new Uint8Array(128));
+    const txtPrefix = crypto.getRandomValues(new Uint8Array(32));
+    const path = crypto.getRandomValues(new Uint8Array(32));
+    const encrypted = await encrypt(new TextEncoder().encode("content"), txtKey);
+    const metadata = await metadataBlob("untitled.epub", {});
+
+    db.query(
+      "INSERT INTO txt (txt_key, txt_prefix, path, metadata, last_accessed, created_at) " +
+        "VALUES (?, ?, ?, ?, 0, 0)",
+      [txtKey, txtPrefix, path, metadata],
+    );
+    const key = `the-db-prefix/${toBase32Crockford(txtPrefix)}/${toBase32Crockford(path)}`;
+    const r2 = fakeR2({ [key]: encrypted });
+
+    const doc = await loadReaderDocument(db, r2, "the-db-prefix", 1);
+    db.close();
+
+    expect(doc!.title).toBe("untitled.epub");
+    expect(doc!.authors).toEqual([]);
+    expect(doc!.subjects).toEqual([]);
+    expect(doc!.publisher).toBeNull();
   });
 
   it("returns null when the txt row doesn't exist", async () => {
