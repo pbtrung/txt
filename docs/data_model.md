@@ -40,9 +40,8 @@ CREATE TABLE txt (
     txt_key       BLOB    NOT NULL,   -- 128 random bytes; the AEAD key for this document's content object
     txt_prefix    BLOB    NOT NULL,   -- 32 random bytes; first key segment of the content object (§1)
     path          BLOB    NOT NULL,   -- 32 random bytes; second key segment of the content object (§1)
-    name          TEXT    NOT NULL,   -- original filename
-    metadata      BLOB    NOT NULL,   -- brotli(JSON): bibliographic fields (title, author, subject, publisher, language, ...) used for search, sort, and browse
-    catalog       BLOB    NOT NULL,   -- brotli(JSON): the document's own navigation structure (table of contents)
+    metadata      BLOB    NOT NULL,   -- brotli(JSON): opf sidecar fields, when present (§3.1)
+    catalog       BLOB    NOT NULL,   -- brotli(JSON): browsable fields (§3.1)
     last_accessed INTEGER NOT NULL,   -- unix ms
     created_at    INTEGER NOT NULL    -- unix ms
 );
@@ -73,6 +72,28 @@ BEGIN
 END;
 ```
 
+### 3.1 `metadata` and `catalog`
+
+`metadata` is a passthrough bag of whatever an ingested document's OPF sidecar carries — its shape isn't fixed, and it's absent any fields the sidecar didn't have:
+
+```json
+{
+  "...": "opf sidecar fields, when present"
+}
+```
+
+`catalog` is the fixed set of fields search, sort, and browse actually operate on — always present, with `authors`/`subjects`/`publishers` as arrays since a document can have more than one of each:
+
+```json
+{
+  "name": "original filename",
+  "title": "display title",
+  "authors": [],
+  "subjects": [],
+  "publishers": []
+}
+```
+
 The whole file is already encrypted by SQLCipher under `db_master_key`, so `metadata` and `catalog` are only brotli-compressed, not separately encrypted — there is no second key for them to be wrapped under.
 
 `txt_key` is unrelated to `db_master_key`: it is the AEAD key for one document's content object, generated fresh per document, so leaking one document's key exposes nothing about any other document or about the database file itself.
@@ -86,6 +107,6 @@ The whole file is already encrypted by SQLCipher under `db_master_key`, so `meta
 ## 4. Build order
 
 1. The SQLCipher round trip: download, open with `db_master_key`, read, close, re-upload only on change.
-2. `txt` and search/sort/browse over `metadata`.
+2. `txt` and search/sort/browse over `catalog`.
 3. Per-document content: `txt_key`/`txt_prefix`/`path`, fetching and decrypting one document's object from R2.
 4. `txt_bookmarks`, its cap trigger, and the supporting index.
