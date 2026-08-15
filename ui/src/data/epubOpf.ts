@@ -1,0 +1,96 @@
+// Parses an EPUB's own internal package document (its content.opf, part of
+// the EPUB spec) once the Reader already has the book's bytes in hand --
+// this is what feeds the Info panel with full metadata, since txt.catalog
+// (docs/data_model.md §3.1) only keeps a fixed subset. Mirrors
+// txt/opf.py's parse_opf_metadata field-by-field, but reads the EPUB's own
+// package document via JSZip + DOMParser instead of a Calibre sidecar
+// .opf via ElementTree.
+import JSZip from "jszip";
+import type { OpfField, OpfSidecar } from "./opfSidecar";
+
+const CONTAINER_PATH = "META-INF/container.xml";
+
+// Calibre's own bookkeeping, not real book metadata: its internal library id
+// and uuid (dc:identifier opf:scheme="calibre"/"uuid") and its self-authored
+// "book producer" contributor entry (opf:role="bkp" opf:file-as="calibre").
+const IGNORED_IDENTIFIER_SCHEMES = new Set(["calibre", "uuid"]);
+
+function findByLocalName(root: Element, name: string): Element | null {
+  for (const el of Array.from(root.getElementsByTagName("*"))) {
+    if (el.localName === name) return el;
+  }
+  return null;
+}
+
+function localAttrs(el: Element): Record<string, string> {
+  const attrs: Record<string, string> = {};
+  for (const attr of Array.from(el.attributes)) attrs[attr.localName] = attr.value;
+  return attrs;
+}
+
+function isCalibreOwn(tag: string, attrs: Record<string, string>): boolean {
+  if (tag === "identifier") return IGNORED_IDENTIFIER_SCHEMES.has(attrs["scheme"]);
+  if (tag === "contributor") {
+    return attrs["role"] === "bkp" && attrs["file-as"] === "calibre";
+  }
+  return false;
+}
+
+function elementValue(text: string, attrs: Record<string, string>): OpfField {
+  return Object.keys(attrs).length > 0 ? { text, ...attrs } : text;
+}
+
+function addMetadataField(
+  result: Record<string, OpfField | OpfField[]>,
+  key: string,
+  value: OpfField,
+): void {
+  const existing = result[key];
+  if (existing === undefined) {
+    result[key] = value;
+  } else {
+    result[key] = (Array.isArray(existing) ? existing : [existing]).concat(value);
+  }
+}
+
+function metadataDict(metadataEl: Element): Record<string, OpfField | OpfField[]> {
+  const result: Record<string, OpfField | OpfField[]> = {};
+  for (const child of Array.from(metadataEl.children)) {
+    const tag = child.localName;
+    let key: string | null;
+    let value: OpfField;
+    if (tag === "meta") {
+      key = child.getAttribute("name");
+      value = child.getAttribute("content") ?? "";
+    } else {
+      const attrs = localAttrs(child);
+      if (isCalibreOwn(tag, attrs)) continue;
+      key = tag;
+      value = elementValue((child.textContent ?? "").trim(), attrs);
+    }
+    if (key !== null) addMetadataField(result, key, value);
+  }
+  return result;
+}
+
+async function readZipXml(zip: JSZip, path: string): Promise<Document> {
+  const xml = await zip.file(path)?.async("string");
+  if (xml === undefined) throw new Error(`${path} not found in EPUB`);
+  return new DOMParser().parseFromString(xml, "application/xml");
+}
+
+async function rootfilePath(zip: JSZip): Promise<string> {
+  const container = await readZipXml(zip, CONTAINER_PATH);
+  const rootfile = findByLocalName(container.documentElement, "rootfile");
+  const fullPath = rootfile?.getAttribute("full-path");
+  if (!fullPath) throw new Error("no <rootfile full-path> found in container.xml");
+  return fullPath;
+}
+
+export async function parseEpubOpf(epubBytes: Uint8Array): Promise<OpfSidecar> {
+  const zip = await JSZip.loadAsync(epubBytes);
+  const opfPath = await rootfilePath(zip);
+  const opf = await readZipXml(zip, opfPath);
+  const metadataEl = findByLocalName(opf.documentElement, "metadata");
+  return { name: opfPath, metadata: metadataEl ? metadataDict(metadataEl) : {} };
+}

@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
 import { brotliCompress } from "../crypto/brotli";
 import { encrypt } from "../crypto/cryptoBlob";
@@ -17,6 +19,40 @@ async function catalogBlob(catalog: Record<string, unknown>): Promise<Uint8Array
   return brotliCompress(new TextEncoder().encode(JSON.stringify(catalog)));
 }
 
+const CONTAINER_XML = `<?xml version="1.0"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>`;
+
+function opfMetadataXml(fields: {
+  authors?: string[];
+  subjects?: string[];
+  publisher?: string;
+}): string {
+  const creators = (fields.authors ?? []).map((a) => `<dc:creator>${a}</dc:creator>`);
+  const subjects = (fields.subjects ?? []).map((s) => `<dc:subject>${s}</dc:subject>`);
+  const publisher = fields.publisher
+    ? `<dc:publisher>${fields.publisher}</dc:publisher>`
+    : "";
+  return `<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <metadata>${creators.join("")}${subjects.join("")}${publisher}</metadata>
+</package>`;
+}
+
+async function buildFakeEpub(fields: {
+  authors?: string[];
+  subjects?: string[];
+  publisher?: string;
+}): Promise<Uint8Array> {
+  const zip = new JSZip();
+  zip.file("META-INF/container.xml", CONTAINER_XML);
+  zip.file("OEBPS/content.opf", opfMetadataXml(fields));
+  return zip.generateAsync({ type: "uint8array" });
+}
+
 describe("loadReaderDocument (real sqlcipher.wasm + real crypto)", () => {
   it("fetches and decrypts a document's content under its own txt_key", async () => {
     const db = await SqliteDatabase.openUnkeyed();
@@ -25,15 +61,13 @@ describe("loadReaderDocument (real sqlcipher.wasm + real crypto)", () => {
     const txtKey = crypto.getRandomValues(new Uint8Array(128));
     const txtPrefix = crypto.getRandomValues(new Uint8Array(32));
     const path = crypto.getRandomValues(new Uint8Array(32));
-    const epubBytes = new TextEncoder().encode("fake epub content");
-    const encrypted = await encrypt(epubBytes, txtKey);
-    const catalog = await catalogBlob({
-      name: "dune.epub",
-      title: "Dune",
+    const epubBytes = await buildFakeEpub({
       authors: ["Frank Herbert"],
       subjects: ["Science Fiction", "Adventure"],
       publisher: "Ace",
     });
+    const encrypted = await encrypt(epubBytes, txtKey);
+    const catalog = await catalogBlob({ name: "dune.epub", title: "Dune" });
 
     db.query(
       "INSERT INTO txt (txt_key, txt_prefix, path, catalog, last_accessed, created_at) " +
@@ -52,7 +86,7 @@ describe("loadReaderDocument (real sqlcipher.wasm + real crypto)", () => {
     expect(doc!.authors).toEqual(["Frank Herbert"]);
     expect(doc!.subjects).toEqual(["Science Fiction", "Adventure"]);
     expect(doc!.publisher).toBe("Ace");
-    expect(new TextDecoder().decode(doc!.epubBytes)).toBe("fake epub content");
+    expect(doc!.epubBytes).toEqual(epubBytes);
   });
 
   it("passes through an empty authors/subjects and a null publisher", async () => {
@@ -62,13 +96,11 @@ describe("loadReaderDocument (real sqlcipher.wasm + real crypto)", () => {
     const txtKey = crypto.getRandomValues(new Uint8Array(128));
     const txtPrefix = crypto.getRandomValues(new Uint8Array(32));
     const path = crypto.getRandomValues(new Uint8Array(32));
-    const encrypted = await encrypt(new TextEncoder().encode("content"), txtKey);
+    const epubBytes = await buildFakeEpub({});
+    const encrypted = await encrypt(epubBytes, txtKey);
     const catalog = await catalogBlob({
       name: "untitled.epub",
       title: "untitled.epub",
-      authors: [],
-      subjects: [],
-      publisher: null,
     });
 
     db.query(
@@ -103,13 +135,7 @@ describe("loadReaderDocument (real sqlcipher.wasm + real crypto)", () => {
     const txtKey = crypto.getRandomValues(new Uint8Array(128));
     const txtPrefix = crypto.getRandomValues(new Uint8Array(32));
     const path = crypto.getRandomValues(new Uint8Array(32));
-    const catalog = await catalogBlob({
-      name: "x.epub",
-      title: "x.epub",
-      authors: [],
-      subjects: [],
-      publisher: null,
-    });
+    const catalog = await catalogBlob({ name: "x.epub", title: "x.epub" });
     db.query(
       "INSERT INTO txt (txt_key, txt_prefix, path, catalog, last_accessed, created_at) " +
         "VALUES (?, ?, ?, ?, 0, 0)",

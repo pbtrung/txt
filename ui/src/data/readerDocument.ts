@@ -2,12 +2,15 @@
 // (docs/data_model.md §1: {db_prefix}/{txt_prefix}/{path}), keyed by that
 // row's own txt_key -- unrelated to db_master_key, so leaking one
 // document's key exposes nothing about any other document or the database
-// file itself. Metadata comes from the txt row's own catalog for now
-// (title/authors/subjects/publisher only) -- richer detail is planned to
-// come from parsing the EPUB's own internal OPF once it's downloaded.
+// file itself. Title comes from the txt row's own catalog (cheap, already
+// fetched); authors/subjects/publisher come from parsing the EPUB's own
+// internal package document once its bytes are in hand, since catalog only
+// keeps a fixed subset (docs/data_model.md §3.1).
 import { decrypt } from "../crypto/cryptoBlob";
 import { brotliDecompress } from "../crypto/brotli";
 import { toBase32Crockford } from "../util/base32Crockford";
+import { parseEpubOpf } from "./epubOpf";
+import { fieldStrings } from "./opfSidecar";
 import type { R2Client } from "./r2";
 import type { SqliteDatabase } from "./sqlite";
 
@@ -22,9 +25,6 @@ export interface ReaderDocument {
 interface Catalog {
   name: string;
   title: string;
-  authors: string[];
-  subjects: string[];
-  publisher: string | null;
 }
 
 function contentKey(dbPrefix: string, txtPrefix: Uint8Array, path: Uint8Array): string {
@@ -55,11 +55,13 @@ export async function loadReaderDocument(
   const epubBytes = await decrypt(encrypted, txtKey);
   const json = new TextDecoder().decode(await brotliDecompress(catalogBlob));
   const catalog = JSON.parse(json) as Catalog;
+  const opf = await parseEpubOpf(epubBytes);
+  const publishers = fieldStrings(opf.metadata.publisher);
   return {
     title: catalog.title,
-    authors: catalog.authors,
-    subjects: catalog.subjects,
-    publisher: catalog.publisher,
+    authors: fieldStrings(opf.metadata.creator),
+    subjects: fieldStrings(opf.metadata.subject),
+    publisher: publishers[0] ?? null,
     epubBytes,
   };
 }
