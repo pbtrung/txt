@@ -1,62 +1,66 @@
 # Auth — Design
 
-Firebase identity, exchanged at a Cloudflare Worker for a short-lived Turso token scoped to one user's database.
+Firebase identity, exchanged at a Cloudflare Worker for two things a client needs to open its own data: wrapped key material from the control database (`ctl`), and a short-lived R2 credential scoped to its own storage prefix.
 
-The client authenticates with Firebase, sends its ID token to the Worker, and receives a 60-minute Turso token valid for its own database only. The Worker mints tokens; it does not create users or databases. Both are provisioned by an administrator out of band.
+The client authenticates with Firebase, sends its ID token to the Worker, and gets back its own wrapped `umk` and wrapped `cred_store` backup (§4.1). It decrypts both locally to recover `db_path`, `db_master_key`, and `db_prefix` (docs/data_model.md), then calls the Worker a second time with `db_prefix` to receive a short-lived R2 credential scoped to it (§4.2). The Worker mints credentials; it does not create users or storage prefixes. Both are provisioned by an administrator out of band.
 
-The Worker is the only component holding Turso credentials, and it holds no encryption key: database page content and the library index are encrypted client-side, so a compromised Worker exposes database metadata and nothing else.
+The Worker is the only component holding Turso credentials, and it holds no encryption key: `umk`, `cred_store.content`, and every object in R2 are encrypted client-side, so a compromised Worker exposes only ciphertext and the metadata described in §8.
 
 ---
 
-## 1. Which Turso token does what
+## 1. Worker secrets
 
-Three token types exist and only one of them can mint:
-
-| token | scope | can mint database tokens | used here |
-|---|---|---|---|
-| **Platform API token** — `turso auth api-tokens mint <name>` | the whole organization: create, delete, and issue tokens for every database | **yes** | **the Worker secret** |
-| **group token** — `turso group tokens create <group>` | data access to every database in the group | no | not used |
-| **database token** — minted per request by the Worker, or once by an admin for `ctl` | data access to one database | no | returned to the client; also the Worker's `ctl` credential |
-
-**The Worker secret is the Platform API token.** A group token is a data-plane credential, not an API credential: it cannot mint anything, and it grants access to *every* database in the group, so one leak exposes every user. The Platform API token is the only credential that can issue a token scoped to a single database.
-
-Worker secrets:
+There is exactly one Turso database, `ctl` (§2), holding the three tables that make up the whole control plane: `users`, `key_store`, `cred_store`. Every user's actual data lives as objects in R2 (docs/data_model.md), so there is no per-user Turso database and no step where the Worker mints a Turso token scoped to one; its only Turso credential is a single token against `ctl` itself.
 
 | secret | value |
 |---|---|
-| `TURSO_ORG_TOKEN` | Platform API token, minted under a dedicated name so it can be revoked independently |
-| `TURSO_ORG` | organization slug; also the `account_name` in database URLs |
 | `CTL_DB_URL` | the control database's URL (§2) |
 | `CTL_DB_TOKEN` | a non-expiring `read-only` database token for `ctl` |
 | `FIREBASE_PROJECT_ID` | expected `iss` and `aud` of incoming ID tokens |
+| `R2_ENDPOINT`, `R2_BUCKET`, `R2_REGION` | the object store the R2 credential in §4.2 is scoped into |
+| `R2_READ_WRITE_ACCESS_KEY_ID` / `R2_READ_WRITE_SECRET_ACCESS_KEY` | parent credential the admin's bucket-wide, read-write temporary credential is signed from |
+| `R2_READ_ONLY_ACCESS_KEY_ID` / `R2_READ_ONLY_SECRET_ACCESS_KEY` | parent credential an ordinary user's prefix-scoped, read-only temporary credential is signed from |
 
 ---
 
 ## 2. The control database
 
-`ctl` is an ordinary Turso database in the same organization, created by an administrator and holding one table. It is not special to Turso in any way; it is simply the database the Worker consults to map a Firebase uid to a user's database.
+`ctl` is an ordinary Turso database in the same organization, created by an administrator and holding three tables. Its actual name is a generated value, same recipe as `db_path` below, recorded as `turso_ctl_db_name`/`turso_ctl_db_url` in the administrator's own backend config when it's created; `ctl` is only this document's shorthand for it. It is not special to Turso in any way; it is simply the database the Worker consults for identity and key material.
 
 ```sql
 CREATE TABLE users (
   id         TEXT PRIMARY KEY,       -- Firebase uid (the ID token's sub claim)
-  db_path    TEXT NOT NULL UNIQUE,   -- 32 random bytes, 52 chars base32-Crockford
-  type       TEXT NOT NULL CHECK (type IN ('admin', 'user')),
+  type       TEXT NOT NULL,          -- admin or user
   created_at INTEGER NOT NULL        -- unix ms
+);
+
+CREATE TABLE key_store (
+  user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  umk     BLOB NOT NULL,      -- 128 random bytes, wrapped by user_root_key
+  pubkey  BLOB,                -- composite KEM public key (docs/crypto.md), raw; admin row only
+  privkey BLOB                 -- composite KEM private key, wrapped by umk (docs/crypto.md); admin row only
+);
+
+CREATE TABLE cred_store (
+  owner_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  for_user_id  TEXT NOT NULL REFERENCES users(id),   -- ctl users.id: this account's own id, or another user's
+  -- owner_id = for_user_id is an account's own row; every account, admin or not, has exactly one
+  -- owner_id = the admin's id and for_user_id = a user's id is the admin's backup of that user's creds; both wrapped under the admin's own umk
+  content      BLOB NOT NULL,          -- wrapped by owner_id's umk; { display_name, db_master_key, db_path, db_prefix }
+  PRIMARY KEY (owner_id, for_user_id)
 );
 ```
 
-`type` distinguishes the one administrator account from every ordinary user. It decides which tables exist in that account's own database: `key_store` only for `admin`, and the shape of `cred_store` (data_model.md §3.6–3.7).
+`db_path` and `db_prefix` are each 32 random bytes rendered as 52 lowercase base32-Crockford characters, the same recipe as every object key in the store (docs/data_model.md): `db_path` addresses a user's own SQLCipher database file in R2, `db_prefix` the R2 prefix its documents live under. `db_master_key` is 256 random bytes, base64-encoded — the SQLCipher key for that database file. None of the three is a column on `users` — all three live only inside the encrypted `content` blob, so the Worker itself never learns them; it forwards ciphertext and lets the client decrypt.
 
-`db_path` is assigned the moment the row is created, but that's only a name — registering an account and creating the Turso database at that name are two separate steps (§3.2), so a row's database may not exist yet. The Worker's mint-token call is what actually discovers this (a 404, §5 step 3), not a `NULL` check.
-
-How the Worker reaches it, and where each half comes from:
+How the Worker reaches `ctl`, and where each half comes from:
 
 | secret | how the administrator produces it | value |
 |---|---|---|
-| `CTL_DB_URL` | fixed at creation | `libsql://ctl-{account_name}.aws-us-east-1.turso.io` |
-| `CTL_DB_TOKEN` | minted once with the Platform API token: `POST /v1/organizations/{org}/databases/ctl/auth/tokens?authorization=read-only` (no `expiration`, so it does not expire) | the returned `jwt` |
+| `CTL_DB_URL` | generated when the control database is created, recorded as `turso_ctl_db_url` in the administrator's own backend config | `libsql://{turso_ctl_db_name}-{account_name}.aws-us-east-1.turso.io` |
+| `CTL_DB_TOKEN` | minted once with the Platform API token: `POST /v1/organizations/{org}/databases/{turso_ctl_db_name}/auth/tokens?authorization=read-only` (no `expiration`, so it does not expire) | the returned `jwt` |
 
-The token is `read-only` because the Worker only ever reads `users`. That is the whole reason this is a separate secret rather than a reuse of the Platform API token: a Worker bug or injection cannot write or drop the mapping table.
+The token is `read-only` because the Worker only ever reads `users`, `key_store`, and `cred_store`. That is the whole reason this is a separate secret rather than a reuse of the Platform API token: a Worker bug or injection cannot write or drop any of the three tables.
 
 Both secrets are set on the Worker at deploy time and rotated by minting a replacement and redeploying.
 
@@ -68,15 +72,12 @@ Authorization: Bearer {CTL_DB_TOKEN}
 
 { "requests": [
     { "type": "execute",
-      "stmt": { "sql": "SELECT db_path FROM users WHERE id = ?", "args": [ { "type": "text", "value": "{uid}" } ] } },
+      "stmt": { "sql": "SELECT u.type, k.umk, k.pubkey, k.privkey, c.content FROM users u JOIN key_store k ON k.user_id = u.id JOIN cred_store c ON c.owner_id = u.id AND c.for_user_id = u.id WHERE u.id = ?",
+                "args": [ { "type": "text", "value": "{uid}" } ] } },
     { "type": "close" } ] }
 ```
 
-`db_path` is both the Turso database name and the host label of a user's database URL. It is 32 random bytes rendered as 52 lowercase base32-Crockford characters, the same recipe as every object key in the store.
-
-The host label is `{db_path}-{account_name}` and a DNS label is limited to 63 bytes. Account names are capped at 10 characters, so the label is at most 52 + 1 + 10 = 63 bytes — within the limit, with no slack. This is a hard constraint on the account name: an eleven-character account name produces a hostname that does not resolve.
-
-Nothing else lives in `users`. No email, no display name, no Firebase claims — Firebase owns identity, `ctl` owns only the mapping.
+Nothing else lives in `users` beyond identity and `type`. No email, no display name, no Firebase claims — Firebase owns identity, `ctl` owns only the mapping and the wrapped key material.
 
 ---
 
@@ -98,46 +99,73 @@ An administrator who wants provisioning to feel immediate needs the uid earlier,
 
 ### 3.2 Steps
 
-Done by an administrator, never by the Worker, in two independent phases:
+Done by an administrator, never by the Worker, in one step — unlike a database, an R2 prefix needs no separate creation phase, so there is nothing left to do lazily on first use:
 
-**Register** — mints `db_path` and creates the mapping row, but not the database itself:
+1. Generate `db_path` and `db_prefix`: 32 random bytes each, base32-Crockford.
+2. Generate `umk`: 128 random bytes.
+3. `INSERT INTO users (id, type, created_at) VALUES (?, 'user', ?)` in `ctl`, with the uid from §3.1.
+4. `INSERT INTO key_store (user_id, umk) VALUES (?, ?)`, `umk` wrapped by a `user_root_key` generated for this account.
+5. `INSERT INTO cred_store (owner_id, for_user_id, content) VALUES (?, ?, ?)` with `owner_id = for_user_id` = the uid, `content` wrapped by `umk` and holding `{ display_name, db_master_key, db_path, db_prefix }`.
 
-1. Generate `db_path`: 32 random bytes, base32-Crockford.
-2. `INSERT INTO users (id, db_path, type, created_at) VALUES (?, ?, ?, ?)` in `ctl`, with the uid from §3.1.
+The administrator packages `user_root_key`, and whatever else the client needs to reach the Worker, into that user's own creds.json — the same way the administrator's own backend config carries its own `user_root_key`.
 
-**Create the database** — lazily, the first time the account is actually used, which can be well after registration:
-
-3. `POST /v1/organizations/{org}/databases` with `{ "name": "{db_path}", "group": "{group}" }` using the Platform API token, if it doesn't already exist — discovered by a mint-token call 404ing (§5 step 3), not by any column on the row.
-
-A row's `db_path` is a name assigned upfront; nothing about it guarantees the database behind that name exists yet. That's a deliberate choice: creating the row is cheap and instant, and the database — the expensive, quota-consuming resource — is only ever created on demand.
-
-The database's own schema is applied by the client on first connect, guarded by a schema-version row.
-
-A Firebase account with no `users` row is authenticated but not provisioned, and the endpoint returns 403. The Worker never creates the row, so a valid Firebase signup grants no access on its own. A row whose database doesn't exist yet is a different case entirely (503, not 403) — see §5 step 3.
+A Firebase account with no `users` row is authenticated but not provisioned, and the endpoint returns 403. The Worker never creates the row, so a valid Firebase signup grants no access on its own.
 
 ---
 
-## 4. Endpoint
+## 4. Endpoints
+
+### 4.1 `POST /v1/keys`
 
 ```
-POST /v1/db-token
+POST /v1/keys
 Authorization: Bearer <Firebase ID token>
 ```
 
 ```json
 {
-  "db_token": "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9…",
-  "db_url": "libsql://{db_path}-{account_name}.aws-us-east-1.turso.io"
+  "type": "user",
+  "umk": "<base64 ciphertext>",
+  "cred_store": "<base64 ciphertext>"
 }
 ```
 
 | status | condition |
 |---|---|
-| 200 | token minted |
+| 200 | key material returned |
 | 401 | ID token missing, malformed, expired, or wrong issuer or audience |
 | 403 | no `users` row for this uid — the account is not provisioned |
 | 429 | per-uid rate limit exceeded |
-| 503 | `ctl` or the Turso Platform API unavailable, or the user's database does not exist |
+| 503 | `ctl` unavailable |
+
+### 4.2 `POST /v1/r2-token`
+
+```
+POST /v1/r2-token
+Authorization: Bearer <Firebase ID token>
+Content-Type: application/json
+
+{ "db_prefix": "<the prefix the client just decrypted from cred_store>" }
+```
+
+```json
+{
+  "access_key_id": "...",
+  "secret_access_key": "...",
+  "session_token": "...",
+  "expiration": "..."
+}
+```
+
+Scoped read-only to `{db_prefix}/*` for an ordinary user (`type = 'user'`); bucket-wide read-write for the admin's own uid (`type = 'admin'`), since the admin also holds every provisioned user's backup. The Worker does not independently verify that the supplied `db_prefix` belongs to the caller — see §8.
+
+| status | condition |
+|---|---|
+| 200 | credential minted |
+| 401 | ID token missing, malformed, expired, or wrong issuer or audience |
+| 403 | no `users` row for this uid |
+| 429 | per-uid rate limit exceeded |
+| 503 | `ctl`, or the R2 signing step, unavailable |
 
 ---
 
@@ -145,39 +173,27 @@ Authorization: Bearer <Firebase ID token>
 
 **1. Verify the Firebase ID token.** RS256 signature against Google's published keys for `securetoken@system.gserviceaccount.com`, fetched with WebCrypto and cached in the Worker for the lifetime given by the response's `Cache-Control`. Assert `iss = https://securetoken.google.com/{FIREBASE_PROJECT_ID}`, `aud = {FIREBASE_PROJECT_ID}`, `exp` in the future, `iat` and `auth_time` not in the future, and `sub` non-empty. `uid = sub`.
 
-**2. Look up the user.** `SELECT db_path FROM users WHERE id = ?` against `ctl` (§2). No row → 403, and nothing is created.
+**2. Look up the user.** The join in §2 against `ctl`. No row → 403, and nothing is created.
 
-**3. Mint the database token**, scoped to that one database, valid for 60 minutes:
+**3. Return `type`, `umk`, and `cred_store.content`**, still wrapped — the Worker never sees plaintext key material. The client unwraps `umk` with its own `user_root_key`, then unwraps `cred_store.content` with `umk` to recover `display_name`, `db_master_key`, `db_path`, and `db_prefix`.
 
-```
-POST https://api.turso.tech/v1/organizations/{TURSO_ORG}/databases/{db_path}/auth/tokens
-     ?expiration=60m&authorization=full-access
-Authorization: Bearer {TURSO_ORG_TOKEN}
-Content-Type: application/json
-
-{ }
-```
-
-The response is `{ "jwt": "…" }`. `authorization=full-access` grants read and write on that database and nothing else; the empty body grants no `read_attach` permission, so the token cannot attach any other database. A 404 here means the `users` row points at a database that does not exist — return 503 and alert, since it is a provisioning error, not a client error.
-
-**4. Return** `db_token` and `db_url`. The uid appears nowhere in the response — it is the request's identity, not the reply's. The client reads `exp` from the JWT and re-calls this endpoint at `exp − 5 minutes`, and immediately on a `401` from Turso.
+**4. Mint the R2 credential.** The client calls `/v1/r2-token` with the `db_prefix` it just recovered; the Worker signs a short-lived, scoped credential (§4.2) and returns it. The client reads its `expiration` and re-calls this endpoint before it lapses, and immediately on a rejected R2 request.
 
 ---
 
 ## 6. Caching and rate limits
 
-Minting is a Platform API round trip and the Platform API is rate-limited per organization, so the Worker does not mint per request.
+The `ctl` join is a round trip, so the Worker does not repeat it per request; minting the R2 credential is a local signing operation, not a round trip, and is not cached.
 
 | key | contents | TTL |
 |---|---|---|
-| `token:{uid}` | the minted JWT | 55 minutes |
-| `user:{uid}` | `db_path` | 24 hours |
+| `keys:{uid}` | `type`, `umk`, `cred_store.content` as returned by the §2 join | 24 hours |
 
-Steady state is one KV read. A cache miss is one `ctl` query plus one Platform API call.
+Steady state is one KV read for `/v1/keys`. A cache miss is one `ctl` query.
 
-`user:{uid}` is cached rather than read every time because the mapping changes only when an administrator changes it; the 24-hour TTL bounds how long a deprovisioned user keeps being served, and revocation (§7) purges the key explicitly.
+`keys:{uid}` is cached rather than read every time because the underlying rows change only when an administrator changes them; the 24-hour TTL bounds how long a deprovisioned user keeps being served, and revocation (§7) purges the key explicitly.
 
-Rate-limit per `uid` — ten requests per hour is generous for a client that refreshes hourly — so a looping client cannot exhaust the organization's Platform API quota for every other user. Rate-limit 403s per uid too: an unprovisioned client retrying in a loop otherwise hits `ctl` on every request.
+Rate-limit per `uid` on both endpoints — generous for a client that refreshes on its own credential's expiry — so a looping client cannot exhaust the Worker's capacity for every other user. Rate-limit 403s per uid too: an unprovisioned client retrying in a loop otherwise hits `ctl` on every request.
 
 ---
 
@@ -185,26 +201,31 @@ Rate-limit per `uid` — ten requests per hour is generous for a client that ref
 
 | event | action |
 |---|---|
-| a user's token leaks | `POST /v1/organizations/{TURSO_ORG}/databases/{db_path}/auth/rotate`, which invalidates every token for that database; delete `token:{uid}` from KV |
-| the Worker's Platform API token leaks | `DELETE /v1/auth/api-tokens/{name}`, mint a replacement, redeploy; database tokens already issued keep working until they expire |
-| a user is deprovisioned | delete the `users` row, purge `token:{uid}` and `user:{uid}` from KV, rotate the database's tokens, then delete the Turso database and the user's object-storage prefix |
+| a user's `umk` or `cred_store` content leaks | purge `keys:{uid}` from KV so the next `/v1/keys` call re-reads `ctl`; rotate that account's `user_root_key`/`umk` if the leak exposed plaintext |
+| an R2 credential leaks | nothing to revoke early — it is bounded by its own short expiration (§4.2) |
+| the Worker's R2 signing credential leaks | mint a replacement parent key pair, redeploy; credentials already issued keep working until they expire |
+| the administrator's Platform API token leaks | `DELETE /v1/auth/api-tokens/{name}`, mint a replacement — used only for out-of-band provisioning, never held by the Worker |
+| a user is deprovisioned | delete the `users`, `key_store`, and `cred_store` rows, purge `keys:{uid}` from KV, then delete the user's R2 objects (`db_path` and everything under `db_prefix`) |
 
-Individual database tokens cannot be revoked — only expired or rotated wholesale per database. The 60-minute lifetime is what bounds exposure in the ordinary case; deleting the `users` row stops new tokens but does not invalidate outstanding ones, which is why deprovisioning rotates as well.
+Individual R2 credentials cannot be revoked — only left to expire. The short TTL in §4.2 is what bounds exposure in the ordinary case.
 
 ---
 
 ## 8. Trust boundary
 
-The Worker holds an organization-wide credential and can therefore read and write any user's database. That is the boundary, and it is placed here deliberately: a user's database holds page numbers, version numbers, random object keys, sizes, and timestamps. It holds no page content, no SQLCipher key, and no library-index key. Those are derived on the client from the user's own secret and never transmitted, so the Worker — and Turso, and the object store — cannot decrypt anything the user stores.
+The Worker holds `ctl` credentials and R2 signing credentials, and can therefore read every user's wrapped key material and mint an R2 credential for any prefix a caller supplies. It holds no encryption key: `umk` and `cred_store.content` decrypt only client-side, so the Worker — and Turso, and R2 — cannot decrypt anything a user stores.
 
-The database URL is not a secret. `db_path` is unguessable, but access control rests entirely on the token, and every token expires in 60 minutes.
+`/v1/r2-token` scopes its credential to whatever `db_prefix` the caller supplies (§4.2), with no independent check that the prefix is actually that uid's own. Soundness rests on the client only ever asking for its own prefix; a malicious or compromised client could ask for another account's prefix. Because everything under a prefix is client-side encrypted, the confidentiality of that data still holds regardless — but its availability does not, since a read-write-scoped credential could still overwrite or delete it.
+
+`db_path` and `db_prefix` are not secrets in the sense of being load-bearing for access control; they are unguessable, but the actual gate is the token, and every token is short-lived.
 
 ---
 
 ## 9. Build order
 
 1. Firebase ID token verification with cached signing keys, including the negative cases: expired, wrong audience, wrong issuer, tampered signature.
-2. The `ctl` query and the mint call, against an administrator-created user row.
+2. The `ctl` join and `/v1/keys`, against an administrator-created row.
 3. The unprovisioned path: valid Firebase token, no `users` row, 403, and nothing written anywhere.
-4. KV caching and the per-uid rate limits.
-5. Rotation and deprovisioning runbooks.
+4. `/v1/r2-token`, scoped by the caller-supplied `db_prefix`.
+5. KV caching and the per-uid rate limits, on both endpoints.
+6. Revocation and deprovisioning runbooks.
