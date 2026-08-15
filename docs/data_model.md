@@ -34,7 +34,11 @@ There is exactly one writer at a time by construction: the R2 credential from §
 
 ## 3. Schema
 
+The page size is fixed at 16 KiB, set once when a fresh database is created (§2 step 2) — SQLite only honors `PRAGMA page_size` on an empty database, so reopening an existing one is always a no-op:
+
 ```sql
+PRAGMA page_size = 16384;
+
 CREATE TABLE txt (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     txt_key       BLOB    NOT NULL,   -- 128 random bytes; the AEAD key for this document's content object

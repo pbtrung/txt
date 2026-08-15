@@ -14,6 +14,10 @@ from .r2_client import R2Client
 from .random_token import to_base32_crockford
 from .sqlite_engine import SqliteEngine
 
+# docs/data_model.md §3: fixed at creation, a no-op on an already-populated database.
+PAGE_SIZE = 16384  # 16 KiB
+SET_PAGE_SIZE_SQL = f"PRAGMA page_size = {PAGE_SIZE}"
+
 # docs/data_model.md §3.
 CREATE_TXT_SQL = """
 CREATE TABLE IF NOT EXISTS txt (
@@ -105,6 +109,7 @@ class TxtIngester:
 
     def _ensure_schema(self) -> None:
         for stmt in (
+            SET_PAGE_SIZE_SQL,
             CREATE_TXT_SQL,
             CREATE_TXT_BOOKMARKS_SQL,
             CREATE_TXT_BOOKMARKS_INDEX_SQL,

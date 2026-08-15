@@ -75,16 +75,40 @@ def _write_epub(path, content=b"epub bytes"):
     path.write_bytes(path.read_bytes() + content)  # pad so different epubs differ
 
 
-def _txt_rows_from_disk(local_path):
-    # run() closes its own engine at the end, so verify the persisted bytes
-    # by reopening a fresh, independent engine rather than reusing it.
+def _reopen(local_path):
+    # run() closes its own engine at the end, so verification reopens a
+    # fresh, independent engine rather than reusing it. SQLCipher's page-1
+    # salt overwrites the bytes SQLite would otherwise auto-detect the page
+    # size from, so the pragma must be reissued (matching ingest.py's own
+    # _ensure_schema, which does this on every run) before any other read.
     engine = SqliteEngine()
     engine.open(ACCOUNT.db_master_key, initial_bytes=local_path.read_bytes())
+    engine.exec_sql(ingest_module.SET_PAGE_SIZE_SQL)
+    return engine
+
+
+def _txt_rows_from_disk(local_path):
+    engine = _reopen(local_path)
     try:
         return [
             json.loads(brotli.decompress(row[0]))
             for row in engine.query("SELECT metadata FROM txt")
         ]
+    finally:
+        engine.close()
+
+
+def test_fresh_database_gets_16kib_page_size(tmp_path):
+    src, local = tmp_path / "src", tmp_path / "local"
+    src.mkdir()
+    _write_epub(src / "a.epub")
+
+    ingester = TxtIngester(src, local, CREDS, NullLogger())
+    ingester.run()
+
+    engine = _reopen(local / ACCOUNT.db_path)
+    try:
+        assert int(engine.query("PRAGMA page_size")[0][0]) == 16384
     finally:
         engine.close()
 
