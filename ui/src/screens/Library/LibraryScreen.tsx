@@ -51,7 +51,7 @@ export function LibraryScreen() {
   }
 
   return (
-    <div className="d-flex flex-column vh-100">
+    <div className="d-flex flex-column vh-100 mx-auto" style={{ maxWidth: "80%" }}>
       <div className="d-flex align-items-center border-bottom px-3 py-2 flex-shrink-0">
         <button
           type="button"
