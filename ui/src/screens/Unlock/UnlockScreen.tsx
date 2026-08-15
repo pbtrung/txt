@@ -28,13 +28,20 @@ export function UnlockScreen() {
   const unlocking = status === "unlocking";
 
   return (
-    <div>
-      <h1>Unlock</h1>
+    <div className="container py-5 text-center" style={{ maxWidth: "24rem" }}>
+      <h1 className="h3 mb-4">
+        <i className="bi bi-book me-2" />
+        Unlock
+      </h1>
       <button
         type="button"
+        className="btn btn-primary w-100"
         onClick={() => inputRef.current?.click()}
         disabled={unlocking}
       >
+        {unlocking && (
+          <span className="spinner-border spinner-border-sm me-2" aria-hidden="true" />
+        )}
         {unlocking ? "Unlocking…" : "Choose File"}
       </button>
       <input
@@ -45,11 +52,15 @@ export function UnlockScreen() {
         hidden
       />
       {progress && (
-        <p role="status">
+        <p role="status" className="text-muted mt-3 mb-0">
           {progress.label} (step {progress.step} of {progress.total})
         </p>
       )}
-      {error && <p role="alert">{error}</p>}
+      {error && (
+        <p role="alert" className="alert alert-danger mt-3 mb-0">
+          {error}
+        </p>
+      )}
     </div>
   );
 }

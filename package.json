@@ -17,6 +17,8 @@
   },
   "dependencies": {
     "aws4fetch": "^1.0.20",
+    "bootstrap": "^5.3.8",
+    "bootstrap-icons": "^1.13.1",
     "jose": "^6.2.8",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
