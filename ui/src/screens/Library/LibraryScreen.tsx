@@ -50,7 +50,7 @@ export function LibraryScreen() {
     <div className="container py-4">
       <h1 className="h3 mb-4">
         <i className="bi bi-book me-2" />
-        Library
+        Skypiea
       </h1>
       <div className="row g-4">
         <div className="col-12 col-md-4 col-lg-3">

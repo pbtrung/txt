@@ -31,7 +31,7 @@ export function UnlockScreen() {
     <div className="container py-5 text-center" style={{ maxWidth: "24rem" }}>
       <h1 className="h3 mb-4">
         <i className="bi bi-book me-2" />
-        Unlock
+        Skypiea
       </h1>
       <button
         type="button"
