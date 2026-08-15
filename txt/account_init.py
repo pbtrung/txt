@@ -40,7 +40,9 @@ CREATE TABLE IF NOT EXISTS cred_store (
 
 
 class AccountInitializer:
-    def __init__(self, creds: Creds, creds_path: str, logger: Logger, account_type: str):
+    def __init__(
+        self, creds: Creds, creds_path: str, logger: Logger, account_type: str
+    ):
         self.creds = creds
         self.creds_path = creds_path
         self.logger = logger

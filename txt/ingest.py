@@ -92,7 +92,9 @@ class TxtIngester:
         if self.local_path.exists():
             self.logger.verbose(f"Resuming from local db {self.local_path}...")
             return self.local_path.read_bytes()
-        self.logger.verbose(f"No local db yet, checking R2 for {self.account.db_path}...")
+        self.logger.verbose(
+            f"No local db yet, checking R2 for {self.account.db_path}..."
+        )
         remote = self.r2.get_object(self.account.db_path)
         self.logger.verbose(
             "Found existing remote db, resuming from it."

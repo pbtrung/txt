@@ -95,9 +95,13 @@ def creds_path(tmp_path):
 
 @pytest.mark.parametrize("account_type", ["admin", "user"])
 def test_creates_schema_for_all_three_tables(creds_path, account_type):
-    AccountInitializer(load_creds(creds_path), creds_path, NullLogger(), account_type).run()
+    AccountInitializer(
+        load_creds(creds_path), creds_path, NullLogger(), account_type
+    ).run()
     ctl = FakeLibsqlClient.last_instance
-    schema_calls = [c for c in ctl.calls if c[0] == "execute" and "CREATE TABLE" in c[1]]
+    schema_calls = [
+        c for c in ctl.calls if c[0] == "execute" and "CREATE TABLE" in c[1]
+    ]
     assert {_table_name(sql) for _kind, sql, _args in schema_calls} == {
         "users",
         "key_store",
@@ -107,7 +111,9 @@ def test_creates_schema_for_all_three_tables(creds_path, account_type):
 
 @pytest.mark.parametrize("account_type", ["admin", "user"])
 def test_registers_account_row(creds_path, account_type):
-    AccountInitializer(load_creds(creds_path), creds_path, NullLogger(), account_type).run()
+    AccountInitializer(
+        load_creds(creds_path), creds_path, NullLogger(), account_type
+    ).run()
     ctl = FakeLibsqlClient.last_instance
     uid, type_, created_at = ctl.insert_args("users")
     assert (uid, type_) == (UID, account_type)
@@ -116,7 +122,9 @@ def test_registers_account_row(creds_path, account_type):
 
 @pytest.mark.parametrize("account_type", ["admin", "user"])
 def test_persists_generated_user_root_key(creds_path, account_type):
-    AccountInitializer(load_creds(creds_path), creds_path, NullLogger(), account_type).run()
+    AccountInitializer(
+        load_creds(creds_path), creds_path, NullLogger(), account_type
+    ).run()
     with open(creds_path) as f:
         saved = json.load(f)
     assert len(base64.b64decode(saved["user_root_key"])) == 256
@@ -146,7 +154,9 @@ def test_user_key_store_has_no_kem_keypair(creds_path):
 
 @pytest.mark.parametrize("account_type", ["admin", "user"])
 def test_cred_store_decrypts_correctly(creds_path, engine, account_type):
-    AccountInitializer(load_creds(creds_path), creds_path, NullLogger(), account_type).run()
+    AccountInitializer(
+        load_creds(creds_path), creds_path, NullLogger(), account_type
+    ).run()
     ctl = FakeLibsqlClient.last_instance
     with open(creds_path) as f:
         ikm = base64.b64decode(json.load(f)["user_root_key"])
@@ -164,7 +174,9 @@ def test_cred_store_decrypts_correctly(creds_path, engine, account_type):
 
 @pytest.mark.parametrize("account_type", ["admin", "user"])
 def test_second_run_does_not_reinsert(creds_path, account_type):
-    AccountInitializer(load_creds(creds_path), creds_path, NullLogger(), account_type).run()
+    AccountInitializer(
+        load_creds(creds_path), creds_path, NullLogger(), account_type
+    ).run()
     first_ctl = FakeLibsqlClient.last_instance
     FakeLibsqlClient.preset = {
         "SELECT id FROM users": [[UID]],
@@ -172,7 +184,9 @@ def test_second_run_does_not_reinsert(creds_path, account_type):
         "SELECT content FROM cred_store": [[first_ctl.insert_args("cred_store")[2]]],
     }
 
-    AccountInitializer(load_creds(creds_path), creds_path, NullLogger(), account_type).run()
+    AccountInitializer(
+        load_creds(creds_path), creds_path, NullLogger(), account_type
+    ).run()
     second_ctl = FakeLibsqlClient.last_instance
     inserts = [c for c in second_ctl.calls if c[0] == "execute" and "INSERT" in c[1]]
     assert inserts == []

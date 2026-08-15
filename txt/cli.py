@@ -76,7 +76,10 @@ def _dispatch(opts: dict, logger: Logger) -> bool:
         _run_replace_images(opts["replace_images_dirs"], logger)
     elif opts["ingest_src_dir"]:
         _run_ingest(
-            opts["ingest_src_dir"], opts["local_db_dir"], opts["ingest_creds_path"], logger
+            opts["ingest_src_dir"],
+            opts["local_db_dir"],
+            opts["ingest_creds_path"],
+            logger,
         )
     else:
         return False
@@ -96,7 +99,9 @@ def _run_ingest(
     src_dir: str, local_db_dir: str | None, creds_path: str | None, logger: Logger
 ) -> None:
     if not local_db_dir or not creds_path:
-        raise click.UsageError("--ingest requires --local-db-dir DIR and --creds CREDS_JSON")
+        raise click.UsageError(
+            "--ingest requires --local-db-dir DIR and --creds CREDS_JSON"
+        )
     TxtIngester(Path(src_dir), Path(local_db_dir), load_creds(creds_path), logger).run()
 
 

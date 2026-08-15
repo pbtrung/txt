@@ -60,11 +60,10 @@ def test_undersized_key_raises():
 
 
 def test_bind_and_column_types_round_trip(engine):
-    engine.exec_sql(
-        "CREATE TABLE t (i INTEGER, s TEXT, b BLOB, n INTEGER)"
-    )
+    engine.exec_sql("CREATE TABLE t (i INTEGER, s TEXT, b BLOB, n INTEGER)")
     engine.execute(
-        "INSERT INTO t (i, s, b, n) VALUES (?, ?, ?, ?)", [7, "abc", b"\x00\x01\x02", None]
+        "INSERT INTO t (i, s, b, n) VALUES (?, ?, ?, ?)",
+        [7, "abc", b"\x00\x01\x02", None],
     )
     row = engine.query("SELECT i, s, b, n FROM t")[0]
     assert row == (7, "abc", b"\x00\x01\x02", None)
