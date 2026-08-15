@@ -256,6 +256,25 @@ describe("ReaderScreen", () => {
     expect(screen.getByText("Dune Saga")).toBeInTheDocument();
   });
 
+  it("truncates a long Description at 300 characters behind a Show more toggle", async () => {
+    mockVault();
+    const long = "A".repeat(320);
+    mockReadyDocument({
+      extraMetadata: [{ label: "Description", values: [long] }],
+    });
+    renderScreen();
+
+    await userEvent.click(screen.getByRole("button", { name: "Book info" }));
+
+    expect(screen.getByText(`${"A".repeat(300)}…`)).toBeInTheDocument();
+    expect(screen.queryByText(long)).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Show more" }));
+
+    expect(screen.getByText(long)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show less" })).toBeInTheDocument();
+  });
+
   it("opens the Contents panel", async () => {
     mockVault();
     mockReadyDocument();

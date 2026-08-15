@@ -4,7 +4,7 @@
 // toolbar directly -- five always-visible icon buttons plus the title
 // leaves more room to breathe than nine would, especially on a narrow
 // screen.
-import { Fragment, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { OffcanvasPanel } from "../../components/OffcanvasPanel";
 import { EpubRenderer } from "../../data/epubRenderer";
@@ -253,26 +253,60 @@ function InfoPanel({
       {document.authors.length > 0 && (
         <p className="text-muted mb-3">{document.authors.join(", ")}</p>
       )}
-      <dl className="row small mb-0">
+      <dl className="small mb-0">
         {document.publisher && (
-          <>
-            <dt className="col-4 col-md-3 text-muted fw-normal">Publisher</dt>
-            <dd className="col-8 col-md-9">{document.publisher}</dd>
-          </>
+          <MetadataGroup label="Publisher" value={document.publisher} />
         )}
         {document.subjects.length > 0 && (
-          <>
-            <dt className="col-4 col-md-3 text-muted fw-normal">Subjects</dt>
-            <dd className="col-8 col-md-9">{document.subjects.join(", ")}</dd>
-          </>
+          <MetadataGroup label="Subjects" value={document.subjects.join(", ")} />
         )}
         {document.extraMetadata.map((field, i) => (
-          <Fragment key={`${field.label}-${i}`}>
-            <dt className="col-4 col-md-3 text-muted fw-normal">{field.label}</dt>
-            <dd className="col-8 col-md-9">{field.values.join(", ")}</dd>
-          </Fragment>
+          <MetadataGroup
+            key={`${field.label}-${i}`}
+            label={field.label}
+            value={field.values.join(", ")}
+            truncate={field.label === "Description"}
+          />
         ))}
       </dl>
     </OffcanvasPanel>
+  );
+}
+
+const DESCRIPTION_PREVIEW_LENGTH = 300;
+
+function MetadataGroup({
+  label,
+  value,
+  truncate = false,
+}: {
+  label: string;
+  value: string;
+  truncate?: boolean;
+}) {
+  return (
+    <div className="mb-3">
+      <dt className="text-muted fw-normal">{label}</dt>
+      <dd className="mb-0">{truncate ? <TruncatedText text={value} /> : value}</dd>
+    </div>
+  );
+}
+
+function TruncatedText({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (text.length <= DESCRIPTION_PREVIEW_LENGTH) return <>{text}</>;
+
+  return (
+    <>
+      {expanded ? text : `${text.slice(0, DESCRIPTION_PREVIEW_LENGTH)}…`}{" "}
+      <button
+        type="button"
+        className="btn btn-link btn-sm p-0 align-baseline"
+        onClick={() => setExpanded((v) => !v)}
+      >
+        {expanded ? "Show less" : "Show more"}
+      </button>
+    </>
   );
 }

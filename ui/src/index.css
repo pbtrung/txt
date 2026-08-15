@@ -48,5 +48,11 @@
 
 .search-box-input {
   padding-left: 2rem;
-  border-color: rgba(0, 0, 0, 0.1);
+  border-color: rgba(0, 0, 0, 0.08);
+  /* Bootstrap's own inset shadow (its form-control default) reads as a
+     second, heavier edge stacked on top of the border -- dropping it in
+     the resting state is what actually makes the hairline border above
+     read as thin. Left untouched on :focus, where Bootstrap's own ring
+     is the field's only focus indicator. */
+  box-shadow: none;
 }
