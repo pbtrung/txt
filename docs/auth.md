@@ -2,7 +2,7 @@
 
 Firebase identity, exchanged at a Cloudflare Worker for two things a client needs to open its own data: wrapped key material from the control database (`ctl`), and a short-lived R2 credential scoped to its own storage prefix.
 
-The client authenticates with Firebase, sends its ID token to the Worker, and gets back its own wrapped `umk` and wrapped `cred_store` backup (§4.1). It decrypts both locally to recover `db_path`, `db_master_key`, and `db_prefix` (docs/data_model.md), then calls the Worker a second time with `db_prefix` to receive a short-lived R2 credential scoped to it (§4.2). The Worker mints credentials; it does not create users or storage prefixes. Both are provisioned by an administrator out of band.
+The client authenticates with Firebase, sends its ID token to the Worker, and gets back its own wrapped `umk` and wrapped `cred_store` backup (§4.1). It decrypts both locally to recover `db_path`, `db_master_key`, and `db_prefix` (docs/data_model.md), then calls the Worker a second time with `db_path` and `db_prefix` to receive a short-lived R2 credential scoped to both (§4.2). The Worker mints credentials; it does not create users or storage prefixes. Both are provisioned by an administrator out of band.
 
 The Worker is the only component holding Turso credentials, and it holds no encryption key: `umk`, `cred_store.content`, and every object in R2 are encrypted client-side, so a compromised Worker exposes only ciphertext and the metadata described in §8.
 
@@ -145,7 +145,10 @@ POST /v1/r2-token
 Authorization: Bearer <Firebase ID token>
 Content-Type: application/json
 
-{ "db_prefix": "<the prefix the client just decrypted from cred_store>" }
+{
+  "db_path": "<the path the client just decrypted from cred_store>",
+  "db_prefix": "<the prefix the client just decrypted from cred_store>"
+}
 ```
 
 ```json
@@ -157,7 +160,7 @@ Content-Type: application/json
 }
 ```
 
-Scoped read-only to `{db_prefix}/*` for an ordinary user (`type = 'user'`); bucket-wide read-write for the admin's own uid (`type = 'admin'`), since the admin also holds every provisioned user's backup. The Worker does not independently verify that the supplied `db_prefix` belongs to the caller — see §8.
+Scoped read-only to the single object at `db_path` and to `{db_prefix}/*` for an ordinary user (`type = 'user'`) — both need their own authorization, since `db_path` addresses one object rather than a prefix and isn't covered by a `db_prefix`-scoped grant; bucket-wide read-write for the admin's own uid (`type = 'admin'`), since the admin also holds every provisioned user's backup. The Worker does not independently verify that the supplied `db_path`/`db_prefix` belong to the caller — see §8.
 
 | status | condition |
 |---|---|
@@ -177,7 +180,7 @@ Scoped read-only to `{db_prefix}/*` for an ordinary user (`type = 'user'`); buck
 
 **3. Return `type`, `umk`, and `cred_store.content`**, still wrapped — the Worker never sees plaintext key material. The client unwraps `umk` with its own `user_root_key`, then unwraps `cred_store.content` with `umk` to recover `display_name`, `db_master_key`, `db_path`, and `db_prefix`.
 
-**4. Mint the R2 credential.** The client calls `/v1/r2-token` with the `db_prefix` it just recovered; the Worker signs a short-lived, scoped credential (§4.2) and returns it. The client reads its `expiration` and re-calls this endpoint before it lapses, and immediately on a rejected R2 request.
+**4. Mint the R2 credential.** The client calls `/v1/r2-token` with the `db_path` and `db_prefix` it just recovered; the Worker signs a short-lived credential scoped to both (§4.2) and returns it. The client reads its `expiration` and re-calls this endpoint before it lapses, and immediately on a rejected R2 request.
 
 ---
 
@@ -215,7 +218,7 @@ Individual R2 credentials cannot be revoked — only left to expire. The short T
 
 The Worker holds `ctl` credentials and R2 signing credentials, and can therefore read every user's wrapped key material and mint an R2 credential for any prefix a caller supplies. It holds no encryption key: `umk` and `cred_store.content` decrypt only client-side, so the Worker — and Turso, and R2 — cannot decrypt anything a user stores.
 
-`/v1/r2-token` scopes its credential to whatever `db_prefix` the caller supplies (§4.2), with no independent check that the prefix is actually that uid's own. Soundness rests on the client only ever asking for its own prefix; a malicious or compromised client could ask for another account's prefix. Because everything under a prefix is client-side encrypted, the confidentiality of that data still holds regardless — but its availability does not, since a read-write-scoped credential could still overwrite or delete it.
+`/v1/r2-token` scopes its credential to whatever `db_path`/`db_prefix` the caller supplies (§4.2), with no independent check that either is actually that uid's own. Soundness rests on the client only ever asking for its own `db_path`/`db_prefix`; a malicious or compromised client could ask for another account's. Because everything at `db_path` and under `db_prefix` is client-side encrypted, the confidentiality of that data still holds regardless — but its availability does not, since a read-write-scoped credential could still overwrite or delete it.
 
 `db_path` and `db_prefix` are not secrets in the sense of being load-bearing for access control; they are unguessable, but the actual gate is the token, and every token is short-lived.
 
@@ -226,6 +229,6 @@ The Worker holds `ctl` credentials and R2 signing credentials, and can therefore
 1. Firebase ID token verification with cached signing keys, including the negative cases: expired, wrong audience, wrong issuer, tampered signature.
 2. The `ctl` join and `/v1/keys`, against an administrator-created row.
 3. The unprovisioned path: valid Firebase token, no `users` row, 403, and nothing written anywhere.
-4. `/v1/r2-token`, scoped by the caller-supplied `db_prefix`.
+4. `/v1/r2-token`, scoped by the caller-supplied `db_path` and `db_prefix`.
 5. KV caching and the per-uid rate limits, on both endpoints.
 6. Revocation and deprovisioning runbooks.
