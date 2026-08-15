@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This repo holds the txt document-storage system's design docs and the Python CLI that administers it.
+This repo holds the txt document-storage system's design docs, the Cloudflare Worker that mediates client access, and the Python CLI that administers it.
 
 ## Design docs (read these before touching auth/storage code)
 
@@ -31,9 +31,21 @@ This repo holds the txt document-storage system's design docs and the Python CLI
 - `txt/tests/` — pytest. Crypto and SQLCipher tests run against the real wasm engine (`txt/tests/conftest.py`'s session-scoped `engine` fixture); everything else fakes only the network boundary (Firebase, the Turso Platform API, libsql HTTP, R2) — never the crypto itself.
 - `sqlcipher/` — the prebuilt SQLCipher+leancrypto wasm module `leancrypto_wasm.py`/`sqlite_engine.py` load. Not built from source in this repo.
 - `creds/` — local, gitignored credential files. Never commit these. Never run a command against a real one yourself — hand it to the user to run.
+- `worker/` — the Cloudflare Worker implementing docs/auth.md, one module per concern:
+  - `firebaseAuth.ts` — RS256/JWKS verification of a Firebase ID token, cached per the response's own `Cache-Control`.
+  - `auth.ts` — bearer-token extraction + `verifiedUid`, shared by both endpoints.
+  - `ctl.ts` — the `ctl` join (docs/auth.md §2) over the libsql HTTP `/v2/pipeline` protocol.
+  - `cache.ts` — the `keys:{uid}` KV cache and per-uid rate limit (docs/auth.md §6).
+  - `account.ts` — `getAccount`, orchestrating cache → rate limit → `ctl.ts`, shared by both endpoints (a cache hit skips the rate limiter, since it never touches the resource the limiter protects).
+  - `keys.ts` — `POST /v1/keys`.
+  - `r2Token.ts` — `POST /v1/r2-token`: local JWT-signing of a scoped R2 temporary credential (no outbound Cloudflare API call), from a single parent R2 key pair for both the admin's bucket-wide and an ordinary user's `db_path`/`db_prefix`-scoped credential.
+  - `index.ts` — the fetch handler/router.
+  - `env.d.ts` — the `Env` interface for secrets/bindings `wrangler types` doesn't know about.
+- `wrangler.jsonc`, `package.json`, `scripts/deploy.sh` — Worker config/build; `scripts/deploy.sh` requires `WORKER_NAME` so a stale placeholder name in `wrangler.jsonc` can never silently target the wrong Worker.
 
 ## Conventions
 
 - Functions stay ≤15 lines; use a class (not free functions) for anything holding state — a client, an engine, a session.
 - Reuse the existing generic pieces (`LibsqlClient`, `TursoClient`, `CryptoBlob`, `FirebaseAuth`, `AccountSession`, `R2Client`, `SqliteEngine`) instead of duplicating HTTP, crypto, or storage logic in a new command.
+- `worker/*.ts` is formatted with Prettier at 88 columns (`.prettierrc.json`); run `npm run format` before committing. `.prettierignore` excludes generated/vendored files (`worker/worker-configuration.d.ts`, `sqlcipher/`) and the Python tree.
 - Docs (this file, README, docs/*) describe current state only — no commit hashes, no "legacy"/"previously" framing, no narrated history.
