@@ -9,7 +9,7 @@ def test_no_args_shows_help():
     assert "--init-admin" in result.output
 
 
-def test_init_admin_without_creds_is_a_usage_error():
+def test_init_admin_without_a_value_is_a_usage_error():
     result = CliRunner().invoke(cli, ["--init-admin"])
     assert result.exit_code != 0
-    assert "--creds" in result.output
+    assert "--init-admin" in result.output
