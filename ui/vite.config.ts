@@ -37,6 +37,10 @@ export default defineConfig({
   build: {
     outDir: DIST_DIR,
     emptyOutDir: true,
+    // Single chunk (below) now bundles epub.js/brotli-wasm/bootstrap too,
+    // comfortably past Vite's 500 kB default warning -- that default is
+    // tuned for apps that code-split, which this one deliberately doesn't.
+    chunkSizeWarningLimit: 1500,
     rollupOptions: {
       output: {
         // A prior version of this app was crashed by exactly this: a
