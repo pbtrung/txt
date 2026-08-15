@@ -1,44 +1,18 @@
 // txt/crypto_blob.py's encrypt_json/decrypt_json brotli-compress the JSON
 // payload before it ever reaches CryptoBlob's own AEAD layer, so any wrapped
 // JSON value (cred_store.content, txt.metadata) needs the same step to
-// decode. Browsers and Node reach compression differently: the Web
-// Streams-based Compression/DecompressionStream API in the browser,
-// node:zlib's synchronous brotli functions under Vitest/Node.
-import { isBrowser } from "../env";
-
-// "br" is a real, widely-supported CompressionFormat value; this repo's
-// current TS DOM lib just doesn't list it yet.
-const BROTLI = "br" as CompressionFormat;
-
-async function readAll(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
-  return new Uint8Array(await new Response(stream).arrayBuffer());
-}
-
-async function nodeZlib() {
-  // @ts-expect-error node:zlib has no ambient types under ui/'s browser-scoped
-  // tsconfig; this path only ever runs under Node/Vitest (see isBrowser()).
-  // @vite-ignore: keep Vite's client bundler from resolving this into the browser build.
-  return import(/* @vite-ignore */ "node:zlib");
-}
+// decode. brotli-wasm gives one WASM implementation shared by both the
+// browser and Node/Vitest -- CompressionStream's own "br" support isn't
+// available in every browser this app needs to run in, and Node's zlib
+// would otherwise be a second, separate implementation to keep in sync.
+import brotliWasm from "brotli-wasm";
 
 export async function brotliCompress(data: Uint8Array): Promise<Uint8Array> {
-  if (isBrowser()) {
-    const stream = new Blob([new Uint8Array(data)])
-      .stream()
-      .pipeThrough(new CompressionStream(BROTLI));
-    return readAll(stream);
-  }
-  const zlib = await nodeZlib();
-  return new Uint8Array(zlib.brotliCompressSync(data));
+  const brotli = await brotliWasm;
+  return brotli.compress(data);
 }
 
 export async function brotliDecompress(data: Uint8Array): Promise<Uint8Array> {
-  if (isBrowser()) {
-    const stream = new Blob([new Uint8Array(data)])
-      .stream()
-      .pipeThrough(new DecompressionStream(BROTLI));
-    return readAll(stream);
-  }
-  const zlib = await nodeZlib();
-  return new Uint8Array(zlib.brotliDecompressSync(data));
+  const brotli = await brotliWasm;
+  return brotli.decompress(data);
 }

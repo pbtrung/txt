@@ -59,5 +59,17 @@ export default defineConfig({
     environment: "node",
     setupFiles: ["./src/setupTests.ts"],
     globals: true,
+    alias: {
+      // brotli-wasm's package.json "exports" sends any `import` specifier
+      // (which is what this ESM app uses, everywhere -- not just tests) to
+      // its pure-ESM web build, which does its own async fetch() of the
+      // .wasm file -- there's nothing to fetch it from under Vitest, browser
+      // or not. index.node.js resolves the same way real Node's own
+      // `require()` condition would: synchronously, from disk, no fetch.
+      // Both still expose the same `Promise<{ compress, decompress }>`
+      // shape brotli.ts awaits, so this doesn't change what the code under
+      // test actually does -- only how the wasm gets loaded.
+      "brotli-wasm": join(REPO_ROOT, "node_modules/brotli-wasm/index.node.js"),
+    },
   },
 });
