@@ -40,7 +40,7 @@ CREATE TABLE txt (
     txt_key       BLOB    NOT NULL,   -- 128 random bytes; the AEAD key for this document's content object
     txt_prefix    BLOB    NOT NULL,   -- 32 random bytes; first key segment of the content object (§1)
     path          BLOB    NOT NULL,   -- 32 random bytes; second key segment of the content object (§1)
-    metadata      BLOB    NOT NULL,   -- brotli(JSON): browsable fields plus opf sidecar passthrough (§3.1)
+    metadata      BLOB    NOT NULL,   -- brotli(JSON): original filename plus opf sidecar passthrough (§3.1)
     last_accessed INTEGER NOT NULL,   -- unix ms
     created_at    INTEGER NOT NULL    -- unix ms
 );
@@ -73,15 +73,11 @@ END;
 
 ### 3.1 `metadata`
 
-A fixed set of fields search, sort, and browse operate on: `name` is the original filename; `title`, `authors`, `subjects`, and `publishers` are parsed out of the ingested document's OPF sidecar (`authors`/`subjects`/`publishers` as arrays, since a document can have more than one of each). The nested `metadata` key is a passthrough of whatever else that same OPF sidecar carried, absent any fields it didn't have:
+`name` is the original filename, not from the sidecar. The nested `metadata` key is the ingested document's OPF sidecar, parsed as-is when one exists — title, authors, subjects, publishers, and whatever else it carries all live there under the OPF format's own field names, rather than duplicated as separate columns:
 
 ```json
 {
   "name": "original filename",
-  "title": "display title",
-  "authors": [],
-  "subjects": [],
-  "publishers": [],
   "metadata": { "...": "opf sidecar fields, when present" }
 }
 ```
