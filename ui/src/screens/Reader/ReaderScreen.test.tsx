@@ -275,6 +275,24 @@ describe("ReaderScreen", () => {
     expect(screen.getByRole("button", { name: "Show less" })).toBeInTheDocument();
   });
 
+  it("renders a short Description's HTML markup, sanitized", async () => {
+    mockVault();
+    mockReadyDocument({
+      extraMetadata: [
+        {
+          label: "Description",
+          values: ["<p>A <b>desert</b> planet.</p><script>alert(1)</script>"],
+        },
+      ],
+    });
+    renderScreen();
+
+    await userEvent.click(screen.getByRole("button", { name: "Book info" }));
+
+    expect(screen.getByText("desert").tagName).toBe("B");
+    expect(document.querySelector("script")).not.toBeInTheDocument();
+  });
+
   it("opens the Contents panel", async () => {
     mockVault();
     mockReadyDocument();

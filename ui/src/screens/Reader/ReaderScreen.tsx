@@ -9,6 +9,7 @@ import { Link, useParams } from "react-router-dom";
 import { OffcanvasPanel } from "../../components/OffcanvasPanel";
 import { EpubRenderer } from "../../data/epubRenderer";
 import type { MetadataField } from "../../data/readerDocument";
+import { sanitizeHtml, stripHtmlToText } from "../../data/sanitizeHtml";
 import { useVault } from "../../state/VaultContext";
 import { TocPanel } from "./TocPanel";
 import { useReaderDocument } from "./useReaderDocument";
@@ -265,7 +266,7 @@ function InfoPanel({
             key={`${field.label}-${i}`}
             label={field.label}
             value={field.values.join(", ")}
-            truncate={field.label === "Description"}
+            html={field.label === "Description"}
           />
         ))}
       </dl>
@@ -278,34 +279,55 @@ const DESCRIPTION_PREVIEW_LENGTH = 300;
 function MetadataGroup({
   label,
   value,
-  truncate = false,
+  html = false,
 }: {
   label: string;
   value: string;
-  truncate?: boolean;
+  html?: boolean;
 }) {
   return (
     <div className="mb-3">
       <dt className="text-muted fw-normal">{label}</dt>
-      <dd className="mb-0">{truncate ? <TruncatedText text={value} /> : value}</dd>
+      <dd className="mb-0">{html ? <TruncatedHtml html={value} /> : value}</dd>
     </div>
   );
 }
 
-function TruncatedText({ text }: { text: string }) {
+// Calibre's own dc:description is commonly rich HTML, not plain text; the
+// 300-character truncation works off a plain-text rendering of it (via
+// stripHtmlToText) rather than slicing the raw markup, which would risk
+// cutting a tag in half. Only the expanded state ever renders the actual
+// sanitized HTML.
+function TruncatedHtml({ html }: { html: string }) {
   const [expanded, setExpanded] = useState(false);
+  const plainText = stripHtmlToText(html);
 
-  if (text.length <= DESCRIPTION_PREVIEW_LENGTH) return <>{text}</>;
-
+  if (plainText.length <= DESCRIPTION_PREVIEW_LENGTH) {
+    return <span dangerouslySetInnerHTML={{ __html: sanitizeHtml(html) }} />;
+  }
+  if (!expanded) {
+    return (
+      <>
+        {plainText.slice(0, DESCRIPTION_PREVIEW_LENGTH)}…{" "}
+        <button
+          type="button"
+          className="btn btn-link btn-sm p-0 align-baseline"
+          onClick={() => setExpanded(true)}
+        >
+          Show more
+        </button>
+      </>
+    );
+  }
   return (
     <>
-      {expanded ? text : `${text.slice(0, DESCRIPTION_PREVIEW_LENGTH)}…`}{" "}
+      <span dangerouslySetInnerHTML={{ __html: sanitizeHtml(html) }} />{" "}
       <button
         type="button"
         className="btn btn-link btn-sm p-0 align-baseline"
-        onClick={() => setExpanded((v) => !v)}
+        onClick={() => setExpanded(false)}
       >
-        {expanded ? "Show less" : "Show more"}
+        Show less
       </button>
     </>
   );

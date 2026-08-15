@@ -33,9 +33,10 @@
 
 /* Library search box: the icon sits inside the input itself (not a
    separate input-group-text segment) so the two read as one field with
-   no seam, and the border is a low-contrast hairline rather than
-   Bootstrap's full-strength default -- it only needs to be visible
-   enough to mark the field's edges, not to draw the eye. */
+   no seam. No border at all in the resting state -- a soft tonal fill
+   marks the field's edges instead, which reads lighter than any border
+   weight would; the border only appears on :focus, as the field's own
+   focus indicator. */
 .search-box-icon {
   position: absolute;
   left: 0.7rem;
@@ -48,11 +49,11 @@
 
 .search-box-input {
   padding-left: 2rem;
-  border-color: rgba(0, 0, 0, 0.08);
-  /* Bootstrap's own inset shadow (its form-control default) reads as a
-     second, heavier edge stacked on top of the border -- dropping it in
-     the resting state is what actually makes the hairline border above
-     read as thin. Left untouched on :focus, where Bootstrap's own ring
-     is the field's only focus indicator. */
+  background-color: var(--bs-tertiary-bg);
+  border-color: transparent;
   box-shadow: none;
+}
+
+.search-box-input:focus {
+  background-color: var(--bs-body-bg);
 }
