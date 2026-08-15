@@ -99,4 +99,13 @@ describe("LibraryScreen", () => {
       "/read/1",
     );
   });
+
+  it("the Browse button opens the browse drawer", async () => {
+    renderScreen(LIBRARY);
+    expect(screen.getByRole("dialog", { name: "Browse" })).not.toHaveClass("show");
+
+    await userEvent.click(screen.getByRole("button", { name: "Browse" }));
+
+    expect(screen.getByRole("dialog", { name: "Browse" })).toHaveClass("show");
+  });
 });

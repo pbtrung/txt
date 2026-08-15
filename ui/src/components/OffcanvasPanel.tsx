@@ -2,26 +2,38 @@
 // Bootstrap's CSS/Icons, never its JS, so open/close is just a boolean
 // prop toggling the "show" class plus a backdrop <div> the caller doesn't
 // need to wire up itself (no data-bs-* attributes anywhere).
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 
 export function OffcanvasPanel({
   open,
   onClose,
   title,
   placement = "end",
+  responsive,
+  className,
+  style,
   children,
 }: {
   open: boolean;
   onClose: () => void;
   title: string;
   placement?: "start" | "end";
+  /** Bootstrap's offcanvas-{breakpoint} variant: below the breakpoint this
+   * behaves like a normal drawer; at/above it, it becomes a normal static
+   * block instead (its own header/close button included -- Bootstrap's CSS
+   * hides those automatically past the breakpoint). */
+  responsive?: "md";
+  className?: string;
+  style?: CSSProperties;
   children: ReactNode;
 }) {
+  const base = responsive ? `offcanvas-${responsive}` : "offcanvas";
   const titleId = `offcanvas-title-${title.replace(/\s+/g, "-").toLowerCase()}`;
   return (
     <>
       <div
-        className={`offcanvas offcanvas-${placement} ${open ? "show" : ""}`}
+        className={`${base} offcanvas-${placement} ${open ? "show" : ""} ${className ?? ""}`}
+        style={style}
         tabIndex={-1}
         role="dialog"
         aria-labelledby={titleId}
@@ -39,7 +51,12 @@ export function OffcanvasPanel({
         </div>
         <div className="offcanvas-body">{children}</div>
       </div>
-      {open && <div className="offcanvas-backdrop show" onClick={onClose} />}
+      {open && (
+        <div
+          className={`offcanvas-backdrop show ${responsive ? `d-${responsive}-none` : ""}`}
+          onClick={onClose}
+        />
+      )}
     </>
   );
 }

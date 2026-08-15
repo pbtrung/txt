@@ -50,4 +50,35 @@ describe("OffcanvasPanel", () => {
 
     expect(onClose).toHaveBeenCalled();
   });
+
+  it("uses the offcanvas-{breakpoint} class and hides the backdrop past it when responsive", () => {
+    const { container } = render(
+      <OffcanvasPanel open onClose={vi.fn()} title="Browse" responsive="md">
+        content
+      </OffcanvasPanel>,
+    );
+
+    const panel = screen.getByRole("dialog", { name: "Browse" });
+    expect(panel).toHaveClass("offcanvas-md");
+    expect(panel).not.toHaveClass("offcanvas offcanvas-end");
+    expect(container.querySelector(".offcanvas-backdrop")).toHaveClass("d-md-none");
+  });
+
+  it("passes through className and style", () => {
+    render(
+      <OffcanvasPanel
+        open={false}
+        onClose={vi.fn()}
+        title="Info"
+        className="border-end"
+        style={{ width: "18rem" }}
+      >
+        content
+      </OffcanvasPanel>,
+    );
+
+    const panel = screen.getByRole("dialog", { name: "Info" });
+    expect(panel).toHaveClass("border-end");
+    expect(panel).toHaveStyle({ width: "288px" }); // jsdom resolves 18rem -> 288px (16px root)
+  });
 });

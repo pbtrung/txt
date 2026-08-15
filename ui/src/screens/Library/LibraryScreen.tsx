@@ -1,7 +1,10 @@
 // Search + browse over the txt table's metadata: All books, plus
-// browse-by-Author/Subject/Publisher.
+// browse-by-Author/Subject/Publisher. Two panes, bounded to the viewport
+// height so only the panes scroll, never the page; below Bootstrap's `md`
+// breakpoint the browse pane collapses into a drawer.
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import { OffcanvasPanel } from "../../components/OffcanvasPanel";
 import type { LibraryBook } from "../../data/libraryDb";
 import { useVault } from "../../state/VaultContext";
 import {
@@ -36,6 +39,7 @@ export function LibraryScreen() {
   const books = useLibraryBooks(session?.db ?? null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<BrowseFilter | null>(null);
+  const [browseOpen, setBrowseOpen] = useState(false);
 
   if (books === null) {
     return (
@@ -47,24 +51,46 @@ export function LibraryScreen() {
   }
 
   return (
-    <div className="container py-4">
-      <h1 className="h3 mb-4">
-        <i className="bi bi-book me-2" />
-        Skypiea
-      </h1>
-      <div className="row g-4">
-        <div className="col-12 col-md-4 col-lg-3">
-          <input
-            type="search"
-            className="form-control mb-3"
-            placeholder="Search"
-            aria-label="Search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-          <BrowsePanel books={books} filter={filter} onFilterChange={setFilter} />
-        </div>
-        <div className="col-12 col-md-8 col-lg-9">
+    <div className="d-flex flex-column vh-100">
+      <div className="d-flex align-items-center border-bottom px-3 py-2 flex-shrink-0">
+        <button
+          type="button"
+          className="btn btn-sm btn-outline-secondary d-md-none me-2"
+          aria-label="Browse"
+          onClick={() => setBrowseOpen(true)}
+        >
+          <i className="bi bi-funnel" />
+        </button>
+        <h1 className="h3 mb-0">
+          <i className="bi bi-book me-2" />
+          Skypiea
+        </h1>
+      </div>
+
+      <div className="d-flex flex-grow-1 overflow-hidden">
+        <OffcanvasPanel
+          open={browseOpen}
+          onClose={() => setBrowseOpen(false)}
+          title="Browse"
+          placement="start"
+          responsive="md"
+          className="h-100 border-end"
+          style={{ width: "18rem" }}
+        >
+          <div className="h-100 overflow-y-auto p-3 p-md-0 pe-md-3">
+            <input
+              type="search"
+              className="form-control mb-3"
+              placeholder="Search"
+              aria-label="Search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            <BrowsePanel books={books} filter={filter} onFilterChange={setFilter} />
+          </div>
+        </OffcanvasPanel>
+
+        <div className="flex-grow-1 overflow-y-auto p-3">
           <BookList books={visibleBooks(books, query, filter)} />
         </div>
       </div>
