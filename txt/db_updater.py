@@ -2,9 +2,13 @@
 §3.1) for every account this admin can reach -- their own db, plus every
 user backup row account_init.py's admin-backup mechanism has written
 (docs/auth.md §2). Idempotent and resumable at both the per-account and
-per-row level: an already-migrated account (metadata column already
-dropped) is skipped outright; a partially-migrated one only re-populates
-rows still missing a catalog.
+per-row level: an account with no database yet is skipped outright with
+neither a local write nor an upload; a partially-migrated one only
+re-populates rows still missing a catalog. An account whose local working
+copy already has the new schema still gets re-uploaded to R2 on every run
+-- otherwise an upload interrupted between the local write and the R2
+PUT would leave R2 on the old schema forever, since a resumed run would
+see nothing left to change locally and skip without ever retrying it.
 """
 
 import base64
@@ -101,18 +105,27 @@ class DbUpdater:
     def _migrate_db(
         self, engine: SqliteEngine, uid: str, db_path: str, local_path: Path
     ) -> None:
-        if not self._needs_migration(engine):
-            self.logger.info(f"[{uid}] already migrated, skipping.")
+        if not self._table_exists(engine):
+            self.logger.info(f"[{uid}] no database yet, skipping.")
             return
-        self._add_catalog_column(engine)
-        self._populate_catalog(engine, uid)
-        engine.exec_sql("ALTER TABLE txt DROP COLUMN metadata")
-        self.logger.verbose(f"[{uid}] vacuuming...")
-        engine.vacuum()
+        if self._needs_migration(engine):
+            self._add_catalog_column(engine)
+            self._populate_catalog(engine, uid)
+            engine.exec_sql("ALTER TABLE txt DROP COLUMN metadata")
+            self.logger.verbose(f"[{uid}] vacuuming...")
+            engine.vacuum()
+        else:
+            self.logger.verbose(f"[{uid}] schema already migrated, re-syncing R2...")
         data = engine.to_bytes()
         local_path.write_bytes(data)
         self.r2.put_object(db_path, data)
         self.logger.info(f"[{uid}] migration complete.")
+
+    def _table_exists(self, engine: SqliteEngine) -> bool:
+        rows = engine.query(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'txt'"
+        )
+        return bool(rows)
 
     def _columns(self, engine: SqliteEngine) -> set:
         return {row[1] for row in engine.query("PRAGMA table_info(txt)")}

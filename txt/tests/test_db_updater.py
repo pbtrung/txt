@@ -240,6 +240,64 @@ def test_second_run_is_a_noop(tmp_path, creds_path, engine):
     assert FakeR2Client.objects[db_path] == first_upload
 
 
+def test_reuploads_when_local_copy_is_migrated_but_r2_is_still_stale(
+    tmp_path, creds_path, engine
+):
+    # Simulates an interrupted prior run: the local working copy already
+    # got migrated and written to disk, but the upload to R2 never landed
+    # (network drop, etc.), so R2 is still on the old schema.
+    db_master_key = secrets.token_bytes(256)
+    db_path = "d" * 52
+    _register_account(engine, ADMIN_UID, db_master_key, db_path)
+    FakeR2Client.objects[db_path] = _build_old_db(
+        db_master_key, [("dune.epub", {"title": "Dune"})]
+    )
+
+    local_dir = tmp_path / "local"
+    local_dir.mkdir()
+    migrated = SqliteEngine()
+    migrated.open(db_master_key)
+    migrated.exec_sql("PRAGMA page_size = 16384")
+    migrated.exec_sql("""
+        CREATE TABLE txt (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          txt_key BLOB NOT NULL,
+          txt_prefix BLOB NOT NULL,
+          path BLOB NOT NULL,
+          catalog BLOB NOT NULL,
+          last_accessed INTEGER NOT NULL,
+          created_at INTEGER NOT NULL
+        )
+        """)
+    migrated.execute(
+        "INSERT INTO txt (txt_key, txt_prefix, path, catalog, last_accessed, "
+        "created_at) VALUES (x'00', x'00', x'00', ?, 0, 0)",
+        [
+            brotli.compress(
+                json.dumps(
+                    {
+                        "name": "dune.epub",
+                        "title": "Dune",
+                        "authors": [],
+                        "subjects": [],
+                        "publisher": None,
+                    }
+                ).encode()
+            )
+        ],
+    )
+    (local_dir / db_path).write_bytes(migrated.to_bytes())
+    migrated.close()
+
+    DbUpdater(load_creds(creds_path), local_dir, NullLogger()).run()
+
+    verify = _reopen(db_master_key, FakeR2Client.objects[db_path])
+    columns = {row[1] for row in verify.query("PRAGMA table_info(txt)")}
+    assert "metadata" not in columns
+    assert "catalog" in columns
+    verify.close()
+
+
 def test_resumes_a_partially_migrated_database(tmp_path, creds_path, engine):
     db_master_key = secrets.token_bytes(256)
     db_path = "d" * 52
