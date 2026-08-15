@@ -41,7 +41,7 @@ This repo holds the txt document-storage system's design docs, the Cloudflare Wo
   - `r2Token.ts` — `POST /v1/r2-token`: local JWT-signing of a scoped R2 temporary credential (no outbound Cloudflare API call), from a single parent R2 key pair for both the admin's bucket-wide and an ordinary user's `db_path`/`db_prefix`-scoped credential.
   - `index.ts` — the fetch handler/router.
   - `env.d.ts` — the `Env` interface for secrets/bindings `wrangler types` doesn't know about.
-- `wrangler.jsonc`, `package.json`, `scripts/deploy.sh` — Worker config/build; `scripts/deploy.sh` requires `WORKER_NAME` so a stale placeholder name in `wrangler.jsonc` can never silently target the wrong Worker.
+- `wrangler.jsonc`, `package.json`, `scripts/deploy.sh` — Worker config/build; `scripts/deploy.sh` requires `WORKER_NAME` so a stale placeholder name in `wrangler.jsonc` can never silently target the wrong Worker, and rebuilds `ui/` fresh before every deploy. `wrangler.jsonc`'s `assets` block deploys `ui/`'s build (`dist/`) alongside the Worker script: `/v1/*` reaches `worker/index.ts`, everything else is served (or SPA-fallback-served) from `dist/`.
 
 ## Conventions
 

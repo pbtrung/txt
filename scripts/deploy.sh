@@ -11,4 +11,8 @@ if [ -z "$WORKER_NAME" ]; then
   exit 1
 fi
 
+# wrangler.jsonc's "assets" block deploys dist/ alongside the Worker script --
+# rebuild it fresh every time so a deploy never ships a stale ui/ build.
+npm run ui:build
+
 wrangler deploy --name "$WORKER_NAME"

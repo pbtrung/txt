@@ -1,7 +1,8 @@
 // docs/auth.md's Firebase-ID-token-to-key-material exchange, plus R2 temp
-// credential minting. Deployed as a plain Worker script (no static assets
-// binding here -- this repo's frontend is a separate build, not served by
-// this Worker).
+// credential minting. wrangler.jsonc's own "assets" block serves ui/'s
+// built static files alongside this script -- requests under /v1/* reach
+// this fetch handler, everything else is served (or SPA-fallback-served)
+// from dist/ without ever invoking it.
 
 import { handleKeys } from "./keys";
 import { handleR2Token } from "./r2Token";
