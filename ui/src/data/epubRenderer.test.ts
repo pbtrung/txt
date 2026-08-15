@@ -11,7 +11,7 @@ const renditionMock = {
   prev: vi.fn().mockResolvedValue(undefined),
   on: vi.fn(),
   spread: vi.fn(),
-  themes: { fontSize: vi.fn(), registerCss: vi.fn() },
+  themes: { fontSize: vi.fn(), registerCss: vi.fn(), font: vi.fn() },
 };
 const bookMock = {
   renderTo: vi.fn().mockReturnValue(renditionMock),
@@ -50,6 +50,9 @@ describe("EpubRenderer", () => {
     expect(renditionMock.display).toHaveBeenCalled();
     expect(renditionMock.themes.registerCss).toHaveBeenCalledWith(
       "default",
+      expect.stringContaining("@font-face"),
+    );
+    expect(renditionMock.themes.font).toHaveBeenCalledWith(
       expect.stringContaining("Literata"),
     );
   });

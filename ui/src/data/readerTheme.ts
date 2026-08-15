@@ -7,6 +7,14 @@
 // don't cross from the outer page into a child iframe's own document.
 // Injected instead as raw CSS via Rendition.themes.registerCss().
 //
+// READER_FONT_FAMILY is deliberately NOT baked into that CSS as a plain
+// `body { font-family: ... }` rule -- nearly every real EPUB ships its own
+// stylesheet with its own font-family on body/paragraphs, which would win
+// the cascade over an externally injected, unremarkable-specificity rule.
+// EpubRenderer applies it instead via Rendition.themes.font(), epub.js's
+// own override mechanism: an inline `!important` style, guaranteed to beat
+// the book's own CSS.
+//
 // One @font-face per subset (each with its own unicode-range) rather than
 // a single all-glyphs file: the browser only fetches the woff2 for a
 // range actually used by the rendered text, so a book that's plain Latin
@@ -74,10 +82,11 @@ const fontFaceRules = SUBSETS.map(
 }`,
 ).join("\n");
 
+export const READER_FONT_FAMILY = "'Literata', serif";
+
 export const READER_THEME_CSS = `
 ${fontFaceRules}
 body {
-  font-family: 'Literata', serif;
   max-width: 80ch;
   margin-left: auto;
   margin-right: auto;

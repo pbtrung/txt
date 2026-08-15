@@ -3,7 +3,7 @@
 // URLs) behind a class ReaderScreen and its tests can mock, the same
 // pattern as R2Client wrapping aws4fetch.
 import ePub, { type Book, type NavItem, type Rendition } from "epubjs";
-import { READER_THEME_CSS } from "./readerTheme";
+import { READER_FONT_FAMILY, READER_THEME_CSS } from "./readerTheme";
 
 // A 2-column spread only kicks in once there's room for two 80ch-ish
 // columns side by side -- otherwise setColumns(2) would just crush both
@@ -38,6 +38,11 @@ export class EpubRenderer {
       allowScriptedContent: true,
     });
     this.rendition.themes.registerCss("default", READER_THEME_CSS);
+    // themes.font(), not a plain CSS rule: it applies as an inline
+    // `!important` style per section (Rendition's own override mechanism),
+    // which is what it takes to beat a book's own stylesheet -- nearly
+    // every real EPUB sets its own font-family on body/paragraphs.
+    this.rendition.themes.font(READER_FONT_FAMILY);
     void this.rendition.display();
   }
 
