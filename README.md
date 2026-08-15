@@ -71,6 +71,14 @@ Uploads every `*.epub` in `SRC_DIR` to R2 as one encrypted object each, and reco
 
 The local working database lives at `DIR/{db_path}`; a run resumes from that file if present, or from the matching object in R2, or starts fresh otherwise (a fresh database's page size is set to 16 KiB before any table is created). Already-ingested files are skipped (matched by filename against each row's recorded name), so an interrupted run can simply be restarted. The local file is rewritten after every successfully ingested file; only at the end is it `VACUUM`ed and uploaded to `{bucket}/{db_path}`.
 
+### Migrate every reachable database to `txt.catalog`
+
+```
+txt --update-db admin_creds.json --local-db-dir DIR --verbose
+```
+
+Walks every account this administrator's creds.json can reach — their own database, plus every user backup row `--init-user` has written (docs/auth.md §2) — and migrates each one still on the old `txt.metadata` column to the flat `txt.catalog` shape (docs/data_model.md §3.1): adds `catalog`, populates it by extracting `title`/`authors`/`subjects`/`publisher` out of each row's existing `metadata`, drops `metadata`, `VACUUM`s, and re-uploads. Only covers accounts with a backup `cred_store` row; anyone provisioned before that mechanism existed needs their own creds.json run individually. Idempotent and resumable at both the per-account and per-row level — an already-migrated account is skipped outright, and a partially-migrated one only re-populates rows still missing a `catalog`.
+
 ### Common to every CLI command
 
 `-v`/`--verbose` logs each step's progress.

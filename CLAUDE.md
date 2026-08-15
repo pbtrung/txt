@@ -26,6 +26,7 @@ This repo holds the txt document-storage system's design docs, the Cloudflare Wo
   - `r2_client.py` — `R2Client`, a thin boto3/S3-compatible wrapper for R2 (get/put object, list keys, list common prefixes, delete keys).
   - `opf.py` — Calibre `.opf` sidecar detection and `<metadata>` parsing; `ingest.py` extracts just `title`/`authors`/`subjects`/`publisher` from it into `txt.catalog` (docs/data_model.md §3.1).
   - `ingest.py` — `TxtIngester`, the `--ingest` command: uploads each EPUB in a directory as one R2 object, keeps a resumable local SQLCipher working copy, and dedups against already-recorded filenames.
+  - `db_updater.py` — `DbUpdater`, the `--update-db` command: migrates every account an administrator's creds.json can reach (their own database, plus every user backup row `account_init.py`'s admin-backup mechanism has written) from `txt.metadata` to `txt.catalog` (docs/data_model.md §3.1), idempotent and resumable at both the per-account and per-row level.
   - `replace_images.py` — `--replace-images`: replaces EPUB images with placeholders and constrains their display size; unrelated to the rest of this package's account/storage logic.
   - `cli.py` — the click entry point.
 - `txt/tests/` — pytest. Crypto and SQLCipher tests run against the real wasm engine (`txt/tests/conftest.py`'s session-scoped `engine` fixture); everything else fakes only the network boundary (Firebase, the Turso Platform API, libsql HTTP, R2) — never the crypto itself.

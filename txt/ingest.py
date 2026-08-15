@@ -9,7 +9,7 @@ from .account_session import Account, AccountSession
 from .creds import Creds
 from .crypto_blob import CryptoBlob
 from .logger import Logger
-from .opf import find_opf_sidecar, parse_opf_metadata
+from .opf import catalog_fields, find_opf_sidecar, parse_opf_metadata
 from .r2_client import R2Client
 from .random_token import to_base32_crockford
 from .sqlite_engine import SqliteEngine
@@ -60,17 +60,6 @@ BEGIN
     );
 END
 """
-
-
-def _field_strings(value) -> list:
-    """Normalizes one parse_opf_metadata() field into a flat list of
-    strings: absent -> [], a bare string or an attributed {"text": ...}
-    dict -> a single-item list, a list of either -> itself, flattened.
-    """
-    if value is None:
-        return []
-    items = value if isinstance(value, list) else [value]
-    return [item["text"] if isinstance(item, dict) else item for item in items]
 
 
 class TxtIngester:
@@ -187,15 +176,7 @@ class TxtIngester:
         """
         opf_path = find_opf_sidecar(epub_path)
         opf_metadata = parse_opf_metadata(opf_path) if opf_path is not None else {}
-        titles = _field_strings(opf_metadata.get("title"))
-        publishers = _field_strings(opf_metadata.get("publisher"))
-        return {
-            "name": epub_path.name,
-            "title": titles[0] if titles else epub_path.name,
-            "authors": _field_strings(opf_metadata.get("creator")),
-            "subjects": _field_strings(opf_metadata.get("subject")),
-            "publisher": publishers[0] if publishers else None,
-        }
+        return {"name": epub_path.name, **catalog_fields(opf_metadata, epub_path.name)}
 
     def _finish(self) -> None:
         self.logger.verbose("Vacuuming local db...")

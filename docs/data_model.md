@@ -93,6 +93,8 @@ A fixed, flat shape — just what the Library screen needs to search and browse 
 
 The whole file is already encrypted by SQLCipher under `db_master_key`, so `catalog` is only brotli-compressed, not separately encrypted — there is no second key for it to be wrapped under.
 
+`txt --update-db admin_creds.json --local-db-dir DIR --verbose` migrates a database still on the older `metadata` column to this shape: adds `catalog`, populates each row from its existing `metadata`, drops `metadata`, and `VACUUM`s. It reaches every account the given administrator's creds.json can reach (docs/auth.md §2's backup `cred_store` row), is idempotent (an already-migrated account is skipped), and resumable per row (a partial run only re-populates rows still missing a `catalog`).
+
 `txt_key` is unrelated to `db_master_key`: it is the AEAD key for one document's content object, generated fresh per document, so leaking one document's key exposes nothing about any other document or about the database file itself.
 
 `txt_bookmarks.line` is the line number a bookmark points to inside the document; `preview` is a short excerpt shown alongside it, capped at 180 bytes rather than 180 characters (`CAST(... AS BLOB)`) since a UTF-8 character can be up to 4 bytes. `UNIQUE (txt_id, line)` means re-bookmarking the same line replaces the existing bookmark rather than duplicating it.

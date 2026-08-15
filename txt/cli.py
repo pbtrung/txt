@@ -4,6 +4,7 @@ import click
 
 from .account_init import AccountInitializer
 from .creds import load_creds, load_user_creds
+from .db_updater import DbUpdater
 from .ingest import TxtIngester
 from .logger import Logger
 from .replace_images import ImageReplacer
@@ -61,6 +62,15 @@ from .replace_images import ImageReplacer
     metavar="CREDS_JSON",
     help="creds.json for --ingest",
 )
+@click.option(
+    "--update-db",
+    "update_db_creds_path",
+    metavar="CREDS_JSON",
+    help=(
+        "Migrate txt.metadata to txt.catalog for every account this admin's "
+        "creds.json can reach (needs --local-db-dir)"
+    ),
+)
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose progress logging")
 @click.pass_context
 def cli(
@@ -73,6 +83,7 @@ def cli(
     ingest_src_dir: str | None,
     local_db_dir: str | None,
     ingest_creds_path: str | None,
+    update_db_creds_path: str | None,
     verbose: bool,
 ) -> None:
     logger = Logger(verbose)
@@ -96,6 +107,8 @@ def _dispatch(opts: dict, logger: Logger) -> bool:
             opts["ingest_creds_path"],
             logger,
         )
+    elif opts["update_db_creds_path"]:
+        _run_update_db(opts["update_db_creds_path"], opts["local_db_dir"], logger)
     else:
         return False
     return True
@@ -115,9 +128,7 @@ def _run_init_user(
         )
     admin_creds = load_creds(admin_creds_path)
     user_creds = load_user_creds(user_creds_path)
-    AccountInitializer(
-        admin_creds, user_creds, user_creds_path, logger, "user"
-    ).run()
+    AccountInitializer(admin_creds, user_creds, user_creds_path, logger, "user").run()
 
 
 def _run_replace_images(dirs: tuple[str, str], logger: Logger) -> None:
@@ -133,6 +144,12 @@ def _run_ingest(
             "--ingest requires --local-db-dir DIR and --creds CREDS_JSON"
         )
     TxtIngester(Path(src_dir), Path(local_db_dir), load_creds(creds_path), logger).run()
+
+
+def _run_update_db(creds_path: str, local_db_dir: str | None, logger: Logger) -> None:
+    if not local_db_dir:
+        raise click.UsageError("--update-db requires --local-db-dir DIR")
+    DbUpdater(load_creds(creds_path), Path(local_db_dir), logger).run()
 
 
 def run(argv: list | None = None) -> None:

@@ -25,9 +25,7 @@ def test_init_user_without_admin_or_user_creds_is_a_usage_error():
 def test_init_user_without_user_creds_is_a_usage_error(tmp_path):
     admin_path = tmp_path / "admin.json"
     admin_path.write_text("{}")
-    result = CliRunner().invoke(
-        cli, ["--init-user", "--admin-creds", str(admin_path)]
-    )
+    result = CliRunner().invoke(cli, ["--init-user", "--admin-creds", str(admin_path)])
     assert result.exit_code != 0
     assert "--user-creds" in result.output
 
@@ -44,5 +42,13 @@ def test_ingest_without_local_db_dir_or_creds_is_a_usage_error(tmp_path):
     src = tmp_path / "src"
     src.mkdir()
     result = CliRunner().invoke(cli, ["--ingest", str(src)])
+    assert result.exit_code != 0
+    assert "--local-db-dir" in result.output
+
+
+def test_update_db_without_local_db_dir_is_a_usage_error(tmp_path):
+    creds_path = tmp_path / "creds.json"
+    creds_path.write_text("{}")
+    result = CliRunner().invoke(cli, ["--update-db", str(creds_path)])
     assert result.exit_code != 0
     assert "--local-db-dir" in result.output

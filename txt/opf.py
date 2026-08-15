@@ -97,3 +97,28 @@ def parse_opf_metadata(opf_path: Path) -> dict:
     metadata = _metadata_dict(metadata_el)
     logger.debug("%s: parsed field(s): %s", opf_path, sorted(metadata))
     return metadata
+
+
+def field_strings(value) -> list:
+    """Normalizes one parse_opf_metadata() field into a flat list of
+    strings: absent -> [], a bare string or an attributed {"text": ...}
+    dict -> a single-item list, a list of either -> itself, flattened.
+    """
+    if value is None:
+        return []
+    items = value if isinstance(value, list) else [value]
+    return [item["text"] if isinstance(item, dict) else item for item in items]
+
+
+def catalog_fields(opf_metadata: dict, fallback_name: str) -> dict:
+    """Extracts just {title, authors, subjects, publisher} -- the whole
+    catalog (docs/data_model.md §3.1) -- from a parse_opf_metadata()-shaped
+    dict (or {} if there was none)."""
+    titles = field_strings(opf_metadata.get("title"))
+    publishers = field_strings(opf_metadata.get("publisher"))
+    return {
+        "title": titles[0] if titles else fallback_name,
+        "authors": field_strings(opf_metadata.get("creator")),
+        "subjects": field_strings(opf_metadata.get("subject")),
+        "publisher": publishers[0] if publishers else None,
+    }
