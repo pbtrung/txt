@@ -27,6 +27,9 @@ interface R2Credential {
   secret_access_key: string;
   session_token: string;
   expiration: string;
+  endpoint: string;
+  bucket: string;
+  region: string;
 }
 
 interface Paths {
@@ -104,6 +107,11 @@ async function mintCredential(
     // (+/'s and '=' padding) with InvalidArgument on X-Amz-Security-Token.
     session_token: base64url.encode(`jwt/${jwt}`),
     expiration: new Date(Date.now() + TTL_SECONDS * 1000).toISOString(),
+    // The client carries no R2 connection details of its own -- this
+    // response is its only source of them (docs/auth.md §4.2).
+    endpoint: env.R2_ENDPOINT,
+    bucket: env.R2_BUCKET,
+    region: env.R2_REGION,
   };
 }
 

@@ -11,6 +11,7 @@ const ENV = {
   FIREBASE_PROJECT_ID: "proj",
   R2_ENDPOINT: "https://account123.r2.cloudflarestorage.com",
   R2_BUCKET: "txt-bucket",
+  R2_REGION: "auto",
   R2_READ_WRITE_ACCESS_KEY_ID: "parent-access-key",
   R2_READ_WRITE_SECRET_ACCESS_KEY: "parent-secret-key",
 } as unknown as Env;
@@ -87,11 +88,17 @@ describe("handleR2Token", () => {
       secret_access_key: string;
       session_token: string;
       expiration: string;
+      endpoint: string;
+      bucket: string;
+      region: string;
     };
 
     expect(body.access_key_id).toBe("parent-access-key");
     expect(typeof body.secret_access_key).toBe("string");
     expect(new Date(body.expiration).getTime()).toBeGreaterThan(Date.now());
+    expect(body.endpoint).toBe(ENV.R2_ENDPOINT);
+    expect(body.bucket).toBe(ENV.R2_BUCKET);
+    expect(body.region).toBe(ENV.R2_REGION);
 
     const { payload } = await decodeSessionTokenJwt(body.session_token);
     expect(payload.bucket).toBe("txt-bucket");
@@ -111,7 +118,16 @@ describe("handleR2Token", () => {
 
     const resp = await handleR2Token(makeRequest({}), ENV);
     expect(resp.status).toBe(200);
-    const body = (await resp.json()) as { session_token: string };
+    const body = (await resp.json()) as {
+      session_token: string;
+      endpoint: string;
+      bucket: string;
+      region: string;
+    };
+
+    expect(body.endpoint).toBe(ENV.R2_ENDPOINT);
+    expect(body.bucket).toBe(ENV.R2_BUCKET);
+    expect(body.region).toBe(ENV.R2_REGION);
 
     const { payload } = await decodeSessionTokenJwt(body.session_token);
     expect(payload.scope).toBe("object-read-write");

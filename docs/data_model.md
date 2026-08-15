@@ -17,7 +17,7 @@ s3://{bucket}/{db_prefix}/{txt.txt_prefix}/{txt.path}
 
 The first is the user's whole SQLCipher database — one object, downloaded whole and uploaded whole. The second is one document's content — one object per `txt` row, addressed by that row's own `txt_prefix`/`path` columns rather than by `id`, so listing or guessing one document's key reveals nothing about any other. Both `txt_prefix` and `path` are raw random bytes in the database and rendered as base32-Crockford strings when used as key segments, the same recipe as `db_path`/`db_prefix` (docs/auth.md).
 
-`{bucket}` is not a secret — it comes from the client's own local config, alongside the R2 endpoint and region.
+`{bucket}` is not a secret, but the client carries no R2 connection details of its own — `bucket`, along with the endpoint and region, travels in the `/v1/r2-token` response itself (docs/auth.md §4.2), the client's only source of R2 configuration.
 
 ---
 

@@ -9,7 +9,7 @@
     "worker:dev": "wrangler dev",
     "ui:dev": "vite --config ui/vite.config.ts",
     "ui:typecheck": "tsc -b ui/tsconfig.json",
-    "ui:build": "tsc -b ui/tsconfig.json && vite build --config ui/vite.config.ts && rm -rf dist/test-* dist/sqlcipher.js.symbols dist/package.json ui/node_modules",
+    "ui:build": "tsc -b ui/tsconfig.json && vite build --config ui/vite.config.ts && rm -rf dist/test-* dist/sqlcipher.js.symbols dist/*.mjs dist/package.json ui/node_modules",
     "ui:test": "vitest run --config ui/vite.config.ts",
     "deploy": "sh scripts/deploy.sh",
     "format": "prettier --write \"**/*.{ts,tsx}\"",

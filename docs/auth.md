@@ -155,9 +155,14 @@ Content-Type: application/json
   "access_key_id": "...",
   "secret_access_key": "...",
   "session_token": "...",
-  "expiration": "..."
+  "expiration": "...",
+  "endpoint": "...",
+  "bucket": "...",
+  "region": "..."
 }
 ```
+
+The client carries no R2 connection details of its own — `endpoint`/`bucket`/`region` (not secrets, but still needed to address any R2 request at all) travel alongside the temporary credential itself, so this response is the client's only source of R2 configuration.
 
 Scoped read-only to the single object at `db_path` and to `{db_prefix}/*` for an ordinary user (`type = 'user'`) — both need their own authorization, since `db_path` addresses one object rather than a prefix and isn't covered by a `db_prefix`-scoped grant; bucket-wide read-write for the admin's own uid (`type = 'admin'`), since the admin also holds every provisioned user's backup. The Worker does not independently verify that the supplied `db_path`/`db_prefix` belong to the caller — see §8.
 
