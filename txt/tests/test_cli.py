@@ -27,3 +27,11 @@ def test_replace_images_processes_a_directory(tmp_path):
     result = CliRunner().invoke(cli, ["--replace-images", str(src), str(dst)])
     assert result.exit_code == 0
     assert dst.is_dir()
+
+
+def test_ingest_without_local_db_dir_or_creds_is_a_usage_error(tmp_path):
+    src = tmp_path / "src"
+    src.mkdir()
+    result = CliRunner().invoke(cli, ["--ingest", str(src)])
+    assert result.exit_code != 0
+    assert "--local-db-dir" in result.output
