@@ -19,10 +19,14 @@
     "aws4fetch": "^1.0.20",
     "bootstrap": "^5.3.8",
     "bootstrap-icons": "^1.13.1",
+    "epubjs": "^0.3.93",
     "jose": "^6.2.8",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-router-dom": "^7.18.2"
+  },
+  "overrides": {
+    "@xmldom/xmldom": "^0.8.14"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260815.1",
