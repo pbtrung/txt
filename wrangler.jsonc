@@ -1,0 +1,23 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	// A placeholder, not the real name -- scripts/deploy.sh always overrides
+	// this via `wrangler deploy --name "$WORKER_NAME"` (erroring out if
+	// WORKER_NAME is unset/empty) so the actual deploy target never depends
+	// on this file matching whatever Worker resource actually exists on
+	// Cloudflare. Must still be a syntactically valid Worker name (lowercase,
+	// alphanumeric + hyphens) for `wrangler` to parse this file at all.
+	"name": "unused-placeholder-set-worker-name-via-env-var",
+	"compatibility_date": "2026-08-14",
+	"main": "worker/index.ts",
+	// No [vars] block for secrets here on purpose -- see worker/env.d.ts.
+	"kv_namespaces": [
+		{
+			"binding": "KEYS_CACHE",
+			// Placeholder -- replace with the real id after running
+			// `wrangler kv namespace create keys-cache` once, then commit the
+			// real id (KV namespace ids aren't secret, just per-account resource
+			// identifiers).
+			"id": "e790702a42b74a749f66796853244c11",
+		},
+	],
+}

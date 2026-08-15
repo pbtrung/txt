@@ -1,0 +1,24 @@
+{
+  "name": "txt",
+  "version": "0.9999",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "worker:typecheck": "wrangler types worker/worker-configuration.d.ts && tsc -b worker/tsconfig.json",
+    "worker:test": "vitest run worker",
+    "worker:dev": "wrangler dev",
+    "deploy": "sh scripts/deploy.sh",
+    "format": "prettier --write \"**/*.ts\"",
+    "format:check": "prettier --check \"**/*.ts\""
+  },
+  "dependencies": {
+    "jose": "^6.2.8"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260815.1",
+    "prettier": "^3.9.6",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10",
+    "wrangler": "^4.123.0"
+  }
+}

@@ -18,8 +18,7 @@ There is exactly one Turso database, `ctl` (§2), holding the three tables that 
 | `CTL_DB_TOKEN` | a non-expiring `read-only` database token for `ctl` |
 | `FIREBASE_PROJECT_ID` | expected `iss` and `aud` of incoming ID tokens |
 | `R2_ENDPOINT`, `R2_BUCKET`, `R2_REGION` | the object store the R2 credential in §4.2 is scoped into |
-| `R2_READ_WRITE_ACCESS_KEY_ID` / `R2_READ_WRITE_SECRET_ACCESS_KEY` | parent credential the admin's bucket-wide, read-write temporary credential is signed from |
-| `R2_READ_ONLY_ACCESS_KEY_ID` / `R2_READ_ONLY_SECRET_ACCESS_KEY` | parent credential an ordinary user's prefix-scoped, read-only temporary credential is signed from |
+| `R2_READ_WRITE_ACCESS_KEY_ID` / `R2_READ_WRITE_SECRET_ACCESS_KEY` | parent credential every §4.2 temporary credential is signed from, whether it ends up bucket-wide read-write for the admin or prefix/object-scoped read-only for an ordinary user — the scoping lives in what's signed, not in which parent key signs it |
 
 ---
 
