@@ -56,4 +56,8 @@
 
 .search-box-input:focus {
   background-color: var(--bs-body-bg);
+  /* Bootstrap's own focus ring (.25rem spread) reads as thick against
+     this small a field -- a slimmer, tighter glow still marks focus
+     clearly without the heavy halo. */
+  box-shadow: 0 0 0 0.1rem rgba(var(--bs-primary-rgb), 0.25);
 }
