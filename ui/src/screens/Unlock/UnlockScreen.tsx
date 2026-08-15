@@ -35,7 +35,7 @@ export function UnlockScreen() {
       </h1>
       <button
         type="button"
-        className="btn btn-primary w-100"
+        className="btn btn-primary px-4"
         onClick={() => inputRef.current?.click()}
         disabled={unlocking}
       >
