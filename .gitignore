@@ -7,6 +7,7 @@ npm-debug.log*
 .npm/
 .env
 .env.*
+*.tsbuildinfo
 
 # Python
 __pycache__/
@@ -22,7 +23,6 @@ dist/
 *.egg
 
 # Secrets / data
-*.json
 *.db
 creds/
 replaced_txt_*/
