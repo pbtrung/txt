@@ -79,6 +79,8 @@ class AccountInitializer:
         ikm = base64.b64decode(self.target_creds.user_root_key)
         umk = self._ensure_key_store(ctl, uid, ikm)
         self._ensure_cred_store(ctl, uid, umk)
+        if self.account_type == "user":
+            self._ensure_admin_backup(ctl, uid, umk)
         self.logger.info(f"{self.account_type.capitalize()} {uid} ready in ctl.")
 
     def _sign_in(self, creds: Creds | UserCreds) -> str:
@@ -170,3 +172,36 @@ class AccountInitializer:
             [uid, uid, content],
         )
         self.logger.verbose("cred_store row inserted.")
+
+    def _ensure_admin_backup(
+        self, ctl: LibsqlClient, user_uid: str, user_umk: bytes
+    ) -> None:
+        """docs/auth.md §2: a second cred_store row, owner_id = the admin's
+        uid, wrapped under the admin's own umk -- so the admin alone can
+        later recover this user's db_master_key/db_path/db_prefix (used by
+        --update-db). Only ever called for account_type == "user"; the
+        admin's own self-row from _ensure_cred_store already covers them.
+        """
+        admin_uid = self._sign_in(self.admin_creds)
+        if ctl.query(
+            "SELECT 1 FROM cred_store WHERE owner_id = ? AND for_user_id = ?",
+            [admin_uid, user_uid],
+        ):
+            self.logger.verbose(f"admin backup row for {user_uid} already exists.")
+            return
+        admin_ikm = base64.b64decode(self.admin_creds.user_root_key)
+        admin_wrapped_umk = ctl.query(
+            "SELECT umk FROM key_store WHERE user_id = ?", [admin_uid]
+        )[0][0]
+        admin_umk = self.blob.decrypt(admin_wrapped_umk, admin_ikm)
+        user_content = ctl.query(
+            "SELECT content FROM cred_store WHERE owner_id = ? AND for_user_id = ?",
+            [user_uid, user_uid],
+        )[0][0]
+        payload = self.blob.decrypt_json(user_content, user_umk)
+        wrapped_for_admin = self.blob.encrypt_json(payload, admin_umk)
+        ctl.execute(
+            "INSERT INTO cred_store (owner_id, for_user_id, content) VALUES (?, ?, ?)",
+            [admin_uid, user_uid, wrapped_for_admin],
+        )
+        self.logger.verbose(f"Inserted admin backup cred_store row for {user_uid}.")
