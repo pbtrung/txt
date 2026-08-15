@@ -108,7 +108,7 @@ describe("ReaderScreen", () => {
     mockReadyDocument();
     renderScreen();
 
-    expect(screen.getByRole("heading", { name: "Dune" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Dune", level: 1 })).toBeInTheDocument();
     expect(vi.mocked(EpubRenderer)).toHaveBeenCalledWith(new Uint8Array([1, 2, 3]));
   });
 
@@ -175,6 +175,7 @@ describe("ReaderScreen", () => {
       setFontSize: (size: string) => void;
     };
 
+    await userEvent.click(screen.getByRole("button", { name: "Display settings" }));
     await userEvent.click(screen.getByRole("button", { name: "Increase font size" }));
 
     expect(instance.setFontSize).toHaveBeenLastCalledWith("19px");
@@ -187,6 +188,7 @@ describe("ReaderScreen", () => {
     const instance = vi.mocked(EpubRenderer).mock.results[0].value as {
       setColumns: (count: 1 | 2) => void;
     };
+    await userEvent.click(screen.getByRole("button", { name: "Display settings" }));
     const button = screen.getByRole("button", { name: "Two-column layout" });
     expect(instance.setColumns).toHaveBeenCalledWith(1);
     expect(button).toHaveAttribute("aria-pressed", "false");

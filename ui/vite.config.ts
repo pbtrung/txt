@@ -26,6 +26,15 @@ export default defineConfig({
   // from the repo root, not from inside ui/ itself.
   root: UI_DIR,
   plugins: [react()],
+  css: {
+    preprocessorOptions: {
+      // Bootstrap's own SCSS still calls Sass's legacy red()/green()/blue()
+      // color functions internally -- harmless upstream deprecation noise
+      // this app's own code doesn't trigger, not worth drowning real
+      // warnings in.
+      scss: { quietDeps: true },
+    },
+  },
   // sqlcipher/ is served as-is at the site root (/sqlcipher.js,
   // /sqlcipher.wasm) so the browser loader can fetch it directly. The other
   // files living there (test scripts, the .symbols list) get copied along

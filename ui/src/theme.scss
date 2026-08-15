@@ -1,0 +1,44 @@
+// Solarized Light (Ethan Schoonover's palette) mapped onto Bootstrap's own
+// Sass variables, so every component -- buttons, badges, list-group,
+// offcanvas, forms, alerts -- is recolored consistently at build time
+// rather than only the handful of things a runtime CSS-variable override
+// would reach (most of Bootstrap 5's compiled classes bake their colors
+// into component-local custom properties, not the root `--bs-*` ones).
+$base03: #002b36;
+$base02: #073642;
+$base01: #586e75;
+$base00: #657b83;
+$base1: #93a1a1;
+$base2: #eee8d5;
+$base3: #fdf6e3;
+
+$blue: #268bd2;
+$cyan: #2aa198;
+$green: #859900;
+$yellow: #b58900;
+$orange: #cb4b16;
+$red: #dc322f;
+$magenta: #d33682;
+$violet: #6c71c4;
+
+// `@use ... with (...)` (not the legacy `@import` + pre-declared-variable
+// pattern) is Bootstrap 5.2+'s own recommended theming entry point --
+// `with` only accepts the module's own `!default` variables, so the
+// Solarized values above stay as plain locals and get passed in by name.
+@use "bootstrap/scss/bootstrap" with (
+  $primary: $blue,
+  $secondary: $base1,
+  $success: $green,
+  $info: $cyan,
+  $warning: $yellow,
+  $danger: $red,
+  $light: $base2,
+  $dark: $base02,
+  $body-bg: $base3,
+  $body-color: $base00,
+  $headings-color: $base01,
+  $border-color: $base2,
+  $link-color: $blue,
+  $link-hover-color: #1e6fa8,
+  $component-active-bg: $blue
+);

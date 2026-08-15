@@ -1,9 +1,14 @@
 // Renders the requested document with epub.js: page navigation, a table of
-// contents, book info, column layout, and font size controls.
+// contents, book info, column layout, and font size controls. Font/column
+// controls live behind one "Display" dropdown rather than sitting in the
+// toolbar directly -- five always-visible icon buttons plus the title
+// leaves more room to breathe than nine would, especially on a narrow
+// screen.
 import { Fragment, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { OffcanvasPanel } from "../../components/OffcanvasPanel";
 import { EpubRenderer } from "../../data/epubRenderer";
+import type { MetadataField } from "../../data/readerDocument";
 import { useVault } from "../../state/VaultContext";
 import { TocPanel } from "./TocPanel";
 import { useReaderDocument } from "./useReaderDocument";
@@ -29,6 +34,7 @@ export function ReaderScreen() {
   const [renderer, setRenderer] = useState<EpubRenderer | null>(null);
   const [fontPx, setFontPx] = useState(defaultFontPx);
   const [columns, setColumns] = useState<1 | 2>(1);
+  const [displayOpen, setDisplayOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
   const [tocOpen, setTocOpen] = useState(false);
 
@@ -119,32 +125,15 @@ export function ReaderScreen() {
         >
           <i className="bi bi-chevron-right" />
         </button>
-        <button
-          type="button"
-          className="btn btn-sm btn-outline-secondary"
-          aria-label="Decrease font size"
-          onClick={() => adjustFontSize(-FONT_STEP_PX)}
-        >
-          <i className="bi bi-dash" />
-        </button>
-        <button
-          type="button"
-          className="btn btn-sm btn-outline-secondary"
-          aria-label="Increase font size"
-          onClick={() => adjustFontSize(FONT_STEP_PX)}
-        >
-          <i className="bi bi-plus" />
-        </button>
-        <button
-          type="button"
-          className={`btn btn-sm btn-outline-secondary ${columns === 2 ? "active" : ""}`}
-          aria-pressed={columns === 2}
-          aria-label="Two-column layout"
-          onClick={toggleColumns}
-        >
-          <i className="bi bi-columns-gap" />
-        </button>
         <h1 className="h6 mb-0 mx-2 text-truncate flex-grow-1">{document!.title}</h1>
+        <DisplayMenu
+          open={displayOpen}
+          onToggle={() => setDisplayOpen((v) => !v)}
+          onDecreaseFont={() => adjustFontSize(-FONT_STEP_PX)}
+          onIncreaseFont={() => adjustFontSize(FONT_STEP_PX)}
+          columns={columns}
+          onToggleColumns={toggleColumns}
+        />
         <button
           type="button"
           className="btn btn-sm btn-outline-secondary"
@@ -165,37 +154,125 @@ export function ReaderScreen() {
 
       <div ref={containerRef} className="flex-grow-1" />
 
-      <OffcanvasPanel open={infoOpen} onClose={() => setInfoOpen(false)} title="Info">
-        <dl className="mb-0">
-          <dt>Title</dt>
-          <dd>{document!.title}</dd>
-          {document!.authors.length > 0 && (
-            <>
-              <dt>Author{document!.authors.length > 1 ? "s" : ""}</dt>
-              <dd>{document!.authors.join(", ")}</dd>
-            </>
-          )}
-          {document!.publisher && (
-            <>
-              <dt>Publisher</dt>
-              <dd>{document!.publisher}</dd>
-            </>
-          )}
-          {document!.subjects.length > 0 && (
-            <>
-              <dt>Subjects</dt>
-              <dd>{document!.subjects.join(", ")}</dd>
-            </>
-          )}
-          {document!.extraMetadata.map((field, i) => (
-            <Fragment key={`${field.label}-${i}`}>
-              <dt>{field.label}</dt>
-              <dd>{field.values.join(", ")}</dd>
-            </Fragment>
-          ))}
-        </dl>
-      </OffcanvasPanel>
+      <InfoPanel
+        open={infoOpen}
+        onClose={() => setInfoOpen(false)}
+        document={document!}
+      />
       <TocPanel open={tocOpen} onClose={() => setTocOpen(false)} renderer={renderer} />
     </div>
+  );
+}
+
+function DisplayMenu({
+  open,
+  onToggle,
+  onDecreaseFont,
+  onIncreaseFont,
+  columns,
+  onToggleColumns,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  onDecreaseFont: () => void;
+  onIncreaseFont: () => void;
+  columns: 1 | 2;
+  onToggleColumns: () => void;
+}) {
+  return (
+    <div className="dropdown">
+      <button
+        type="button"
+        className="btn btn-sm btn-outline-secondary"
+        aria-label="Display settings"
+        aria-expanded={open}
+        onClick={onToggle}
+      >
+        <i className="bi bi-textarea-t" />
+      </button>
+      <div
+        className={`dropdown-menu dropdown-menu-end p-3 ${open ? "show" : ""}`}
+        style={{ minWidth: "14rem" }}
+      >
+        <div className="d-flex align-items-center justify-content-between gap-3 mb-3">
+          <span className="small text-muted">Font size</span>
+          <div>
+            <button
+              type="button"
+              className="btn btn-sm btn-outline-secondary"
+              aria-label="Decrease font size"
+              onClick={onDecreaseFont}
+            >
+              <i className="bi bi-dash" />
+            </button>
+            <button
+              type="button"
+              className="btn btn-sm btn-outline-secondary ms-1"
+              aria-label="Increase font size"
+              onClick={onIncreaseFont}
+            >
+              <i className="bi bi-plus" />
+            </button>
+          </div>
+        </div>
+        <div className="d-flex align-items-center justify-content-between gap-3">
+          <span className="small text-muted">Two columns</span>
+          <button
+            type="button"
+            className={`btn btn-sm btn-outline-secondary ${columns === 2 ? "active" : ""}`}
+            aria-pressed={columns === 2}
+            aria-label="Two-column layout"
+            onClick={onToggleColumns}
+          >
+            <i className="bi bi-columns-gap" />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function InfoPanel({
+  open,
+  onClose,
+  document,
+}: {
+  open: boolean;
+  onClose: () => void;
+  document: {
+    title: string;
+    authors: string[];
+    subjects: string[];
+    publisher: string | null;
+    extraMetadata: MetadataField[];
+  };
+}) {
+  return (
+    <OffcanvasPanel open={open} onClose={onClose} title="Info">
+      <h2 className="h5 mb-1">{document.title}</h2>
+      {document.authors.length > 0 && (
+        <p className="text-muted mb-3">{document.authors.join(", ")}</p>
+      )}
+      <dl className="row small mb-0">
+        {document.publisher && (
+          <>
+            <dt className="col-4 col-md-3 text-muted fw-normal">Publisher</dt>
+            <dd className="col-8 col-md-9">{document.publisher}</dd>
+          </>
+        )}
+        {document.subjects.length > 0 && (
+          <>
+            <dt className="col-4 col-md-3 text-muted fw-normal">Subjects</dt>
+            <dd className="col-8 col-md-9">{document.subjects.join(", ")}</dd>
+          </>
+        )}
+        {document.extraMetadata.map((field, i) => (
+          <Fragment key={`${field.label}-${i}`}>
+            <dt className="col-4 col-md-3 text-muted fw-normal">{field.label}</dt>
+            <dd className="col-8 col-md-9">{field.values.join(", ")}</dd>
+          </Fragment>
+        ))}
+      </dl>
+    </OffcanvasPanel>
   );
 }

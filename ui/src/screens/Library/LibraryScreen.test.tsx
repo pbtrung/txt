@@ -6,6 +6,21 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("../../state/VaultContext", () => ({ useVault: vi.fn() }));
 vi.mock("./useLibraryBooks", () => ({ useLibraryBooks: vi.fn() }));
+// jsdom reports a zero-size scroll container, so the real virtualizer would
+// see nothing as "in view" and render no rows at all -- these tests care
+// about search/filter/link behavior, not which rows a real viewport would
+// show, so every row is rendered unconditionally instead.
+vi.mock("@tanstack/react-virtual", () => ({
+  useVirtualizer: (options: { count: number }) => ({
+    getTotalSize: () => options.count * 64,
+    getVirtualItems: () =>
+      Array.from({ length: options.count }, (_, index) => ({
+        index,
+        start: index * 64,
+        key: index,
+      })),
+  }),
+}));
 
 import type { LibraryBook } from "../../data/libraryDb";
 import { useVault, type VaultSession } from "../../state/VaultContext";
@@ -89,6 +104,30 @@ describe("LibraryScreen", () => {
     expect(screen.queryByRole("link", { name: /Dune/ })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /Fantasy/ }));
+    expect(screen.getByRole("link", { name: /Dune/ })).toBeInTheDocument();
+  });
+
+  it("shows an empty-library message when there are no books at all", () => {
+    renderScreen([]);
+    expect(screen.getByText("Your library is empty.")).toBeInTheDocument();
+  });
+
+  it("shows a no-matches message when a search matches nothing", async () => {
+    renderScreen(LIBRARY);
+    await userEvent.type(screen.getByRole("searchbox"), "nonexistent");
+    expect(screen.getByText("No books match.")).toBeInTheDocument();
+  });
+
+  it("shows a clearable chip while a browse filter is active", async () => {
+    renderScreen(LIBRARY);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /Fantasy/ }));
+
+    expect(screen.getByText(/subject: Fantasy/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Clear filter" }));
+
+    expect(screen.queryByText(/subject: Fantasy/)).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Dune/ })).toBeInTheDocument();
   });
 

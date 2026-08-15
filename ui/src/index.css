@@ -14,3 +14,19 @@
     max-width: 80%;
   }
 }
+
+/* Library book rows: the whole row is the click target (not just the
+   title), so a subtle hover/focus background is what shows a row is
+   interactive -- Bootstrap has no ready-made "clickable list row" utility. */
+.book-row:hover,
+.book-row:focus-visible {
+  background-color: var(--bs-tertiary-bg);
+}
+
+.book-row-icon {
+  width: 2.5rem;
+  height: 2.5rem;
+  background-color: var(--bs-tertiary-bg);
+  color: var(--bs-secondary-color);
+  font-size: 1.1rem;
+}

@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@fontsource/literata": "^5.3.0",
+    "@tanstack/react-virtual": "^3.14.9",
     "aws4fetch": "^1.0.20",
     "bootstrap": "^5.3.8",
     "bootstrap-icons": "^1.13.1",
@@ -43,6 +44,7 @@
     "fake-indexeddb": "^6.2.5",
     "jsdom": "^30.0.1",
     "prettier": "^3.9.6",
+    "sass": "^1.102.0",
     "typescript": "^7.0.2",
     "vite": "^8.2.1",
     "vitest": "^4.1.10",
