@@ -33,6 +33,27 @@ def test_load_creds_defaults_optional_fields(creds_path):
     creds = load_creds(creds_path)
     assert creds.display_name == ""
     assert creds.user_root_key == ""
+    assert creds.r2_config is None
+
+
+def test_load_creds_parses_r2_config_when_present(tmp_path):
+    data = {
+        **VALID,
+        "r2_config": {
+            "endpoint": "https://x.r2.cloudflarestorage.com",
+            "read_only_access_key_id": "ro-id",
+            "read_only_secret_access_key": "ro-secret",
+            "read_write_access_key_id": "rw-id",
+            "read_write_secret_access_key": "rw-secret",
+            "region": "auto",
+            "bucket": "my-bucket",
+        },
+    }
+    path = tmp_path / "creds.json"
+    path.write_text(json.dumps(data))
+    creds = load_creds(str(path))
+    assert creds.r2_config.bucket == "my-bucket"
+    assert creds.r2_config.read_write_access_key_id == "rw-id"
 
 
 def test_load_creds_reads_required_fields(creds_path):
