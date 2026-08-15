@@ -3,8 +3,8 @@ import json
 
 import pytest
 
-import txt.admin_init as admin_init_module
-from txt.admin_init import AdminInitializer
+import txt.account_init as account_init_module
+from txt.account_init import AccountInitializer
 from txt.creds import load_creds
 from txt.crypto_blob import CryptoBlob
 
@@ -69,9 +69,9 @@ def _table_name(sql: str) -> str:
 
 @pytest.fixture(autouse=True)
 def patch_clients(monkeypatch):
-    monkeypatch.setattr(admin_init_module, "FirebaseAuth", FakeFirebaseAuth)
-    monkeypatch.setattr(admin_init_module, "TursoClient", FakeTursoClient)
-    monkeypatch.setattr(admin_init_module, "LibsqlClient", FakeLibsqlClient)
+    monkeypatch.setattr(account_init_module, "FirebaseAuth", FakeFirebaseAuth)
+    monkeypatch.setattr(account_init_module, "TursoClient", FakeTursoClient)
+    monkeypatch.setattr(account_init_module, "LibsqlClient", FakeLibsqlClient)
     FakeLibsqlClient.preset = {}
     FakeLibsqlClient.last_instance = None
     yield
@@ -93,12 +93,11 @@ def creds_path(tmp_path):
     return str(path)
 
 
-def test_creates_schema_for_all_three_tables(creds_path):
-    AdminInitializer(load_creds(creds_path), creds_path, NullLogger()).run()
+@pytest.mark.parametrize("account_type", ["admin", "user"])
+def test_creates_schema_for_all_three_tables(creds_path, account_type):
+    AccountInitializer(load_creds(creds_path), creds_path, NullLogger(), account_type).run()
     ctl = FakeLibsqlClient.last_instance
-    schema_calls = [
-        c for c in ctl.calls if c[0] == "execute" and "CREATE TABLE" in c[1]
-    ]
+    schema_calls = [c for c in ctl.calls if c[0] == "execute" and "CREATE TABLE" in c[1]]
     assert {_table_name(sql) for _kind, sql, _args in schema_calls} == {
         "users",
         "key_store",
@@ -106,26 +105,25 @@ def test_creates_schema_for_all_three_tables(creds_path):
     }
 
 
-def test_registers_admin_row(creds_path):
-    AdminInitializer(load_creds(creds_path), creds_path, NullLogger()).run()
+@pytest.mark.parametrize("account_type", ["admin", "user"])
+def test_registers_account_row(creds_path, account_type):
+    AccountInitializer(load_creds(creds_path), creds_path, NullLogger(), account_type).run()
     ctl = FakeLibsqlClient.last_instance
-    uid, created_at = ctl.insert_args("users")
-    assert uid == UID
-    assert "'admin'" in next(
-        s for kind, s, _a in ctl.calls if kind == "execute" and "INSERT INTO users" in s
-    )
+    uid, type_, created_at = ctl.insert_args("users")
+    assert (uid, type_) == (UID, account_type)
     assert isinstance(created_at, int)
 
 
-def test_persists_generated_user_root_key(creds_path):
-    AdminInitializer(load_creds(creds_path), creds_path, NullLogger()).run()
+@pytest.mark.parametrize("account_type", ["admin", "user"])
+def test_persists_generated_user_root_key(creds_path, account_type):
+    AccountInitializer(load_creds(creds_path), creds_path, NullLogger(), account_type).run()
     with open(creds_path) as f:
         saved = json.load(f)
     assert len(base64.b64decode(saved["user_root_key"])) == 256
 
 
-def test_key_store_and_cred_store_decrypt_correctly(creds_path, engine):
-    AdminInitializer(load_creds(creds_path), creds_path, NullLogger()).run()
+def test_admin_key_store_has_composite_kem_keypair(creds_path, engine):
+    AccountInitializer(load_creds(creds_path), creds_path, NullLogger(), "admin").run()
     ctl = FakeLibsqlClient.last_instance
     with open(creds_path) as f:
         ikm = base64.b64decode(json.load(f)["user_root_key"])
@@ -138,6 +136,23 @@ def test_key_store_and_cred_store_decrypt_correctly(creds_path, engine):
     assert len(pubkey) == 1624
     assert len(blob.decrypt(wrapped_privkey, umk)) == 3224
 
+
+def test_user_key_store_has_no_kem_keypair(creds_path):
+    AccountInitializer(load_creds(creds_path), creds_path, NullLogger(), "user").run()
+    ctl = FakeLibsqlClient.last_instance
+    uid, _wrapped_umk = ctl.insert_args("key_store")
+    assert uid == UID
+
+
+@pytest.mark.parametrize("account_type", ["admin", "user"])
+def test_cred_store_decrypts_correctly(creds_path, engine, account_type):
+    AccountInitializer(load_creds(creds_path), creds_path, NullLogger(), account_type).run()
+    ctl = FakeLibsqlClient.last_instance
+    with open(creds_path) as f:
+        ikm = base64.b64decode(json.load(f)["user_root_key"])
+
+    blob = CryptoBlob(engine)
+    umk = blob.decrypt(ctl.insert_args("key_store")[1], ikm)
     owner_id, for_user_id, content = ctl.insert_args("cred_store")
     assert owner_id == for_user_id == UID
     payload = blob.decrypt_json(content, umk)
@@ -147,8 +162,9 @@ def test_key_store_and_cred_store_decrypt_correctly(creds_path, engine):
     assert payload["db_path"] != payload["db_prefix"]
 
 
-def test_second_run_does_not_reinsert(creds_path):
-    AdminInitializer(load_creds(creds_path), creds_path, NullLogger()).run()
+@pytest.mark.parametrize("account_type", ["admin", "user"])
+def test_second_run_does_not_reinsert(creds_path, account_type):
+    AccountInitializer(load_creds(creds_path), creds_path, NullLogger(), account_type).run()
     first_ctl = FakeLibsqlClient.last_instance
     FakeLibsqlClient.preset = {
         "SELECT id FROM users": [[UID]],
@@ -156,7 +172,7 @@ def test_second_run_does_not_reinsert(creds_path):
         "SELECT content FROM cred_store": [[first_ctl.insert_args("cred_store")[2]]],
     }
 
-    AdminInitializer(load_creds(creds_path), creds_path, NullLogger()).run()
+    AccountInitializer(load_creds(creds_path), creds_path, NullLogger(), account_type).run()
     second_ctl = FakeLibsqlClient.last_instance
     inserts = [c for c in second_ctl.calls if c[0] == "execute" and "INSERT" in c[1]]
     assert inserts == []

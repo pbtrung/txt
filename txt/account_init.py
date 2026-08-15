@@ -39,11 +39,12 @@ CREATE TABLE IF NOT EXISTS cred_store (
 """
 
 
-class AdminInitializer:
-    def __init__(self, creds: Creds, creds_path: str, logger: Logger):
+class AccountInitializer:
+    def __init__(self, creds: Creds, creds_path: str, logger: Logger, account_type: str):
         self.creds = creds
         self.creds_path = creds_path
         self.logger = logger
+        self.account_type = account_type
         account_name = extract_account_name(
             creds.turso_ctl_db_url, creds.turso_ctl_db_name
         )
@@ -52,7 +53,7 @@ class AdminInitializer:
         self.blob = CryptoBlob(self.engine)
 
     def run(self) -> None:
-        self.logger.verbose("Starting admin bootstrap...")
+        self.logger.verbose(f"Starting {self.account_type} bootstrap...")
         uid = self._sign_in()
         ctl = self._ensure_schema()
         self._ensure_users_row(ctl, uid)
@@ -60,7 +61,7 @@ class AdminInitializer:
         ikm = base64.b64decode(self.creds.user_root_key)
         umk = self._ensure_key_store(ctl, uid, ikm)
         self._ensure_cred_store(ctl, uid, umk)
-        self.logger.info(f"Admin {uid} ready in ctl.")
+        self.logger.info(f"{self.account_type.capitalize()} {uid} ready in ctl.")
 
     def _sign_in(self) -> str:
         self.logger.verbose(f"Signing in to Firebase as {self.creds.firebase_email}...")
@@ -91,10 +92,10 @@ class AdminInitializer:
             return
         created_at = int(time.time() * 1000)
         ctl.execute(
-            "INSERT INTO users (id, type, created_at) VALUES (?, 'admin', ?)",
-            [uid, created_at],
+            "INSERT INTO users (id, type, created_at) VALUES (?, ?, ?)",
+            [uid, self.account_type, created_at],
         )
-        self.logger.verbose(f"Inserted users row for {uid} (type=admin).")
+        self.logger.verbose(f"Inserted users row for {uid} (type={self.account_type}).")
 
     def _ensure_key_store(self, ctl: LibsqlClient, uid: str, ikm: bytes) -> bytes:
         rows = ctl.query("SELECT umk FROM key_store WHERE user_id = ?", [uid])
@@ -104,18 +105,28 @@ class AdminInitializer:
         return self._insert_key_store(ctl, uid, ikm)
 
     def _insert_key_store(self, ctl: LibsqlClient, uid: str, ikm: bytes) -> bytes:
-        self.logger.verbose("Generating umk and composite KEM keypair...")
+        self.logger.verbose("Generating umk...")
         umk = secrets.token_bytes(128)
+        wrapped_umk = self.blob.encrypt(umk, ikm)
+        if self.account_type == "admin":
+            self._insert_admin_key_store(ctl, uid, umk, wrapped_umk)
+        else:
+            ctl.execute(
+                "INSERT INTO key_store (user_id, umk) VALUES (?, ?)", [uid, wrapped_umk]
+            )
+        self.logger.verbose("key_store row inserted.")
+        return umk
+
+    def _insert_admin_key_store(
+        self, ctl: LibsqlClient, uid: str, umk: bytes, wrapped_umk: bytes
+    ) -> None:
+        self.logger.verbose("Generating composite KEM keypair...")
         pk, sk = self.engine.kem_keypair()
-        wrapped_umk, wrapped_privkey = self.blob.encrypt(umk, ikm), self.blob.encrypt(
-            sk, umk
-        )
+        wrapped_privkey = self.blob.encrypt(sk, umk)
         ctl.execute(
             "INSERT INTO key_store (user_id, umk, pubkey, privkey) VALUES (?, ?, ?, ?)",
             [uid, wrapped_umk, pk, wrapped_privkey],
         )
-        self.logger.verbose("key_store row inserted.")
-        return umk
 
     def _ensure_cred_store(self, ctl: LibsqlClient, uid: str, umk: bytes) -> None:
         rows = ctl.query(
