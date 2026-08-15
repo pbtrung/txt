@@ -61,7 +61,7 @@ export function LibraryScreen() {
   return (
     <div className="d-flex flex-column vh-100 mx-auto max-w-md-80 px-2 px-md-0">
       <div className="border-bottom py-2 px-2 px-md-0 flex-shrink-0">
-        <div className="d-flex align-items-center gap-2 mb-2">
+        <div className="d-flex align-items-center gap-3">
           <button
             type="button"
             className="btn btn-sm btn-outline-secondary d-md-none"
@@ -70,23 +70,21 @@ export function LibraryScreen() {
           >
             <i className="bi bi-funnel" />
           </button>
-          <h1 className="h4 mb-0 flex-grow-1">
+          <h1 className="h4 mb-0 text-nowrap">
             <i className="bi bi-book me-2" />
             Skypiea
           </h1>
-        </div>
-        <div className="input-group input-group-sm">
-          <span className="input-group-text bg-transparent">
-            <i className="bi bi-search" />
-          </span>
-          <input
-            type="search"
-            className="form-control"
-            placeholder="Search title, author, subject…"
-            aria-label="Search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
+          <div className="search-box flex-grow-1 position-relative">
+            <i className="bi bi-search search-box-icon" aria-hidden="true" />
+            <input
+              type="search"
+              className="form-control form-control-sm search-box-input"
+              placeholder="Search title, author, subject…"
+              aria-label="Search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </div>
         </div>
         {filter && (
           <div className="mt-2">

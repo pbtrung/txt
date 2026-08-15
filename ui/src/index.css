@@ -30,3 +30,23 @@
   color: var(--bs-secondary-color);
   font-size: 1.1rem;
 }
+
+/* Library search box: the icon sits inside the input itself (not a
+   separate input-group-text segment) so the two read as one field with
+   no seam, and the border is a low-contrast hairline rather than
+   Bootstrap's full-strength default -- it only needs to be visible
+   enough to mark the field's edges, not to draw the eye. */
+.search-box-icon {
+  position: absolute;
+  left: 0.7rem;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--bs-secondary-color);
+  font-size: 0.8rem;
+  pointer-events: none;
+}
+
+.search-box-input {
+  padding-left: 2rem;
+  border-color: rgba(0, 0, 0, 0.1);
+}
