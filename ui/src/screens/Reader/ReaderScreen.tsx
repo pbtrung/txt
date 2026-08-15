@@ -94,8 +94,8 @@ export function ReaderScreen() {
   }
 
   return (
-    <div className="d-flex flex-column vh-100 mx-auto" style={{ maxWidth: "80%" }}>
-      <div className="d-flex align-items-center border-bottom px-2 py-1 gap-1">
+    <div className="d-flex flex-column vh-100 mx-auto max-w-md-80 px-2 px-md-0">
+      <div className="d-flex align-items-center border-bottom py-1 gap-1">
         <Link
           to="/library"
           className="btn btn-sm btn-outline-secondary"

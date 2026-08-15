@@ -1,0 +1,16 @@
+/* Full width with the surrounding chrome's own padding on small screens;
+   capped and centered on larger ones. Bootstrap's own utilities don't cover
+   a responsive max-width (only min-width-gated display/spacing), so this is
+   a small hand-written class rather than an inline style that couldn't
+   vary per breakpoint. Uses the same `md` breakpoint (768px) the rest of
+   the app's mobile/desktop split already keys off of (Library's browse
+   drawer, Reader's default font size). */
+.max-w-md-80 {
+  max-width: 100%;
+}
+
+@media (min-width: 768px) {
+  .max-w-md-80 {
+    max-width: 80%;
+  }
+}
