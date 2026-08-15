@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
-import { parseEpubOpf } from "./epubOpf";
+import { extraMetadataFields, parseEpubOpf } from "./epubOpf";
 
 const CONTAINER_XML = `<?xml version="1.0"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
@@ -105,5 +105,42 @@ describe("parseEpubOpf", () => {
     const epub = await zip.generateAsync({ type: "uint8array" });
 
     await expect(parseEpubOpf(epub)).rejects.toThrow(/container\.xml/);
+  });
+});
+
+describe("extraMetadataFields", () => {
+  it("labels known dc:*/Calibre fields and drops title/creator/subject/publisher", () => {
+    const opf = {
+      name: "content.opf",
+      metadata: {
+        title: "Dune",
+        creator: "Frank Herbert",
+        subject: ["Science Fiction"],
+        publisher: "Ace",
+        description: "A desert planet.",
+        language: "en",
+        "calibre:series": "Dune Saga",
+      },
+    };
+
+    expect(extraMetadataFields(opf)).toEqual([
+      { label: "Description", values: ["A desert planet."] },
+      { label: "Language", values: ["en"] },
+      { label: "Series", values: ["Dune Saga"] },
+    ]);
+  });
+
+  it("falls back to the raw key for an unrecognized field", () => {
+    const opf = { name: "content.opf", metadata: { "custom:field": "value" } };
+
+    expect(extraMetadataFields(opf)).toEqual([
+      { label: "custom:field", values: ["value"] },
+    ]);
+  });
+
+  it("returns an empty list when there's nothing beyond the known fields", () => {
+    const opf = { name: "content.opf", metadata: { title: "Dune" } };
+
+    expect(extraMetadataFields(opf)).toEqual([]);
   });
 });

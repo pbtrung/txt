@@ -30,15 +30,19 @@ function opfMetadataXml(fields: {
   authors?: string[];
   subjects?: string[];
   publisher?: string;
+  description?: string;
 }): string {
   const creators = (fields.authors ?? []).map((a) => `<dc:creator>${a}</dc:creator>`);
   const subjects = (fields.subjects ?? []).map((s) => `<dc:subject>${s}</dc:subject>`);
   const publisher = fields.publisher
     ? `<dc:publisher>${fields.publisher}</dc:publisher>`
     : "";
+  const description = fields.description
+    ? `<dc:description>${fields.description}</dc:description>`
+    : "";
   return `<?xml version="1.0"?>
 <package xmlns="http://www.idpf.org/2007/opf" xmlns:dc="http://purl.org/dc/elements/1.1/">
-  <metadata>${creators.join("")}${subjects.join("")}${publisher}</metadata>
+  <metadata>${creators.join("")}${subjects.join("")}${publisher}${description}</metadata>
 </package>`;
 }
 
@@ -46,6 +50,7 @@ async function buildFakeEpub(fields: {
   authors?: string[];
   subjects?: string[];
   publisher?: string;
+  description?: string;
 }): Promise<Uint8Array> {
   const zip = new JSZip();
   zip.file("META-INF/container.xml", CONTAINER_XML);
@@ -65,6 +70,7 @@ describe("loadReaderDocument (real sqlcipher.wasm + real crypto)", () => {
       authors: ["Frank Herbert"],
       subjects: ["Science Fiction", "Adventure"],
       publisher: "Ace",
+      description: "A desert planet.",
     });
     const encrypted = await encrypt(epubBytes, txtKey);
     const catalog = await catalogBlob({ name: "dune.epub", title: "Dune" });
@@ -86,6 +92,9 @@ describe("loadReaderDocument (real sqlcipher.wasm + real crypto)", () => {
     expect(doc!.authors).toEqual(["Frank Herbert"]);
     expect(doc!.subjects).toEqual(["Science Fiction", "Adventure"]);
     expect(doc!.publisher).toBe("Ace");
+    expect(doc!.extraMetadata).toEqual([
+      { label: "Description", values: ["A desert planet."] },
+    ]);
     expect(doc!.epubBytes).toEqual(epubBytes);
   });
 
@@ -118,6 +127,7 @@ describe("loadReaderDocument (real sqlcipher.wasm + real crypto)", () => {
     expect(doc!.authors).toEqual([]);
     expect(doc!.subjects).toEqual([]);
     expect(doc!.publisher).toBeNull();
+    expect(doc!.extraMetadata).toEqual([]);
   });
 
   it("returns null when the txt row doesn't exist", async () => {

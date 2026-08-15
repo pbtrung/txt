@@ -26,6 +26,7 @@ describe("useReaderDocument", () => {
       authors: ["Frank Herbert"],
       subjects: ["Science Fiction"],
       publisher: "Ace",
+      extraMetadata: [],
       epubBytes: new Uint8Array([1]),
     };
     vi.mocked(loadReaderDocument).mockResolvedValue(document);

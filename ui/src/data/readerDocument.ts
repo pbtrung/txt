@@ -3,22 +3,25 @@
 // row's own txt_key -- unrelated to db_master_key, so leaking one
 // document's key exposes nothing about any other document or the database
 // file itself. Title comes from the txt row's own catalog (cheap, already
-// fetched); authors/subjects/publisher come from parsing the EPUB's own
-// internal package document once its bytes are in hand, since catalog only
-// keeps a fixed subset (docs/data_model.md §3.1).
+// fetched); everything else the Info panel shows comes from parsing the
+// EPUB's own internal package document once its bytes are in hand, since
+// catalog only keeps a fixed subset (docs/data_model.md §3.1).
 import { decrypt } from "../crypto/cryptoBlob";
 import { brotliDecompress } from "../crypto/brotli";
 import { toBase32Crockford } from "../util/base32Crockford";
-import { parseEpubOpf } from "./epubOpf";
+import { extraMetadataFields, parseEpubOpf, type MetadataField } from "./epubOpf";
 import { fieldStrings } from "./opfSidecar";
 import type { R2Client } from "./r2";
 import type { SqliteDatabase } from "./sqlite";
+
+export type { MetadataField };
 
 export interface ReaderDocument {
   title: string;
   authors: string[];
   subjects: string[];
   publisher: string | null;
+  extraMetadata: MetadataField[];
   epubBytes: Uint8Array;
 }
 
@@ -62,6 +65,7 @@ export async function loadReaderDocument(
     authors: fieldStrings(opf.metadata.creator),
     subjects: fieldStrings(opf.metadata.subject),
     publisher: publishers[0] ?? null,
+    extraMetadata: extraMetadataFields(opf),
     epubBytes,
   };
 }

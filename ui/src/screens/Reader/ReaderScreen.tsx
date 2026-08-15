@@ -1,6 +1,6 @@
 // Renders the requested document with epub.js: page navigation, a table of
 // contents, book info, column layout, and font size controls.
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { OffcanvasPanel } from "../../components/OffcanvasPanel";
 import { EpubRenderer } from "../../data/epubRenderer";
@@ -187,6 +187,12 @@ export function ReaderScreen() {
               <dd>{document!.subjects.join(", ")}</dd>
             </>
           )}
+          {document!.extraMetadata.map((field, i) => (
+            <Fragment key={`${field.label}-${i}`}>
+              <dt>{field.label}</dt>
+              <dd>{field.values.join(", ")}</dd>
+            </Fragment>
+          ))}
         </dl>
       </OffcanvasPanel>
       <TocPanel open={tocOpen} onClose={() => setTocOpen(false)} renderer={renderer} />

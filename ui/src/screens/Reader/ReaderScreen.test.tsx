@@ -51,6 +51,7 @@ function mockReadyDocument(overrides: Record<string, unknown> = {}) {
       authors: ["Frank Herbert"],
       subjects: ["Science Fiction"],
       publisher: "Ace",
+      extraMetadata: [],
       epubBytes: new Uint8Array([1, 2, 3]),
       ...overrides,
     },
@@ -233,6 +234,24 @@ describe("ReaderScreen", () => {
     expect(screen.getByText("Frank Herbert")).toBeInTheDocument();
     expect(screen.getByText("Ace")).toBeInTheDocument();
     expect(screen.getByText("Science Fiction")).toBeInTheDocument();
+  });
+
+  it("shows every other OPF metadata field in the Info panel", async () => {
+    mockVault();
+    mockReadyDocument({
+      extraMetadata: [
+        { label: "Description", values: ["A desert planet."] },
+        { label: "Series", values: ["Dune Saga"] },
+      ],
+    });
+    renderScreen();
+
+    await userEvent.click(screen.getByRole("button", { name: "Book info" }));
+
+    expect(screen.getByText("Description")).toBeInTheDocument();
+    expect(screen.getByText("A desert planet.")).toBeInTheDocument();
+    expect(screen.getByText("Series")).toBeInTheDocument();
+    expect(screen.getByText("Dune Saga")).toBeInTheDocument();
   });
 
   it("opens the Contents panel", async () => {

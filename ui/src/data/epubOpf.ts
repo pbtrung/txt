@@ -6,9 +6,33 @@
 // package document via JSZip + DOMParser instead of a Calibre sidecar
 // .opf via ElementTree.
 import JSZip from "jszip";
-import type { OpfField, OpfSidecar } from "./opfSidecar";
+import { fieldStrings, type OpfField, type OpfSidecar } from "./opfSidecar";
 
 const CONTAINER_PATH = "META-INF/container.xml";
+
+// title/creator/subject/publisher already get their own dedicated fields
+// on ReaderDocument (readerDocument.ts); everything else the OPF carries
+// (description, language, date, Calibre's own series/rating meta, ...) is
+// shown generically in the Info panel via extraMetadataFields below.
+const KNOWN_FIELDS = new Set(["title", "creator", "subject", "publisher"]);
+
+const FIELD_LABELS: Record<string, string> = {
+  date: "Date",
+  description: "Description",
+  language: "Language",
+  rights: "Rights",
+  identifier: "Identifier",
+  contributor: "Contributor",
+  source: "Source",
+  type: "Type",
+  format: "Format",
+  relation: "Relation",
+  coverage: "Coverage",
+  "calibre:series": "Series",
+  "calibre:series_index": "Series index",
+  "calibre:rating": "Rating",
+  "calibre:title_sort": "Sort title",
+};
 
 // Calibre's own bookkeeping, not real book metadata: its internal library id
 // and uuid (dc:identifier opf:scheme="calibre"/"uuid") and its self-authored
@@ -93,4 +117,19 @@ export async function parseEpubOpf(epubBytes: Uint8Array): Promise<OpfSidecar> {
   const opf = await readZipXml(zip, opfPath);
   const metadataEl = findByLocalName(opf.documentElement, "metadata");
   return { name: opfPath, metadata: metadataEl ? metadataDict(metadataEl) : {} };
+}
+
+export interface MetadataField {
+  label: string;
+  values: string[];
+}
+
+export function extraMetadataFields(opf: OpfSidecar): MetadataField[] {
+  return Object.entries(opf.metadata)
+    .filter(([key]) => !KNOWN_FIELDS.has(key))
+    .map(([key, value]) => ({
+      label: FIELD_LABELS[key] ?? key,
+      values: fieldStrings(value),
+    }))
+    .filter((field) => field.values.length > 0);
 }
