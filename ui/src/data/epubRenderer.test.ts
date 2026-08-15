@@ -44,6 +44,7 @@ describe("EpubRenderer", () => {
     expect(bookMock.renderTo).toHaveBeenCalledWith(element, {
       width: "100%",
       height: "100%",
+      allowScriptedContent: true,
     });
     expect(renditionMock.display).toHaveBeenCalled();
   });
@@ -63,6 +64,16 @@ describe("EpubRenderer", () => {
     expect(() => renderer.destroy()).not.toThrow();
     expect(bookMock.destroy).toHaveBeenCalled();
     expect(renditionMock.destroy).not.toHaveBeenCalled();
+  });
+
+  it("display() jumps to an arbitrary TOC href or CFI", async () => {
+    const renderer = new EpubRenderer(new Uint8Array([1]));
+    renderer.renderTo(document.createElement("div"));
+    renditionMock.display.mockClear();
+
+    await renderer.display("chapter1.xhtml");
+
+    expect(renditionMock.display).toHaveBeenCalledWith("chapter1.xhtml");
   });
 
   it("next()/prev() delegate to the rendition", async () => {

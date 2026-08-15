@@ -20,8 +20,23 @@ export class EpubRenderer {
   }
 
   renderTo(element: HTMLElement): void {
-    this.rendition = this.book.renderTo(element, { width: "100%", height: "100%" });
+    // allowScriptedContent: epub.js's own default (false) sandboxes each
+    // section's iframe as just "allow-same-origin", which blocks epub.js's
+    // own internal per-section helper script from running (DevTools:
+    // "Blocked script execution in 'about:srcdoc'..."), not just any
+    // script content an EPUB itself might carry.
+    this.rendition = this.book.renderTo(element, {
+      width: "100%",
+      height: "100%",
+      allowScriptedContent: true,
+    });
     void this.rendition.display();
+  }
+
+  /** Jumps to an arbitrary TOC href or CFI -- unlike next()/prev(), which
+   * just step relative to wherever the rendition already is. */
+  async display(target: string): Promise<void> {
+    return this.requireRendition().display(target);
   }
 
   async next(): Promise<void> {
