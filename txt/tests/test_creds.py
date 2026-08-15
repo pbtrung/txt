@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from txt.creds import ensure_user_root_key, load_creds
+from txt.creds import ensure_user_root_key, load_creds, load_user_creds
 
 VALID = {
     "turso_org_token": "tok",
@@ -12,6 +12,13 @@ VALID = {
     "firebase_email": "a@b.com",
     "firebase_password": "pw",
     "firebase_api_key": "key",
+}
+
+VALID_USER = {
+    "firebase_email": "a@b.com",
+    "firebase_password": "pw",
+    "firebase_api_key": "key",
+    "cf_worker_url": "https://worker.example",
 }
 
 
@@ -79,3 +86,43 @@ def test_ensure_user_root_key_never_overwrites(creds_path):
     first = ensure_user_root_key(creds_path, load_creds(creds_path)).user_root_key
     second = ensure_user_root_key(creds_path, load_creds(creds_path)).user_root_key
     assert first == second
+
+
+@pytest.fixture
+def user_creds_path(tmp_path):
+    path = tmp_path / "user_creds.json"
+    path.write_text(json.dumps(VALID_USER))
+    return str(path)
+
+
+def test_load_user_creds_rejects_missing_fields(tmp_path):
+    path = tmp_path / "user_creds.json"
+    path.write_text(json.dumps({"firebase_email": "a@b.com"}))
+    with pytest.raises(ValueError):
+        load_user_creds(str(path))
+
+
+def test_load_user_creds_reads_required_fields(user_creds_path):
+    creds = load_user_creds(user_creds_path)
+    assert creds.firebase_email == "a@b.com"
+    assert creds.cf_worker_url == "https://worker.example"
+
+
+def test_load_user_creds_defaults_optional_fields(user_creds_path):
+    creds = load_user_creds(user_creds_path)
+    assert creds.display_name == ""
+    assert creds.user_root_key == ""
+
+
+def test_load_user_creds_has_no_turso_or_r2_fields(user_creds_path):
+    creds = load_user_creds(user_creds_path)
+    assert not hasattr(creds, "turso_org_token")
+    assert not hasattr(creds, "r2_config")
+
+
+def test_ensure_user_root_key_works_for_user_creds_too(user_creds_path):
+    creds = ensure_user_root_key(user_creds_path, load_user_creds(user_creds_path))
+    assert len(base64.b64decode(creds.user_root_key)) == 256
+    with open(user_creds_path) as f:
+        saved = json.load(f)
+    assert saved["user_root_key"] == creds.user_root_key

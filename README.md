@@ -17,13 +17,13 @@ This installs the `txt` console script (`txt.cli:run`) and its dependencies: `re
 ### Provision an account
 
 ```
-txt --init-admin creds.json --verbose   # the administrator's own account
-txt --init-user creds.json --verbose    # an ordinary user's account
+txt --init-admin creds.json --verbose                                     # the administrator's own account
+txt --init-user --admin-creds admin_creds.json --user-creds user_creds.json --verbose   # an ordinary user's account
 ```
 
 Creates the `users`, `key_store`, and `cred_store` tables in `ctl` if they don't already exist, signs in to Firebase to obtain that account's uid, and provisions its row (`type = 'admin'` or `'user'`) — generating and wrapping `umk` and `db_path`/`db_prefix`/`db_master_key`; the admin's row additionally gets a composite KEM keypair. Safe to re-run: each step is skipped if it's already done.
 
-`creds.json` requires:
+`--init-admin`'s `creds.json` requires:
 
 ```json
 {
@@ -38,7 +38,20 @@ Creates the `users`, `key_store`, and `cred_store` tables in `ctl` if they don't
 }
 ```
 
-`user_root_key` is generated (256 random bytes, base64) and written back to the file if left empty.
+`--init-user` takes two separate files: `--admin-creds` is the administrator's own `creds.json` above (for `ctl`/Turso access), and `--user-creds` is the new user's own, much smaller file — the same shape the browser (`ui/`) reads directly, since an ordinary user never touches `ctl`/Turso or R2 directly, only through the Worker:
+
+```json
+{
+  "firebase_email": "...",
+  "firebase_password": "...",
+  "firebase_api_key": "...",
+  "cf_worker_url": "...",
+  "display_name": "...",
+  "user_root_key": ""
+}
+```
+
+`user_root_key` is generated (256 random bytes, base64) and written back to whichever file is being provisioned (`creds.json` for `--init-admin`, `--user-creds`'s file for `--init-user`) if left empty.
 
 ### Replace images in a directory of EPUBs
 

@@ -15,10 +15,21 @@ def test_init_admin_without_a_value_is_a_usage_error():
     assert "--init-admin" in result.output
 
 
-def test_init_user_without_a_value_is_a_usage_error():
+def test_init_user_without_admin_or_user_creds_is_a_usage_error():
     result = CliRunner().invoke(cli, ["--init-user"])
     assert result.exit_code != 0
-    assert "--init-user" in result.output
+    assert "--admin-creds" in result.output
+    assert "--user-creds" in result.output
+
+
+def test_init_user_without_user_creds_is_a_usage_error(tmp_path):
+    admin_path = tmp_path / "admin.json"
+    admin_path.write_text("{}")
+    result = CliRunner().invoke(
+        cli, ["--init-user", "--admin-creds", str(admin_path)]
+    )
+    assert result.exit_code != 0
+    assert "--user-creds" in result.output
 
 
 def test_replace_images_processes_a_directory(tmp_path):

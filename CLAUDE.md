@@ -12,7 +12,7 @@ This repo holds the txt document-storage system's design docs, the Cloudflare Wo
 
 - `txt.py` — thin entry point; also runnable as the installed `txt` console script.
 - `txt/` — one module per concern:
-  - `creds.py` — loads/validates `creds.json`, generates `user_root_key` if empty; also holds the optional `r2_config` (`--ingest` only).
+  - `creds.py` — loads/validates `creds.json` (`Creds`, the administrator's own full shape, `r2_config` included, `--ingest`/`--init-admin`) or a reduced `UserCreds` (`--init-user`'s `--user-creds`, matching `ui/src/data/creds.ts`'s `BrowserCreds` — no `turso_org_token`/`r2_config`, since an ordinary user only ever reaches `ctl`/R2 through the Worker); generates `user_root_key` if empty for either shape.
   - `logger.py` — `--verbose` progress logging.
   - `firebase_auth.py` — Firebase email/password sign-in, returns the uid.
   - `turso_api.py` — Turso Platform API client (mints database tokens); `extract_account_name` recovers the org slug from a `libsql://` URL.
@@ -21,7 +21,7 @@ This repo holds the txt document-storage system's design docs, the Cloudflare Wo
   - `leancrypto_wasm.py` — wasmtime binding to `sqlcipher/sqlcipher.wasm`'s bundled leancrypto build (AEAD, HKDF, KEM).
   - `crypto_blob.py` — docs/crypto.md's wrap/unwrap blob format, built on `leancrypto_wasm`.
   - `sqlite_engine.py` — real SQLCipher read/write against `sqlcipher.wasm`: an in-memory `sqlite3_vfs` (function pointers installed into the wasm indirect function table via `sqlite3_js_vfs_register`) backs the whole database in a Python `bytearray`, since this build has no working native filesystem VFS and `:memory:` connections never engage the codec. Keys are 256–8192 raw bytes (`sqlite3_key`), not a passphrase.
-  - `account_init.py` — `AccountInitializer`, shared by `--init-admin`/`--init-user` (parameterized by `account_type`).
+  - `account_init.py` — `AccountInitializer`, shared by `--init-admin`/`--init-user` (parameterized by `account_type`). Takes `admin_creds` (`ctl`/Turso access) and `target_creds` (whichever account is being provisioned — the same object as `admin_creds` for `--init-admin`, a separate `UserCreds` for `--init-user`) separately, since only the target's own Firebase identity is needed to discover its uid.
   - `account_session.py` — `AccountSession`: signs in, runs `ctl`'s `users`/`key_store`/`cred_store` join, and decrypts down to an `Account` (`db_path`/`db_prefix`/`db_master_key`/`display_name`). Used by `--ingest`.
   - `r2_client.py` — `R2Client`, a thin boto3/S3-compatible wrapper for R2 (get/put object, list keys, list common prefixes, delete keys).
   - `opf.py` — Calibre `.opf` sidecar detection and `<metadata>` parsing, feeding `txt.metadata`'s nested passthrough (docs/data_model.md §3.1).

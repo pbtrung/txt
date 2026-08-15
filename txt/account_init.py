@@ -2,7 +2,7 @@ import base64
 import secrets
 import time
 
-from .creds import Creds, ensure_user_root_key
+from .creds import Creds, UserCreds, ensure_user_root_key
 from .crypto_blob import CryptoBlob
 from .firebase_auth import FirebaseAuth
 from .leancrypto_wasm import LeancryptoEngine
@@ -40,44 +40,60 @@ CREATE TABLE IF NOT EXISTS cred_store (
 
 
 class AccountInitializer:
+    """Provisions one ctl row. For account_type="admin", admin_creds and
+    target_creds are the same Creds object (an admin bootstraps itself).
+    For "user", admin_creds is the administrator's own (ctl/Turso access),
+    target_creds is the new user's own reduced UserCreds (only used to sign
+    in as them and discover their uid) -- an ordinary user never touches
+    ctl/Turso directly.
+    """
+
     def __init__(
-        self, creds: Creds, creds_path: str, logger: Logger, account_type: str
+        self,
+        admin_creds: Creds,
+        target_creds: Creds | UserCreds,
+        target_creds_path: str,
+        logger: Logger,
+        account_type: str,
     ):
-        self.creds = creds
-        self.creds_path = creds_path
+        self.admin_creds = admin_creds
+        self.target_creds = target_creds
+        self.target_creds_path = target_creds_path
         self.logger = logger
         self.account_type = account_type
         account_name = extract_account_name(
-            creds.turso_ctl_db_url, creds.turso_ctl_db_name
+            admin_creds.turso_ctl_db_url, admin_creds.turso_ctl_db_name
         )
-        self.turso = TursoClient(creds.turso_org_token, account_name)
+        self.turso = TursoClient(admin_creds.turso_org_token, account_name)
         self.engine = LeancryptoEngine()
         self.blob = CryptoBlob(self.engine)
 
     def run(self) -> None:
         self.logger.verbose(f"Starting {self.account_type} bootstrap...")
-        uid = self._sign_in()
+        uid = self._sign_in(self.target_creds)
         ctl = self._ensure_schema()
         self._ensure_users_row(ctl, uid)
-        self.creds = ensure_user_root_key(self.creds_path, self.creds)
-        ikm = base64.b64decode(self.creds.user_root_key)
+        self.target_creds = ensure_user_root_key(
+            self.target_creds_path, self.target_creds
+        )
+        ikm = base64.b64decode(self.target_creds.user_root_key)
         umk = self._ensure_key_store(ctl, uid, ikm)
         self._ensure_cred_store(ctl, uid, umk)
         self.logger.info(f"{self.account_type.capitalize()} {uid} ready in ctl.")
 
-    def _sign_in(self) -> str:
-        self.logger.verbose(f"Signing in to Firebase as {self.creds.firebase_email}...")
-        auth = FirebaseAuth(self.creds.firebase_api_key)
-        uid = auth.sign_in(self.creds.firebase_email, self.creds.firebase_password)
+    def _sign_in(self, creds: Creds | UserCreds) -> str:
+        self.logger.verbose(f"Signing in to Firebase as {creds.firebase_email}...")
+        auth = FirebaseAuth(creds.firebase_api_key)
+        uid = auth.sign_in(creds.firebase_email, creds.firebase_password)
         self.logger.verbose(f"Firebase sign-in succeeded, uid={uid}")
         return uid
 
     def _ensure_schema(self) -> LibsqlClient:
         self.logger.verbose(
-            f"Minting a database token for {self.creds.turso_ctl_db_name}..."
+            f"Minting a database token for {self.admin_creds.turso_ctl_db_name}..."
         )
-        token = self.turso.mint_db_token(self.creds.turso_ctl_db_name)
-        ctl = LibsqlClient(self.creds.turso_ctl_db_url, token)
+        token = self.turso.mint_db_token(self.admin_creds.turso_ctl_db_name)
+        ctl = LibsqlClient(self.admin_creds.turso_ctl_db_url, token)
         self.logger.verbose("Ensuring ctl schema exists...")
         for stmt in (
             CREATE_USERS_TABLE_SQL,
@@ -143,7 +159,7 @@ class AccountInitializer:
     def _insert_cred_store(self, ctl: LibsqlClient, uid: str, umk: bytes) -> None:
         self.logger.verbose("Generating db_path, db_prefix, and db_master_key...")
         payload = {
-            "display_name": self.creds.display_name,
+            "display_name": self.target_creds.display_name,
             "db_master_key": base64.b64encode(secrets.token_bytes(256)).decode(),
             "db_path": generate_random_prefix(),
             "db_prefix": generate_random_prefix(),

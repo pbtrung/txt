@@ -3,7 +3,7 @@ from pathlib import Path
 import click
 
 from .account_init import AccountInitializer
-from .creds import load_creds
+from .creds import load_creds, load_user_creds
 from .ingest import TxtIngester
 from .logger import Logger
 from .replace_images import ImageReplacer
@@ -18,9 +18,20 @@ from .replace_images import ImageReplacer
 )
 @click.option(
     "--init-user",
+    is_flag=True,
+    help="Provision an ordinary user's row in ctl (needs --admin-creds and --user-creds)",
+)
+@click.option(
+    "--admin-creds",
+    "admin_creds_path_for_user",
+    metavar="CREDS_JSON",
+    help="The administrator's own creds.json, for --init-user",
+)
+@click.option(
+    "--user-creds",
     "user_creds_path",
     metavar="CREDS_JSON",
-    help="Provision an ordinary user's row in ctl (users/key_store/cred_store)",
+    help="The new user's own reduced creds.json, for --init-user",
 )
 @click.option(
     "--replace-images",
@@ -55,6 +66,8 @@ from .replace_images import ImageReplacer
 def cli(
     ctx: click.Context,
     admin_creds_path: str | None,
+    init_user: bool,
+    admin_creds_path_for_user: str | None,
     user_creds_path: str | None,
     replace_images_dirs: tuple[str, str],
     ingest_src_dir: str | None,
@@ -69,9 +82,11 @@ def cli(
 
 def _dispatch(opts: dict, logger: Logger) -> bool:
     if opts["admin_creds_path"]:
-        _run_init(opts["admin_creds_path"], "admin", logger)
-    elif opts["user_creds_path"]:
-        _run_init(opts["user_creds_path"], "user", logger)
+        _run_init_admin(opts["admin_creds_path"], logger)
+    elif opts["init_user"]:
+        _run_init_user(
+            opts["admin_creds_path_for_user"], opts["user_creds_path"], logger
+        )
     elif opts["replace_images_dirs"]:
         _run_replace_images(opts["replace_images_dirs"], logger)
     elif opts["ingest_src_dir"]:
@@ -86,8 +101,23 @@ def _dispatch(opts: dict, logger: Logger) -> bool:
     return True
 
 
-def _run_init(creds_path: str, account_type: str, logger: Logger) -> None:
-    AccountInitializer(load_creds(creds_path), creds_path, logger, account_type).run()
+def _run_init_admin(creds_path: str, logger: Logger) -> None:
+    admin_creds = load_creds(creds_path)
+    AccountInitializer(admin_creds, admin_creds, creds_path, logger, "admin").run()
+
+
+def _run_init_user(
+    admin_creds_path: str | None, user_creds_path: str | None, logger: Logger
+) -> None:
+    if not admin_creds_path or not user_creds_path:
+        raise click.UsageError(
+            "--init-user requires --admin-creds CREDS_JSON and --user-creds CREDS_JSON"
+        )
+    admin_creds = load_creds(admin_creds_path)
+    user_creds = load_user_creds(user_creds_path)
+    AccountInitializer(
+        admin_creds, user_creds, user_creds_path, logger, "user"
+    ).run()
 
 
 def _run_replace_images(dirs: tuple[str, str], logger: Logger) -> None:

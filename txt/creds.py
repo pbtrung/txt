@@ -14,6 +14,23 @@ REQUIRED_FIELDS = [
 
 OPTIONAL_FIELDS = ["display_name", "user_root_key"]
 
+# An ordinary user never touches ctl/Turso or R2 directly -- only through
+# the Worker -- so their own creds.json is this reduced shape instead of
+# the administrator's full Creds, matching ui/src/data/creds.ts's
+# BrowserCreds exactly.
+USER_REQUIRED_FIELDS = [
+    "firebase_email",
+    "firebase_password",
+    "firebase_api_key",
+    "cf_worker_url",
+]
+
+# display_name is set here at provisioning time (by whoever creates this
+# file for the new user) purely so --init-user has somewhere to read it
+# from; the browser itself never reads it back out of its own creds.json
+# -- it gets display_name from the decrypted cred_store payload instead.
+USER_OPTIONAL_FIELDS = ["display_name", "user_root_key"]
+
 
 @dataclass
 class R2Config:
@@ -39,6 +56,16 @@ class Creds:
     r2_config: R2Config | None = None
 
 
+@dataclass
+class UserCreds:
+    firebase_email: str
+    firebase_password: str
+    firebase_api_key: str
+    cf_worker_url: str
+    display_name: str = ""
+    user_root_key: str = ""
+
+
 def load_creds(path: str) -> Creds:
     data = _read_json(path)
     missing = [k for k in REQUIRED_FIELDS if k not in data]
@@ -50,11 +77,20 @@ def load_creds(path: str) -> Creds:
     return creds
 
 
+def load_user_creds(path: str) -> UserCreds:
+    data = _read_json(path)
+    missing = [k for k in USER_REQUIRED_FIELDS if k not in data]
+    if missing:
+        raise ValueError(f"Missing fields in creds.json: {', '.join(missing)}")
+    fields = USER_REQUIRED_FIELDS + USER_OPTIONAL_FIELDS
+    return UserCreds(**{k: data.get(k, "") for k in fields})
+
+
 def _parse_r2_config(value: dict | None) -> R2Config | None:
     return R2Config(**value) if value else None
 
 
-def ensure_user_root_key(path: str, creds: Creds) -> Creds:
+def ensure_user_root_key(path: str, creds: Creds | UserCreds) -> Creds | UserCreds:
     if creds.user_root_key:
         return creds
     creds.user_root_key = base64.b64encode(secrets.token_bytes(256)).decode()

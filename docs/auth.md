@@ -106,7 +106,7 @@ Done by an administrator, never by the Worker, in one step — unlike a database
 4. `INSERT INTO key_store (user_id, umk) VALUES (?, ?)`, `umk` wrapped by a `user_root_key` generated for this account.
 5. `INSERT INTO cred_store (owner_id, for_user_id, content) VALUES (?, ?, ?)` with `owner_id = for_user_id` = the uid, `content` wrapped by `umk` and holding `{ display_name, db_master_key, db_path, db_prefix }`.
 
-The administrator packages `user_root_key`, and whatever else the client needs to reach the Worker, into that user's own creds.json — the same way the administrator's own backend config carries its own `user_root_key`.
+The administrator runs this with their own `ctl`/Turso credentials (§1) plus the new user's own Firebase identity (only needed to sign in and discover the uid from §3.1) — the CLI's `--init-user --admin-creds ADMIN_CREDS_JSON --user-creds USER_CREDS_JSON`. `user_root_key` is generated and packaged, along with `firebase_email`/`firebase_password`/`firebase_api_key`/`cf_worker_url`, into that user's own reduced creds.json (`--user-creds`'s file) — the same shape the browser itself reads (`ui/src/data/creds.ts`'s `BrowserCreds`), since an ordinary user never holds `ctl`/Turso or R2 credentials of their own, only the Worker's URL.
 
 A Firebase account with no `users` row is authenticated but not provisioned, and the endpoint returns 403. The Worker never creates the row, so a valid Firebase signup grants no access on its own.
 

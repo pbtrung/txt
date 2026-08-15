@@ -5,7 +5,7 @@ import pytest
 
 import txt.account_init as account_init_module
 from txt.account_init import AccountInitializer
-from txt.creds import load_creds
+from txt.creds import load_creds, load_user_creds
 from txt.crypto_blob import CryptoBlob
 
 UID = "uid-123"
@@ -93,11 +93,45 @@ def creds_path(tmp_path):
     return str(path)
 
 
+@pytest.fixture
+def user_creds_path(tmp_path):
+    data = {
+        "firebase_email": "user@b.com",
+        "firebase_password": "pw",
+        "firebase_api_key": "key",
+        "cf_worker_url": "https://worker.example",
+        "display_name": "Trung",
+    }
+    path = tmp_path / "user_creds.json"
+    path.write_text(json.dumps(data))
+    return str(path)
+
+
+def _build(account_type, creds_path, user_creds_path=None):
+    """Returns (initializer, target_creds_path) -- target_creds_path is
+    whichever file the initializer will read/persist user_root_key into.
+    """
+    admin_creds = load_creds(creds_path)
+    if account_type == "admin":
+        return (
+            AccountInitializer(
+                admin_creds, admin_creds, creds_path, NullLogger(), "admin"
+            ),
+            creds_path,
+        )
+    user_creds = load_user_creds(user_creds_path)
+    return (
+        AccountInitializer(
+            admin_creds, user_creds, user_creds_path, NullLogger(), "user"
+        ),
+        user_creds_path,
+    )
+
+
 @pytest.mark.parametrize("account_type", ["admin", "user"])
-def test_creates_schema_for_all_three_tables(creds_path, account_type):
-    AccountInitializer(
-        load_creds(creds_path), creds_path, NullLogger(), account_type
-    ).run()
+def test_creates_schema_for_all_three_tables(creds_path, user_creds_path, account_type):
+    initializer, _ = _build(account_type, creds_path, user_creds_path)
+    initializer.run()
     ctl = FakeLibsqlClient.last_instance
     schema_calls = [
         c for c in ctl.calls if c[0] == "execute" and "CREATE TABLE" in c[1]
@@ -110,10 +144,9 @@ def test_creates_schema_for_all_three_tables(creds_path, account_type):
 
 
 @pytest.mark.parametrize("account_type", ["admin", "user"])
-def test_registers_account_row(creds_path, account_type):
-    AccountInitializer(
-        load_creds(creds_path), creds_path, NullLogger(), account_type
-    ).run()
+def test_registers_account_row(creds_path, user_creds_path, account_type):
+    initializer, _ = _build(account_type, creds_path, user_creds_path)
+    initializer.run()
     ctl = FakeLibsqlClient.last_instance
     uid, type_, created_at = ctl.insert_args("users")
     assert (uid, type_) == (UID, account_type)
@@ -121,19 +154,19 @@ def test_registers_account_row(creds_path, account_type):
 
 
 @pytest.mark.parametrize("account_type", ["admin", "user"])
-def test_persists_generated_user_root_key(creds_path, account_type):
-    AccountInitializer(
-        load_creds(creds_path), creds_path, NullLogger(), account_type
-    ).run()
-    with open(creds_path) as f:
+def test_persists_generated_user_root_key(creds_path, user_creds_path, account_type):
+    initializer, target_path = _build(account_type, creds_path, user_creds_path)
+    initializer.run()
+    with open(target_path) as f:
         saved = json.load(f)
     assert len(base64.b64decode(saved["user_root_key"])) == 256
 
 
 def test_admin_key_store_has_composite_kem_keypair(creds_path, engine):
-    AccountInitializer(load_creds(creds_path), creds_path, NullLogger(), "admin").run()
+    initializer, target_path = _build("admin", creds_path)
+    initializer.run()
     ctl = FakeLibsqlClient.last_instance
-    with open(creds_path) as f:
+    with open(target_path) as f:
         ikm = base64.b64decode(json.load(f)["user_root_key"])
 
     blob = CryptoBlob(engine)
@@ -145,20 +178,20 @@ def test_admin_key_store_has_composite_kem_keypair(creds_path, engine):
     assert len(blob.decrypt(wrapped_privkey, umk)) == 3224
 
 
-def test_user_key_store_has_no_kem_keypair(creds_path):
-    AccountInitializer(load_creds(creds_path), creds_path, NullLogger(), "user").run()
+def test_user_key_store_has_no_kem_keypair(creds_path, user_creds_path):
+    initializer, _ = _build("user", creds_path, user_creds_path)
+    initializer.run()
     ctl = FakeLibsqlClient.last_instance
     uid, _wrapped_umk = ctl.insert_args("key_store")
     assert uid == UID
 
 
 @pytest.mark.parametrize("account_type", ["admin", "user"])
-def test_cred_store_decrypts_correctly(creds_path, engine, account_type):
-    AccountInitializer(
-        load_creds(creds_path), creds_path, NullLogger(), account_type
-    ).run()
+def test_cred_store_decrypts_correctly(creds_path, user_creds_path, engine, account_type):
+    initializer, target_path = _build(account_type, creds_path, user_creds_path)
+    initializer.run()
     ctl = FakeLibsqlClient.last_instance
-    with open(creds_path) as f:
+    with open(target_path) as f:
         ikm = base64.b64decode(json.load(f)["user_root_key"])
 
     blob = CryptoBlob(engine)
@@ -173,10 +206,9 @@ def test_cred_store_decrypts_correctly(creds_path, engine, account_type):
 
 
 @pytest.mark.parametrize("account_type", ["admin", "user"])
-def test_second_run_does_not_reinsert(creds_path, account_type):
-    AccountInitializer(
-        load_creds(creds_path), creds_path, NullLogger(), account_type
-    ).run()
+def test_second_run_does_not_reinsert(creds_path, user_creds_path, account_type):
+    initializer, _ = _build(account_type, creds_path, user_creds_path)
+    initializer.run()
     first_ctl = FakeLibsqlClient.last_instance
     FakeLibsqlClient.preset = {
         "SELECT id FROM users": [[UID]],
@@ -184,9 +216,8 @@ def test_second_run_does_not_reinsert(creds_path, account_type):
         "SELECT content FROM cred_store": [[first_ctl.insert_args("cred_store")[2]]],
     }
 
-    AccountInitializer(
-        load_creds(creds_path), creds_path, NullLogger(), account_type
-    ).run()
+    initializer2, _ = _build(account_type, creds_path, user_creds_path)
+    initializer2.run()
     second_ctl = FakeLibsqlClient.last_instance
     inserts = [c for c in second_ctl.calls if c[0] == "execute" and "INSERT" in c[1]]
     assert inserts == []
