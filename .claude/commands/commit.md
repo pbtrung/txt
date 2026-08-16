@@ -7,12 +7,17 @@ description: Commit staged/modified changes with a detailed message and push, no
 ## Steps
 
 1. Run `git status` and `git diff` (and `git diff --staged` if anything is already staged) to see all changes.
-2. If nothing is staged, stage all relevant modified/new files with `git add`.
-3. Write a **detailed** commit message:
+2. Lint and format whatever's actually touched, before staging anything:
+   - Any `*.py` changed: `python3 -m ruff format .` then `python3 -m ruff check .`.
+   - Any `worker/**/*.ts` or `ui/**/*.{ts,tsx}` changed: `npm run format` then `npm run lint`.
+   - If formatting rewrote a file, or lint reports an error (not just a warning), fix it and re-run before continuing — don't commit code a linter/formatter would still flag.
+   - These tools already leave `sqlcipher/`, `worker/worker-configuration.d.ts`, and generated files alone (`.prettierignore`, `eslint.config.js`'s `ignores`) — don't widen a glob or pass an explicit path that would pull those in.
+3. If nothing is staged, stage all relevant modified/new files with `git add`.
+4. Write a **detailed** commit message:
    - Subject line: concise summary of the change (imperative mood, e.g. "Add", "Fix", "Refactor").
    - Body: explain _what_ changed and _why_, as bullet points if there are multiple distinct changes.
    - Base the message only on the actual diff — do not include conversational back-and-forth, dead ends, or trial-and-error from the session.
-4. Create the commit using a HEREDOC so formatting is preserved, e.g.:
+5. Create the commit using a HEREDOC so formatting is preserved, e.g.:
    ```bash
    git commit -m "$(cat <<'EOF'
    Short summary of the change
@@ -23,12 +28,13 @@ description: Commit staged/modified changes with a detailed message and push, no
    EOF
    )"
    ```
-5. **Do not** add any AI attribution — no `🤖 Generated with Claude Code` line, no `Co-Authored-By: Claude` trailer, no mention of Claude/AI anywhere in the message.
-6. Push the commit to the current branch's remote (`git push`, or `git push -u origin <branch>` if it has no upstream yet).
-7. Confirm success by showing `git log -1` and `git status` after pushing.
+6. **Do not** add any AI attribution — no `🤖 Generated with Claude Code` line, no `Co-Authored-By: Claude` trailer, no mention of Claude/AI anywhere in the message.
+7. Push the commit to the current branch's remote (`git push`, or `git push -u origin <branch>` if it has no upstream yet).
+8. Confirm success by showing `git log -1` and `git status` after pushing.
 
 ## Rules
 
 - Never include Claude/AI co-authorship or attribution in the commit message.
 - Always push after committing — don't stop at just the local commit.
 - If the push fails (e.g. diverged branch), report the error and ask before force-pushing or rebasing.
+- Never run the Python/TS lint or format commands against `sqlcipher/` (vendored/generated, already excluded by config) — don't override that exclusion for any reason.
