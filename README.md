@@ -126,6 +126,7 @@ npm run worker:test        # vitest
 npm run worker:typecheck   # wrangler types + tsc
 npm run format             # prettier --write, 88 columns
 npm run format:check
+npm run lint               # eslint (worker/ + ui/)
 ```
 
 Deploying requires `WORKER_NAME` (the existing Cloudflare Worker's name) to be set: `WORKER_NAME=... npm run deploy`.
