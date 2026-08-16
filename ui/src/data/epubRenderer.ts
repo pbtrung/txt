@@ -12,8 +12,16 @@ import ePub, {
 } from "@likecoin/epub-ts";
 import { READER_FONT_FAMILY, READER_THEME_CSS } from "./readerTheme";
 
+const TWO_COLUMN_MIN_WIDTH_PX = 900;
+const FRONT_MATTER_SPINE_INDEX_LIMIT = 3;
+const BOOK_PAGE_CHARS = 1000;
 const COVER_MEDIA_SELECTOR = "img, image, object";
 const XLINK_NAMESPACE = "http://www.w3.org/1999/xlink";
+
+interface SectionLike {
+  href?: string;
+  index?: number;
+}
 
 function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(
@@ -75,6 +83,11 @@ export interface PagePosition {
 export class EpubRenderer {
   private readonly book: Book;
   private rendition: Rendition | null = null;
+  private preferredColumns: 1 | 2 = 1;
+  private coverHref: string | null = null;
+  private currentCfi: string | null = null;
+  private pageMapReady = false;
+  private pageCallback: ((page: PagePosition) => void) | null = null;
 
   constructor(
     epubBytes: Uint8Array,
@@ -132,8 +145,44 @@ export class EpubRenderer {
     // which is what it takes to beat a book's own stylesheet -- nearly
     // every real EPUB sets its own font-family on body/paragraphs.
     this.rendition.themes.font(READER_FONT_FAMILY);
-    this.rendition.spread("none");
+    this.rendition.on("rendered", (section) => this.applyLayoutFor(section));
+    void this.loadCoverHref();
     void this.rendition.display();
+  }
+
+  private async loadCoverHref(): Promise<void> {
+    try {
+      this.coverHref = (await this.book.loaded.cover) || null;
+    } catch {
+      this.coverHref = null;
+    }
+  }
+
+  private isFrontMatter(section: SectionLike): boolean {
+    if (section.index !== undefined && section.index < FRONT_MATTER_SPINE_INDEX_LIMIT)
+      return true;
+    return (
+      this.coverHref !== null &&
+      section.href !== undefined &&
+      this.book.resolve(section.href) === this.coverHref
+    );
+  }
+
+  private applyPreferredColumns(): void {
+    const rendition = this.requireRendition();
+    if (this.preferredColumns === 1) rendition.spread("none");
+    else rendition.spread("auto", TWO_COLUMN_MIN_WIDTH_PX);
+  }
+
+  private applyLayoutFor(section: SectionLike): void {
+    if (this.isFrontMatter(section)) this.requireRendition().spread("none");
+    else this.applyPreferredColumns();
+  }
+
+  setColumns(count: 1 | 2): void {
+    this.preferredColumns = count;
+    const current = this.requireRendition().currentLocation()?.start;
+    if (!current || !this.isFrontMatter(current)) this.applyPreferredColumns();
   }
 
   /** Jumps to an arbitrary TOC href or CFI -- unlike next()/prev(), which
@@ -159,10 +208,29 @@ export class EpubRenderer {
   }
 
   onPageChange(cb: (page: PagePosition) => void): void {
+    this.pageCallback = cb;
     this.requireRendition().on("relocated", (location: Location) => {
-      const displayed = location.start.displayed;
-      cb({ current: displayed.page, total: displayed.total });
+      this.currentCfi = location.start.cfi;
+      this.emitPagePosition();
     });
+    void this.generatePageMap();
+  }
+
+  private async generatePageMap(): Promise<void> {
+    try {
+      await this.book.locations.generate(BOOK_PAGE_CHARS);
+      this.pageMapReady = true;
+      this.emitPagePosition();
+    } catch {
+      this.pageMapReady = false;
+    }
+  }
+
+  private emitPagePosition(): void {
+    if (!this.pageMapReady || !this.currentCfi || !this.pageCallback) return;
+    const index = this.book.locations.locationFromCfi(this.currentCfi);
+    const total = this.book.locations.length();
+    if (index >= 0 && total > 0) this.pageCallback({ current: index + 1, total });
   }
 
   async getToc(): Promise<NavItem[]> {

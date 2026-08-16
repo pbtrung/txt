@@ -1,6 +1,6 @@
 // Renders the requested document with epub.js. The header stays to three
-// controls (back, contents, info), while page-turn controls and the current
-// section's page count sit in their own compact footer.
+// controls (back, menu, info); font size, book-wide page navigation, and
+// contents share the viewport-constrained left menu.
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { OffcanvasPanel } from "../../components/OffcanvasPanel";
@@ -14,6 +14,9 @@ import { useReaderDocument } from "./useReaderDocument";
 const MOBILE_MEDIA_QUERY = "(max-width: 767.98px)";
 const DESKTOP_FONT_PX = 18;
 const MOBILE_FONT_PX = 16;
+const MIN_FONT_PX = 12;
+const MAX_FONT_PX = 32;
+const FONT_STEP_PX = 1;
 function defaultFontPx(): number {
   return window.matchMedia(MOBILE_MEDIA_QUERY).matches
     ? MOBILE_FONT_PX
@@ -26,6 +29,7 @@ export function ReaderScreen() {
   const { status, document, error } = useReaderDocument(session, Number(txtId));
   const containerRef = useRef<HTMLDivElement>(null);
   const [renderer, setRenderer] = useState<EpubRenderer | null>(null);
+  const [fontPx, setFontPx] = useState(defaultFontPx);
   const [page, setPage] = useState<PagePosition>({ current: 1, total: 1 });
   const [infoOpen, setInfoOpen] = useState(false);
   const [tocOpen, setTocOpen] = useState(false);
@@ -38,7 +42,8 @@ export function ReaderScreen() {
       document.authors,
     );
     newRenderer.renderTo(containerRef.current);
-    newRenderer.setFontSize(`${defaultFontPx()}px`);
+    newRenderer.setFontSize(`${fontPx}px`);
+    newRenderer.setColumns(2);
     newRenderer.onPageChange(setPage);
     setRenderer(newRenderer);
 
@@ -54,7 +59,16 @@ export function ReaderScreen() {
       newRenderer.destroy();
       setRenderer(null);
     };
+    // Font changes are applied directly by adjustFontSize; they do not
+    // replace the renderer or restart the book-wide page map.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, document]);
+
+  function adjustFontSize(delta: number) {
+    const next = Math.min(MAX_FONT_PX, Math.max(MIN_FONT_PX, fontPx + delta));
+    setFontPx(next);
+    renderer?.setFontSize(`${next}px`);
+  }
 
   if (status === "loading") {
     return (
@@ -112,59 +126,25 @@ export function ReaderScreen() {
 
       <div ref={containerRef} className="flex-grow-1" />
 
-      <PageNavigation renderer={renderer} page={page} />
-
       <InfoPanel
         open={infoOpen}
         onClose={() => setInfoOpen(false)}
         document={document!}
       />
-      <TocPanel open={tocOpen} onClose={() => setTocOpen(false)} renderer={renderer} />
+      <TocPanel
+        open={tocOpen}
+        onClose={() => setTocOpen(false)}
+        renderer={renderer}
+        page={page}
+        onDecreaseFont={() => adjustFontSize(-FONT_STEP_PX)}
+        onIncreaseFont={() => adjustFontSize(FONT_STEP_PX)}
+      />
     </div>
   );
 }
 
 function readerTitle(title: string, authors: string[]): string {
   return authors.length > 0 ? `${title} — ${authors.join(", ")}` : title;
-}
-
-function PageNavigation({
-  renderer,
-  page,
-}: {
-  renderer: EpubRenderer | null;
-  page: PagePosition;
-}) {
-  return (
-    <div className="d-flex align-items-center justify-content-center border-top py-1 gap-2">
-      <button
-        type="button"
-        className="btn btn-sm btn-outline-secondary"
-        aria-label="Previous page"
-        disabled={!renderer}
-        onClick={() => void renderer?.prev()}
-      >
-        <i className="bi bi-chevron-left" />
-      </button>
-      <span
-        className="small text-muted text-center"
-        style={{ minWidth: "5rem" }}
-        aria-label={`Page ${page.current} of ${page.total}`}
-        aria-live="polite"
-      >
-        {page.current} / {page.total}
-      </span>
-      <button
-        type="button"
-        className="btn btn-sm btn-outline-secondary"
-        aria-label="Next page"
-        disabled={!renderer}
-        onClick={() => void renderer?.next()}
-      >
-        <i className="bi bi-chevron-right" />
-      </button>
-    </div>
-  );
 }
 
 function InfoPanel({
@@ -183,7 +163,12 @@ function InfoPanel({
   };
 }) {
   return (
-    <OffcanvasPanel open={open} onClose={onClose} title="Info">
+    <OffcanvasPanel
+      open={open}
+      onClose={onClose}
+      title="Info"
+      className="reader-side-panel"
+    >
       <h2 className="h5 mb-1">{document.title}</h2>
       {document.authors.length > 0 && (
         <p className="text-muted mb-3">{document.authors.join(", ")}</p>

@@ -18,6 +18,7 @@ vi.mock("../../../src/data/epubRenderer", () => ({
       onKeyup: vi.fn(),
       onPageChange: vi.fn(),
       setFontSize: vi.fn(),
+      setColumns: vi.fn(),
       getToc: vi.fn().mockResolvedValue([]),
     };
   }),
@@ -145,6 +146,7 @@ describe("ReaderScreen", () => {
       next: () => void;
     };
 
+    await userEvent.click(screen.getByRole("button", { name: "Menu" }));
     await userEvent.click(screen.getByRole("button", { name: "Previous page" }));
     await userEvent.click(screen.getByRole("button", { name: "Next page" }));
 
@@ -178,6 +180,31 @@ describe("ReaderScreen", () => {
     expect(instance.setFontSize).toHaveBeenCalledWith("16px");
   });
 
+  it("keeps the previous responsive two-column preference", () => {
+    mockVault();
+    mockReadyDocument();
+    renderScreen();
+    const instance = vi.mocked(EpubRenderer).mock.results[0].value as {
+      setColumns: (count: 1 | 2) => void;
+    };
+
+    expect(instance.setColumns).toHaveBeenCalledWith(2);
+  });
+
+  it("adjusts font size from the menu", async () => {
+    mockVault();
+    mockReadyDocument();
+    renderScreen();
+    const instance = vi.mocked(EpubRenderer).mock.results[0].value as {
+      setFontSize: (size: string) => void;
+    };
+    await userEvent.click(screen.getByRole("button", { name: "Menu" }));
+
+    await userEvent.click(screen.getByRole("button", { name: "Increase font size" }));
+
+    expect(instance.setFontSize).toHaveBeenLastCalledWith("19px");
+  });
+
   it("keeps the header to back, menu, and info controls", () => {
     mockVault();
     mockReadyDocument();
@@ -189,7 +216,7 @@ describe("ReaderScreen", () => {
     expect(screen.queryByRole("button", { name: "Two-column layout" })).toBeNull();
   });
 
-  it("updates the current and total page from renderer relocation", () => {
+  it("updates the current and total page from renderer relocation", async () => {
     mockVault();
     mockReadyDocument();
     renderScreen();
@@ -199,6 +226,7 @@ describe("ReaderScreen", () => {
     const callback = vi.mocked(instance.onPageChange).mock.calls[0][0];
 
     act(() => callback({ current: 4, total: 12 }));
+    await userEvent.click(screen.getByRole("button", { name: "Menu" }));
 
     expect(screen.getByLabelText("Page 4 of 12")).toHaveTextContent("4 / 12");
   });
@@ -237,6 +265,9 @@ describe("ReaderScreen", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Book info" }));
 
+    expect(screen.getByRole("dialog", { name: "Info" })).toHaveClass(
+      "reader-side-panel",
+    );
     expect(screen.getByText("Frank Herbert")).toBeInTheDocument();
     expect(screen.getByText("Ace")).toBeInTheDocument();
     expect(screen.getByText("Science Fiction")).toBeInTheDocument();
@@ -305,7 +336,6 @@ describe("ReaderScreen", () => {
     await userEvent.click(screen.getByRole("button", { name: "Menu" }));
 
     const menu = screen.getByRole("dialog", { name: "Menu" });
-    expect(menu).toHaveClass("show", "offcanvas-start");
-    expect(menu).toHaveStyle({ maxWidth: "100%" });
+    expect(menu).toHaveClass("show", "offcanvas-start", "reader-side-panel");
   });
 });

@@ -19,6 +19,11 @@ const bookMock = {
   renderTo: vi.fn().mockReturnValue(renditionMock),
   destroy: vi.fn(),
   resolve: vi.fn((href: string) => href),
+  locations: {
+    generate: vi.fn().mockResolvedValue([]),
+    locationFromCfi: vi.fn().mockReturnValue(0),
+    length: vi.fn().mockReturnValue(1),
+  },
   spine: { hooks: { content: { register: vi.fn() } } },
   loaded: { navigation: Promise.resolve({ toc: TOC }), cover: Promise.resolve("") },
 };
@@ -33,6 +38,8 @@ afterEach(() => {
   renditionMock.settings = {};
   renditionMock.currentLocation.mockReturnValue(undefined);
   bookMock.loaded.cover = Promise.resolve("");
+  bookMock.locations.locationFromCfi.mockReturnValue(0);
+  bookMock.locations.length.mockReturnValue(1);
 });
 
 describe("EpubRenderer", () => {
@@ -100,10 +107,14 @@ describe("EpubRenderer", () => {
     expect(chapter.body.textContent).toBe("Chapter text");
   });
 
-  it("always renders in a single-column layout", () => {
+  it("retains the responsive one/two-column behavior", () => {
     const renderer = new EpubRenderer(new Uint8Array([1]));
     renderer.renderTo(document.createElement("div"));
 
+    renderer.setColumns(2);
+    expect(renditionMock.spread).toHaveBeenCalledWith("auto", expect.any(Number));
+
+    renderer.setColumns(1);
     expect(renditionMock.spread).toHaveBeenCalledWith("none");
   });
 
@@ -155,7 +166,9 @@ describe("EpubRenderer", () => {
     expect(renditionMock.on).toHaveBeenCalledWith("keyup", cb);
   });
 
-  it("reports the displayed page and total when the rendition relocates", () => {
+  it("reports a stable book-wide page and total when the rendition relocates", async () => {
+    bookMock.locations.locationFromCfi.mockReturnValue(2);
+    bookMock.locations.length.mockReturnValue(120);
     const renderer = new EpubRenderer(new Uint8Array([1]));
     renderer.renderTo(document.createElement("div"));
     const cb = vi.fn();
@@ -164,9 +177,16 @@ describe("EpubRenderer", () => {
       ([event]) => event === "relocated",
     )![1];
 
-    relocated({ start: { displayed: { page: 3, total: 8 } } });
+    relocated({ start: { cfi: "epubcfi(/6/4!/4/2)" } });
 
-    expect(cb).toHaveBeenCalledWith({ current: 3, total: 8 });
+    await vi.waitFor(() => {
+      expect(cb).toHaveBeenCalledWith({ current: 3, total: 120 });
+    });
+
+    expect(bookMock.locations.generate).toHaveBeenCalledWith(1000);
+    expect(bookMock.locations.locationFromCfi).toHaveBeenCalledWith(
+      "epubcfi(/6/4!/4/2)",
+    );
   });
 
   it("setFontSize() delegates to the rendition's themes", () => {

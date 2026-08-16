@@ -128,3 +128,8 @@
 .min-w-0 {
   min-width: 0;
 }
+
+.reader-side-panel {
+  width: 520px;
+  max-width: 100%;
+}
