@@ -395,8 +395,8 @@ class ImageReplacer:
                 epub_path, self.dst_dir / epub_path.name
             )
             self.logger.verbose(
-                f"{epub_path.name}: replaced {replaced} image(s), resized {resized} tag(s), "
-                f"stripped {stripped} caption(s)"
+                f"{epub_path.name}: replaced {replaced} image(s), resized {resized} "
+                f"tag(s), stripped {stripped} caption(s)"
             )
 
     def _copy_opf_files(self) -> None:

@@ -90,6 +90,13 @@ pip install -e ".[dev]"
 pytest
 ```
 
+### Python lint/format
+
+```
+ruff check .
+ruff format .
+```
+
 ## Cloudflare Worker (`worker/`)
 
 Implements docs/auth.md: exchanges a Firebase ID token for wrapped key material, and mints short-lived R2 credentials, over two endpoints.

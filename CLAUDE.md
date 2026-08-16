@@ -49,4 +49,5 @@ This repo holds the txt document-storage system's design docs, the Cloudflare Wo
 - Functions stay ≤15 lines; use a class (not free functions) for anything holding state — a client, an engine, a session.
 - Reuse the existing generic pieces (`LibsqlClient`, `TursoClient`, `CryptoBlob`, `FirebaseAuth`, `AccountSession`, `R2Client`, `SqliteEngine`) instead of duplicating HTTP, crypto, or storage logic in a new command.
 - `worker/*.ts` is formatted with Prettier at 88 columns (`.prettierrc.json`); run `npm run format` before committing. `.prettierignore` excludes generated/vendored files (`worker/worker-configuration.d.ts`, `sqlcipher/`) and the Python tree.
+- The Python tree is linted and formatted with ruff (`[tool.ruff]` in `pyproject.toml`, 88 columns to match the TS side): `python3 -m ruff check .` and `python3 -m ruff format .` before committing.
 - Docs (this file, README, docs/*) describe current state only — no commit hashes, no "legacy"/"previously" framing, no narrated history.

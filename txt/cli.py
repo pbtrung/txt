@@ -20,7 +20,8 @@ from .replace_images import ImageReplacer
 @click.option(
     "--init-user",
     is_flag=True,
-    help="Provision an ordinary user's row in ctl (needs --admin-creds and --user-creds)",
+    help="Provision an ordinary user's row in ctl (needs --admin-creds and "
+    "--user-creds)",
 )
 @click.option(
     "--admin-creds",

@@ -18,7 +18,10 @@ class TursoClient:
         return {"Authorization": f"Bearer {self.org_token}"}
 
     def mint_db_token(self, db_name: str, authorization: str = "full-access") -> str:
-        url = f"{PLATFORM_API_BASE}/organizations/{self.org}/databases/{db_name}/auth/tokens"
+        url = (
+            f"{PLATFORM_API_BASE}/organizations/{self.org}/databases/{db_name}"
+            "/auth/tokens"
+        )
         resp = requests.post(
             url,
             headers=self._headers(),

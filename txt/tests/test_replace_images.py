@@ -44,7 +44,10 @@ def test_replace_images_replaces_manifest_image_and_constrains_img_tag(tmp_path)
         '<item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>'
         "</manifest></package>"
     )
-    xhtml = b'<html><body><img src="images/cover.png" width="500" height="800"/></body></html>'
+    xhtml = (
+        b'<html><body><img src="images/cover.png" width="500" '
+        b'height="800"/></body></html>'
+    )
     with zipfile.ZipFile(src, "w") as zf:
         zf.writestr("mimetype", "application/epub+zip")
         zf.writestr("content.opf", opf)

@@ -92,7 +92,9 @@ def _define_env_lifecycle(linker, store):
 
 
 def _define_env_time(linker, store):
-    now_ms = lambda: time.time() * 1000
+    def now_ms():
+        return time.time() * 1000
+
     _define(linker, store, "emscripten_date_now", [], ["f64"], now_ms)
     _define(linker, store, "emscripten_get_now", [], ["f64"], now_ms)
     _define(linker, store, "emscripten_get_heap_max", [], ["i32"], lambda: 2**31 - 1)

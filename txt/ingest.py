@@ -163,8 +163,8 @@ class TxtIngester:
         payload = self._catalog_payload(epub_path)
         catalog = brotli.compress(json.dumps(payload).encode())
         self.engine.execute(
-            "INSERT INTO txt (txt_key, txt_prefix, path, catalog, last_accessed, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO txt (txt_key, txt_prefix, path, catalog, last_accessed, "
+            "created_at) VALUES (?, ?, ?, ?, ?, ?)",
             [txt_key, txt_prefix, path, catalog, now, now],
         )
 
