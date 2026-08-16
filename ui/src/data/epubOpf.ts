@@ -6,7 +6,7 @@
 // package document via JSZip + DOMParser instead of a Calibre sidecar
 // .opf via ElementTree.
 import JSZip from "jszip";
-import { fieldStrings, type OpfField, type OpfSidecar } from "./opfSidecar";
+import { fieldStrings, type OpfField, type ParsedOpf } from "./opfMetadata";
 
 const CONTAINER_PATH = "META-INF/container.xml";
 
@@ -100,7 +100,11 @@ function metadataDict(metadataEl: Element): Record<string, OpfField | OpfField[]
 async function readZipXml(zip: JSZip, path: string): Promise<Document> {
   const xml = await zip.file(path)?.async("string");
   if (xml === undefined) throw new Error(`${path} not found in EPUB`);
-  return new DOMParser().parseFromString(xml, "application/xml");
+  const document = new DOMParser().parseFromString(xml, "application/xml");
+  if (document.querySelector("parsererror")) {
+    throw new Error(`${path} contains invalid XML`);
+  }
+  return document;
 }
 
 async function rootfilePath(zip: JSZip): Promise<string> {
@@ -111,7 +115,7 @@ async function rootfilePath(zip: JSZip): Promise<string> {
   return fullPath;
 }
 
-export async function parseEpubOpf(epubBytes: Uint8Array): Promise<OpfSidecar> {
+export async function parseEpubOpf(epubBytes: Uint8Array): Promise<ParsedOpf> {
   const zip = await JSZip.loadAsync(epubBytes);
   const opfPath = await rootfilePath(zip);
   const opf = await readZipXml(zip, opfPath);
@@ -124,7 +128,7 @@ export interface MetadataField {
   values: string[];
 }
 
-export function extraMetadataFields(opf: OpfSidecar): MetadataField[] {
+export function extraMetadataFields(opf: ParsedOpf): MetadataField[] {
   return Object.entries(opf.metadata)
     .filter(([key]) => !KNOWN_FIELDS.has(key))
     .map(([key, value]) => ({

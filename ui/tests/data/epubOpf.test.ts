@@ -106,6 +106,18 @@ describe("parseEpubOpf", () => {
 
     await expect(parseEpubOpf(epub)).rejects.toThrow(/container\.xml/);
   });
+
+  it("rejects malformed container and package XML", async () => {
+    const badContainer = new JSZip();
+    badContainer.file("META-INF/container.xml", "<container>");
+    await expect(
+      parseEpubOpf(await badContainer.generateAsync({ type: "uint8array" })),
+    ).rejects.toThrow(/invalid XML/);
+
+    await expect(parseEpubOpf(await buildEpub("<package>"))).rejects.toThrow(
+      /invalid XML/,
+    );
+  });
 });
 
 describe("extraMetadataFields", () => {

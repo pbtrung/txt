@@ -26,14 +26,16 @@ vi.mock("@tanstack/react-virtual", () => ({
 
 import type { LibraryBook } from "../../../src/data/libraryDb";
 import { LibraryScreen } from "../../../src/screens/Library/LibraryScreen";
-import { useLibraryBooks } from "../../../src/screens/Library/useLibraryBooks";
+import {
+  useLibraryBooks,
+  type LibraryState,
+} from "../../../src/screens/Library/useLibraryBooks";
 import { useVault, type VaultSession } from "../../../src/state/VaultContext";
 
 function book(overrides: Partial<LibraryBook>): LibraryBook {
   return {
     txtId: 1,
     title: "Untitled",
-    sortKey: null,
     authors: [],
     subjects: [],
     publisher: null,
@@ -58,6 +60,13 @@ const LIBRARY: LibraryBook[] = [
 ];
 
 function renderScreen(books: LibraryBook[] | null, lock = vi.fn()) {
+  return renderLibrary(
+    books === null ? { status: "loading" } : { status: "ready", books },
+    lock,
+  );
+}
+
+function renderLibrary(library: LibraryState, lock = vi.fn()) {
   const session = { db: {}, displayName: "Trung" } as VaultSession;
   vi.mocked(useVault).mockReturnValue({
     status: "unlocked",
@@ -67,7 +76,7 @@ function renderScreen(books: LibraryBook[] | null, lock = vi.fn()) {
     unlock: vi.fn(),
     lock,
   });
-  vi.mocked(useLibraryBooks).mockReturnValue(books);
+  vi.mocked(useLibraryBooks).mockReturnValue(library);
   return render(
     <MemoryRouter>
       <LibraryScreen />
@@ -79,6 +88,15 @@ describe("LibraryScreen", () => {
   it("shows a loading message before books resolve", () => {
     renderScreen(null);
     expect(screen.getByText(/Loading your library/)).toBeInTheDocument();
+  });
+
+  it("shows a library loading error", () => {
+    renderLibrary({
+      status: "error",
+      error: "database failed",
+    });
+
+    expect(screen.getByRole("alert")).toHaveTextContent("database failed");
   });
 
   it("lists every book once loaded, under All Books", () => {

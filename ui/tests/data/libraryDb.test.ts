@@ -39,7 +39,6 @@ describe("loadLibraryBooks (real sqlcipher.wasm)", () => {
     expect(book).toEqual({
       txtId: 1,
       title: "Dune",
-      sortKey: null,
       authors: ["Frank Herbert"],
       subjects: ["Science Fiction"],
       publisher: "Ace",

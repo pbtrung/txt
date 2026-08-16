@@ -55,4 +55,16 @@ describe("TocPanel", () => {
     expect(display).toHaveBeenCalledWith("ch1.xhtml");
     expect(onClose).toHaveBeenCalled();
   });
+
+  it("shows an error when contents cannot be loaded", async () => {
+    const renderer = {
+      getToc: vi.fn().mockRejectedValue(new Error("bad navigation")),
+    } as unknown as EpubRenderer;
+
+    render(<TocPanel open onClose={vi.fn()} renderer={renderer} />);
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent("Unable to load contents."),
+    );
+  });
 });

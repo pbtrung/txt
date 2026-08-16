@@ -93,6 +93,7 @@
    to) and makes the whole layout look like it "jumps" when a long entry
    is selected or scrolled into view. */
 .library-sidebar {
+  width: var(--library-sidebar-width);
   flex-shrink: 0;
 }
 
@@ -102,7 +103,7 @@
    Zeroing it lets those dividers run flush edge to edge; the footer
    keeps its own p-2 regardless, since that's set directly on its own div
    rather than inherited from this padding. Bootstrap makes a responsive
-   offcanvas body a row flex container on desktop, so SidebarContent also
+   offcanvas body a row flex container on desktop, so LibrarySidebar also
    carries w-100; without it, the content stays at its intrinsic width and
    the nav rows and their right-aligned counts stop short of the border.
    overflow-x is belt-and-suspenders against the same symptom from a
@@ -132,4 +133,14 @@
 .reader-side-panel {
   width: 100%;
   max-width: 350px;
+}
+
+.reader-font-menu {
+  top: auto;
+  bottom: 100%;
+  min-width: 4.5rem;
+}
+
+.unlock-panel {
+  max-width: 24rem;
 }

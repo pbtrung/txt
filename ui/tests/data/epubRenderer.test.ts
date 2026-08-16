@@ -57,16 +57,16 @@ describe("EpubRenderer", () => {
     expect(new Uint8Array(arrayBuffer as ArrayBuffer)).toEqual(bytes);
   });
 
-  it("renders into the given element and displays it", () => {
+  it("renders untrusted book content without allowing scripts", async () => {
     const renderer = new EpubRenderer(new Uint8Array([1]));
     const element = document.createElement("div");
 
-    renderer.renderTo(element);
+    await renderer.renderTo(element);
 
     expect(bookMock.renderTo).toHaveBeenCalledWith(element, {
       width: "100%",
       height: "100%",
-      allowScriptedContent: true,
+      allowScriptedContent: false,
     });
     expect(renditionMock.display).toHaveBeenCalled();
     expect(renditionMock.themes.registerCss).toHaveBeenCalledWith(
@@ -75,6 +75,18 @@ describe("EpubRenderer", () => {
     );
     expect(renditionMock.themes.font).toHaveBeenCalledWith(
       expect.stringContaining("Literata"),
+    );
+  });
+
+  it("reports initial display failures and prevents duplicate mounts", async () => {
+    renditionMock.display.mockRejectedValueOnce(new Error("display failed"));
+    const renderer = new EpubRenderer(new Uint8Array([1]));
+
+    await expect(renderer.renderTo(document.createElement("div"))).rejects.toThrow(
+      /display failed/,
+    );
+    await expect(renderer.renderTo(document.createElement("div"))).rejects.toThrow(
+      /already mounted/,
     );
   });
 
@@ -131,6 +143,9 @@ describe("EpubRenderer", () => {
 
     expect(renditionMock.destroy).toHaveBeenCalled();
     expect(bookMock.destroy).toHaveBeenCalled();
+    expect(() => renderer.setFontSize("100%")).toThrow(/renderTo/);
+    renderer.destroy();
+    expect(bookMock.destroy).toHaveBeenCalledTimes(1);
   });
 
   it("destroying before renderTo only destroys the book", () => {
@@ -244,6 +259,18 @@ describe("EpubRenderer", () => {
 
     expect(bookMock.locations.cfiFromLocation).toHaveBeenCalledWith(41);
     expect(renditionMock.display).toHaveBeenCalledWith("epubcfi(/6/84)");
+  });
+
+  it("ignores an invalid direct page", async () => {
+    const renderer = new EpubRenderer(new Uint8Array([1]));
+    renderer.renderTo(document.createElement("div"));
+    renderer.onPageChange(vi.fn());
+    await vi.waitFor(() => expect(bookMock.locations.generate).toHaveBeenCalled());
+    bookMock.locations.cfiFromLocation.mockClear();
+
+    await renderer.displayPage(Number.NaN);
+
+    expect(bookMock.locations.cfiFromLocation).not.toHaveBeenCalled();
   });
 
   it("setFontSize() delegates to the rendition's themes", () => {

@@ -36,6 +36,19 @@ describe("WorkerClient.fetchKeys", () => {
 
     await expect(new WorkerClient("idtok").fetchKeys()).rejects.toThrow(/503/);
   });
+
+  it("rejects malformed successful responses", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ type: "reader", umk: "value" }),
+      }),
+    );
+
+    await expect(new WorkerClient("idtok").fetchKeys()).rejects.toThrow(/account type/);
+  });
 });
 
 describe("WorkerClient.fetchR2Token", () => {
@@ -82,6 +95,21 @@ describe("WorkerClient.fetchR2Token", () => {
 
     await expect(new WorkerClient("idtok").fetchR2Token("p", "q")).rejects.toThrow(
       /400/,
+    );
+  });
+
+  it("rejects incomplete successful credentials", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ access_key_id: "ak" }),
+      }),
+    );
+
+    await expect(new WorkerClient("idtok").fetchR2Token("p", "q")).rejects.toThrow(
+      /secret_access_key/,
     );
   });
 });

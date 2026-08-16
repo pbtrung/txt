@@ -32,4 +32,8 @@ describe("stripHtmlToText", () => {
   it("drops tags and keeps their text content", () => {
     expect(stripHtmlToText("<p>A <b>desert</b> planet.</p>")).toBe("A desert planet.");
   });
+
+  it("does not expose text from unsafe elements", () => {
+    expect(stripHtmlToText("<p>Safe</p><script>unsafe()</script>")).toBe("Safe");
+  });
 });

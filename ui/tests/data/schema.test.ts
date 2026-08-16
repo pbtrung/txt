@@ -8,6 +8,7 @@ describe("ensureSchema (real sqlcipher.wasm)", () => {
     ensureSchema(db);
 
     expect(Number(db.query("PRAGMA page_size")[0][0])).toBe(PAGE_SIZE);
+    expect(db.query("PRAGMA foreign_keys")).toEqual([[1]]);
     expect(db.query("SELECT count(*) FROM txt")).toEqual([[0]]);
     expect(db.query("SELECT count(*) FROM txt_bookmarks")).toEqual([[0]]);
     db.close();
@@ -40,6 +41,24 @@ describe("ensureSchema (real sqlcipher.wasm)", () => {
     }
 
     expect(db.query("SELECT count(*) FROM txt_bookmarks")).toEqual([[20]]);
+    db.close();
+  });
+
+  it("cascades bookmark deletion when a document is deleted", async () => {
+    const db = await SqliteDatabase.openUnkeyed();
+    ensureSchema(db);
+    db.execSql(
+      "INSERT INTO txt (txt_key, txt_prefix, path, catalog, last_accessed, created_at) " +
+        "VALUES (x'00', x'00', x'00', x'00', 0, 0)",
+    );
+    db.execSql(
+      "INSERT INTO txt_bookmarks (txt_id, line, preview, created_at) " +
+        "VALUES (1, 1, 'preview', 0)",
+    );
+
+    db.execSql("DELETE FROM txt WHERE id = 1");
+
+    expect(db.query("SELECT count(*) FROM txt_bookmarks")).toEqual([[0]]);
     db.close();
   });
 });

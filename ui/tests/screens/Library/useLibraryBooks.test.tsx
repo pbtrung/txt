@@ -9,7 +9,7 @@ import { useLibraryBooks } from "../../../src/screens/Library/useLibraryBooks";
 describe("useLibraryBooks", () => {
   it("returns [] immediately when there's no database yet", () => {
     const { result } = renderHook(() => useLibraryBooks(null));
-    expect(result.current).toEqual([]);
+    expect(result.current).toEqual({ status: "ready", books: [] });
   });
 
   it("loads real database bytes, starting from a loading (null) state", async () => {
@@ -33,19 +33,34 @@ describe("useLibraryBooks", () => {
     );
 
     const { result } = renderHook(() => useLibraryBooks(db));
-    expect(result.current).toBeNull();
+    expect(result.current).toEqual({ status: "loading" });
 
-    await waitFor(() => expect(result.current).not.toBeNull());
-    expect(result.current).toEqual([
-      {
-        txtId: 1,
-        title: "Dune",
-        sortKey: null,
-        authors: [],
-        subjects: [],
-        publisher: null,
-      },
-    ]);
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    expect(result.current).toEqual({
+      status: "ready",
+      books: [
+        {
+          txtId: 1,
+          title: "Dune",
+          authors: [],
+          subjects: [],
+          publisher: null,
+        },
+      ],
+    });
     db.close();
+  });
+
+  it("surfaces database loading failures", async () => {
+    const db = await SqliteDatabase.openUnkeyed();
+    db.close();
+
+    const { result } = renderHook(() => useLibraryBooks(db));
+
+    await waitFor(() => expect(result.current.status).toBe("error"));
+    expect(result.current).toMatchObject({
+      status: "error",
+      error: "database is closed",
+    });
   });
 });

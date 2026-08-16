@@ -11,7 +11,6 @@ function book(overrides: Partial<LibraryBook>): LibraryBook {
   return {
     txtId: 1,
     title: "Untitled",
-    sortKey: null,
     authors: [],
     subjects: [],
     publisher: null,
@@ -23,7 +22,6 @@ const LIBRARY: LibraryBook[] = [
   book({
     txtId: 1,
     title: "Dune",
-    sortKey: "Dune",
     authors: ["Frank Herbert"],
     subjects: ["Science Fiction"],
     publisher: "Ace",
@@ -45,7 +43,7 @@ const LIBRARY: LibraryBook[] = [
 ];
 
 describe("allBooksSorted", () => {
-  it("sorts by sort_key, falling back to title", () => {
+  it("sorts by title", () => {
     const titles = allBooksSorted(LIBRARY).map((b) => b.title);
     expect(titles).toEqual([
       "A Wizard of Earthsea",
@@ -79,6 +77,12 @@ describe("browseEntries", () => {
       { value: "Ace", count: 2 },
       { value: "Parnassus", count: 1 },
     ]);
+  });
+
+  it("counts a repeated value only once per book and ignores blanks", () => {
+    const duplicate = book({ authors: ["Ada", "Ada", " "] });
+
+    expect(browseEntries([duplicate], "author")).toEqual([{ value: "Ada", count: 1 }]);
   });
 });
 

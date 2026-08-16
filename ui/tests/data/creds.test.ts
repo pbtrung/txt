@@ -22,4 +22,22 @@ describe("parseBrowserCreds", () => {
     const { firebase_api_key: _drop, ...rest } = VALID;
     expect(() => parseBrowserCreds(rest)).toThrow(/firebase_api_key/);
   });
+
+  it("rejects non-object credentials", () => {
+    expect(() => parseBrowserCreds(null)).toThrow(/must contain an object/);
+    expect(() => parseBrowserCreds([])).toThrow(/must contain an object/);
+  });
+
+  it("rejects non-string and blank fields", () => {
+    expect(() => parseBrowserCreds({ ...VALID, firebase_email: 42 })).toThrow(
+      /firebase_email/,
+    );
+    expect(() => parseBrowserCreds({ ...VALID, firebase_password: " " })).toThrow(
+      /firebase_password/,
+    );
+  });
+
+  it("drops unrelated top-level fields", () => {
+    expect(parseBrowserCreds({ ...VALID, turso_org_token: "secret" })).toEqual(VALID);
+  });
 });

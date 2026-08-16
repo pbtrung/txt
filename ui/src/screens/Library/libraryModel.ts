@@ -3,9 +3,7 @@
 import type { LibraryBook } from "../../data/libraryDb";
 
 export function allBooksSorted(books: LibraryBook[]): LibraryBook[] {
-  return [...books].sort((a, b) =>
-    (a.sortKey ?? a.title).localeCompare(b.sortKey ?? b.title),
-  );
+  return [...books].sort((a, b) => a.title.localeCompare(b.title));
 }
 
 export function matchesSearch(book: LibraryBook, query: string): boolean {
@@ -21,9 +19,15 @@ export function matchesSearch(book: LibraryBook, query: string): boolean {
 export type BrowseDimension = "author" | "subject" | "publisher";
 
 function dimensionValues(book: LibraryBook, dimension: BrowseDimension): string[] {
-  if (dimension === "author") return book.authors;
-  if (dimension === "subject") return book.subjects;
-  return book.publisher ? [book.publisher] : [];
+  const values =
+    dimension === "author"
+      ? book.authors
+      : dimension === "subject"
+        ? book.subjects
+        : book.publisher
+          ? [book.publisher]
+          : [];
+  return [...new Set(values.filter((value) => value.trim() !== ""))];
 }
 
 export interface BrowseEntry {

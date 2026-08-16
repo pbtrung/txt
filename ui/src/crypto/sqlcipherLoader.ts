@@ -23,8 +23,6 @@ declare const __SQLCIPHER_JS_INTEGRITY__: string;
 
 export interface SqlcipherWasmModule {
   HEAPU8: Uint8Array;
-  HEAP32: Int32Array;
-  HEAPF64: Float64Array;
   FS: {
     writeFile(path: string, data: Uint8Array): void;
     readFile(path: string): Uint8Array;
@@ -33,16 +31,10 @@ export interface SqlcipherWasmModule {
   _malloc(size: number): number;
   _free(ptr: number): void;
   getValue(ptr: number, type: string): number;
-  setValue(ptr: number, value: number, type: string): void;
   lengthBytesUTF8(str: string): number;
   stringToUTF8(str: string, outPtr: number, maxBytes: number): void;
   UTF8ToString(ptr: number): string;
-  /** Turns a JS function into a real, indirectly-callable wasm function
-   * pointer (needs the build's -sALLOW_TABLE_GROWTH=1). Signature is
-   * Emscripten's legacy letter code: 'i' = i32, 'j' = i64. */
-  addFunction(fn: (...args: (number | bigint)[]) => number, signature: string): number;
   _sqlite3_open(filename: number, ppDb: number): number;
-  _sqlite3_open_v2(filename: number, ppDb: number, flags: number, vfs: number): number;
   _sqlite3_key(db: number, key: number, keyLen: number): number;
   _sqlite3_close(db: number): number;
   _sqlite3_errmsg(db: number): number;
@@ -63,9 +55,8 @@ export interface SqlcipherWasmModule {
   _sqlite3_step(stmt: number): number;
   _sqlite3_finalize(stmt: number): number;
   _sqlite3_column_count(stmt: number): number;
-  _sqlite3_column_name(stmt: number, col: number): number;
   _sqlite3_column_type(stmt: number, col: number): number;
-  _sqlite3_column_int(stmt: number, col: number): number;
+  _sqlite3_column_int64(stmt: number, col: number): bigint;
   _sqlite3_column_text(stmt: number, col: number): number;
   _sqlite3_column_bytes(stmt: number, col: number): number;
   _sqlite3_column_blob(stmt: number, col: number): number;
@@ -85,14 +76,6 @@ export interface SqlcipherWasmModule {
     destructor: number,
   ): number;
   _sqlite3_bind_null(stmt: number, idx: number): number;
-  _sqlite3_js_vfs_register(
-    namePtr: number,
-    szOsFile: number,
-    mxPathname: number,
-    makeDefault: number,
-    methodPtrsPtr: number,
-  ): number;
-  _sqlite3_js_vfs_io_methods(): number;
   _lc_wasm_key_size(): number;
   _lc_wasm_nonce_size(): number;
   _lc_wasm_tag_size(): number;

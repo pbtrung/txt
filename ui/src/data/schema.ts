@@ -8,6 +8,7 @@ export const PAGE_SIZE = 16384; // 16 KiB
 // otherwise auto-detect the page size from, so a connection that never
 // reissues this pragma silently falls back to the compiled-in default.
 const SET_PAGE_SIZE_SQL = `PRAGMA page_size = ${PAGE_SIZE}`;
+const ENABLE_FOREIGN_KEYS_SQL = "PRAGMA foreign_keys = ON";
 
 const CREATE_TXT_SQL = `
 CREATE TABLE IF NOT EXISTS txt (
@@ -50,13 +51,14 @@ BEGIN
 END
 `;
 
-export interface Executable {
+interface Executable {
   execSql(sql: string): void;
 }
 
 export function ensureSchema(db: Executable): void {
   for (const stmt of [
     SET_PAGE_SIZE_SQL,
+    ENABLE_FOREIGN_KEYS_SQL,
     CREATE_TXT_SQL,
     CREATE_TXT_BOOKMARKS_SQL,
     CREATE_TXT_BOOKMARKS_INDEX_SQL,

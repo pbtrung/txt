@@ -5,6 +5,11 @@ import { useEffect, useState } from "react";
 import { OffcanvasPanel } from "../../components/OffcanvasPanel";
 import type { EpubRenderer } from "../../data/epubRenderer";
 
+interface LoadedToc {
+  renderer: EpubRenderer;
+  items: NavItem[] | null;
+}
+
 export function TocPanel({
   open,
   onClose,
@@ -14,24 +19,23 @@ export function TocPanel({
   onClose: () => void;
   renderer: EpubRenderer | null;
 }) {
-  const [toc, setToc] = useState<NavItem[] | null>(null);
-
+  const [loaded, setLoaded] = useState<LoadedToc | null>(null);
   useEffect(() => {
     if (!renderer) return;
+    const source = renderer;
     let cancelled = false;
-    renderer.getToc().then((items) => {
-      if (!cancelled) setToc(items);
-    });
+    source
+      .getToc()
+      .then((items) => setUnlessCancelled(items))
+      .catch(() => setUnlessCancelled(null));
+    function setUnlessCancelled(items: NavItem[] | null) {
+      if (!cancelled) setLoaded({ renderer: source, items });
+    }
     return () => {
       cancelled = true;
     };
   }, [renderer]);
-
-  function goTo(href: string) {
-    void renderer?.display(href);
-    onClose();
-  }
-
+  const toc = loaded?.renderer === renderer ? loaded.items : undefined;
   return (
     <OffcanvasPanel
       open={open}
@@ -40,10 +44,20 @@ export function TocPanel({
       placement="start"
       className="reader-side-panel"
     >
-      {toc === null ? (
+      {toc === undefined ? (
         <p className="text-muted">Loading…</p>
+      ) : toc === null ? (
+        <p role="alert" className="text-danger">
+          Unable to load contents.
+        </p>
       ) : (
-        <TocList items={toc} onSelect={goTo} />
+        <TocList
+          items={toc}
+          onSelect={(href) => {
+            void renderer?.display(href);
+            onClose();
+          }}
+        />
       )}
     </OffcanvasPanel>
   );

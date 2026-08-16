@@ -49,6 +49,18 @@ function check(ret: number, what: string): void {
   }
 }
 
+function requireSize(bytes: Uint8Array, expected: number, name: string): void {
+  if (bytes.length !== expected) {
+    throw new Error(`${name} must be exactly ${expected} bytes`);
+  }
+}
+
+function requireOutputLength(length: number): void {
+  if (!Number.isSafeInteger(length) || length < 0) {
+    throw new Error("HKDF output length must be a non-negative safe integer");
+  }
+}
+
 /** HKDF-SHA3-512(ikm, salt, info) -> length bytes of OKM. */
 export async function hkdfSha3_512(
   ikm: Uint8Array,
@@ -56,6 +68,7 @@ export async function hkdfSha3_512(
   info: Uint8Array,
   length: number,
 ): Promise<Uint8Array> {
+  requireOutputLength(length);
   const { mod } = await getAead();
   const ikmPtr = writeBytes(mod, ikm);
   const saltPtr = writeBytes(mod, salt);
@@ -82,7 +95,7 @@ export async function hkdfSha3_512(
   }
 }
 
-export interface Sealed {
+interface Sealed {
   ciphertext: Uint8Array;
   tag: Uint8Array;
 }
@@ -95,6 +108,8 @@ export async function aeadEncrypt(
   plaintext: Uint8Array,
 ): Promise<Sealed> {
   const { mod, keySize, nonceSize, tagSize } = await getAead();
+  requireSize(key, keySize, "AEAD key");
+  requireSize(nonce, nonceSize, "AEAD nonce");
   const keyPtr = writeBytes(mod, key);
   const noncePtr = writeBytes(mod, nonce);
   const aadPtr = writeBytes(mod, aad);
@@ -139,6 +154,9 @@ export async function aeadDecrypt(
   tag: Uint8Array,
 ): Promise<Uint8Array> {
   const { mod, keySize, nonceSize, tagSize } = await getAead();
+  requireSize(key, keySize, "AEAD key");
+  requireSize(nonce, nonceSize, "AEAD nonce");
+  requireSize(tag, tagSize, "AEAD tag");
   const keyPtr = writeBytes(mod, key);
   const noncePtr = writeBytes(mod, nonce);
   const aadPtr = writeBytes(mod, aad);

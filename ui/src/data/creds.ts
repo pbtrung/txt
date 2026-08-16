@@ -22,16 +22,21 @@ const REQUIRED_FIELDS = [
   "user_root_key",
 ] as const;
 
-function missingFields(
-  data: Record<string, unknown>,
-  fields: readonly string[],
-): string[] {
-  return fields.filter((f) => !data[f]);
+function credentialsRecord(data: unknown): Record<string, unknown> {
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    throw new Error("creds.json must contain an object");
+  }
+  return data as Record<string, unknown>;
 }
 
-export function parseBrowserCreds(data: Record<string, unknown>): BrowserCreds {
-  const missing = missingFields(data, REQUIRED_FIELDS);
+export function parseBrowserCreds(data: unknown): BrowserCreds {
+  const record = credentialsRecord(data);
+  const missing = REQUIRED_FIELDS.filter(
+    (field) => typeof record[field] !== "string" || record[field].trim() === "",
+  );
   if (missing.length > 0)
     throw new Error(`creds.json is missing: ${missing.join(", ")}`);
-  return data as unknown as BrowserCreds;
+  return Object.fromEntries(
+    REQUIRED_FIELDS.map((field) => [field, record[field]]),
+  ) as unknown as BrowserCreds;
 }

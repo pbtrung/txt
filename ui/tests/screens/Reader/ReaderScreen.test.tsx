@@ -209,9 +209,7 @@ describe("ReaderScreen", () => {
 
     await userEvent.click(fontSize);
     const menu = screen.getByRole("menu", { name: "Font size options" });
-    expect(menu).toHaveClass("show");
-    expect(menu).toHaveStyle({ bottom: "100%", top: "auto" });
-    expect(menu.style.minWidth).toBe("4.5rem");
+    expect(menu).toHaveClass("show", "reader-font-menu");
     expect(
       screen.getAllByRole("menuitemradio").map((option) => option.textContent),
     ).toEqual(["16px", "18px", "20px", "22px", "24px"]);
@@ -221,6 +219,24 @@ describe("ReaderScreen", () => {
     expect(instance.setFontSize).toHaveBeenLastCalledWith("20px");
     expect(fontSize).toHaveTextContent("20px");
     expect(menu).not.toHaveClass("show");
+  });
+
+  it("dismisses the font menu with Escape or an outside click", async () => {
+    mockVault();
+    mockReadyDocument();
+    renderScreen();
+    const fontSize = screen.getByRole("button", { name: "Font size" });
+    const user = userEvent.setup();
+
+    await user.click(fontSize);
+    await user.keyboard("{Escape}");
+    expect(fontSize).toHaveAttribute("aria-expanded", "false");
+
+    await user.click(fontSize);
+    await user.click(
+      screen.getByRole("heading", { name: "Dune — Frank Herbert", level: 1 }),
+    );
+    expect(fontSize).toHaveAttribute("aria-expanded", "false");
   });
 
   it("keeps the header to back, menu, and info controls", () => {

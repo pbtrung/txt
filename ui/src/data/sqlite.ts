@@ -8,13 +8,14 @@ import type { SqlcipherWasmModule } from "../crypto/sqlcipherLoader";
 
 const SQLITE_OK = 0;
 const SQLITE_ROW = 100;
+const SQLITE_DONE = 101;
 const SQLITE_INTEGER = 1;
 const SQLITE_TEXT = 3;
 const SQLITE_BLOB = 4;
 const SQLITE_TRANSIENT = -1;
 
-export type SqlValue = number | string | Uint8Array | null;
-export type SqlRow = SqlValue[];
+type SqlValue = number | string | Uint8Array | null;
+type SqlRow = SqlValue[];
 
 let nextPathId = 0;
 
@@ -25,9 +26,28 @@ function cString(mod: SqlcipherWasmModule, str: string): number {
   return ptr;
 }
 
+function checkResult(
+  mod: SqlcipherWasmModule,
+  db: number,
+  result: number,
+  operation: string,
+): void {
+  if (result === SQLITE_OK) return;
+  const message = db
+    ? mod.UTF8ToString(mod._sqlite3_errmsg(db))
+    : "unknown SQLite error";
+  throw new Error(`${operation} failed: ${message} (rc=${result})`);
+}
+
 function columnValue(mod: SqlcipherWasmModule, stmt: number, col: number): SqlValue {
   const type = mod._sqlite3_column_type(stmt, col);
-  if (type === SQLITE_INTEGER) return mod._sqlite3_column_int(stmt, col);
+  if (type === SQLITE_INTEGER) {
+    const value = Number(mod._sqlite3_column_int64(stmt, col));
+    if (!Number.isSafeInteger(value)) {
+      throw new Error("SQLite integer exceeds JavaScript's safe range");
+    }
+    return value;
+  }
   if (type === SQLITE_TEXT)
     return mod.UTF8ToString(mod._sqlite3_column_text(stmt, col));
   if (type === SQLITE_BLOB) {
@@ -44,28 +64,45 @@ function bindParam(
   idx: number,
   value: SqlValue,
 ): void {
+  let result: number;
   if (value === null) {
-    mod._sqlite3_bind_null(stmt, idx + 1);
+    result = mod._sqlite3_bind_null(stmt, idx + 1);
   } else if (typeof value === "number") {
     // sqlite3_bind_int64's 3rd param is a real wasm i64 (WASM_BIGINT
     // semantics) -- it needs an actual BigInt, not a JS number.
-    mod._sqlite3_bind_int64(stmt, idx + 1, BigInt(value));
+    if (!Number.isSafeInteger(value)) {
+      throw new Error(`bind parameter ${idx + 1} must be a safe integer`);
+    }
+    result = mod._sqlite3_bind_int64(stmt, idx + 1, BigInt(value));
   } else if (typeof value === "string") {
     const ptr = cString(mod, value);
-    mod._sqlite3_bind_text(
-      stmt,
-      idx + 1,
-      ptr,
-      mod.lengthBytesUTF8(value),
-      SQLITE_TRANSIENT,
-    );
-    mod._free(ptr);
+    try {
+      result = mod._sqlite3_bind_text(
+        stmt,
+        idx + 1,
+        ptr,
+        mod.lengthBytesUTF8(value),
+        SQLITE_TRANSIENT,
+      );
+    } finally {
+      mod._free(ptr);
+    }
   } else {
     const ptr = mod._malloc(value.length || 1);
-    mod.HEAPU8.set(value, ptr);
-    mod._sqlite3_bind_blob(stmt, idx + 1, ptr, value.length, SQLITE_TRANSIENT);
-    mod._free(ptr);
+    try {
+      mod.HEAPU8.set(value, ptr);
+      result = mod._sqlite3_bind_blob(
+        stmt,
+        idx + 1,
+        ptr,
+        value.length,
+        SQLITE_TRANSIENT,
+      );
+    } finally {
+      mod._free(ptr);
+    }
   }
+  if (result !== SQLITE_OK) throw new Error(`bind parameter ${idx + 1} failed`);
 }
 
 function prepare(
@@ -86,20 +123,32 @@ function prepare(
   }
   const stmt = mod.getValue(ppStmt, "i32");
   mod._free(ppStmt);
-  params.forEach((value, idx) => bindParam(mod, stmt, idx, value));
+  try {
+    params.forEach((value, idx) => bindParam(mod, stmt, idx, value));
+  } catch (error) {
+    mod._sqlite3_finalize(stmt);
+    throw error;
+  }
   return stmt;
 }
 
-function readRows(mod: SqlcipherWasmModule, stmt: number): SqlRow[] {
+function readRows(mod: SqlcipherWasmModule, db: number, stmt: number): SqlRow[] {
   const rows: SqlRow[] = [];
   const colCount = mod._sqlite3_column_count(stmt);
-  while (mod._sqlite3_step(stmt) === SQLITE_ROW) {
-    rows.push(
-      Array.from({ length: colCount }, (_, col) => columnValue(mod, stmt, col)),
-    );
+  try {
+    while (true) {
+      const result = mod._sqlite3_step(stmt);
+      if (result === SQLITE_DONE) return rows;
+      if (result !== SQLITE_ROW) {
+        checkResult(mod, db, result, "sqlite3_step");
+      }
+      rows.push(
+        Array.from({ length: colCount }, (_, col) => columnValue(mod, stmt, col)),
+      );
+    }
+  } finally {
+    mod._sqlite3_finalize(stmt);
   }
-  mod._sqlite3_finalize(stmt);
-  return rows;
 }
 
 function keyDatabase(mod: SqlcipherWasmModule, db: number, key: Uint8Array): void {
@@ -112,6 +161,8 @@ function keyDatabase(mod: SqlcipherWasmModule, db: number, key: Uint8Array): voi
 }
 
 export class SqliteDatabase {
+  private closed = false;
+
   private constructor(
     private readonly mod: SqlcipherWasmModule,
     private readonly db: number,
@@ -131,9 +182,19 @@ export class SqliteDatabase {
     const db = mod.getValue(ppDb, "i32");
     mod._free(ppDb);
     mod._free(pathPtr);
-    if (rc !== SQLITE_OK) throw new Error(`sqlite3_open failed: rc=${rc}`);
-    if (key) keyDatabase(mod, db, key);
-    return new SqliteDatabase(mod, db, path);
+    try {
+      checkResult(mod, db, rc, "sqlite3_open");
+      if (key) keyDatabase(mod, db, key);
+      return new SqliteDatabase(mod, db, path);
+    } catch (error) {
+      if (db) mod._sqlite3_close(db);
+      try {
+        mod.FS.unlink(path);
+      } catch {
+        // sqlite3_open can fail before creating the backing file.
+      }
+      throw error;
+    }
   }
 
   /** Opens a plain, unencrypted SQLite file; omit `bytes` to create a fresh one. */
@@ -144,33 +205,45 @@ export class SqliteDatabase {
   /** Opens a SQLCipher database keyed with a raw 256-8192 byte key. `bytes`
    * is omitted to create a fresh database instead of opening an existing
    * one (docs/data_model.md §2 step 2). */
-  static openKeyed(key: Uint8Array, bytes?: Uint8Array): Promise<SqliteDatabase> {
+  static async openKeyed(key: Uint8Array, bytes?: Uint8Array): Promise<SqliteDatabase> {
+    if (key.length < 256 || key.length > 8192) {
+      throw new Error("SQLCipher key must be between 256 and 8192 bytes");
+    }
     return SqliteDatabase.openHandle(bytes ?? null, key);
   }
 
   query(sql: string, params: SqlValue[] = []): SqlRow[] {
-    return readRows(this.mod, prepare(this.mod, this.db, sql, params));
+    this.assertOpen();
+    return readRows(this.mod, this.db, prepare(this.mod, this.db, sql, params));
   }
 
   /** Runs (possibly multi-statement, unparameterized) SQL -- schema DDL. */
   execSql(sql: string): void {
+    this.assertOpen();
     const ptr = cString(this.mod, sql);
-    const rc = this.mod._sqlite3_exec(this.db, ptr, 0, 0, 0);
-    this.mod._free(ptr);
-    if (rc !== SQLITE_OK) {
-      const message = this.mod.UTF8ToString(this.mod._sqlite3_errmsg(this.db));
-      throw new Error(`"${sql}" failed: ${message}`);
+    try {
+      const rc = this.mod._sqlite3_exec(this.db, ptr, 0, 0, 0);
+      checkResult(this.mod, this.db, rc, `execute "${sql}"`);
+    } finally {
+      this.mod._free(ptr);
     }
   }
 
-  /** The database file's current on-disk bytes (post-close, callers should
-   * read this before close() -- MEMFS discards the path on unlink). */
+  /** The database file's current bytes. Call before close(), which unlinks it. */
   toBytes(): Uint8Array {
+    this.assertOpen();
     return this.mod.FS.readFile(this.path);
   }
 
   close(): void {
-    this.mod._sqlite3_close(this.db);
+    if (this.closed) return;
+    const rc = this.mod._sqlite3_close(this.db);
+    checkResult(this.mod, this.db, rc, "sqlite3_close");
     this.mod.FS.unlink(this.path);
+    this.closed = true;
+  }
+
+  private assertOpen(): void {
+    if (this.closed) throw new Error("database is closed");
   }
 }

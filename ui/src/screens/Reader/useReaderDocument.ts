@@ -3,52 +3,62 @@
 import { useEffect, useState } from "react";
 import { loadReaderDocument, type ReaderDocument } from "../../data/readerDocument";
 import type { VaultSession } from "../../state/VaultContext";
+import { errorMessage } from "../../util/errorMessage";
 
-export type ReaderStatus = "loading" | "ready" | "not-found" | "error";
+type ReaderState =
+  | { status: "loading"; document: null; error: null }
+  | { status: "ready"; document: ReaderDocument; error: null }
+  | { status: "not-found"; document: null; error: null }
+  | { status: "error"; document: null; error: string };
 
-export interface ReaderState {
-  status: ReaderStatus;
-  document: ReaderDocument | null;
-  error: string | null;
+interface LoadedReader {
+  session: VaultSession;
+  txtId: number;
+  state: ReaderState;
 }
 
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
+const LOADING: ReaderState = { status: "loading", document: null, error: null };
+const NOT_FOUND: ReaderState = {
+  status: "not-found",
+  document: null,
+  error: null,
+};
 
 export function useReaderDocument(
   session: VaultSession | null,
   txtId: number,
 ): ReaderState {
-  const [state, setState] = useState<ReaderState>({
-    status: "loading",
-    document: null,
-    error: null,
-  });
-
+  const [loaded, setLoaded] = useState<LoadedReader | null>(null);
   useEffect(() => {
-    if (!session) return;
+    if (!session || !validTxtId(txtId)) return;
+    const source = session;
     let cancelled = false;
-    setState({ status: "loading", document: null, error: null });
-
-    loadReaderDocument(session.db, session.r2, session.dbPrefix, txtId)
-      .then((doc) => {
-        if (cancelled) return;
-        setState(
-          doc
-            ? { status: "ready", document: doc, error: null }
-            : { status: "not-found", document: null, error: null },
-        );
-      })
-      .catch((err: unknown) => {
-        if (!cancelled)
-          setState({ status: "error", document: null, error: errorMessage(err) });
-      });
-
+    loadState(source, txtId).then((state) => {
+      if (!cancelled) setLoaded({ session: source, txtId, state });
+    });
     return () => {
       cancelled = true;
     };
   }, [session, txtId]);
+  if (!session) return LOADING;
+  if (!validTxtId(txtId)) return NOT_FOUND;
+  return loaded?.session === session && loaded.txtId === txtId ? loaded.state : LOADING;
+}
 
-  return state;
+function validTxtId(txtId: number): boolean {
+  return Number.isSafeInteger(txtId) && txtId > 0;
+}
+
+async function loadState(session: VaultSession, txtId: number): Promise<ReaderState> {
+  try {
+    const document = await loadReaderDocument(
+      session.db,
+      session.r2,
+      session.dbPrefix,
+      txtId,
+    );
+    return document ? { status: "ready", document, error: null } : NOT_FOUND;
+  } catch (error) {
+    return { status: "error", document: null, error: errorMessage(error) };
+  }
 }

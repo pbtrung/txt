@@ -48,4 +48,24 @@ describe("aead (real sqlcipher.wasm)", () => {
     expect([...out1]).toEqual([...out2]);
     expect(out1.some((b) => b !== 0)).toBe(true);
   });
+
+  it("rejects invalid AEAD buffer sizes before entering wasm", async () => {
+    const valid = filled(64, 1);
+
+    await expect(aeadEncrypt(filled(63, 1), valid, bytes(), bytes())).rejects.toThrow(
+      /key.*64 bytes/,
+    );
+    await expect(aeadEncrypt(valid, filled(63, 1), bytes(), bytes())).rejects.toThrow(
+      /nonce.*64 bytes/,
+    );
+    await expect(
+      aeadDecrypt(valid, valid, bytes(), bytes(), filled(63, 1)),
+    ).rejects.toThrow(/tag.*64 bytes/);
+  });
+
+  it("rejects invalid HKDF output lengths", async () => {
+    await expect(hkdfSha3_512(bytes(), bytes(), bytes(), -1)).rejects.toThrow(
+      /non-negative/,
+    );
+  });
 });

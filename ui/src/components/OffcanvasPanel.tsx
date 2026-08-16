@@ -2,7 +2,8 @@
 // Bootstrap's CSS/Icons, never its JS, so open/close is just a boolean
 // prop toggling the "show" class plus a backdrop <div> the caller doesn't
 // need to wire up itself (no data-bs-* attributes anywhere).
-import type { CSSProperties, ReactNode } from "react";
+import { useEffect, useId, type CSSProperties, type ReactNode } from "react";
+import { classNames } from "../util/classNames";
 
 export function OffcanvasPanel({
   open,
@@ -28,14 +29,28 @@ export function OffcanvasPanel({
   children: ReactNode;
 }) {
   const base = responsive ? `offcanvas-${responsive}` : "offcanvas";
-  const titleId = `offcanvas-title-${title.replace(/\s+/g, "-").toLowerCase()}`;
+  const titleId = useId();
+  useEffect(() => {
+    if (!open) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [open, onClose]);
   return (
     <>
       <div
-        className={`${base} offcanvas-${placement} ${open ? "show" : ""} ${className ?? ""}`}
+        className={classNames(
+          base,
+          `offcanvas-${placement}`,
+          open && "show",
+          className,
+        )}
         style={style}
         tabIndex={-1}
         role="dialog"
+        aria-modal={open || undefined}
         aria-labelledby={titleId}
       >
         <div className="offcanvas-header">
@@ -53,7 +68,11 @@ export function OffcanvasPanel({
       </div>
       {open && (
         <div
-          className={`offcanvas-backdrop show ${responsive ? `d-${responsive}-none` : ""}`}
+          className={classNames(
+            "offcanvas-backdrop show",
+            responsive && `d-${responsive}-none`,
+          )}
+          aria-hidden="true"
           onClick={onClose}
         />
       )}

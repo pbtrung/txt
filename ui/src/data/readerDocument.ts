@@ -7,14 +7,12 @@
 // EPUB's own internal package document once its bytes are in hand, since
 // catalog only keeps a fixed subset (docs/data_model.md §3.1).
 import { decrypt } from "../crypto/cryptoBlob";
-import { brotliDecompress } from "../crypto/brotli";
 import { toBase32Crockford } from "../util/base32Crockford";
+import { decodeCatalog } from "./catalog";
 import { extraMetadataFields, parseEpubOpf, type MetadataField } from "./epubOpf";
-import { fieldStrings } from "./opfSidecar";
+import { fieldStrings } from "./opfMetadata";
 import type { R2Client } from "./r2";
 import type { SqliteDatabase } from "./sqlite";
-
-export type { MetadataField };
 
 export interface ReaderDocument {
   title: string;
@@ -23,11 +21,6 @@ export interface ReaderDocument {
   publisher: string | null;
   extraMetadata: MetadataField[];
   epubBytes: Uint8Array;
-}
-
-interface Catalog {
-  name: string;
-  title: string;
 }
 
 function contentKey(dbPrefix: string, txtPrefix: Uint8Array, path: Uint8Array): string {
@@ -56,8 +49,7 @@ export async function loadReaderDocument(
   if (!encrypted) return null;
 
   const epubBytes = await decrypt(encrypted, txtKey);
-  const json = new TextDecoder().decode(await brotliDecompress(catalogBlob));
-  const catalog = JSON.parse(json) as Catalog;
+  const catalog = await decodeCatalog(catalogBlob);
   const opf = await parseEpubOpf(epubBytes);
   const publishers = fieldStrings(opf.metadata.publisher);
   return {

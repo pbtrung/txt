@@ -54,4 +54,12 @@ describe("useReaderDocument", () => {
     await waitFor(() => expect(result.current.status).toBe("error"));
     expect(result.current.error).toBe("R2 GET failed: 500");
   });
+
+  it("rejects an invalid route id without querying storage", () => {
+    vi.mocked(loadReaderDocument).mockClear();
+    const { result } = renderHook(() => useReaderDocument(SESSION, Number.NaN));
+
+    expect(result.current.status).toBe("not-found");
+    expect(loadReaderDocument).not.toHaveBeenCalled();
+  });
 });

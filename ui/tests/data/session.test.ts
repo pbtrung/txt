@@ -40,4 +40,18 @@ describe("unwrapKeys (real sqlcipher.wasm)", () => {
 
     await expect(unwrapKeys(keys, toBase64(wrongKey))).rejects.toThrow();
   });
+
+  it("rejects an incomplete decrypted credential store", async () => {
+    const userRootKey = crypto.getRandomValues(new Uint8Array(256));
+    const umk = crypto.getRandomValues(new Uint8Array(128));
+    const keys: KeysResponse = {
+      type: "user",
+      umk: toBase64(await encrypt(umk, userRootKey)),
+      credStore: toBase64(await encryptJson({ display_name: "Ada" }, umk)),
+    };
+
+    await expect(unwrapKeys(keys, toBase64(userRootKey))).rejects.toThrow(
+      /db_master_key/,
+    );
+  });
 });

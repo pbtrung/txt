@@ -4,7 +4,9 @@
 // assets block serves this build from the same origin the Worker itself
 // answers /v1/* on (CLAUDE.md), so there's no separate Worker URL to
 // configure or carry around.
-export type AccountType = "admin" | "user";
+import { objectRecord, stringField } from "../util/validation";
+
+type AccountType = "admin" | "user";
 
 export interface KeysResponse {
   type: AccountType;
@@ -33,12 +35,7 @@ export class WorkerClient {
       );
     }
     if (!resp.ok) throw new Error(`could not obtain key material: ${resp.status}`);
-    const data = (await resp.json()) as {
-      type: AccountType;
-      umk: string;
-      cred_store: string;
-    };
-    return { type: data.type, umk: data.umk, credStore: data.cred_store };
+    return parseKeysResponse(await resp.json());
   }
 
   async fetchR2Token(dbPath: string, dbPrefix: string): Promise<R2TempCredential> {
@@ -47,24 +44,7 @@ export class WorkerClient {
       db_prefix: dbPrefix,
     });
     if (!resp.ok) throw new Error(`could not obtain an R2 credential: ${resp.status}`);
-    const data = (await resp.json()) as {
-      access_key_id: string;
-      secret_access_key: string;
-      session_token: string;
-      expiration: string;
-      endpoint: string;
-      bucket: string;
-      region: string;
-    };
-    return {
-      accessKeyId: data.access_key_id,
-      secretAccessKey: data.secret_access_key,
-      sessionToken: data.session_token,
-      expiration: data.expiration,
-      endpoint: data.endpoint,
-      bucket: data.bucket,
-      region: data.region,
-    };
+    return parseR2Credential(await resp.json());
   }
 
   private post(path: string, body?: unknown): Promise<Response> {
@@ -77,4 +57,30 @@ export class WorkerClient {
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
   }
+}
+
+function parseKeysResponse(value: unknown): KeysResponse {
+  const data = objectRecord(value, "key response");
+  const type = data.type;
+  if (type !== "admin" && type !== "user") {
+    throw new Error("key response has an invalid account type");
+  }
+  return {
+    type,
+    umk: stringField(data, "umk", "key response"),
+    credStore: stringField(data, "cred_store", "key response"),
+  };
+}
+
+function parseR2Credential(value: unknown): R2TempCredential {
+  const data = objectRecord(value, "R2 credential response");
+  return {
+    accessKeyId: stringField(data, "access_key_id", "R2 credential response"),
+    secretAccessKey: stringField(data, "secret_access_key", "R2 credential response"),
+    sessionToken: stringField(data, "session_token", "R2 credential response"),
+    expiration: stringField(data, "expiration", "R2 credential response"),
+    endpoint: stringField(data, "endpoint", "R2 credential response"),
+    bucket: stringField(data, "bucket", "R2 credential response"),
+    region: stringField(data, "region", "R2 credential response"),
+  };
 }

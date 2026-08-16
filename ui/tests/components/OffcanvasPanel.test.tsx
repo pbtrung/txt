@@ -51,6 +51,19 @@ describe("OffcanvasPanel", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  it("calls onClose when Escape is pressed", async () => {
+    const onClose = vi.fn();
+    render(
+      <OffcanvasPanel open onClose={onClose} title="Info">
+        content
+      </OffcanvasPanel>,
+    );
+
+    await userEvent.keyboard("{Escape}");
+
+    expect(onClose).toHaveBeenCalled();
+  });
+
   it("uses the offcanvas-{breakpoint} class and hides the backdrop past it when responsive", () => {
     const { container } = render(
       <OffcanvasPanel open onClose={vi.fn()} title="Browse" responsive="md">

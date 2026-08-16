@@ -89,6 +89,7 @@ export class EpubRenderer {
   private pageMapReady = false;
   private pageTotal = 0;
   private pageCallback: ((page: PagePosition) => void) | null = null;
+  private destroyed = false;
 
   constructor(
     epubBytes: Uint8Array,
@@ -129,16 +130,15 @@ export class EpubRenderer {
     );
   }
 
-  renderTo(element: HTMLElement): void {
-    // allowScriptedContent: epub.js's own default (false) sandboxes each
-    // section's iframe as just "allow-same-origin", which blocks epub.js's
-    // own internal per-section helper script from running (DevTools:
-    // "Blocked script execution in 'about:srcdoc'..."), not just any
-    // script content an EPUB itself might carry.
+  async renderTo(element: HTMLElement): Promise<void> {
+    if (this.destroyed) throw new Error("EpubRenderer has been destroyed");
+    if (this.rendition) throw new Error("EpubRenderer is already mounted");
+    // EPUB content is untrusted. Keep scripts disabled so the iframe remains
+    // sandboxed as allow-same-origin without the dangerous allow-scripts pair.
     this.rendition = this.book.renderTo(element, {
       width: "100%",
       height: "100%",
-      allowScriptedContent: true,
+      allowScriptedContent: false,
     });
     this.rendition.themes.registerCss("default", READER_THEME_CSS);
     // themes.font(), not a plain CSS rule: it applies as an inline
@@ -152,7 +152,7 @@ export class EpubRenderer {
       this.emitPagePosition();
     });
     void this.loadCoverHref();
-    void this.rendition.display();
+    await this.rendition.display();
   }
 
   private async loadCoverHref(): Promise<void> {
@@ -205,7 +205,7 @@ export class EpubRenderer {
   }
 
   async displayPage(page: number): Promise<void> {
-    if (!this.pageMapReady || this.pageTotal === 0) return;
+    if (!this.pageMapReady || this.pageTotal === 0 || !Number.isFinite(page)) return;
     const index = Math.min(this.pageTotal - 1, Math.max(0, Math.trunc(page) - 1));
     const target = this.book.locations.cfiFromLocation(index);
     if (typeof target === "string") await this.requireRendition().display(target);
@@ -242,7 +242,9 @@ export class EpubRenderer {
     const index = this.currentCfi
       ? this.book.locations.locationFromCfi(this.currentCfi)
       : 0;
-    this.pageCallback({ current: Math.max(0, index) + 1, total: this.pageTotal });
+    const locationIndex = Number.isFinite(index) ? index : 0;
+    const current = Math.min(this.pageTotal, Math.max(0, locationIndex) + 1);
+    this.pageCallback({ current, total: this.pageTotal });
   }
 
   async getToc(): Promise<NavItem[]> {
@@ -261,7 +263,11 @@ export class EpubRenderer {
   }
 
   destroy(): void {
+    if (this.destroyed) return;
+    this.destroyed = true;
     this.rendition?.destroy();
+    this.rendition = null;
+    this.pageCallback = null;
     this.book.destroy();
   }
 }

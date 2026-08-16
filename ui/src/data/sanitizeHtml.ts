@@ -14,5 +14,6 @@ export function sanitizeHtml(html: string): string {
 }
 
 export function stripHtmlToText(html: string): string {
-  return new DOMParser().parseFromString(html, "text/html").body.textContent ?? "";
+  const safe = sanitizeHtml(html);
+  return new DOMParser().parseFromString(safe, "text/html").body.textContent ?? "";
 }

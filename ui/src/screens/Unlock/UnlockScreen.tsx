@@ -28,7 +28,7 @@ export function UnlockScreen() {
   const unlocking = status === "unlocking";
 
   return (
-    <div className="container py-5 text-center" style={{ maxWidth: "24rem" }}>
+    <div className="container py-5 text-center unlock-panel">
       <h1 className="h3 mb-4">
         <i className="bi bi-book me-2" />
         Skypiea
