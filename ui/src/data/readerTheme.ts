@@ -91,4 +91,8 @@ body {
   margin-left: auto;
   margin-right: auto;
 }
+img, svg, table {
+  max-width: 100%;
+  height: auto;
+}
 `;
