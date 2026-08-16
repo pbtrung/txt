@@ -4,8 +4,13 @@
 // iframes, Blob URLs) behind a class ReaderScreen and its tests can mock,
 // the same pattern as R2Client wrapping aws4fetch.
 import ePub, { type Book, type NavItem, type Rendition } from "@likecoin/epub-ts";
-import type { ColumnLayout } from "./columnLayout";
 import { READER_FONT_FAMILY, READER_THEME_CSS } from "./readerTheme";
+
+// A 2-column spread only kicks in once there's room for two 80ch-ish
+// columns side by side -- otherwise setColumns(2) would just crush both
+// columns on a narrow viewport. Approximate, not exact: an actual 80ch
+// width depends on the rendered font's own metrics.
+const TWO_COLUMN_MIN_WIDTH_PX = 900;
 
 // epub.ts applies spread mode uniformly across every section of a
 // reflowable book -- its per-item page-spread-left/right handling only
@@ -40,7 +45,7 @@ function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
 export class EpubRenderer {
   private readonly book: Book;
   private rendition: Rendition | null = null;
-  private preferredLayout: ColumnLayout = { columns: 1, gapPx: 0, maxWidthPx: null };
+  private preferredColumns: 1 | 2 = 1;
   private coverHref: string | null = null;
 
   constructor(epubBytes: Uint8Array) {
@@ -88,15 +93,13 @@ export class EpubRenderer {
     );
   }
 
-  private applyPreferredLayout(): void {
+  private applyPreferredColumns(): void {
     const rendition = this.requireRendition();
-    const layout = this.preferredLayout;
-    if (layout.columns === 1) {
+    if (this.preferredColumns === 1) {
       rendition.spread("none");
-      return;
+    } else {
+      rendition.spread("auto", TWO_COLUMN_MIN_WIDTH_PX);
     }
-    rendition.settings.gap = layout.gapPx;
-    rendition.spread("auto", 1);
   }
 
   private applyLayoutFor(section: SectionLike): void {
@@ -104,26 +107,19 @@ export class EpubRenderer {
       this.requireRendition().spread("none");
       return;
     }
-    this.applyPreferredLayout();
+    this.applyPreferredColumns();
   }
 
-  /** ui/src/data/columnLayout.ts decides both the column count and the
-   * gap between them (shrinking the gap, then the columns themselves,
-   * before ever dropping to one column) -- this just applies that
-   * decision, unless the currently displayed section is front matter
-   * (see FRONT_MATTER_SPINE_INDEX_LIMIT above), which always stays
-   * single-column regardless. `spread()` is what actually triggers
-   * Rendition's manager to recompute layout, so it's still called even
-   * when only the gap (not the column count) changed; `settings.gap`
-   * alone wouldn't take effect until the next layout pass otherwise.
-   * minSpreadWidth is set to 1 (not epub.js's own auto-detection) since
-   * the column-count decision has already been made externally, based on
-   * the container's actual measured width. */
-  setColumnLayout(layout: ColumnLayout): void {
-    this.preferredLayout = layout;
+  /** 1 = always a single column; 2 = a two-page spread once the viewport
+   * is wide enough, otherwise epub.js falls back to one column on its
+   * own -- unless the currently displayed section is front matter (see
+   * FRONT_MATTER_SPINE_INDEX_LIMIT above), which always stays
+   * single-column regardless. */
+  setColumns(count: 1 | 2): void {
+    this.preferredColumns = count;
     const current = this.requireRendition().currentLocation()?.start;
     if (current && this.isFrontMatter(current)) return;
-    this.applyPreferredLayout();
+    this.applyPreferredColumns();
   }
 
   /** Jumps to an arbitrary TOC href or CFI -- unlike next()/prev(), which

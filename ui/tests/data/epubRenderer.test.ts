@@ -65,23 +65,15 @@ describe("EpubRenderer", () => {
     );
   });
 
-  it("setColumnLayout({columns: 1}) forces a single column", () => {
+  it("setColumns(1) forces a single column, setColumns(2) allows a spread", () => {
     const renderer = new EpubRenderer(new Uint8Array([1]));
     renderer.renderTo(document.createElement("div"));
 
-    renderer.setColumnLayout({ columns: 1, gapPx: 0, maxWidthPx: null });
-
+    renderer.setColumns(1);
     expect(renditionMock.spread).toHaveBeenCalledWith("none");
-  });
 
-  it("setColumnLayout({columns: 2, gapPx}) applies the gap and spreads", () => {
-    const renderer = new EpubRenderer(new Uint8Array([1]));
-    renderer.renderTo(document.createElement("div"));
-
-    renderer.setColumnLayout({ columns: 2, gapPx: 24, maxWidthPx: null });
-
-    expect(renditionMock.settings.gap).toBe(24);
-    expect(renditionMock.spread).toHaveBeenCalledWith("auto", 1);
+    renderer.setColumns(2);
+    expect(renditionMock.spread).toHaveBeenCalledWith("auto", expect.any(Number));
   });
 
   function renderedCallback() {
@@ -92,7 +84,7 @@ describe("EpubRenderer", () => {
   it("forces a single column for an early spine section (front matter)", () => {
     const renderer = new EpubRenderer(new Uint8Array([1]));
     renderer.renderTo(document.createElement("div"));
-    renderer.setColumnLayout({ columns: 2, gapPx: 40, maxWidthPx: 1480 });
+    renderer.setColumns(2);
     renditionMock.spread.mockClear();
 
     renderedCallback()({ index: 0, href: "titlepage.xhtml" });
@@ -103,13 +95,12 @@ describe("EpubRenderer", () => {
   it("applies the preferred 2-column layout for a normal, later section", () => {
     const renderer = new EpubRenderer(new Uint8Array([1]));
     renderer.renderTo(document.createElement("div"));
-    renderer.setColumnLayout({ columns: 2, gapPx: 40, maxWidthPx: 1480 });
+    renderer.setColumns(2);
     renditionMock.spread.mockClear();
 
     renderedCallback()({ index: 5, href: "chapter1.xhtml" });
 
-    expect(renditionMock.settings.gap).toBe(40);
-    expect(renditionMock.spread).toHaveBeenCalledWith("auto", 1);
+    expect(renditionMock.spread).toHaveBeenCalledWith("auto", expect.any(Number));
   });
 
   it("forces a single column for the book's own declared cover, however far into the spine it is", async () => {
@@ -117,7 +108,7 @@ describe("EpubRenderer", () => {
     const renderer = new EpubRenderer(new Uint8Array([1]));
     renderer.renderTo(document.createElement("div"));
     await bookMock.loaded.cover;
-    renderer.setColumnLayout({ columns: 2, gapPx: 40, maxWidthPx: 1480 });
+    renderer.setColumns(2);
     renditionMock.spread.mockClear();
 
     renderedCallback()({ index: 10, href: "images/cover.jpg" });
@@ -125,14 +116,14 @@ describe("EpubRenderer", () => {
     expect(renditionMock.spread).toHaveBeenCalledWith("none");
   });
 
-  it("setColumnLayout doesn't override the single column while on front matter", () => {
+  it("setColumns doesn't override the single column while on front matter", () => {
     const renderer = new EpubRenderer(new Uint8Array([1]));
     renderer.renderTo(document.createElement("div"));
     renderedCallback()({ index: 0, href: "titlepage.xhtml" });
     renditionMock.currentLocation.mockReturnValue({ start: { index: 0 } });
     renditionMock.spread.mockClear();
 
-    renderer.setColumnLayout({ columns: 2, gapPx: 40, maxWidthPx: 1480 });
+    renderer.setColumns(2);
 
     expect(renditionMock.spread).not.toHaveBeenCalled();
   });
