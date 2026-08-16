@@ -48,6 +48,7 @@
 
 .search-box-input {
   padding-left: 2rem;
+  border-color: var(--bs-secondary-color);
 }
 
 .search-box-input:focus {
@@ -111,6 +112,12 @@
 .library-sidebar .offcanvas-body {
   padding: 0;
   overflow-x: hidden;
+}
+
+@media (min-width: 768px) {
+  .library-sidebar .offcanvas-body {
+    height: 100%;
+  }
 }
 
 /* A flex child needs an explicit min-width: 0 to shrink below its text's

@@ -19,6 +19,7 @@ const bookMock = {
   renderTo: vi.fn().mockReturnValue(renditionMock),
   destroy: vi.fn(),
   resolve: vi.fn((href: string) => href),
+  spine: { hooks: { content: { register: vi.fn() } } },
   loaded: { navigation: Promise.resolve({ toc: TOC }), cover: Promise.resolve("") },
 };
 const ePubMock = vi.fn().mockReturnValue(bookMock);
@@ -63,6 +64,38 @@ describe("EpubRenderer", () => {
     expect(renditionMock.themes.font).toHaveBeenCalledWith(
       expect.stringContaining("Literata"),
     );
+  });
+
+  function coverHook() {
+    return bookMock.spine.hooks.content.register.mock.calls.at(-1)![0] as (
+      document: Document,
+      section: { href?: string; url?: string },
+    ) => Promise<void>;
+  }
+
+  it("replaces the declared cover image with the title and authors before render", async () => {
+    bookMock.loaded.cover = Promise.resolve("https://reader.test/OEBPS/cover.jpg");
+    new EpubRenderer(new Uint8Array([1]), "Dune", ["Frank Herbert"]);
+    const cover = document.implementation.createHTMLDocument();
+    cover.head.innerHTML = '<base href="https://reader.test/OEBPS/titlepage.xhtml">';
+    cover.body.innerHTML = '<img src="cover.jpg" alt="Cover">';
+
+    await coverHook()(cover, { href: "titlepage.xhtml" });
+
+    expect(cover.body.querySelector("img")).toBeNull();
+    expect(cover.body.querySelector("h1")?.textContent).toBe("Dune");
+    expect(cover.body.querySelector("p")?.textContent).toBe("Frank Herbert");
+  });
+
+  it("does not replace a section that does not contain the cover", async () => {
+    bookMock.loaded.cover = Promise.resolve("https://reader.test/OEBPS/cover.jpg");
+    new EpubRenderer(new Uint8Array([1]), "Dune", ["Frank Herbert"]);
+    const chapter = document.implementation.createHTMLDocument();
+    chapter.body.innerHTML = "<p>Chapter text</p>";
+
+    await coverHook()(chapter, { href: "chapter.xhtml" });
+
+    expect(chapter.body.textContent).toBe("Chapter text");
   });
 
   it("setColumns(1) forces a single column, setColumns(2) allows a spread", () => {

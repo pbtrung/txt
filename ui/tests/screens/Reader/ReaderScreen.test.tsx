@@ -111,7 +111,11 @@ describe("ReaderScreen", () => {
     renderScreen();
 
     expect(screen.getByRole("heading", { name: "Dune", level: 1 })).toBeInTheDocument();
-    expect(vi.mocked(EpubRenderer)).toHaveBeenCalledWith(new Uint8Array([1, 2, 3]));
+    expect(vi.mocked(EpubRenderer)).toHaveBeenCalledWith(
+      new Uint8Array([1, 2, 3]),
+      "Dune",
+      ["Frank Herbert"],
+    );
   });
 
   it("destroys the renderer on unmount", () => {

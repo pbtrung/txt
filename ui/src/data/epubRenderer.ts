@@ -3,7 +3,12 @@
 // isolates the actual rendering library (it needs a genuine browser:
 // iframes, Blob URLs) behind a class ReaderScreen and its tests can mock,
 // the same pattern as R2Client wrapping aws4fetch.
-import ePub, { type Book, type NavItem, type Rendition } from "@likecoin/epub-ts";
+import ePub, {
+  type Book,
+  type NavItem,
+  type Rendition,
+  type Section,
+} from "@likecoin/epub-ts";
 import { READER_FONT_FAMILY, READER_THEME_CSS } from "./readerTheme";
 
 // A 2-column spread only kicks in once there's room for two 80ch-ish
@@ -35,11 +40,51 @@ interface SectionLike {
   index?: number;
 }
 
+const COVER_MEDIA_SELECTOR = "img, image, object";
+const XLINK_NAMESPACE = "http://www.w3.org/1999/xlink";
+
 function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(
     bytes.byteOffset,
     bytes.byteOffset + bytes.byteLength,
   ) as ArrayBuffer;
+}
+
+function resourcePath(reference: string, base: string): string {
+  try {
+    return decodeURI(new URL(reference, base).pathname);
+  } catch {
+    return decodeURI(reference.split(/[?#]/)[0]);
+  }
+}
+
+function mediaReference(element: Element): string | null {
+  return (
+    element.getAttribute("src") ??
+    element.getAttribute("href") ??
+    element.getAttribute("xlink:href") ??
+    element.getAttributeNS(XLINK_NAMESPACE, "href") ??
+    element.getAttribute("data")
+  );
+}
+
+function titlePage(document: Document, title: string, authors: string[]): HTMLElement {
+  const page = document.createElement("main");
+  page.style.cssText =
+    "min-height:90vh!important;display:flex!important;flex-direction:column!important;" +
+    "justify-content:center!important;text-align:center!important;padding:2rem!important;" +
+    "box-sizing:border-box!important";
+  page.append(document.createElement("h1"));
+  page.firstElementChild!.textContent = title;
+  if (authors.length > 0) page.append(authorLine(document, authors));
+  return page;
+}
+
+function authorLine(document: Document, authors: string[]): HTMLElement {
+  const line = document.createElement("p");
+  line.style.cssText = "margin-top:1rem!important";
+  line.textContent = authors.join(", ");
+  return line;
 }
 
 export class EpubRenderer {
@@ -48,8 +93,43 @@ export class EpubRenderer {
   private preferredColumns: 1 | 2 = 1;
   private coverHref: string | null = null;
 
-  constructor(epubBytes: Uint8Array) {
+  constructor(
+    epubBytes: Uint8Array,
+    private readonly title: string,
+    private readonly authors: string[],
+  ) {
     this.book = ePub(toArrayBuffer(epubBytes));
+    this.book.spine.hooks.content.register((document, section) =>
+      this.replaceCover(document as Document, section as Section),
+    );
+  }
+
+  private async replaceCover(document: Document, section: Section): Promise<void> {
+    const coverHref = await this.book.loaded.cover;
+    if (!coverHref || !this.containsCover(document, section, coverHref)) return;
+    const body = document.body;
+    if (body) body.replaceChildren(titlePage(document, this.title, this.authors));
+  }
+
+  private containsCover(
+    document: Document,
+    section: Section,
+    coverHref: string,
+  ): boolean {
+    const coverPath = resourcePath(coverHref, document.baseURI);
+    if (
+      section.href &&
+      resourcePath(section.url ?? section.href, document.baseURI) === coverPath
+    )
+      return true;
+    return Array.from(document.querySelectorAll(COVER_MEDIA_SELECTOR)).some(
+      (element) => {
+        const reference = mediaReference(element);
+        return (
+          reference !== null && resourcePath(reference, document.baseURI) === coverPath
+        );
+      },
+    );
   }
 
   renderTo(element: HTMLElement): void {

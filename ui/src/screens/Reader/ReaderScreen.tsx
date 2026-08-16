@@ -41,7 +41,11 @@ export function ReaderScreen() {
 
   useEffect(() => {
     if (status !== "ready" || !document || !containerRef.current) return;
-    const newRenderer = new EpubRenderer(document.epubBytes);
+    const newRenderer = new EpubRenderer(
+      document.epubBytes,
+      document.title,
+      document.authors,
+    );
     newRenderer.renderTo(containerRef.current);
     newRenderer.setFontSize(`${fontPx}px`);
     newRenderer.setColumns(columns);
