@@ -5,40 +5,12 @@
 // the same pattern as R2Client wrapping aws4fetch.
 import ePub, {
   type Book,
+  type Location,
   type NavItem,
   type Rendition,
   type Section,
 } from "@likecoin/epub-ts";
 import { READER_FONT_FAMILY, READER_THEME_CSS } from "./readerTheme";
-
-// A 2-column spread only kicks in once there's room for two 80ch-ish
-// columns side by side -- otherwise setColumns(2) would just crush both
-// columns on a narrow viewport. Approximate, not exact: an actual 80ch
-// width depends on the rendered font's own metrics.
-const TWO_COLUMN_MIN_WIDTH_PX = 900;
-
-// epub.ts applies spread mode uniformly across every section of a
-// reflowable book -- its per-item page-spread-left/right handling only
-// applies to pre-paginated (fixed) layouts, so there's no built-in
-// exemption for a book's own front matter. A cover page (typically one
-// full-bleed image) or an early title/copyright/TOC page can genuinely
-// come out wrong split across two CSS columns the same way body text
-// would flow across them, so those always render single-column instead,
-// regardless of the column preference:
-//  - the cover specifically, matched via the book's own declared cover
-//    path (book.loaded.cover) -- precise, not a guess.
-//  - a fallback in case the cover isn't caught above (front matter
-//    doesn't always start at spine index 0, or a book declares no cover
-//    at all): the first few spine positions, a heuristic that covers
-//    title/copyright/TOC pages in most real books without reaching far
-//    enough to catch genuine chapter 1 content in the ones with little
-//    front matter.
-const FRONT_MATTER_SPINE_INDEX_LIMIT = 3;
-
-interface SectionLike {
-  href?: string;
-  index?: number;
-}
 
 const COVER_MEDIA_SELECTOR = "img, image, object";
 const XLINK_NAMESPACE = "http://www.w3.org/1999/xlink";
@@ -74,24 +46,35 @@ function titlePage(document: Document, title: string, authors: string[]): HTMLEl
     "min-height:90vh!important;display:flex!important;flex-direction:column!important;" +
     "justify-content:center!important;text-align:center!important;padding:2rem!important;" +
     "box-sizing:border-box!important";
-  page.append(document.createElement("h1"));
-  page.firstElementChild!.textContent = title;
+  page.append(titleHeading(document, title));
   if (authors.length > 0) page.append(authorLine(document, authors));
   return page;
 }
 
+function titleHeading(document: Document, title: string): HTMLElement {
+  const heading = document.createElement("h1");
+  heading.style.cssText =
+    "font-size:20px!important;line-height:1.1!important;margin:0!important";
+  heading.textContent = title;
+  return heading;
+}
+
 function authorLine(document: Document, authors: string[]): HTMLElement {
   const line = document.createElement("p");
-  line.style.cssText = "margin-top:1rem!important";
+  line.style.cssText =
+    "font-size:16px!important;line-height:1.3!important;margin:1rem 0 0!important";
   line.textContent = authors.join(", ");
   return line;
+}
+
+export interface PagePosition {
+  current: number;
+  total: number;
 }
 
 export class EpubRenderer {
   private readonly book: Book;
   private rendition: Rendition | null = null;
-  private preferredColumns: 1 | 2 = 1;
-  private coverHref: string | null = null;
 
   constructor(
     epubBytes: Uint8Array,
@@ -149,57 +132,8 @@ export class EpubRenderer {
     // which is what it takes to beat a book's own stylesheet -- nearly
     // every real EPUB sets its own font-family on body/paragraphs.
     this.rendition.themes.font(READER_FONT_FAMILY);
-    this.rendition.on("rendered", (section) => this.applyLayoutFor(section));
-    void this.loadCoverHref();
+    this.rendition.spread("none");
     void this.rendition.display();
-  }
-
-  private async loadCoverHref(): Promise<void> {
-    try {
-      this.coverHref = (await this.book.loaded.cover) || null;
-    } catch {
-      this.coverHref = null;
-    }
-  }
-
-  private isFrontMatter(section: SectionLike): boolean {
-    if (section.index !== undefined && section.index < FRONT_MATTER_SPINE_INDEX_LIMIT) {
-      return true;
-    }
-    return (
-      this.coverHref !== null &&
-      section.href !== undefined &&
-      this.book.resolve(section.href) === this.coverHref
-    );
-  }
-
-  private applyPreferredColumns(): void {
-    const rendition = this.requireRendition();
-    if (this.preferredColumns === 1) {
-      rendition.spread("none");
-    } else {
-      rendition.spread("auto", TWO_COLUMN_MIN_WIDTH_PX);
-    }
-  }
-
-  private applyLayoutFor(section: SectionLike): void {
-    if (this.isFrontMatter(section)) {
-      this.requireRendition().spread("none");
-      return;
-    }
-    this.applyPreferredColumns();
-  }
-
-  /** 1 = always a single column; 2 = a two-page spread once the viewport
-   * is wide enough, otherwise epub.js falls back to one column on its
-   * own -- unless the currently displayed section is front matter (see
-   * FRONT_MATTER_SPINE_INDEX_LIMIT above), which always stays
-   * single-column regardless. */
-  setColumns(count: 1 | 2): void {
-    this.preferredColumns = count;
-    const current = this.requireRendition().currentLocation()?.start;
-    if (current && this.isFrontMatter(current)) return;
-    this.applyPreferredColumns();
   }
 
   /** Jumps to an arbitrary TOC href or CFI -- unlike next()/prev(), which
@@ -222,6 +156,13 @@ export class EpubRenderer {
    * outer page. */
   onKeyup(cb: (event: KeyboardEvent) => void): void {
     this.requireRendition().on("keyup", cb);
+  }
+
+  onPageChange(cb: (page: PagePosition) => void): void {
+    this.requireRendition().on("relocated", (location: Location) => {
+      const displayed = location.start.displayed;
+      cb({ current: displayed.page, total: displayed.total });
+    });
   }
 
   async getToc(): Promise<NavItem[]> {

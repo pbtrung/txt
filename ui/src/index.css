@@ -48,7 +48,7 @@
 
 .search-box-input {
   padding-left: 2rem;
-  border-color: var(--bs-secondary-color);
+  border: var(--bs-border-width) var(--bs-border-style) var(--bs-border-color);
 }
 
 .search-box-input:focus {

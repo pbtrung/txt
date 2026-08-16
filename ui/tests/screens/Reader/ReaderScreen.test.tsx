@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -16,8 +16,8 @@ vi.mock("../../../src/data/epubRenderer", () => ({
       prev: vi.fn().mockResolvedValue(undefined),
       next: vi.fn().mockResolvedValue(undefined),
       onKeyup: vi.fn(),
+      onPageChange: vi.fn(),
       setFontSize: vi.fn(),
-      setColumns: vi.fn(),
       getToc: vi.fn().mockResolvedValue([]),
     };
   }),
@@ -110,7 +110,12 @@ describe("ReaderScreen", () => {
     mockReadyDocument();
     renderScreen();
 
-    expect(screen.getByRole("heading", { name: "Dune", level: 1 })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", {
+        name: "Dune — Frank Herbert",
+        level: 1,
+      }),
+    ).toBeInTheDocument();
     expect(vi.mocked(EpubRenderer)).toHaveBeenCalledWith(
       new Uint8Array([1, 2, 3]),
       "Dune",
@@ -173,48 +178,29 @@ describe("ReaderScreen", () => {
     expect(instance.setFontSize).toHaveBeenCalledWith("16px");
   });
 
-  it("font size buttons adjust the size in 1px steps", async () => {
+  it("keeps the header to back, menu, and info controls", () => {
     mockVault();
     mockReadyDocument();
-    renderScreen();
-    const instance = vi.mocked(EpubRenderer).mock.results[0].value as {
-      setFontSize: (size: string) => void;
-    };
+    const { container } = renderScreen();
+    const toolbar = container.querySelector(".reader-toolbar")!;
 
-    await userEvent.click(screen.getByRole("button", { name: "Display settings" }));
-    await userEvent.click(screen.getByRole("button", { name: "Increase font size" }));
-
-    expect(instance.setFontSize).toHaveBeenLastCalledWith("19px");
+    expect(toolbar.querySelectorAll("a, button")).toHaveLength(3);
+    expect(screen.queryByRole("button", { name: "Display settings" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Two-column layout" })).toBeNull();
   });
 
-  it("defaults to 2 columns", async () => {
+  it("updates the current and total page from renderer relocation", () => {
     mockVault();
     mockReadyDocument();
     renderScreen();
     const instance = vi.mocked(EpubRenderer).mock.results[0].value as {
-      setColumns: (count: 1 | 2) => void;
+      onPageChange: (cb: (page: { current: number; total: number }) => void) => void;
     };
-    await userEvent.click(screen.getByRole("button", { name: "Display settings" }));
-    const button = screen.getByRole("button", { name: "Two-column layout" });
+    const callback = vi.mocked(instance.onPageChange).mock.calls[0][0];
 
-    expect(instance.setColumns).toHaveBeenCalledWith(2);
-    expect(button).toHaveAttribute("aria-pressed", "true");
-  });
+    act(() => callback({ current: 4, total: 12 }));
 
-  it("the columns button toggles between 2 and 1 columns", async () => {
-    mockVault();
-    mockReadyDocument();
-    renderScreen();
-    const instance = vi.mocked(EpubRenderer).mock.results[0].value as {
-      setColumns: (count: 1 | 2) => void;
-    };
-    await userEvent.click(screen.getByRole("button", { name: "Display settings" }));
-    const button = screen.getByRole("button", { name: "Two-column layout" });
-
-    await userEvent.click(button);
-
-    expect(instance.setColumns).toHaveBeenLastCalledWith(1);
-    expect(button).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByLabelText("Page 4 of 12")).toHaveTextContent("4 / 12");
   });
 
   it("has a back-to-library link", () => {
@@ -311,13 +297,15 @@ describe("ReaderScreen", () => {
     expect(document.querySelector("script")).not.toBeInTheDocument();
   });
 
-  it("opens the Contents panel", async () => {
+  it("opens the menu from the left without exceeding the viewport", async () => {
     mockVault();
     mockReadyDocument();
     renderScreen();
 
-    await userEvent.click(screen.getByRole("button", { name: "Contents" }));
+    await userEvent.click(screen.getByRole("button", { name: "Menu" }));
 
-    expect(screen.getByRole("dialog", { name: "Contents" })).toHaveClass("show");
+    const menu = screen.getByRole("dialog", { name: "Menu" });
+    expect(menu).toHaveClass("show", "offcanvas-start");
+    expect(menu).toHaveStyle({ maxWidth: "100%" });
   });
 });

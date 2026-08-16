@@ -13,6 +13,13 @@ function fakeRenderer(toc: unknown[], display = vi.fn()): EpubRenderer {
 }
 
 describe("TocPanel", () => {
+  it("opens from the left and is constrained to the viewport", () => {
+    render(<TocPanel open onClose={vi.fn()} renderer={null} />);
+    const panel = screen.getByRole("dialog", { name: "Menu" });
+    expect(panel).toHaveClass("offcanvas-start");
+    expect(panel).toHaveStyle({ maxWidth: "100%" });
+  });
+
   it("shows a loading state before the toc resolves", () => {
     render(<TocPanel open onClose={vi.fn()} renderer={null} />);
     expect(screen.getByText(/Loading/)).toBeInTheDocument();

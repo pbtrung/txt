@@ -33,7 +33,13 @@ export function TocPanel({
   }
 
   return (
-    <OffcanvasPanel open={open} onClose={onClose} title="Contents">
+    <OffcanvasPanel
+      open={open}
+      onClose={onClose}
+      title="Menu"
+      placement="start"
+      style={{ width: "20rem", maxWidth: "100%" }}
+    >
       {toc === null ? (
         <p className="text-muted">Loading…</p>
       ) : (
