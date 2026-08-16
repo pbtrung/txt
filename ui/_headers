@@ -1,0 +1,19 @@
+# Cloudflare Workers Static Assets honors this file (same syntax as Pages)
+# at the root of the assets directory -- copied into dist/ by `ui:build`.
+#
+# script-src/style-src/default-src are deliberately left unset here, not
+# omitted by oversight: epub.ts (ui/src/data/epubRenderer.ts) renders each
+# book section in its own sandboxed `srcdoc` iframe (sandbox="allow-same-origin
+# allow-scripts"), and a srcdoc document inherits its creator's CSP -- so a
+# restrictive script-src/style-src here would also bind inside every one of
+# those iframes. allowScriptedContent is already required just to let
+# epub.ts's own per-section helper script run there (see epubRenderer.ts's
+# own comment on that setting); a same-origin-only script-src would block
+# that inline script the same way disallowing it entirely once did.
+/*
+  Content-Security-Policy: connect-src 'self' https://identitytoolkit.googleapis.com https://*.r2.cloudflarestorage.com; object-src 'none'; base-uri 'self'; frame-ancestors 'self'; form-action 'self'
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()
+  Strict-Transport-Security: max-age=63072000; includeSubDomains

@@ -44,6 +44,7 @@ This repo holds the txt document-storage system's design docs, the Cloudflare Wo
   - `env.d.ts` — the `Env` interface for secrets/bindings `wrangler types` doesn't know about.
 - `worker/tests/`, `ui/tests/` — vitest, mirroring each tree's own source subdirectory structure (e.g. `ui/tests/screens/Reader/ReaderScreen.test.tsx` for `ui/src/screens/Reader/ReaderScreen.tsx`) rather than living alongside the source files they test.
 - `wrangler.jsonc`, `package.json`, `scripts/deploy.sh` — Worker config/build; `scripts/deploy.sh` requires `WORKER_NAME` so a stale placeholder name in `wrangler.jsonc` can never silently target the wrong Worker, and rebuilds `ui/` fresh before every deploy. `wrangler.jsonc`'s `assets` block deploys `ui/`'s build (`dist/`) alongside the Worker script: `/v1/*` reaches `worker/index.ts`, everything else is served (or SPA-fallback-served) from `dist/`.
+- `ui/_headers` — response headers (CSP, `X-Frame-Options`, `Permissions-Policy`, ...) Cloudflare Workers Static Assets applies to every `dist/` response, same syntax as Cloudflare Pages; `npm run ui:build` copies it into `dist/`. The CSP's `connect-src` is the only thing it restricts beyond that — deliberately no `script-src`/`style-src`/`default-src`, since epub.ts renders each book section in its own sandboxed `srcdoc` iframe, which inherits this same policy.
 
 ## Conventions
 
