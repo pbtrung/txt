@@ -100,10 +100,14 @@
    short of the vertical rule beside it (the sidebar's own border-end).
    Zeroing it lets those dividers run flush edge to edge; the footer
    keeps its own p-2 regardless, since that's set directly on its own div
-   rather than inherited from this padding. overflow-x is belt-and-
-   suspenders against the same symptom from a different cause: a row
-   whose content doesn't shrink as expected (see .min-w-0 below) would
-   otherwise push the sidebar itself wider even with flex-shrink pinned. */
+   rather than inherited from this padding. Bootstrap makes a responsive
+   offcanvas body a row flex container on desktop, so SidebarContent also
+   carries w-100; without it, the content stays at its intrinsic width and
+   the nav rows and their right-aligned counts stop short of the border.
+   overflow-x is belt-and-suspenders against the same symptom from a
+   different cause: a row whose content doesn't shrink as expected (see
+   .min-w-0 below) would otherwise push the sidebar itself wider even with
+   flex-shrink pinned. */
 .library-sidebar .offcanvas-body {
   padding: 0;
   overflow-x: hidden;

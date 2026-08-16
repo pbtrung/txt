@@ -148,8 +148,8 @@ function SidebarContent({
 }) {
   const allActive = view.kind === "books" && view.filter === null;
   return (
-    <div className="d-flex flex-column h-100">
-      <nav className="flex-grow-1 overflow-y-auto" aria-label="Library">
+    <div className="d-flex flex-column h-100 w-100">
+      <nav className="flex-grow-1 overflow-y-auto pt-2" aria-label="Library">
         <div className="list-group list-group-flush">
           <NavRow
             label="All Books"
@@ -231,7 +231,7 @@ function RightPane({
 }) {
   return (
     <div className="d-flex flex-column flex-grow-1 overflow-hidden">
-      <div className="d-flex align-items-center gap-2 px-2 px-md-3 pt-3 pb-2 flex-shrink-0">
+      <div className="d-flex align-items-center gap-2 px-2 px-md-3 pt-2 pb-2 flex-shrink-0">
         {view.kind === "books" && view.filter && (
           <button
             type="button"
