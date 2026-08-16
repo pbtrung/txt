@@ -1,6 +1,6 @@
 // Renders the requested document with epub.js. The header stays to three
-// controls (back, menu, info); font size, book-wide page navigation, and
-// contents share the viewport-constrained left menu.
+// controls (back, menu, info); Contents lives in the left menu, while font
+// size and book-wide page navigation share a compact bottom bar.
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { OffcanvasPanel } from "../../components/OffcanvasPanel";
@@ -14,9 +14,7 @@ import { useReaderDocument } from "./useReaderDocument";
 const MOBILE_MEDIA_QUERY = "(max-width: 767.98px)";
 const DESKTOP_FONT_PX = 18;
 const MOBILE_FONT_PX = 16;
-const MIN_FONT_PX = 12;
-const MAX_FONT_PX = 32;
-const FONT_STEP_PX = 1;
+const FONT_SIZES_PX = [16, 18, 20, 22, 24] as const;
 function defaultFontPx(): number {
   return window.matchMedia(MOBILE_MEDIA_QUERY).matches
     ? MOBILE_FONT_PX
@@ -59,13 +57,12 @@ export function ReaderScreen() {
       newRenderer.destroy();
       setRenderer(null);
     };
-    // Font changes are applied directly by adjustFontSize; they do not
+    // Font changes are applied directly by changeFontSize; they do not
     // replace the renderer or restart the book-wide page map.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, document]);
 
-  function adjustFontSize(delta: number) {
-    const next = Math.min(MAX_FONT_PX, Math.max(MIN_FONT_PX, fontPx + delta));
+  function changeFontSize(next: number) {
     setFontPx(next);
     renderer?.setFontSize(`${next}px`);
   }
@@ -126,25 +123,132 @@ export function ReaderScreen() {
 
       <div ref={containerRef} className="flex-grow-1" />
 
+      <PageNavigation
+        renderer={renderer}
+        page={page}
+        fontPx={fontPx}
+        onFontSize={changeFontSize}
+      />
+
       <InfoPanel
         open={infoOpen}
         onClose={() => setInfoOpen(false)}
         document={document!}
       />
-      <TocPanel
-        open={tocOpen}
-        onClose={() => setTocOpen(false)}
-        renderer={renderer}
-        page={page}
-        onDecreaseFont={() => adjustFontSize(-FONT_STEP_PX)}
-        onIncreaseFont={() => adjustFontSize(FONT_STEP_PX)}
-      />
+      <TocPanel open={tocOpen} onClose={() => setTocOpen(false)} renderer={renderer} />
     </div>
   );
 }
 
 function readerTitle(title: string, authors: string[]): string {
   return authors.length > 0 ? `${title} — ${authors.join(", ")}` : title;
+}
+
+function PageNavigation({
+  renderer,
+  page,
+  fontPx,
+  onFontSize,
+}: {
+  renderer: EpubRenderer | null;
+  page: PagePosition;
+  fontPx: number;
+  onFontSize: (size: number) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [fontMenuOpen, setFontMenuOpen] = useState(false);
+  useEffect(() => {
+    if (inputRef.current) inputRef.current.value = String(page.current);
+  }, [page]);
+
+  function goToInputPage() {
+    const value = Number(inputRef.current?.value);
+    if (Number.isInteger(value) && value >= 1 && value <= page.total)
+      void renderer?.displayPage(value);
+    else if (inputRef.current) inputRef.current.value = String(page.current);
+  }
+
+  return (
+    <div className="d-flex align-items-center justify-content-start border-top py-1 gap-2">
+      <div className="dropup">
+        <button
+          type="button"
+          className="btn btn-sm btn-outline-secondary dropdown-toggle"
+          aria-label="Font size"
+          aria-haspopup="menu"
+          aria-expanded={fontMenuOpen}
+          onClick={() => setFontMenuOpen((open) => !open)}
+        >
+          {fontPx}px
+        </button>
+        <ul
+          role="menu"
+          className={`dropdown-menu${fontMenuOpen ? " show" : ""}`}
+          aria-label="Font size options"
+          style={{ bottom: "100%", top: "auto" }}
+        >
+          {FONT_SIZES_PX.map((size) => (
+            <li key={size}>
+              <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={fontPx === size}
+                className={`dropdown-item${fontPx === size ? " active" : ""}`}
+                onClick={() => {
+                  onFontSize(size);
+                  setFontMenuOpen(false);
+                }}
+              >
+                {size}px
+              </button>
+            </li>
+          ))}
+        </ul>
+      </div>
+      <span className="vr" aria-hidden="true" />
+      <button
+        type="button"
+        className="btn btn-sm btn-outline-secondary"
+        aria-label="Previous page"
+        disabled={!renderer}
+        onClick={() => void renderer?.prev()}
+      >
+        <i className="bi bi-chevron-left" />
+      </button>
+      <input
+        ref={inputRef}
+        type="text"
+        inputMode="numeric"
+        className="form-control form-control-sm text-end"
+        aria-label="Current page"
+        defaultValue={page.current}
+        style={{ width: `calc(${String(page.total).length}ch + 1.5rem)` }}
+        onBlur={goToInputPage}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") event.currentTarget.blur();
+        }}
+      />
+      <span className="small text-muted" aria-label={`Total pages ${page.total}`}>
+        / {page.total}
+      </span>
+      <button
+        type="button"
+        className="btn btn-sm btn-outline-secondary"
+        aria-label="Next page"
+        disabled={!renderer}
+        onClick={() => void renderer?.next()}
+      >
+        <i className="bi bi-chevron-right" />
+      </button>
+      <button
+        type="button"
+        className="btn btn-sm btn-outline-secondary ms-auto"
+        aria-label="Bookmark"
+      >
+        <i className="bi bi-bookmark" />
+      </button>
+    </div>
+  );
 }
 
 function InfoPanel({

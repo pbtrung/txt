@@ -87,6 +87,7 @@ export class EpubRenderer {
   private coverHref: string | null = null;
   private currentCfi: string | null = null;
   private pageMapReady = false;
+  private pageTotal = 0;
   private pageCallback: ((page: PagePosition) => void) | null = null;
 
   constructor(
@@ -146,6 +147,10 @@ export class EpubRenderer {
     // every real EPUB sets its own font-family on body/paragraphs.
     this.rendition.themes.font(READER_FONT_FAMILY);
     this.rendition.on("rendered", (section) => this.applyLayoutFor(section));
+    this.rendition.on("relocated", (location: Location) => {
+      this.currentCfi = location.start.cfi;
+      this.emitPagePosition();
+    });
     void this.loadCoverHref();
     void this.rendition.display();
   }
@@ -199,6 +204,13 @@ export class EpubRenderer {
     return this.requireRendition().prev();
   }
 
+  async displayPage(page: number): Promise<void> {
+    if (!this.pageMapReady || this.pageTotal === 0) return;
+    const index = Math.min(this.pageTotal - 1, Math.max(0, Math.trunc(page) - 1));
+    const target = this.book.locations.cfiFromLocation(index);
+    if (typeof target === "string") await this.requireRendition().display(target);
+  }
+
   /** epub.js relays DOM events (keydown/keyup/click/...) up from inside the
    * rendered iframe's content -- this is the only way a keyboard shortcut
    * sees keypresses while focus is inside the book itself, not just the
@@ -209,17 +221,16 @@ export class EpubRenderer {
 
   onPageChange(cb: (page: PagePosition) => void): void {
     this.pageCallback = cb;
-    this.requireRendition().on("relocated", (location: Location) => {
-      this.currentCfi = location.start.cfi;
-      this.emitPagePosition();
-    });
     void this.generatePageMap();
   }
 
   private async generatePageMap(): Promise<void> {
     try {
-      await this.book.locations.generate(BOOK_PAGE_CHARS);
-      this.pageMapReady = true;
+      await this.book.opened;
+      const locations = await this.book.locations.generate(BOOK_PAGE_CHARS);
+      this.pageTotal = locations.length;
+      this.pageMapReady = this.pageTotal > 0;
+      this.currentCfi ??= this.requireRendition().currentLocation()?.start.cfi ?? null;
       this.emitPagePosition();
     } catch {
       this.pageMapReady = false;
@@ -227,10 +238,11 @@ export class EpubRenderer {
   }
 
   private emitPagePosition(): void {
-    if (!this.pageMapReady || !this.currentCfi || !this.pageCallback) return;
-    const index = this.book.locations.locationFromCfi(this.currentCfi);
-    const total = this.book.locations.length();
-    if (index >= 0 && total > 0) this.pageCallback({ current: index + 1, total });
+    if (!this.pageMapReady || !this.pageCallback) return;
+    const index = this.currentCfi
+      ? this.book.locations.locationFromCfi(this.currentCfi)
+      : 0;
+    this.pageCallback({ current: Math.max(0, index) + 1, total: this.pageTotal });
   }
 
   async getToc(): Promise<NavItem[]> {

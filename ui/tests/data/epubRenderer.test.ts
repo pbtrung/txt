@@ -16,12 +16,14 @@ const renditionMock = {
   themes: { fontSize: vi.fn(), registerCss: vi.fn(), font: vi.fn() },
 };
 const bookMock = {
+  opened: Promise.resolve({}),
   renderTo: vi.fn().mockReturnValue(renditionMock),
   destroy: vi.fn(),
   resolve: vi.fn((href: string) => href),
   locations: {
-    generate: vi.fn().mockResolvedValue([]),
+    generate: vi.fn().mockResolvedValue(["epubcfi(/6/2)"]),
     locationFromCfi: vi.fn().mockReturnValue(0),
+    cfiFromLocation: vi.fn().mockReturnValue("epubcfi(/6/2)"),
     length: vi.fn().mockReturnValue(1),
   },
   spine: { hooks: { content: { register: vi.fn() } } },
@@ -38,8 +40,11 @@ afterEach(() => {
   renditionMock.settings = {};
   renditionMock.currentLocation.mockReturnValue(undefined);
   bookMock.loaded.cover = Promise.resolve("");
+  bookMock.opened = Promise.resolve({});
   bookMock.locations.locationFromCfi.mockReturnValue(0);
+  bookMock.locations.cfiFromLocation.mockReturnValue("epubcfi(/6/2)");
   bookMock.locations.length.mockReturnValue(1);
+  bookMock.locations.generate.mockResolvedValue(["epubcfi(/6/2)"]);
 });
 
 describe("EpubRenderer", () => {
@@ -168,16 +173,17 @@ describe("EpubRenderer", () => {
 
   it("reports a stable book-wide page and total when the rendition relocates", async () => {
     bookMock.locations.locationFromCfi.mockReturnValue(2);
-    bookMock.locations.length.mockReturnValue(120);
+    bookMock.locations.generate.mockResolvedValue(
+      Array.from({ length: 120 }, (_, index) => `epubcfi(/6/${index + 2})`),
+    );
     const renderer = new EpubRenderer(new Uint8Array([1]));
     renderer.renderTo(document.createElement("div"));
-    const cb = vi.fn();
-    renderer.onPageChange(cb);
     const relocated = renditionMock.on.mock.calls.find(
       ([event]) => event === "relocated",
     )![1];
-
     relocated({ start: { cfi: "epubcfi(/6/4!/4/2)" } });
+    const cb = vi.fn();
+    renderer.onPageChange(cb);
 
     await vi.waitFor(() => {
       expect(cb).toHaveBeenCalledWith({ current: 3, total: 120 });
@@ -187,6 +193,57 @@ describe("EpubRenderer", () => {
     expect(bookMock.locations.locationFromCfi).toHaveBeenCalledWith(
       "epubcfi(/6/4!/4/2)",
     );
+  });
+
+  it("publishes the generated total even if the initial relocation was missed", async () => {
+    bookMock.locations.generate.mockResolvedValue(
+      Array.from({ length: 120 }, (_, index) => `epubcfi(/6/${index + 2})`),
+    );
+    const renderer = new EpubRenderer(new Uint8Array([1]));
+    renderer.renderTo(document.createElement("div"));
+    const cb = vi.fn();
+
+    renderer.onPageChange(cb);
+
+    await vi.waitFor(() => {
+      expect(cb).toHaveBeenCalledWith({ current: 1, total: 120 });
+    });
+  });
+
+  it("waits for the book to open before generating page locations", async () => {
+    let resolveOpened!: () => void;
+    bookMock.opened = new Promise((resolve) => {
+      resolveOpened = () => resolve({});
+    });
+    const renderer = new EpubRenderer(new Uint8Array([1]));
+    renderer.renderTo(document.createElement("div"));
+
+    renderer.onPageChange(vi.fn());
+
+    expect(bookMock.locations.generate).not.toHaveBeenCalled();
+    resolveOpened();
+    await vi.waitFor(() => {
+      expect(bookMock.locations.generate).toHaveBeenCalledWith(1000);
+    });
+  });
+
+  it("jumps to an edited book-wide page", async () => {
+    bookMock.locations.generate.mockResolvedValue(
+      Array.from({ length: 120 }, (_, index) => `epubcfi(/6/${index + 2})`),
+    );
+    bookMock.locations.cfiFromLocation.mockReturnValue("epubcfi(/6/84)");
+    const renderer = new EpubRenderer(new Uint8Array([1]));
+    renderer.renderTo(document.createElement("div"));
+    renderer.onPageChange(vi.fn());
+    await vi.waitFor(() => {
+      expect(bookMock.locations.generate).toHaveBeenCalled();
+    });
+    renditionMock.display.mockClear();
+
+    await renderer.displayPage(42);
+
+    expect(bookMock.locations.cfiFromLocation).toHaveBeenCalledWith(41);
+    expect(renditionMock.display).toHaveBeenCalledWith("epubcfi(/6/84)");
   });
 
   it("setFontSize() delegates to the rendition's themes", () => {

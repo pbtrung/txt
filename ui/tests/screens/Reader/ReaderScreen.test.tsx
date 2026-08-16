@@ -15,6 +15,7 @@ vi.mock("../../../src/data/epubRenderer", () => ({
       destroy: vi.fn(),
       prev: vi.fn().mockResolvedValue(undefined),
       next: vi.fn().mockResolvedValue(undefined),
+      displayPage: vi.fn().mockResolvedValue(undefined),
       onKeyup: vi.fn(),
       onPageChange: vi.fn(),
       setFontSize: vi.fn(),
@@ -146,7 +147,6 @@ describe("ReaderScreen", () => {
       next: () => void;
     };
 
-    await userEvent.click(screen.getByRole("button", { name: "Menu" }));
     await userEvent.click(screen.getByRole("button", { name: "Previous page" }));
     await userEvent.click(screen.getByRole("button", { name: "Next page" }));
 
@@ -191,18 +191,35 @@ describe("ReaderScreen", () => {
     expect(instance.setColumns).toHaveBeenCalledWith(2);
   });
 
-  it("adjusts font size from the menu", async () => {
+  it("offers only the supported font sizes beside page navigation", async () => {
     mockVault();
     mockReadyDocument();
-    renderScreen();
+    const { container } = renderScreen();
     const instance = vi.mocked(EpubRenderer).mock.results[0].value as {
       setFontSize: (size: string) => void;
     };
-    await userEvent.click(screen.getByRole("button", { name: "Menu" }));
+    const fontSize = screen.getByRole("button", { name: "Font size" });
 
-    await userEvent.click(screen.getByRole("button", { name: "Increase font size" }));
+    expect(
+      fontSize.compareDocumentPosition(
+        screen.getByRole("button", { name: "Previous page" }),
+      ),
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(container.querySelector(".vr")).toBeInTheDocument();
 
-    expect(instance.setFontSize).toHaveBeenLastCalledWith("19px");
+    await userEvent.click(fontSize);
+    const menu = screen.getByRole("menu", { name: "Font size options" });
+    expect(menu).toHaveClass("show");
+    expect(menu).toHaveStyle({ bottom: "100%", top: "auto" });
+    expect(
+      screen.getAllByRole("menuitemradio").map((option) => option.textContent),
+    ).toEqual(["16px", "18px", "20px", "22px", "24px"]);
+
+    await userEvent.click(screen.getByRole("menuitemradio", { name: "20px" }));
+
+    expect(instance.setFontSize).toHaveBeenLastCalledWith("20px");
+    expect(fontSize).toHaveTextContent("20px");
+    expect(menu).not.toHaveClass("show");
   });
 
   it("keeps the header to back, menu, and info controls", () => {
@@ -226,9 +243,39 @@ describe("ReaderScreen", () => {
     const callback = vi.mocked(instance.onPageChange).mock.calls[0][0];
 
     act(() => callback({ current: 4, total: 12 }));
-    await userEvent.click(screen.getByRole("button", { name: "Menu" }));
 
-    expect(screen.getByLabelText("Page 4 of 12")).toHaveTextContent("4 / 12");
+    expect(screen.getByRole("textbox", { name: "Current page" })).toHaveValue("4");
+    expect(screen.getByLabelText("Total pages 12")).toHaveTextContent("/ 12");
+  });
+
+  it("jumps to an edited page and sizes the input from the total", async () => {
+    mockVault();
+    mockReadyDocument();
+    renderScreen();
+    const instance = vi.mocked(EpubRenderer).mock.results[0].value as {
+      onPageChange: (cb: (page: { current: number; total: number }) => void) => void;
+      displayPage: (page: number) => Promise<void>;
+    };
+    const callback = vi.mocked(instance.onPageChange).mock.calls[0][0];
+    act(() => callback({ current: 4, total: 120 }));
+    const input = screen.getByRole("textbox", { name: "Current page" });
+
+    await userEvent.clear(input);
+    await userEvent.type(input, "42{Enter}");
+
+    expect(instance.displayPage).toHaveBeenCalledWith(42);
+    expect(input.getAttribute("style")).toContain("calc(3ch + 1.5rem)");
+  });
+
+  it("puts an inert bookmark control at the right of the bottom bar", async () => {
+    mockVault();
+    mockReadyDocument();
+    renderScreen();
+    const bookmark = screen.getByRole("button", { name: "Bookmark" });
+
+    await userEvent.click(bookmark);
+
+    expect(bookmark).toHaveClass("ms-auto");
   });
 
   it("has a back-to-library link", () => {
@@ -335,7 +382,7 @@ describe("ReaderScreen", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Menu" }));
 
-    const menu = screen.getByRole("dialog", { name: "Menu" });
+    const menu = screen.getByRole("dialog", { name: "Content" });
     expect(menu).toHaveClass("show", "offcanvas-start", "reader-side-panel");
   });
 });

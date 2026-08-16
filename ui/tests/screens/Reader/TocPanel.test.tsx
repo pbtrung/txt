@@ -12,21 +12,15 @@ function fakeRenderer(toc: unknown[], display = vi.fn()): EpubRenderer {
   } as unknown as EpubRenderer;
 }
 
-const MENU_PROPS = {
-  page: { current: 3, total: 120 },
-  onDecreaseFont: vi.fn(),
-  onIncreaseFont: vi.fn(),
-};
-
 describe("TocPanel", () => {
   it("opens from the left and is constrained to the viewport", () => {
-    render(<TocPanel open onClose={vi.fn()} renderer={null} {...MENU_PROPS} />);
-    const panel = screen.getByRole("dialog", { name: "Menu" });
+    render(<TocPanel open onClose={vi.fn()} renderer={null} />);
+    const panel = screen.getByRole("dialog", { name: "Content" });
     expect(panel).toHaveClass("offcanvas-start", "reader-side-panel");
   });
 
   it("shows a loading state before the toc resolves", () => {
-    render(<TocPanel open onClose={vi.fn()} renderer={null} {...MENU_PROPS} />);
+    render(<TocPanel open onClose={vi.fn()} renderer={null} />);
     expect(screen.getByText(/Loading/)).toBeInTheDocument();
   });
 
@@ -40,7 +34,7 @@ describe("TocPanel", () => {
       },
     ]);
 
-    render(<TocPanel open onClose={vi.fn()} renderer={renderer} {...MENU_PROPS} />);
+    render(<TocPanel open onClose={vi.fn()} renderer={renderer} />);
 
     await waitFor(() => expect(screen.getByText("Chapter 1")).toBeInTheDocument());
     expect(screen.getByText("Section 1.1")).toBeInTheDocument();
@@ -54,7 +48,7 @@ describe("TocPanel", () => {
     );
     const onClose = vi.fn();
 
-    render(<TocPanel open onClose={onClose} renderer={renderer} {...MENU_PROPS} />);
+    render(<TocPanel open onClose={onClose} renderer={renderer} />);
     await waitFor(() => expect(screen.getByText("Chapter 1")).toBeInTheDocument());
     await userEvent.click(screen.getByText("Chapter 1"));
 
