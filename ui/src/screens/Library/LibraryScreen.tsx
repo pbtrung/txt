@@ -1,11 +1,14 @@
-// A persistent nav sidebar (a drawer below Bootstrap's `md` breakpoint) --
-// All books, plus Authors/Subjects/Publishers each shown as a count -- and
-// a right pane whose content depends on where that nav leads: the
-// dimension's own list of entries (each with its own count) until one is
-// picked, then the books matching it. Clicking All books shows every book
-// directly. The book list is virtualized (@tanstack/react-virtual) since
-// it renders directly off however many books this account has ingested,
-// with no pagination.
+// A single header row split into two zones that line up with the panes
+// below it: branding (icon + "Skypiea" on desktop; just the icon, doubling
+// as the drawer toggle, on mobile) over the nav sidebar's own column, and
+// the search box over the right pane's. Below that: a persistent nav
+// sidebar (a drawer below Bootstrap's `md` breakpoint) -- All books, plus
+// Authors/Subjects/Publishers each shown as a count -- and a right pane
+// whose content depends on where that nav leads: the dimension's own list
+// of entries (each with its own count) until one is picked, then the books
+// matching it. Clicking All books shows every book directly. The book
+// list is virtualized (@tanstack/react-virtual) since it renders directly
+// off however many books this account has ingested, with no pagination.
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
@@ -75,15 +78,34 @@ export function LibraryScreen() {
 
   return (
     <div className="d-flex flex-column vh-100 mx-auto max-w-md-80 px-2 px-md-0">
-      <div className="d-flex align-items-center border-bottom py-2 px-2 d-md-none flex-shrink-0">
-        <button
-          type="button"
-          className="btn btn-sm btn-outline-secondary"
-          aria-label="Open menu"
-          onClick={() => setDrawerOpen(true)}
-        >
-          <i className="bi bi-book" />
-        </button>
+      <div className="d-flex align-items-center border-bottom flex-shrink-0">
+        <div className="d-flex align-items-center gap-2 px-2 px-md-3 py-2 library-brand-col">
+          <button
+            type="button"
+            className="btn btn-sm btn-outline-secondary d-md-none"
+            aria-label="Open menu"
+            onClick={() => setDrawerOpen(true)}
+          >
+            <i className="bi bi-book" />
+          </button>
+          <div className="d-none d-md-flex align-items-center gap-2">
+            <i className="bi bi-book fs-5" />
+            <span className="fw-semibold fs-5">Skypiea</span>
+          </div>
+        </div>
+        <div className="flex-grow-1 px-2 px-md-3 py-2">
+          <div className="search-box position-relative">
+            <i className="bi bi-search search-box-icon" aria-hidden="true" />
+            <input
+              type="search"
+              className="form-control form-control-sm search-box-input"
+              placeholder="Search…"
+              aria-label="Search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </div>
+        </div>
       </div>
 
       <div className="d-flex flex-grow-1 overflow-hidden">
@@ -105,13 +127,7 @@ export function LibraryScreen() {
           />
         </OffcanvasPanel>
 
-        <RightPane
-          books={books}
-          view={view}
-          query={query}
-          onQueryChange={setQuery}
-          onNavigate={goTo}
-        />
+        <RightPane books={books} view={view} query={query} onNavigate={goTo} />
       </div>
     </div>
   );
@@ -133,31 +149,29 @@ function SidebarContent({
   const allActive = view.kind === "books" && view.filter === null;
   return (
     <div className="d-flex flex-column h-100">
-      <div className="d-none d-md-flex align-items-center gap-2 px-3 py-3 border-bottom flex-shrink-0">
-        <i className="bi bi-book fs-5" />
-        <span className="fw-semibold fs-5">Skypiea</span>
-      </div>
-      <nav className="flex-grow-1 overflow-y-auto p-2" aria-label="Library">
-        <NavRow
-          label="All Books"
-          count={books.length}
-          active={allActive}
-          onClick={() => onNavigate({ kind: "books", filter: null })}
-        />
-        {DIMENSIONS.map((dimension) => {
-          const active =
-            (view.kind === "entries" && view.dimension === dimension) ||
-            (view.kind === "books" && view.filter?.dimension === dimension);
-          return (
-            <NavRow
-              key={dimension}
-              label={DIMENSION_LABEL[dimension]}
-              count={browseEntries(books, dimension).length}
-              active={active}
-              onClick={() => onNavigate({ kind: "entries", dimension })}
-            />
-          );
-        })}
+      <nav className="flex-grow-1 overflow-y-auto" aria-label="Library">
+        <div className="list-group list-group-flush">
+          <NavRow
+            label="All Books"
+            count={books.length}
+            active={allActive}
+            onClick={() => onNavigate({ kind: "books", filter: null })}
+          />
+          {DIMENSIONS.map((dimension) => {
+            const active =
+              (view.kind === "entries" && view.dimension === dimension) ||
+              (view.kind === "books" && view.filter?.dimension === dimension);
+            return (
+              <NavRow
+                key={dimension}
+                label={DIMENSION_LABEL[dimension]}
+                count={browseEntries(books, dimension).length}
+                active={active}
+                onClick={() => onNavigate({ kind: "entries", dimension })}
+              />
+            );
+          })}
+        </div>
       </nav>
       <div className="d-flex align-items-center justify-content-between border-top p-2 flex-shrink-0">
         <span className="d-flex align-items-center gap-2 text-truncate">
@@ -191,7 +205,7 @@ function NavRow({
   return (
     <button
       type="button"
-      className={`list-group-item list-group-item-action d-flex justify-content-between align-items-center border-0 rounded-3 mb-1 ${active ? "active" : ""}`}
+      className={`list-group-item list-group-item-action d-flex justify-content-between align-items-center ${active ? "active" : ""}`}
       onClick={onClick}
     >
       {label}
@@ -208,44 +222,29 @@ function RightPane({
   books,
   view,
   query,
-  onQueryChange,
   onNavigate,
 }: {
   books: LibraryBook[];
   view: RightView;
   query: string;
-  onQueryChange: (query: string) => void;
   onNavigate: (view: RightView) => void;
 }) {
   return (
     <div className="d-flex flex-column flex-grow-1 overflow-hidden">
-      <div className="border-bottom py-2 px-2 px-md-3 flex-shrink-0">
-        <div className="d-flex align-items-center gap-2 mb-2">
-          {view.kind === "books" && view.filter && (
-            <button
-              type="button"
-              className="btn btn-sm btn-outline-secondary"
-              aria-label={`Back to ${DIMENSION_LABEL[view.filter.dimension]}`}
-              onClick={() =>
-                onNavigate({ kind: "entries", dimension: view.filter!.dimension })
-              }
-            >
-              <i className="bi bi-chevron-left" />
-            </button>
-          )}
-          <h2 className="h5 mb-0 text-truncate flex-grow-1">{viewTitle(view)}</h2>
-        </div>
-        <div className="search-box position-relative">
-          <i className="bi bi-search search-box-icon" aria-hidden="true" />
-          <input
-            type="search"
-            className="form-control form-control-sm search-box-input"
-            placeholder="Search…"
-            aria-label="Search"
-            value={query}
-            onChange={(e) => onQueryChange(e.target.value)}
-          />
-        </div>
+      <div className="d-flex align-items-center gap-2 px-2 px-md-3 pt-3 pb-2 flex-shrink-0">
+        {view.kind === "books" && view.filter && (
+          <button
+            type="button"
+            className="btn btn-sm btn-outline-secondary"
+            aria-label={`Back to ${DIMENSION_LABEL[view.filter.dimension]}`}
+            onClick={() =>
+              onNavigate({ kind: "entries", dimension: view.filter!.dimension })
+            }
+          >
+            <i className="bi bi-chevron-left" />
+          </button>
+        )}
+        <h2 className="h5 mb-0 text-truncate flex-grow-1">{viewTitle(view)}</h2>
       </div>
 
       {view.kind === "entries" ? (
@@ -298,7 +297,7 @@ function EntriesList({
 
   if (entries.length === 0) {
     return (
-      <div className="flex-grow-1 overflow-y-auto pt-3 px-3">
+      <div className="flex-grow-1 overflow-y-auto px-3">
         <EmptyState
           message={
             browseEntries(books, dimension).length === 0
@@ -311,7 +310,7 @@ function EntriesList({
   }
 
   return (
-    <div className="flex-grow-1 overflow-y-auto pt-3 px-2 px-md-3">
+    <div className="flex-grow-1 overflow-y-auto px-2 px-md-3">
       <div className="list-group list-group-flush">
         {entries.map((entry) => (
           <button
@@ -351,7 +350,7 @@ function BookList({ books, totalCount }: { books: LibraryBook[]; totalCount: num
 
   if (books.length === 0) {
     return (
-      <div className="flex-grow-1 overflow-y-auto pt-3 px-3">
+      <div className="flex-grow-1 overflow-y-auto px-3">
         <EmptyState
           message={totalCount === 0 ? "Your library is empty." : "No books match."}
         />
@@ -360,7 +359,7 @@ function BookList({ books, totalCount }: { books: LibraryBook[]; totalCount: num
   }
 
   return (
-    <div ref={parentRef} className="flex-grow-1 overflow-y-auto px-2 px-md-3 pt-3">
+    <div ref={parentRef} className="flex-grow-1 overflow-y-auto px-2 px-md-3">
       <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
         {virtualizer.getVirtualItems().map((virtualRow) => (
           <div

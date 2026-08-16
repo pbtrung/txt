@@ -53,3 +53,20 @@
 .search-box-input:focus {
   box-shadow: 0 0 0 0.1rem rgba(var(--bs-primary-rgb), 0.25);
 }
+
+/* Library header: the branding zone's width must match the nav sidebar's
+   own width (LibraryScreen.tsx's OffcanvasPanel `style={{ width: "16rem" }}`)
+   so the header's vertical divider lines up with the one between the
+   sidebar and the right pane below it. Below md the sidebar is a hidden
+   drawer instead of an inline column, so the zone shrinks to fit just its
+   icon button and the divider drops. */
+.library-brand-col {
+  width: auto;
+}
+
+@media (min-width: 768px) {
+  .library-brand-col {
+    width: 16rem;
+    border-right: var(--bs-border-width) solid var(--bs-border-color);
+  }
+}
