@@ -25,9 +25,9 @@ vi.mock("@tanstack/react-virtual", () => ({
 }));
 
 import type { LibraryBook } from "../../../src/data/libraryDb";
-import { useVault, type VaultSession } from "../../../src/state/VaultContext";
 import { LibraryScreen } from "../../../src/screens/Library/LibraryScreen";
 import { useLibraryBooks } from "../../../src/screens/Library/useLibraryBooks";
+import { useVault, type VaultSession } from "../../../src/state/VaultContext";
 
 function book(overrides: Partial<LibraryBook>): LibraryBook {
   return {
@@ -57,15 +57,15 @@ const LIBRARY: LibraryBook[] = [
   }),
 ];
 
-function renderScreen(books: LibraryBook[] | null) {
-  const session = { db: {} } as VaultSession;
+function renderScreen(books: LibraryBook[] | null, lock = vi.fn()) {
+  const session = { db: {}, displayName: "Trung" } as VaultSession;
   vi.mocked(useVault).mockReturnValue({
     status: "unlocked",
     session,
     error: null,
     progress: null,
     unlock: vi.fn(),
-    lock: vi.fn(),
+    lock,
   });
   vi.mocked(useLibraryBooks).mockReturnValue(books);
   return render(
@@ -81,8 +81,9 @@ describe("LibraryScreen", () => {
     expect(screen.getByText(/Loading your library/)).toBeInTheDocument();
   });
 
-  it("lists every book once loaded", () => {
+  it("lists every book once loaded, under All Books", () => {
     renderScreen(LIBRARY);
+    expect(screen.getByRole("heading", { name: "All Books" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Dune/ })).toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: /A Wizard of Earthsea/ }),
@@ -97,18 +98,6 @@ describe("LibraryScreen", () => {
     expect(screen.queryByRole("link", { name: /Dune/ })).not.toBeInTheDocument();
   });
 
-  it("filters by clicking a browse entry, and clears on a second click", async () => {
-    renderScreen(LIBRARY);
-    const user = userEvent.setup();
-
-    await user.click(screen.getByRole("button", { name: /Fantasy/ }));
-    expect(screen.getByRole("link", { name: /Wizard/ })).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: /Dune/ })).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: /Fantasy/ }));
-    expect(screen.getByRole("link", { name: /Dune/ })).toBeInTheDocument();
-  });
-
   it("shows an empty-library message when there are no books at all", () => {
     renderScreen([]);
     expect(screen.getByText("Your library is empty.")).toBeInTheDocument();
@@ -120,19 +109,6 @@ describe("LibraryScreen", () => {
     expect(screen.getByText("No books match.")).toBeInTheDocument();
   });
 
-  it("shows a clearable chip while a browse filter is active", async () => {
-    renderScreen(LIBRARY);
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: /Fantasy/ }));
-
-    expect(screen.getByText(/subject: Fantasy/)).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Clear filter" }));
-
-    expect(screen.queryByText(/subject: Fantasy/)).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Dune/ })).toBeInTheDocument();
-  });
-
   it("links each book to /read/:txtId", () => {
     renderScreen(LIBRARY);
     expect(screen.getByRole("link", { name: /Dune/ })).toHaveAttribute(
@@ -141,12 +117,62 @@ describe("LibraryScreen", () => {
     );
   });
 
-  it("the Browse button opens the browse drawer", async () => {
+  it("shows nav rows with counts for All Books/Authors/Subjects/Publishers", () => {
     renderScreen(LIBRARY);
-    expect(screen.getByRole("dialog", { name: "Browse" })).not.toHaveClass("show");
+    expect(screen.getByRole("button", { name: /^All Books/ })).toHaveTextContent("2");
+    expect(screen.getByRole("button", { name: /^Authors/ })).toHaveTextContent("2");
+    expect(screen.getByRole("button", { name: /^Subjects/ })).toHaveTextContent("2");
+    expect(screen.getByRole("button", { name: /^Publishers/ })).toHaveTextContent("1");
+  });
 
-    await userEvent.click(screen.getByRole("button", { name: "Browse" }));
+  it("drills from a dimension into its entries, then into that entry's books", async () => {
+    renderScreen(LIBRARY);
+    const user = userEvent.setup();
 
-    expect(screen.getByRole("dialog", { name: "Browse" })).toHaveClass("show");
+    await user.click(screen.getByRole("button", { name: /^Subjects/ }));
+    expect(screen.getByRole("heading", { name: "Subjects" })).toBeInTheDocument();
+    const fantasyRow = screen.getByRole("button", { name: /^Fantasy/ });
+    expect(fantasyRow).toHaveTextContent("1");
+    expect(screen.getByRole("button", { name: /^Science Fiction/ })).toHaveTextContent(
+      "1",
+    );
+
+    await user.click(fantasyRow);
+
+    expect(
+      screen.getByRole("heading", { name: "Subject: Fantasy" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Wizard/ })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Dune/ })).not.toBeInTheDocument();
+  });
+
+  it("the back button returns from filtered books to the dimension's entries", async () => {
+    renderScreen(LIBRARY);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /^Subjects/ }));
+    await user.click(screen.getByRole("button", { name: /^Fantasy/ }));
+
+    await user.click(screen.getByRole("button", { name: /Back to Subjects/ }));
+
+    expect(screen.getByRole("heading", { name: "Subjects" })).toBeInTheDocument();
+  });
+
+  it("shows the account's display name and locks on click", async () => {
+    const lock = vi.fn();
+    renderScreen(LIBRARY, lock);
+    expect(screen.getByText("Trung")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Lock" }));
+
+    expect(lock).toHaveBeenCalledTimes(1);
+  });
+
+  it("the menu button opens the drawer", async () => {
+    renderScreen(LIBRARY);
+    expect(screen.getByRole("dialog", { name: "Menu" })).not.toHaveClass("show");
+
+    await userEvent.click(screen.getByRole("button", { name: "Open menu" }));
+
+    expect(screen.getByRole("dialog", { name: "Menu" })).toHaveClass("show");
   });
 });

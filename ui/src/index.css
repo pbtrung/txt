@@ -33,10 +33,9 @@
 
 /* Library search box: the icon sits inside the input itself (not a
    separate input-group-text segment) so the two read as one field with
-   no seam. No border at all in the resting state -- a soft tonal fill
-   marks the field's edges instead, which reads lighter than any border
-   weight would; the border only appears on :focus, as the field's own
-   focus indicator. */
+   no seam. Otherwise a plain bordered Bootstrap form-control -- just a
+   slimmer focus ring, since Bootstrap's own (.25rem spread) reads as
+   thick against a field this size. */
 .search-box-icon {
   position: absolute;
   left: 0.7rem;
@@ -49,15 +48,8 @@
 
 .search-box-input {
   padding-left: 2rem;
-  background-color: var(--bs-tertiary-bg);
-  border-color: transparent;
-  box-shadow: none;
 }
 
 .search-box-input:focus {
-  background-color: var(--bs-body-bg);
-  /* Bootstrap's own focus ring (.25rem spread) reads as thick against
-     this small a field -- a slimmer, tighter glow still marks focus
-     clearly without the heavy halo. */
   box-shadow: 0 0 0 0.1rem rgba(var(--bs-primary-rgb), 0.25);
 }
