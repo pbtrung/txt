@@ -6,7 +6,6 @@ const VALID = {
   firebase_password: "pw",
   firebase_api_key: "key",
   user_root_key: "dW1r",
-  cf_worker_url: "https://worker.example",
 };
 
 describe("parseBrowserCreds", () => {
@@ -15,8 +14,8 @@ describe("parseBrowserCreds", () => {
   });
 
   it("rejects a missing top-level field", () => {
-    const { cf_worker_url: _drop, ...rest } = VALID;
-    expect(() => parseBrowserCreds(rest)).toThrow(/cf_worker_url/);
+    const { user_root_key: _drop, ...rest } = VALID;
+    expect(() => parseBrowserCreds(rest)).toThrow(/user_root_key/);
   });
 
   it("rejects a missing firebase_api_key", () => {

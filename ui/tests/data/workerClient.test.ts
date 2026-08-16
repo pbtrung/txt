@@ -14,14 +14,11 @@ describe("WorkerClient.fetchKeys", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await new WorkerClient(
-      "https://worker.example",
-      "idtok",
-    ).fetchKeys();
+    const result = await new WorkerClient("idtok").fetchKeys();
 
     expect(result).toEqual({ type: "user", umk: "dW1r", credStore: "Y29udGVudA==" });
     const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe("https://worker.example/v1/keys");
+    expect(url).toBe("/v1/keys");
     expect(init.method).toBe("POST");
     expect(init.headers.Authorization).toBe("Bearer idtok");
   });
@@ -29,17 +26,15 @@ describe("WorkerClient.fetchKeys", () => {
   it("throws a specific message on 403", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 403 }));
 
-    await expect(
-      new WorkerClient("https://worker.example", "idtok").fetchKeys(),
-    ).rejects.toThrow(/not provisioned/);
+    await expect(new WorkerClient("idtok").fetchKeys()).rejects.toThrow(
+      /not provisioned/,
+    );
   });
 
   it("throws on other non-ok statuses", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 503 }));
 
-    await expect(
-      new WorkerClient("https://worker.example", "idtok").fetchKeys(),
-    ).rejects.toThrow(/503/);
+    await expect(new WorkerClient("idtok").fetchKeys()).rejects.toThrow(/503/);
   });
 });
 
@@ -60,10 +55,10 @@ describe("WorkerClient.fetchR2Token", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await new WorkerClient(
-      "https://worker.example",
-      "idtok",
-    ).fetchR2Token("the-db-path", "the-db-prefix");
+    const result = await new WorkerClient("idtok").fetchR2Token(
+      "the-db-path",
+      "the-db-prefix",
+    );
 
     expect(result).toEqual({
       accessKeyId: "ak",
@@ -75,7 +70,7 @@ describe("WorkerClient.fetchR2Token", () => {
       region: "auto",
     });
     const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe("https://worker.example/v1/r2-token");
+    expect(url).toBe("/v1/r2-token");
     expect(JSON.parse(init.body)).toEqual({
       db_path: "the-db-path",
       db_prefix: "the-db-prefix",
@@ -85,8 +80,8 @@ describe("WorkerClient.fetchR2Token", () => {
   it("throws on a non-ok status", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 400 }));
 
-    await expect(
-      new WorkerClient("https://worker.example", "idtok").fetchR2Token("p", "q"),
-    ).rejects.toThrow(/400/);
+    await expect(new WorkerClient("idtok").fetchR2Token("p", "q")).rejects.toThrow(
+      /400/,
+    );
   });
 });

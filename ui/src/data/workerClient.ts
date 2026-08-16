@@ -1,6 +1,9 @@
 // Calls this project's own Cloudflare Worker (docs/auth.md §4) to exchange
 // a Firebase ID token for wrapped key material, or a short-lived R2
-// temporary credential.
+// temporary credential. Requests are always relative (/v1/...): wrangler.jsonc's
+// assets block serves this build from the same origin the Worker itself
+// answers /v1/* on (CLAUDE.md), so there's no separate Worker URL to
+// configure or carry around.
 export type AccountType = "admin" | "user";
 
 export interface KeysResponse {
@@ -20,10 +23,7 @@ export interface R2TempCredential {
 }
 
 export class WorkerClient {
-  constructor(
-    private readonly baseUrl: string,
-    private readonly idToken: string,
-  ) {}
+  constructor(private readonly idToken: string) {}
 
   async fetchKeys(): Promise<KeysResponse> {
     const resp = await this.post("/v1/keys");
@@ -68,7 +68,7 @@ export class WorkerClient {
   }
 
   private post(path: string, body?: unknown): Promise<Response> {
-    return fetch(`${this.baseUrl}${path}`, {
+    return fetch(path, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${this.idToken}`,

@@ -17,12 +17,13 @@ OPTIONAL_FIELDS = ["display_name", "user_root_key"]
 # An ordinary user never touches ctl/Turso or R2 directly -- only through
 # the Worker -- so their own creds.json is this reduced shape instead of
 # the administrator's full Creds, matching ui/src/data/creds.ts's
-# BrowserCreds exactly.
+# BrowserCreds exactly. No Worker URL: the browser always reaches the
+# Worker at its own origin (wrangler.jsonc's assets block), so there's
+# nothing to configure for it.
 USER_REQUIRED_FIELDS = [
     "firebase_email",
     "firebase_password",
     "firebase_api_key",
-    "cf_worker_url",
 ]
 
 # display_name is set here at provisioning time (by whoever creates this
@@ -61,7 +62,6 @@ class UserCreds:
     firebase_email: str
     firebase_password: str
     firebase_api_key: str
-    cf_worker_url: str
     display_name: str = ""
     user_root_key: str = ""
 

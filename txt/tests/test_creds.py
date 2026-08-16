@@ -18,7 +18,6 @@ VALID_USER = {
     "firebase_email": "a@b.com",
     "firebase_password": "pw",
     "firebase_api_key": "key",
-    "cf_worker_url": "https://worker.example",
 }
 
 
@@ -105,7 +104,7 @@ def test_load_user_creds_rejects_missing_fields(tmp_path):
 def test_load_user_creds_reads_required_fields(user_creds_path):
     creds = load_user_creds(user_creds_path)
     assert creds.firebase_email == "a@b.com"
-    assert creds.cf_worker_url == "https://worker.example"
+    assert creds.firebase_api_key == "key"
 
 
 def test_load_user_creds_defaults_optional_fields(user_creds_path):

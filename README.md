@@ -45,7 +45,6 @@ Creates the `users`, `key_store`, and `cred_store` tables in `ctl` if they don't
   "firebase_email": "...",
   "firebase_password": "...",
   "firebase_api_key": "...",
-  "cf_worker_url": "...",
   "display_name": "...",
   "user_root_key": ""
 }

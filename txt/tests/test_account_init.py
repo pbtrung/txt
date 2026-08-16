@@ -141,7 +141,6 @@ def user_creds_path(tmp_path):
         "firebase_email": USER_EMAIL,
         "firebase_password": "pw",
         "firebase_api_key": "key",
-        "cf_worker_url": "https://worker.example",
         "display_name": "Trung",
     }
     path = tmp_path / "user_creds.json"

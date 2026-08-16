@@ -78,7 +78,7 @@ async function resolveSession(
     creds.firebase_email,
     creds.firebase_password,
   );
-  const worker = new WorkerClient(creds.cf_worker_url, idToken);
+  const worker = new WorkerClient(idToken);
   onPhase(2);
   const keys = await worker.fetchKeys();
   onPhase(3);
