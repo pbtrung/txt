@@ -116,7 +116,7 @@ export function LibraryScreen() {
           placement="start"
           responsive="md"
           className="h-100 border-end library-sidebar"
-          style={{ width: "16rem" }}
+          style={{ width: "var(--library-sidebar-width)" }}
         >
           <SidebarContent
             books={books}

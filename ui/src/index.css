@@ -54,32 +54,59 @@
   box-shadow: 0 0 0 0.1rem rgba(var(--bs-primary-rgb), 0.25);
 }
 
+/* The nav sidebar's own width, as a custom property rather than two
+   independently hardcoded "16rem" literals (one here, one an inline
+   style on LibraryScreen.tsx's OffcanvasPanel) that could silently drift
+   apart -- both the sidebar itself and the header's branding zone above
+   it read this same value, so their vertical dividers always line up. */
+:root {
+  --library-sidebar-width: 16rem;
+}
+
 /* Library header: the branding zone's width must match the nav sidebar's
-   own width (LibraryScreen.tsx's OffcanvasPanel `style={{ width: "16rem" }}`)
-   so the header's vertical divider lines up with the one between the
-   sidebar and the right pane below it. Below md the sidebar is a hidden
-   drawer instead of an inline column, so the zone shrinks to fit just its
-   icon button and the divider drops. */
+   own width so the header's vertical divider lines up with the one
+   between the sidebar and the right pane below it. Below md the sidebar
+   is a hidden drawer instead of an inline column, so the zone shrinks to
+   fit just its icon button and the divider drops. */
 .library-brand-col {
   width: auto;
 }
 
 @media (min-width: 768px) {
   .library-brand-col {
-    width: 16rem;
+    width: var(--library-sidebar-width);
     border-right: var(--bs-border-width) solid var(--bs-border-color);
   }
 }
 
-/* Library sidebar: Bootstrap's own .offcanvas-body ships horizontal
-   padding, which insets the nav list's light row-dividers from the
-   sidebar's true edges -- short of the vertical rule beside it (the
-   sidebar's own border-end, and .library-brand-col's border-right in the
-   header above it). Zeroing it lets those dividers run flush edge to
-   edge; the footer keeps its own p-2 regardless, since that's set
-   directly on its own div rather than inherited from this padding. */
+/* The sidebar is a flex item of the row it shares with the right pane
+   (LibraryScreen.tsx's `d-flex flex-grow-1` wrapper), and a flex item's
+   default flex-shrink: 1 lets it give up width under pressure -- which a
+   long, unbreakable dimension entry (a real subject/author/publisher
+   name) in the right pane creates, since text-truncate's white-space:
+   nowrap makes that content's own min-content width the full untruncated
+   string. Without this, the sidebar visibly narrows below its declared
+   width the moment such a row is on screen, which both misaligns its own
+   border-end from .library-brand-col's border-right in the header above
+   it (that column never shrinks, having no flex-shrink sibling to yield
+   to) and makes the whole layout look like it "jumps" when a long entry
+   is selected or scrolled into view. */
+.library-sidebar {
+  flex-shrink: 0;
+}
+
+/* Bootstrap's own .offcanvas-body ships horizontal padding, which insets
+   the nav list's light row-dividers from the sidebar's true edges --
+   short of the vertical rule beside it (the sidebar's own border-end).
+   Zeroing it lets those dividers run flush edge to edge; the footer
+   keeps its own p-2 regardless, since that's set directly on its own div
+   rather than inherited from this padding. overflow-x is belt-and-
+   suspenders against the same symptom from a different cause: a row
+   whose content doesn't shrink as expected (see .min-w-0 below) would
+   otherwise push the sidebar itself wider even with flex-shrink pinned. */
 .library-sidebar .offcanvas-body {
   padding: 0;
+  overflow-x: hidden;
 }
 
 /* A flex child needs an explicit min-width: 0 to shrink below its text's
