@@ -115,7 +115,7 @@ export function LibraryScreen() {
           title="Menu"
           placement="start"
           responsive="md"
-          className="h-100 border-end"
+          className="h-100 border-end library-sidebar"
           style={{ width: "16rem" }}
         >
           <SidebarContent
@@ -321,8 +321,10 @@ function EntriesList({
               onSelect({ kind: "books", filter: { dimension, value: entry.value } })
             }
           >
-            <span className="text-truncate">{entry.value}</span>
-            <span className="badge rounded-pill text-bg-secondary">{entry.count}</span>
+            <span className="text-truncate min-w-0">{entry.value}</span>
+            <span className="badge rounded-pill text-bg-secondary flex-shrink-0">
+              {entry.count}
+            </span>
           </button>
         ))}
       </div>

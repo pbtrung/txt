@@ -70,3 +70,23 @@
     border-right: var(--bs-border-width) solid var(--bs-border-color);
   }
 }
+
+/* Library sidebar: Bootstrap's own .offcanvas-body ships horizontal
+   padding, which insets the nav list's light row-dividers from the
+   sidebar's true edges -- short of the vertical rule beside it (the
+   sidebar's own border-end, and .library-brand-col's border-right in the
+   header above it). Zeroing it lets those dividers run flush edge to
+   edge; the footer keeps its own p-2 regardless, since that's set
+   directly on its own div rather than inherited from this padding. */
+.library-sidebar .offcanvas-body {
+  padding: 0;
+}
+
+/* A flex child needs an explicit min-width: 0 to shrink below its text's
+   natural width -- text-truncate's own overflow:hidden isn't sufficient
+   on its own inside a flex row, so a long entry name (a real book's
+   subject/author/publisher, unlike this app's own short fixed labels)
+   would otherwise force the row wider instead of eliding with "…". */
+.min-w-0 {
+  min-width: 0;
+}
