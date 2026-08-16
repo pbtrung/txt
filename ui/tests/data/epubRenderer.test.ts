@@ -12,12 +12,14 @@ const renditionMock = {
   on: vi.fn(),
   spread: vi.fn(),
   settings: {} as { gap?: number },
+  currentLocation: vi.fn().mockReturnValue(undefined),
   themes: { fontSize: vi.fn(), registerCss: vi.fn(), font: vi.fn() },
 };
 const bookMock = {
   renderTo: vi.fn().mockReturnValue(renditionMock),
   destroy: vi.fn(),
-  loaded: { navigation: Promise.resolve({ toc: TOC }) },
+  resolve: vi.fn((href: string) => href),
+  loaded: { navigation: Promise.resolve({ toc: TOC }), cover: Promise.resolve("") },
 };
 const ePubMock = vi.fn().mockReturnValue(bookMock);
 
@@ -28,6 +30,8 @@ vi.mock("@likecoin/epub-ts", () => ({
 afterEach(() => {
   vi.clearAllMocks();
   renditionMock.settings = {};
+  renditionMock.currentLocation.mockReturnValue(undefined);
+  bookMock.loaded.cover = Promise.resolve("");
 });
 
 describe("EpubRenderer", () => {
@@ -78,6 +82,59 @@ describe("EpubRenderer", () => {
 
     expect(renditionMock.settings.gap).toBe(24);
     expect(renditionMock.spread).toHaveBeenCalledWith("auto", 1);
+  });
+
+  function renderedCallback() {
+    const call = renditionMock.on.mock.calls.find(([event]) => event === "rendered");
+    return call![1] as (section: { href?: string; index?: number }) => void;
+  }
+
+  it("forces a single column for an early spine section (front matter)", () => {
+    const renderer = new EpubRenderer(new Uint8Array([1]));
+    renderer.renderTo(document.createElement("div"));
+    renderer.setColumnLayout({ columns: 2, gapPx: 40, maxWidthPx: 1480 });
+    renditionMock.spread.mockClear();
+
+    renderedCallback()({ index: 0, href: "titlepage.xhtml" });
+
+    expect(renditionMock.spread).toHaveBeenCalledWith("none");
+  });
+
+  it("applies the preferred 2-column layout for a normal, later section", () => {
+    const renderer = new EpubRenderer(new Uint8Array([1]));
+    renderer.renderTo(document.createElement("div"));
+    renderer.setColumnLayout({ columns: 2, gapPx: 40, maxWidthPx: 1480 });
+    renditionMock.spread.mockClear();
+
+    renderedCallback()({ index: 5, href: "chapter1.xhtml" });
+
+    expect(renditionMock.settings.gap).toBe(40);
+    expect(renditionMock.spread).toHaveBeenCalledWith("auto", 1);
+  });
+
+  it("forces a single column for the book's own declared cover, however far into the spine it is", async () => {
+    bookMock.loaded.cover = Promise.resolve("images/cover.jpg");
+    const renderer = new EpubRenderer(new Uint8Array([1]));
+    renderer.renderTo(document.createElement("div"));
+    await bookMock.loaded.cover;
+    renderer.setColumnLayout({ columns: 2, gapPx: 40, maxWidthPx: 1480 });
+    renditionMock.spread.mockClear();
+
+    renderedCallback()({ index: 10, href: "images/cover.jpg" });
+
+    expect(renditionMock.spread).toHaveBeenCalledWith("none");
+  });
+
+  it("setColumnLayout doesn't override the single column while on front matter", () => {
+    const renderer = new EpubRenderer(new Uint8Array([1]));
+    renderer.renderTo(document.createElement("div"));
+    renderedCallback()({ index: 0, href: "titlepage.xhtml" });
+    renditionMock.currentLocation.mockReturnValue({ start: { index: 0 } });
+    renditionMock.spread.mockClear();
+
+    renderer.setColumnLayout({ columns: 2, gapPx: 40, maxWidthPx: 1480 });
+
+    expect(renditionMock.spread).not.toHaveBeenCalled();
   });
 
   it("destroys both the rendition and the book", () => {
