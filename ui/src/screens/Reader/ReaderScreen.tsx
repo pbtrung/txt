@@ -185,7 +185,7 @@ function PageNavigation({
           role="menu"
           className={`dropdown-menu${fontMenuOpen ? " show" : ""}`}
           aria-label="Font size options"
-          style={{ bottom: "100%", top: "auto" }}
+          style={{ bottom: "100%", top: "auto", minWidth: "4.5rem" }}
         >
           {FONT_SIZES_PX.map((size) => (
             <li key={size}>

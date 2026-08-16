@@ -211,6 +211,7 @@ describe("ReaderScreen", () => {
     const menu = screen.getByRole("menu", { name: "Font size options" });
     expect(menu).toHaveClass("show");
     expect(menu).toHaveStyle({ bottom: "100%", top: "auto" });
+    expect(menu.style.minWidth).toBe("4.5rem");
     expect(
       screen.getAllByRole("menuitemradio").map((option) => option.textContent),
     ).toEqual(["16px", "18px", "20px", "22px", "24px"]);
