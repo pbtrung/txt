@@ -11,6 +11,7 @@ const renditionMock = {
   prev: vi.fn().mockResolvedValue(undefined),
   on: vi.fn(),
   spread: vi.fn(),
+  settings: {} as { gap?: number },
   themes: { fontSize: vi.fn(), registerCss: vi.fn(), font: vi.fn() },
 };
 const bookMock = {
@@ -26,6 +27,7 @@ vi.mock("@likecoin/epub-ts", () => ({
 
 afterEach(() => {
   vi.clearAllMocks();
+  renditionMock.settings = {};
 });
 
 describe("EpubRenderer", () => {
@@ -59,15 +61,23 @@ describe("EpubRenderer", () => {
     );
   });
 
-  it("setColumns(1) forces a single column, setColumns(2) allows a spread", () => {
+  it("setColumnLayout({columns: 1}) forces a single column", () => {
     const renderer = new EpubRenderer(new Uint8Array([1]));
     renderer.renderTo(document.createElement("div"));
 
-    renderer.setColumns(1);
-    expect(renditionMock.spread).toHaveBeenCalledWith("none");
+    renderer.setColumnLayout({ columns: 1, gapPx: 0, maxWidthPx: null });
 
-    renderer.setColumns(2);
-    expect(renditionMock.spread).toHaveBeenCalledWith("auto", expect.any(Number));
+    expect(renditionMock.spread).toHaveBeenCalledWith("none");
+  });
+
+  it("setColumnLayout({columns: 2, gapPx}) applies the gap and spreads", () => {
+    const renderer = new EpubRenderer(new Uint8Array([1]));
+    renderer.renderTo(document.createElement("div"));
+
+    renderer.setColumnLayout({ columns: 2, gapPx: 24, maxWidthPx: null });
+
+    expect(renditionMock.settings.gap).toBe(24);
+    expect(renditionMock.spread).toHaveBeenCalledWith("auto", 1);
   });
 
   it("destroys both the rendition and the book", () => {

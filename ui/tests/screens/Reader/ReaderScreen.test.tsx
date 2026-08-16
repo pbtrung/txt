@@ -17,10 +17,18 @@ vi.mock("../../../src/data/epubRenderer", () => ({
       next: vi.fn().mockResolvedValue(undefined),
       onKeyup: vi.fn(),
       setFontSize: vi.fn(),
-      setColumns: vi.fn(),
+      setColumnLayout: vi.fn(),
       getToc: vi.fn().mockResolvedValue([]),
     };
   }),
+}));
+// jsdom always reports a zero-size container, so the real computation
+// would always fall back to 1 column regardless of preference -- these
+// tests care about the wiring (preference -> computed layout -> applied
+// to the renderer), not the arithmetic itself, which columnLayout.test.ts
+// already covers on its own.
+vi.mock("../../../src/data/columnLayout", () => ({
+  computeColumnLayout: vi.fn(() => ({ columns: 2, gapPx: 40, maxWidthPx: 1480 })),
 }));
 
 import { EpubRenderer } from "../../../src/data/epubRenderer";
@@ -183,22 +191,42 @@ describe("ReaderScreen", () => {
     expect(instance.setFontSize).toHaveBeenLastCalledWith("19px");
   });
 
-  it("the columns button toggles between 1 and 2 columns", async () => {
+  it("defaults to 2 columns, applying whatever computeColumnLayout returns", async () => {
     mockVault();
     mockReadyDocument();
     renderScreen();
     const instance = vi.mocked(EpubRenderer).mock.results[0].value as {
-      setColumns: (count: 1 | 2) => void;
+      setColumnLayout: (layout: unknown) => void;
     };
     await userEvent.click(screen.getByRole("button", { name: "Display settings" }));
     const button = screen.getByRole("button", { name: "Two-column layout" });
-    expect(instance.setColumns).toHaveBeenCalledWith(1);
-    expect(button).toHaveAttribute("aria-pressed", "false");
+
+    expect(button).toHaveAttribute("aria-pressed", "true");
+    expect(instance.setColumnLayout).toHaveBeenCalledWith({
+      columns: 2,
+      gapPx: 40,
+      maxWidthPx: 1480,
+    });
+  });
+
+  it("the columns button forces a single column regardless of computeColumnLayout", async () => {
+    mockVault();
+    mockReadyDocument();
+    renderScreen();
+    const instance = vi.mocked(EpubRenderer).mock.results[0].value as {
+      setColumnLayout: (layout: unknown) => void;
+    };
+    await userEvent.click(screen.getByRole("button", { name: "Display settings" }));
+    const button = screen.getByRole("button", { name: "Two-column layout" });
 
     await userEvent.click(button);
 
-    expect(instance.setColumns).toHaveBeenLastCalledWith(2);
-    expect(button).toHaveAttribute("aria-pressed", "true");
+    expect(instance.setColumnLayout).toHaveBeenLastCalledWith({
+      columns: 1,
+      gapPx: 0,
+      maxWidthPx: null,
+    });
+    expect(button).toHaveAttribute("aria-pressed", "false");
   });
 
   it("has a back-to-library link", () => {

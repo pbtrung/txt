@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { OffcanvasPanel } from "../../components/OffcanvasPanel";
+import { computeColumnLayout } from "../../data/columnLayout";
 import { EpubRenderer } from "../../data/epubRenderer";
 import type { MetadataField } from "../../data/readerDocument";
 import { sanitizeHtml, stripHtmlToText } from "../../data/sanitizeHtml";
@@ -34,7 +35,10 @@ export function ReaderScreen() {
   const containerRef = useRef<HTMLDivElement>(null);
   const [renderer, setRenderer] = useState<EpubRenderer | null>(null);
   const [fontPx, setFontPx] = useState(defaultFontPx);
-  const [columns, setColumns] = useState<1 | 2>(1);
+  // The user's preference, not necessarily the rendered column count --
+  // the layout effect below still falls back to 1 column when even 2
+  // narrowed to 70 characters each doesn't fit.
+  const [columnPreference, setColumnPreference] = useState<1 | 2>(2);
   const [displayOpen, setDisplayOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
   const [tocOpen, setTocOpen] = useState(false);
@@ -44,7 +48,6 @@ export function ReaderScreen() {
     const newRenderer = new EpubRenderer(document.epubBytes);
     newRenderer.renderTo(containerRef.current);
     newRenderer.setFontSize(`${fontPx}px`);
-    newRenderer.setColumns(columns);
     setRenderer(newRenderer);
 
     function handleKeyup(event: KeyboardEvent) {
@@ -59,11 +62,44 @@ export function ReaderScreen() {
       newRenderer.destroy();
       setRenderer(null);
     };
-    // fontPx/columns are only applied at mount here (their initial value);
-    // adjustFontSize()/toggleColumns() call the already-mounted renderer's
-    // methods directly, so changing them shouldn't remount the renderer.
+    // fontPx is only applied at mount here (its initial value);
+    // adjustFontSize() calls the already-mounted renderer's own method
+    // directly, so changing it shouldn't remount the renderer. Column
+    // layout is a separate effect below, since it also needs to react to
+    // window resizes the mount effect has no reason to re-run for.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, document]);
+
+  useEffect(() => {
+    if (!renderer || !containerRef.current) return;
+    const container = containerRef.current;
+
+    function apply() {
+      if (columnPreference === 1) {
+        container.style.maxWidth = "";
+        container.style.margin = "";
+        renderer!.setColumnLayout({ columns: 1, gapPx: 0, maxWidthPx: null });
+        return;
+      }
+      // Reset before measuring: a maxWidth cap from a previous, wider
+      // measurement would otherwise make the container look narrower
+      // than it actually has room to be, and the layout would never
+      // widen back out as the window grows.
+      container.style.maxWidth = "";
+      const layout = computeColumnLayout(container.clientWidth, fontPx);
+      if (layout.maxWidthPx) {
+        container.style.maxWidth = `${layout.maxWidthPx}px`;
+        container.style.margin = "0 auto";
+      } else {
+        container.style.margin = "";
+      }
+      renderer!.setColumnLayout(layout);
+    }
+
+    apply();
+    window.addEventListener("resize", apply);
+    return () => window.removeEventListener("resize", apply);
+  }, [renderer, columnPreference, fontPx]);
 
   function adjustFontSize(delta: number) {
     const next = Math.min(MAX_FONT_PX, Math.max(MIN_FONT_PX, fontPx + delta));
@@ -72,9 +108,7 @@ export function ReaderScreen() {
   }
 
   function toggleColumns() {
-    const next = columns === 1 ? 2 : 1;
-    setColumns(next);
-    renderer?.setColumns(next);
+    setColumnPreference((current) => (current === 1 ? 2 : 1));
   }
 
   if (status === "loading") {
@@ -132,7 +166,7 @@ export function ReaderScreen() {
           onToggle={() => setDisplayOpen((v) => !v)}
           onDecreaseFont={() => adjustFontSize(-FONT_STEP_PX)}
           onIncreaseFont={() => adjustFontSize(FONT_STEP_PX)}
-          columns={columns}
+          columns={columnPreference}
           onToggleColumns={toggleColumns}
         />
         <button
