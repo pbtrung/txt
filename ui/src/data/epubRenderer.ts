@@ -1,8 +1,9 @@
-// A thin wrapper around epub.js's Book/Rendition -- isolates the actual
-// rendering library (real epub.js needs a genuine browser: iframes, Blob
-// URLs) behind a class ReaderScreen and its tests can mock, the same
-// pattern as R2Client wrapping aws4fetch.
-import ePub, { type Book, type NavItem, type Rendition } from "epubjs";
+// A thin wrapper around epub.ts's Book/Rendition (a drop-in, fully-typed
+// rewrite of epub.js -- same API, one dependency, actively maintained) --
+// isolates the actual rendering library (it needs a genuine browser:
+// iframes, Blob URLs) behind a class ReaderScreen and its tests can mock,
+// the same pattern as R2Client wrapping aws4fetch.
+import ePub, { type Book, type NavItem, type Rendition } from "@likecoin/epub-ts";
 import { READER_FONT_FAMILY, READER_THEME_CSS } from "./readerTheme";
 
 // A 2-column spread only kicks in once there's room for two 80ch-ish
@@ -60,7 +61,7 @@ export class EpubRenderer {
   /** Jumps to an arbitrary TOC href or CFI -- unlike next()/prev(), which
    * just step relative to wherever the rendition already is. */
   async display(target: string): Promise<void> {
-    return this.requireRendition().display(target);
+    await this.requireRendition().display(target);
   }
 
   async next(): Promise<void> {

@@ -20,7 +20,9 @@ const bookMock = {
 };
 const ePubMock = vi.fn().mockReturnValue(bookMock);
 
-vi.mock("epubjs", () => ({ default: (...args: unknown[]) => ePubMock(...args) }));
+vi.mock("@likecoin/epub-ts", () => ({
+  default: (...args: unknown[]) => ePubMock(...args),
+}));
 
 afterEach(() => {
   vi.clearAllMocks();

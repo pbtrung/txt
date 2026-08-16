@@ -1,6 +1,6 @@
 // Loads the book's table of contents once a renderer exists, letting each
 // entry jump straight to that section.
-import type { NavItem } from "epubjs";
+import type { NavItem } from "@likecoin/epub-ts";
 import { useEffect, useState } from "react";
 import { OffcanvasPanel } from "../../components/OffcanvasPanel";
 import type { EpubRenderer } from "../../data/epubRenderer";
