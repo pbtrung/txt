@@ -124,6 +124,17 @@ describe("EpubRenderer", () => {
     expect(chapter.body.textContent).toBe("Chapter text");
   });
 
+  it("handles malformed percent escapes in cover paths", async () => {
+    bookMock.loaded.cover = Promise.resolve("https://reader.test/%E0%A4%A");
+    new EpubRenderer(new Uint8Array([1]), "Dune", []);
+    const cover = document.implementation.createHTMLDocument();
+    cover.head.innerHTML = '<base href="https://reader.test/title.xhtml">';
+    cover.body.innerHTML = '<img src="/%E0%A4%A">';
+
+    await expect(coverHook()(cover, { href: "title.xhtml" })).resolves.toBeUndefined();
+    expect(cover.body.querySelector("h1")?.textContent).toBe("Dune");
+  });
+
   it("retains the responsive one/two-column behavior", () => {
     const renderer = new EpubRenderer(new Uint8Array([1]));
     renderer.renderTo(document.createElement("div"));

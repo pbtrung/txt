@@ -5,14 +5,16 @@ import { describe, expect, it, vi } from "vitest";
 import { OffcanvasPanel } from "../../src/components/OffcanvasPanel";
 
 describe("OffcanvasPanel", () => {
-  it("does not carry the show class when closed", () => {
-    render(
+  it("hides a closed drawer from assistive technology", () => {
+    const { container } = render(
       <OffcanvasPanel open={false} onClose={vi.fn()} title="Info">
         content
       </OffcanvasPanel>,
     );
-    expect(screen.getByRole("dialog", { name: "Info" })).not.toHaveClass("show");
-    expect(screen.queryByRole("button", { name: "Close" })).not.toBeNull();
+    const panel = container.querySelector('[role="dialog"]');
+    expect(panel).not.toHaveClass("show");
+    expect(panel).toHaveAttribute("aria-hidden", "true");
+    expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
   });
 
   it("carries the show class and renders a backdrop when open", () => {
@@ -23,6 +25,7 @@ describe("OffcanvasPanel", () => {
     );
     expect(screen.getByRole("dialog", { name: "Info" })).toHaveClass("show");
     expect(screen.getByText("content")).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Info" })).toHaveFocus();
   });
 
   it("calls onClose from the close button", async () => {
@@ -78,7 +81,7 @@ describe("OffcanvasPanel", () => {
   });
 
   it("passes through className and style", () => {
-    render(
+    const { container } = render(
       <OffcanvasPanel
         open={false}
         onClose={vi.fn()}
@@ -90,7 +93,7 @@ describe("OffcanvasPanel", () => {
       </OffcanvasPanel>,
     );
 
-    const panel = screen.getByRole("dialog", { name: "Info" });
+    const panel = container.querySelector('[role="dialog"]');
     expect(panel).toHaveClass("border-end");
     expect(panel).toHaveStyle({ width: "288px" }); // jsdom resolves 18rem -> 288px (16px root)
   });

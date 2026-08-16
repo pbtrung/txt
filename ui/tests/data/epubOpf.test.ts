@@ -38,7 +38,6 @@ describe("parseEpubOpf", () => {
 
     const opf = await parseEpubOpf(epub);
 
-    expect(opf.name).toBe("OEBPS/content.opf");
     expect(opf.metadata.title).toBe("Dune");
     expect(opf.metadata.creator).toBe("Frank Herbert");
     expect(opf.metadata.subject).toEqual(["Science Fiction", "Adventure"]);
@@ -63,10 +62,10 @@ describe("parseEpubOpf", () => {
   it("drops Calibre's own bookkeeping identifier/contributor entries", async () => {
     const epub = await buildEpub(
       packageXml(
-        '<dc:identifier opf:scheme="calibre">abc</dc:identifier>' +
-          '<dc:identifier opf:scheme="uuid">def</dc:identifier>' +
+        '<dc:identifier opf:scheme="CALIBRE">abc</dc:identifier>' +
+          '<dc:identifier opf:scheme="UUID">def</dc:identifier>' +
           '<dc:identifier opf:scheme="ISBN">1234567890</dc:identifier>' +
-          '<dc:contributor opf:role="bkp" opf:file-as="calibre">calibre</dc:contributor>',
+          '<dc:contributor opf:role="BKP" opf:file-as="Calibre">calibre</dc:contributor>',
       ),
     );
 
@@ -123,7 +122,6 @@ describe("parseEpubOpf", () => {
 describe("extraMetadataFields", () => {
   it("labels known dc:*/Calibre fields and drops title/creator/subject/publisher", () => {
     const opf = {
-      name: "content.opf",
       metadata: {
         title: "Dune",
         creator: "Frank Herbert",
@@ -143,7 +141,7 @@ describe("extraMetadataFields", () => {
   });
 
   it("falls back to the raw key for an unrecognized field", () => {
-    const opf = { name: "content.opf", metadata: { "custom:field": "value" } };
+    const opf = { metadata: { "custom:field": "value" } };
 
     expect(extraMetadataFields(opf)).toEqual([
       { label: "custom:field", values: ["value"] },
@@ -151,8 +149,16 @@ describe("extraMetadataFields", () => {
   });
 
   it("returns an empty list when there's nothing beyond the known fields", () => {
-    const opf = { name: "content.opf", metadata: { title: "Dune" } };
+    const opf = { metadata: { title: "Dune" } };
 
     expect(extraMetadataFields(opf)).toEqual([]);
+  });
+
+  it("trims values and drops blank metadata", () => {
+    const opf = {
+      metadata: { language: [" en ", " "] },
+    };
+
+    expect(extraMetadataFields(opf)).toEqual([{ label: "Language", values: ["en"] }]);
   });
 });

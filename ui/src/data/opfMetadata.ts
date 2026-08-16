@@ -3,7 +3,6 @@
 export type OpfField = string | { text: string; [attr: string]: string };
 
 export interface ParsedOpf {
-  name: string;
   metadata: Record<string, OpfField | OpfField[]>;
 }
 
@@ -13,5 +12,7 @@ function fieldText(field: OpfField): string {
 
 export function fieldStrings(field: OpfField | OpfField[] | undefined): string[] {
   if (field === undefined) return [];
-  return (Array.isArray(field) ? field : [field]).map(fieldText);
+  return (Array.isArray(field) ? field : [field])
+    .map((value) => fieldText(value).trim())
+    .filter(Boolean);
 }

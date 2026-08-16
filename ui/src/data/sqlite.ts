@@ -10,6 +10,7 @@ const SQLITE_OK = 0;
 const SQLITE_ROW = 100;
 const SQLITE_DONE = 101;
 const SQLITE_INTEGER = 1;
+const SQLITE_FLOAT = 2;
 const SQLITE_TEXT = 3;
 const SQLITE_BLOB = 4;
 const SQLITE_TRANSIENT = -1;
@@ -48,6 +49,7 @@ function columnValue(mod: SqlcipherWasmModule, stmt: number, col: number): SqlVa
     }
     return value;
   }
+  if (type === SQLITE_FLOAT) return mod._sqlite3_column_double(stmt, col);
   if (type === SQLITE_TEXT)
     return mod.UTF8ToString(mod._sqlite3_column_text(stmt, col));
   if (type === SQLITE_BLOB) {

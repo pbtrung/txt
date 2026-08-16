@@ -53,9 +53,14 @@ function localAttrs(el: Element): Record<string, string> {
 }
 
 function isCalibreOwn(tag: string, attrs: Record<string, string>): boolean {
-  if (tag === "identifier") return IGNORED_IDENTIFIER_SCHEMES.has(attrs["scheme"]);
+  if (tag === "identifier") {
+    return IGNORED_IDENTIFIER_SCHEMES.has(attrs["scheme"]?.toLowerCase() ?? "");
+  }
   if (tag === "contributor") {
-    return attrs["role"] === "bkp" && attrs["file-as"] === "calibre";
+    return (
+      attrs["role"]?.toLowerCase() === "bkp" &&
+      attrs["file-as"]?.toLowerCase() === "calibre"
+    );
   }
   return false;
 }
@@ -120,7 +125,7 @@ export async function parseEpubOpf(epubBytes: Uint8Array): Promise<ParsedOpf> {
   const opfPath = await rootfilePath(zip);
   const opf = await readZipXml(zip, opfPath);
   const metadataEl = findByLocalName(opf.documentElement, "metadata");
-  return { name: opfPath, metadata: metadataEl ? metadataDict(metadataEl) : {} };
+  return { metadata: metadataEl ? metadataDict(metadataEl) : {} };
 }
 
 export interface MetadataField {

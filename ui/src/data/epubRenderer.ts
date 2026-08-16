@@ -32,9 +32,17 @@ function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
 
 function resourcePath(reference: string, base: string): string {
   try {
-    return decodeURI(new URL(reference, base).pathname);
+    return decodedPath(new URL(reference, base).pathname);
   } catch {
-    return decodeURI(reference.split(/[?#]/)[0]);
+    return decodedPath(reference.split(/[?#]/)[0]);
+  }
+}
+
+function decodedPath(path: string): string {
+  try {
+    return decodeURI(path);
+  } catch {
+    return path;
   }
 }
 

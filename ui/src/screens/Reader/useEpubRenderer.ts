@@ -35,13 +35,7 @@ export function useEpubRenderer(document: ReaderDocument) {
   const page = located?.document === document ? located.page : INITIAL_PAGE;
   const error = failure?.document === document ? failure.error : null;
   useEffect(() => renderer?.setFontSize(`${fontPx}px`), [fontPx, renderer]);
-  const changeFontSize = useCallback(
-    (size: number) => {
-      setFontPx(size);
-      renderer?.setFontSize(`${size}px`);
-    },
-    [renderer],
-  );
+  const changeFontSize = useCallback((size: number) => setFontPx(size), []);
   return { setHost, renderer, page, fontPx, changeFontSize, error };
 }
 
@@ -61,14 +55,16 @@ function mountRenderer(
     document.title,
     document.authors,
   );
-  void Promise.resolve(renderer.renderTo(host)).catch((error: unknown) =>
-    setFailure({ document, error: errorMessage(error) }),
+  let active = true;
+  void Promise.resolve(renderer.renderTo(host)).catch(
+    (error: unknown) => active && setFailure({ document, error: errorMessage(error) }),
   );
   renderer.setColumns(2);
   renderer.onPageChange((page) => setLocated({ document, page }));
   const removeKeys = registerPageKeys(renderer);
   setMounted({ document, renderer });
   return () => {
+    active = false;
     removeKeys();
     renderer.destroy();
   };

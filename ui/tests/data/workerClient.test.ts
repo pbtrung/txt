@@ -6,7 +6,7 @@ afterEach(() => {
 });
 
 describe("WorkerClient.fetchKeys", () => {
-  it("returns type/umk/credStore on success", async () => {
+  it("validates the account type and returns the consumed key fields", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -16,7 +16,7 @@ describe("WorkerClient.fetchKeys", () => {
 
     const result = await new WorkerClient("idtok").fetchKeys();
 
-    expect(result).toEqual({ type: "user", umk: "dW1r", credStore: "Y29udGVudA==" });
+    expect(result).toEqual({ umk: "dW1r", credStore: "Y29udGVudA==" });
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe("/v1/keys");
     expect(init.method).toBe("POST");
@@ -77,7 +77,6 @@ describe("WorkerClient.fetchR2Token", () => {
       accessKeyId: "ak",
       secretAccessKey: "sk",
       sessionToken: "st",
-      expiration: "2026-01-01T00:00:00.000Z",
       endpoint: "https://acct.r2.cloudflarestorage.com",
       bucket: "b",
       region: "auto",

@@ -57,6 +57,7 @@ export interface SqlcipherWasmModule {
   _sqlite3_column_count(stmt: number): number;
   _sqlite3_column_type(stmt: number, col: number): number;
   _sqlite3_column_int64(stmt: number, col: number): bigint;
+  _sqlite3_column_double(stmt: number, col: number): number;
   _sqlite3_column_text(stmt: number, col: number): number;
   _sqlite3_column_bytes(stmt: number, col: number): number;
   _sqlite3_column_blob(stmt: number, col: number): number;

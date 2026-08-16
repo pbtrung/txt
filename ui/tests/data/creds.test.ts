@@ -24,8 +24,8 @@ describe("parseBrowserCreds", () => {
   });
 
   it("rejects non-object credentials", () => {
-    expect(() => parseBrowserCreds(null)).toThrow(/must contain an object/);
-    expect(() => parseBrowserCreds([])).toThrow(/must contain an object/);
+    expect(() => parseBrowserCreds(null)).toThrow(/must be an object/);
+    expect(() => parseBrowserCreds([])).toThrow(/must be an object/);
   });
 
   it("rejects non-string and blank fields", () => {

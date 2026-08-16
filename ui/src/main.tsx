@@ -7,7 +7,13 @@ import "./index.css";
 
 import { App } from "./App";
 
-createRoot(document.getElementById("root")!).render(
+function appRoot(): HTMLElement {
+  const root = document.getElementById("root");
+  if (!root) throw new Error("Missing #root application element");
+  return root;
+}
+
+createRoot(appRoot()).render(
   <StrictMode>
     <App />
   </StrictMode>,

@@ -16,7 +16,6 @@ describe("unwrapKeys (real sqlcipher.wasm)", () => {
     };
 
     const keys: KeysResponse = {
-      type: "user",
       umk: toBase64(await encrypt(umk, userRootKey)),
       credStore: toBase64(await encryptJson(payload, umk)),
     };
@@ -33,7 +32,6 @@ describe("unwrapKeys (real sqlcipher.wasm)", () => {
     const umk = crypto.getRandomValues(new Uint8Array(128));
 
     const keys: KeysResponse = {
-      type: "user",
       umk: toBase64(await encrypt(umk, userRootKey)),
       credStore: toBase64(await encryptJson({}, umk)),
     };
@@ -45,7 +43,6 @@ describe("unwrapKeys (real sqlcipher.wasm)", () => {
     const userRootKey = crypto.getRandomValues(new Uint8Array(256));
     const umk = crypto.getRandomValues(new Uint8Array(128));
     const keys: KeysResponse = {
-      type: "user",
       umk: toBase64(await encrypt(umk, userRootKey)),
       credStore: toBase64(await encryptJson({ display_name: "Ada" }, umk)),
     };

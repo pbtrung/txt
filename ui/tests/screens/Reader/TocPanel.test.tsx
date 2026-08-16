@@ -13,6 +13,12 @@ function fakeRenderer(toc: unknown[], display = vi.fn()): EpubRenderer {
 }
 
 describe("TocPanel", () => {
+  it("shows an empty state when the book has no contents", async () => {
+    render(<TocPanel open onClose={vi.fn()} renderer={fakeRenderer([])} />);
+
+    expect(await screen.findByText("No contents available.")).toBeInTheDocument();
+  });
+
   it("opens from the left and is constrained to the viewport", () => {
     render(<TocPanel open onClose={vi.fn()} renderer={null} />);
     const panel = screen.getByRole("dialog", { name: "Content" });

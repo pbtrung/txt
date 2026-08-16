@@ -217,6 +217,7 @@ describe("ReaderScreen", () => {
     await userEvent.click(screen.getByRole("menuitemradio", { name: "20px" }));
 
     expect(instance.setFontSize).toHaveBeenLastCalledWith("20px");
+    expect(instance.setFontSize).toHaveBeenCalledTimes(2);
     expect(fontSize).toHaveTextContent("20px");
     expect(menu).not.toHaveClass("show");
   });

@@ -50,6 +50,8 @@ export function TocPanel({
         <p role="alert" className="text-danger">
           Unable to load contents.
         </p>
+      ) : toc.length === 0 ? (
+        <p className="text-muted">No contents available.</p>
       ) : (
         <TocList
           items={toc}

@@ -11,10 +11,20 @@ export function stringField(
   label: string,
 ): string {
   const value = record[key];
-  if (typeof value !== "string" || value === "") {
+  if (typeof value !== "string" || value.trim() === "") {
     throw new Error(`${label} is missing ${key}`);
   }
   return value;
+}
+
+export function stringFields<const Key extends string>(
+  record: Record<string, unknown>,
+  keys: readonly Key[],
+  label: string,
+): Record<Key, string> {
+  return Object.fromEntries(
+    keys.map((key) => [key, stringField(record, key, label)]),
+  ) as Record<Key, string>;
 }
 
 export function stringArrayField(

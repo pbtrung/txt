@@ -2,7 +2,7 @@
 // Bootstrap's CSS/Icons, never its JS, so open/close is just a boolean
 // prop toggling the "show" class plus a backdrop <div> the caller doesn't
 // need to wire up itself (no data-bs-* attributes anywhere).
-import { useEffect, useId, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useId, useRef, type CSSProperties, type ReactNode } from "react";
 import { classNames } from "../util/classNames";
 
 export function OffcanvasPanel({
@@ -30,6 +30,10 @@ export function OffcanvasPanel({
 }) {
   const base = responsive ? `offcanvas-${responsive}` : "offcanvas";
   const titleId = useId();
+  const panelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (open) panelRef.current?.focus();
+  }, [open]);
   useEffect(() => {
     if (!open) return;
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -41,6 +45,7 @@ export function OffcanvasPanel({
   return (
     <>
       <div
+        ref={panelRef}
         className={classNames(
           base,
           `offcanvas-${placement}`,
@@ -51,6 +56,7 @@ export function OffcanvasPanel({
         tabIndex={-1}
         role="dialog"
         aria-modal={open || undefined}
+        aria-hidden={!responsive && !open ? true : undefined}
         aria-labelledby={titleId}
       >
         <div className="offcanvas-header">

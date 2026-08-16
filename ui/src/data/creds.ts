@@ -8,6 +8,8 @@
 // wrangler.jsonc's assets block always serves this build from the same
 // origin the Worker itself answers /v1/* on, so workerClient.ts's
 // requests are relative and need nothing configured here.
+import { objectRecord, stringFields } from "../util/validation";
+
 export interface BrowserCreds {
   firebase_email: string;
   firebase_password: string;
@@ -22,21 +24,7 @@ const REQUIRED_FIELDS = [
   "user_root_key",
 ] as const;
 
-function credentialsRecord(data: unknown): Record<string, unknown> {
-  if (!data || typeof data !== "object" || Array.isArray(data)) {
-    throw new Error("creds.json must contain an object");
-  }
-  return data as Record<string, unknown>;
-}
-
 export function parseBrowserCreds(data: unknown): BrowserCreds {
-  const record = credentialsRecord(data);
-  const missing = REQUIRED_FIELDS.filter(
-    (field) => typeof record[field] !== "string" || record[field].trim() === "",
-  );
-  if (missing.length > 0)
-    throw new Error(`creds.json is missing: ${missing.join(", ")}`);
-  return Object.fromEntries(
-    REQUIRED_FIELDS.map((field) => [field, record[field]]),
-  ) as unknown as BrowserCreds;
+  const record = objectRecord(data, "creds.json");
+  return stringFields(record, REQUIRED_FIELDS, "creds.json") satisfies BrowserCreds;
 }

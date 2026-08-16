@@ -6,10 +6,7 @@
 // configure or carry around.
 import { objectRecord, stringField } from "../util/validation";
 
-type AccountType = "admin" | "user";
-
 export interface KeysResponse {
-  type: AccountType;
   umk: string; // base64
   credStore: string; // base64
 }
@@ -18,7 +15,6 @@ export interface R2TempCredential {
   accessKeyId: string;
   secretAccessKey: string;
   sessionToken: string;
-  expiration: string; // ISO 8601
   endpoint: string;
   bucket: string;
   region: string;
@@ -66,7 +62,6 @@ function parseKeysResponse(value: unknown): KeysResponse {
     throw new Error("key response has an invalid account type");
   }
   return {
-    type,
     umk: stringField(data, "umk", "key response"),
     credStore: stringField(data, "cred_store", "key response"),
   };
@@ -74,13 +69,14 @@ function parseKeysResponse(value: unknown): KeysResponse {
 
 function parseR2Credential(value: unknown): R2TempCredential {
   const data = objectRecord(value, "R2 credential response");
-  return {
+  const credential = {
     accessKeyId: stringField(data, "access_key_id", "R2 credential response"),
     secretAccessKey: stringField(data, "secret_access_key", "R2 credential response"),
     sessionToken: stringField(data, "session_token", "R2 credential response"),
-    expiration: stringField(data, "expiration", "R2 credential response"),
     endpoint: stringField(data, "endpoint", "R2 credential response"),
     bucket: stringField(data, "bucket", "R2 credential response"),
     region: stringField(data, "region", "R2 credential response"),
   };
+  stringField(data, "expiration", "R2 credential response");
+  return credential;
 }
