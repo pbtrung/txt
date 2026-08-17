@@ -13,6 +13,9 @@ import ePub, {
 import { READER_FONT_FAMILY, READER_THEME_CSS } from "./readerTheme";
 
 const TWO_COLUMN_MIN_WIDTH_PX = 900;
+const MAX_FONT_SIZE_PX = 24;
+const REFERENCE_COLUMN_CHARS = 75;
+const TARGET_COLUMN_CHARS = 70;
 const FRONT_MATTER_SPINE_INDEX_LIMIT = 3;
 const BOOK_PAGE_CHARS = 1000;
 const COVER_MEDIA_SELECTOR = "img, image, object";
@@ -91,7 +94,10 @@ export interface PagePosition {
 export class EpubRenderer {
   private readonly book: Book;
   private rendition: Rendition | null = null;
+  private host: HTMLElement | null = null;
+  private hostResizeObserver: ResizeObserver | null = null;
   private preferredColumns: 1 | 2 = 1;
+  private fontSizePx = MAX_FONT_SIZE_PX;
   private coverHref: string | null = null;
   private currentCfi: string | null = null;
   private pageMapReady = false;
@@ -143,6 +149,7 @@ export class EpubRenderer {
     if (this.rendition) throw new Error("EpubRenderer is already mounted");
     // EPUB content is untrusted. Keep scripts disabled so the iframe remains
     // sandboxed as allow-same-origin without the dangerous allow-scripts pair.
+    this.host = element;
     this.rendition = this.book.renderTo(element, {
       width: "100%",
       height: "100%",
@@ -159,6 +166,7 @@ export class EpubRenderer {
       this.currentCfi = location.start.cfi;
       this.emitPagePosition();
     });
+    this.observeHostSize();
     void this.loadCoverHref();
     await this.rendition.display();
   }
@@ -183,13 +191,44 @@ export class EpubRenderer {
 
   private applyPreferredColumns(): void {
     const rendition = this.requireRendition();
+    this.updateColumnGap();
     if (this.preferredColumns === 1) rendition.spread("none");
     else rendition.spread("auto", TWO_COLUMN_MIN_WIDTH_PX);
   }
 
   private applyLayoutFor(section: SectionLike): void {
-    if (this.isFrontMatter(section)) this.requireRendition().spread("none");
-    else this.applyPreferredColumns();
+    if (this.isFrontMatter(section)) {
+      this.updateColumnGap(1);
+      this.requireRendition().spread("none");
+    } else this.applyPreferredColumns();
+  }
+
+  private updateColumnGap(forcedColumns?: 1 | 2): void {
+    const width = this.host?.clientWidth ?? 0;
+    if (width <= 0) return;
+    const responsiveColumns =
+      this.preferredColumns === 2 && width >= TWO_COLUMN_MIN_WIDTH_PX ? 2 : 1;
+    const columns = forcedColumns ?? responsiveColumns;
+    const fontScale = Math.min(
+      1,
+      (this.fontSizePx / MAX_FONT_SIZE_PX) *
+        (TARGET_COLUMN_CHARS / REFERENCE_COLUMN_CHARS),
+    );
+    const rendition = this.requireRendition();
+    const gap = (width / columns) * (1 - fontScale);
+    rendition.settings.gap = gap;
+    if (rendition.manager?.settings) rendition.manager.settings.gap = gap;
+  }
+
+  private observeHostSize(): void {
+    if (!this.host || typeof ResizeObserver === "undefined") return;
+    this.hostResizeObserver = new ResizeObserver(() => {
+      if (!this.rendition || this.destroyed) return;
+      const current = this.rendition.currentLocation()?.start;
+      if (current) this.applyLayoutFor(current);
+      else this.applyPreferredColumns();
+    });
+    this.hostResizeObserver.observe(this.host);
   }
 
   setColumns(count: 1 | 2): void {
@@ -261,7 +300,13 @@ export class EpubRenderer {
   }
 
   setFontSize(size: string): void {
-    this.requireRendition().themes.fontSize(size);
+    const rendition = this.requireRendition();
+    const fontSizePx = Number.parseFloat(size);
+    if (Number.isFinite(fontSizePx)) this.fontSizePx = fontSizePx;
+    rendition.themes.fontSize(size);
+    const current = rendition.currentLocation()?.start;
+    if (current && this.isFrontMatter(current)) rendition.spread("none");
+    else this.applyPreferredColumns();
   }
 
   private requireRendition(): Rendition {
@@ -273,6 +318,9 @@ export class EpubRenderer {
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
+    this.hostResizeObserver?.disconnect();
+    this.hostResizeObserver = null;
+    this.host = null;
     this.rendition?.destroy();
     this.rendition = null;
     this.pageCallback = null;

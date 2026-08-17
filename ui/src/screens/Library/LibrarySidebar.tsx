@@ -116,7 +116,7 @@ function NavRow({
       <span
         className={classNames(
           "badge rounded-pill",
-          active ? "text-bg-light" : "text-bg-secondary",
+          active ? "text-bg-light" : "text-bg-dark",
         )}
       >
         {count}

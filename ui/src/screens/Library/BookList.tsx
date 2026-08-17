@@ -69,14 +69,16 @@ function BookRow({ book }: { book: LibraryBook }) {
   return (
     <Link
       to={`/read/${book.txtId}`}
-      className="d-flex align-items-center gap-3 py-2 px-2 rounded-3 text-decoration-none text-body book-row"
+      className="d-block py-2 px-2 rounded-3 text-decoration-none text-body book-row"
       style={{ height: ROW_HEIGHT_PX }}
     >
-      <span className="book-row-icon flex-shrink-0 d-flex align-items-center justify-content-center rounded-circle">
-        <i className="bi bi-journal-bookmark" aria-hidden="true" />
-      </span>
-      <span className="overflow-hidden">
-        <span className="d-block text-truncate fw-medium">{book.title}</span>
+      <span className="d-block overflow-hidden">
+        <span className="d-flex align-items-center gap-2">
+          <span className="book-row-icon flex-shrink-0 d-flex align-items-center justify-content-center rounded-circle">
+            <i className="bi bi-journal-bookmark" aria-hidden="true" />
+          </span>
+          <span className="text-truncate fw-medium">{book.title}</span>
+        </span>
         {book.authors.length > 0 && (
           <span className="d-block text-truncate small text-muted">
             {book.authors.join(", ")}

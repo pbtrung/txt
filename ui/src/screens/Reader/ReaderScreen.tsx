@@ -35,26 +35,32 @@ function ReadyReader({ document }: { document: ReaderDocument }) {
     useEpubRenderer(document);
   if (error) return <ScreenMessage error>{error}</ScreenMessage>;
   return (
-    <div className="d-flex flex-column vh-100 mx-auto max-w-md-80 px-2 px-md-0">
-      <ReaderToolbar
-        title={document.title}
-        authors={document.authors}
-        onMenu={() => setTocOpen(true)}
-        onInfo={() => setInfoOpen(true)}
-      />
-      <div ref={setHost} className="flex-grow-1" />
-      <ReaderNavigation
-        renderer={renderer}
-        page={page}
-        fontPx={fontPx}
-        onFontSize={changeFontSize}
-      />
-      <ReaderInfoPanel
-        open={infoOpen}
-        onClose={() => setInfoOpen(false)}
-        document={document}
-      />
-      <TocPanel open={tocOpen} onClose={() => setTocOpen(false)} renderer={renderer} />
+    <div className="reader-width vh-100 mx-auto">
+      <div className="reader-column d-flex flex-column h-100 px-2 px-md-0">
+        <ReaderToolbar
+          title={document.title}
+          authors={document.authors}
+          onMenu={() => setTocOpen(true)}
+          onInfo={() => setInfoOpen(true)}
+        />
+        <div ref={setHost} className="flex-grow-1" />
+        <ReaderNavigation
+          renderer={renderer}
+          page={page}
+          fontPx={fontPx}
+          onFontSize={changeFontSize}
+        />
+        <ReaderInfoPanel
+          open={infoOpen}
+          onClose={() => setInfoOpen(false)}
+          document={document}
+        />
+        <TocPanel
+          open={tocOpen}
+          onClose={() => setTocOpen(false)}
+          renderer={renderer}
+        />
+      </div>
     </div>
   );
 }

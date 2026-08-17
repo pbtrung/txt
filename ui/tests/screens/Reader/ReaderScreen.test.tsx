@@ -212,7 +212,7 @@ describe("ReaderScreen", () => {
     expect(menu).toHaveClass("show", "reader-font-menu");
     expect(
       screen.getAllByRole("menuitemradio").map((option) => option.textContent),
-    ).toEqual(["16px", "18px", "20px", "22px", "24px"]);
+    ).toEqual(["16px", "18px", "20px", "22px"]);
 
     await userEvent.click(screen.getByRole("menuitemradio", { name: "20px" }));
 

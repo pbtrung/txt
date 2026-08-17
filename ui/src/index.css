@@ -24,11 +24,11 @@
 }
 
 .book-row-icon {
-  width: 2.5rem;
-  height: 2.5rem;
+  width: 1.5rem;
+  height: 1.5rem;
   background-color: var(--bs-tertiary-bg);
   color: var(--bs-secondary-color);
-  font-size: 1.1rem;
+  font-size: 0.8rem;
 }
 
 /* Library search box: the icon sits inside the input itself (not a
@@ -93,8 +93,16 @@
    to) and makes the whole layout look like it "jumps" when a long entry
    is selected or scrolled into view. */
 .library-sidebar {
-  width: var(--library-sidebar-width);
+  width: 100%;
+  max-width: 350px;
   flex-shrink: 0;
+}
+
+@media (min-width: 768px) {
+  .library-sidebar {
+    width: var(--library-sidebar-width);
+    max-width: none;
+  }
 }
 
 /* Bootstrap's own .offcanvas-body ships horizontal padding, which insets
@@ -128,6 +136,17 @@
    would otherwise force the row wider instead of eliding with "…". */
 .min-w-0 {
   min-width: 0;
+}
+
+.reader-width {
+  width: min(80vw, 150ch);
+  font-family: "Literata", serif;
+  font-size: 24px;
+}
+
+.reader-column {
+  font-family: var(--bs-body-font-family);
+  font-size: var(--bs-body-font-size);
 }
 
 .reader-side-panel {

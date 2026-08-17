@@ -12,6 +12,7 @@ const renditionMock = {
   on: vi.fn(),
   spread: vi.fn(),
   settings: {} as { gap?: number },
+  manager: { settings: {} as { gap?: number } },
   currentLocation: vi.fn().mockReturnValue(undefined),
   themes: { fontSize: vi.fn(), registerCss: vi.fn(), font: vi.fn() },
 };
@@ -38,6 +39,7 @@ vi.mock("@likecoin/epub-ts", () => ({
 afterEach(() => {
   vi.clearAllMocks();
   renditionMock.settings = {};
+  renditionMock.manager.settings = {};
   renditionMock.currentLocation.mockReturnValue(undefined);
   bookMock.loaded.cover = Promise.resolve("");
   bookMock.opened = Promise.resolve({});
@@ -284,13 +286,20 @@ describe("EpubRenderer", () => {
     expect(bookMock.locations.cfiFromLocation).not.toHaveBeenCalled();
   });
 
-  it("setFontSize() delegates to the rendition's themes", () => {
+  it("setFontSize() updates the theme and reapplies the responsive spread", () => {
     const renderer = new EpubRenderer(new Uint8Array([1]));
-    renderer.renderTo(document.createElement("div"));
+    const host = document.createElement("div");
+    Object.defineProperty(host, "clientWidth", { value: 1200 });
+    renderer.renderTo(host);
+    renderer.setColumns(2);
+    renditionMock.spread.mockClear();
 
-    renderer.setFontSize("120%");
+    renderer.setFontSize("16px");
 
-    expect(renditionMock.themes.fontSize).toHaveBeenCalledWith("120%");
+    expect(renditionMock.themes.fontSize).toHaveBeenCalledWith("16px");
+    expect(renditionMock.settings.gap).toBeCloseTo(226.67);
+    expect(renditionMock.manager.settings.gap).toBeCloseTo(226.67);
+    expect(renditionMock.spread).toHaveBeenCalledWith("auto", expect.any(Number));
   });
 
   it("getToc() resolves the book's navigation without needing renderTo() first", async () => {

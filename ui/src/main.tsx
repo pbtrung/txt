@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 
 import "./theme.scss";
 import "bootstrap-icons/font/bootstrap-icons.css";
+import "@fontsource/literata/400.css";
 import "./index.css";
 
 import { App } from "./App";

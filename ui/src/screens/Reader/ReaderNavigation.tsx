@@ -3,7 +3,7 @@ import { IconButton } from "../../components/IconButton";
 import type { EpubRenderer, PagePosition } from "../../data/epubRenderer";
 import { classNames } from "../../util/classNames";
 
-const FONT_SIZES_PX = [16, 18, 20, 22, 24] as const;
+const FONT_SIZES_PX = [16, 18, 20, 22] as const;
 
 export function ReaderNavigation({
   renderer,

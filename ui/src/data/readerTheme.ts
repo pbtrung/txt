@@ -1,7 +1,8 @@
 // The reader's fixed visual defaults: Literata (self-hosted via
 // @fontsource, not a Google Fonts CDN link -- consistent with this app's
-// Bootstrap Icons being bundled too) for body text, and an 80-character
-// measure, centered, so lines don't run edge-to-edge on wide screens.
+// Bootstrap Icons being bundled too) for body text. The outer reader frame
+// stays sized for 24px text while the renderer adjusts its internal column
+// gutter to preserve the text measure at smaller font sizes.
 // epub.js renders each section in its own iframe document, so this can't
 // just be a normal CSS import in main.tsx -- @font-face declarations
 // don't cross from the outer page into a child iframe's own document.
@@ -86,11 +87,6 @@ export const READER_FONT_FAMILY = "'Literata', serif";
 
 export const READER_THEME_CSS = `
 ${fontFaceRules}
-body {
-  max-width: 80ch;
-  margin-left: auto;
-  margin-right: auto;
-}
 img, svg, table {
   max-width: 100%;
   height: auto;
