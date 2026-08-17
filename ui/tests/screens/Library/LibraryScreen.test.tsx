@@ -151,6 +151,7 @@ describe("LibraryScreen", () => {
     expect(screen.getByRole("heading", { name: "Subjects" })).toBeInTheDocument();
     const fantasyRow = screen.getByRole("button", { name: /^Fantasy/ });
     expect(fantasyRow).toHaveTextContent("1");
+    expect(fantasyRow.querySelector(".badge")).toHaveClass("text-bg-dark");
     expect(screen.getByRole("button", { name: /^Science Fiction/ })).toHaveTextContent(
       "1",
     );
