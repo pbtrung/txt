@@ -31,6 +31,21 @@
   font-size: 0.8rem;
 }
 
+.book-row-icon-active {
+  background-color: rgba(139, 90, 43, 0.18);
+  color: #8b5a2b;
+}
+
+.book-row-meta {
+  min-height: 1.25rem;
+  white-space: nowrap;
+}
+
+.book-row-meta .badge {
+  padding: 0.16rem 0.38rem;
+  font-size: 0.67rem;
+}
+
 /* Library search box: the icon sits inside the input itself (not a
    separate input-group-text segment) so the two read as one field with
    no seam. Otherwise a plain bordered Bootstrap form-control -- just a

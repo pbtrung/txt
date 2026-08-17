@@ -138,6 +138,24 @@ describe("LibraryScreen", () => {
     );
   });
 
+  it("marks active books and shows bookmark/access badges before authors", () => {
+    const accessed = new Date(2026, 7, 17, 14, 5, 9).getTime();
+    renderScreen([
+      book({
+        title: "Active book",
+        authors: ["A very long author name"],
+        bookmarkCount: 2,
+        lastAccessed: accessed,
+      }),
+    ]);
+
+    const row = screen.getByRole("link", { name: /Active book/ });
+    expect(row.querySelector(".book-row-icon")).toHaveClass("book-row-icon-active");
+    expect(screen.getByLabelText("2 bookmarks")).toHaveTextContent("2");
+    expect(screen.getByLabelText("Last accessed 14:05:09 17/08/26")).toBeVisible();
+    expect(screen.getByText("A very long author name")).toHaveClass("text-truncate");
+  });
+
   it("shows nav rows with counts for All Books/Authors/Subjects/Publishers", () => {
     renderScreen(LIBRARY);
     expect(screen.getByRole("button", { name: /^Recent/ })).toHaveTextContent("0");
