@@ -10,6 +10,7 @@
 import type { Account } from "./ctl";
 
 const KEYS_TTL_SECONDS = 24 * 60 * 60;
+const ACCOUNT_CACHE_VERSION = 2;
 const RATE_LIMIT_WINDOW_SECONDS = 60 * 60;
 const RATE_LIMIT_MAX_REQUESTS = 20;
 
@@ -17,7 +18,7 @@ export async function getCachedAccount(
   kv: KVNamespace,
   uid: string,
 ): Promise<Account | null> {
-  const value = await kv.get(`keys:${uid}`);
+  const value = await kv.get(accountCacheKey(uid));
   return value ? (JSON.parse(value) as Account) : null;
 }
 
@@ -26,13 +27,21 @@ export async function cacheAccount(
   uid: string,
   account: Account,
 ): Promise<void> {
-  await kv.put(`keys:${uid}`, JSON.stringify(account), {
+  await kv.put(accountCacheKey(uid), JSON.stringify(account), {
     expirationTtl: KEYS_TTL_SECONDS,
   });
 }
 
 export async function purgeAccount(kv: KVNamespace, uid: string): Promise<void> {
-  await kv.delete(`keys:${uid}`);
+  await Promise.all([
+    kv.delete(accountCacheKey(uid)),
+    // Remove the pre-signing/path-binding cache key during the rollout too.
+    kv.delete(`keys:${uid}`),
+  ]);
+}
+
+function accountCacheKey(uid: string): string {
+  return `keys:v${ACCOUNT_CACHE_VERSION}:${uid}`;
 }
 
 export async function checkRateLimit(kv: KVNamespace, uid: string): Promise<boolean> {

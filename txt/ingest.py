@@ -138,6 +138,9 @@ class TxtIngester:
         self.blob = CryptoBlob(self.engine)
         self.account: Account | None = None
         self.local_path: Path | None = None
+        self.db_etag: str | None = None
+        self.db_exists = False
+        self.dirty = False
 
     def run(self) -> None:
         self.account = self.session.connect()
@@ -157,24 +160,22 @@ class TxtIngester:
         self.engine.open(self.account.db_master_key, initial_bytes=initial_bytes)
 
     def _load_initial_bytes(self) -> bytes | None:
-        if self.local_path.exists():
-            self.logger.verbose(f"Resuming from local db {self.local_path}...")
-            return self.local_path.read_bytes()
-        self.logger.verbose(
-            f"No local db yet, checking R2 for {self.account.db_path}..."
-        )
-        remote = self.r2.get_object(self.account.db_path)
+        self.logger.verbose(f"Downloading current db {self.account.db_path} from R2...")
+        remote = self.r2.get_object_with_etag(self.account.db_path)
+        self.db_exists = remote is not None
+        self.db_etag = remote.etag if remote is not None else None
+        self.dirty = remote is None
         self.logger.verbose(
             "Found existing remote db, resuming from it."
             if remote
             else "No remote db either, starting fresh."
         )
-        return remote
+        return remote.body if remote is not None else None
 
     def _ensure_schema(self) -> None:
         for stmt in (SET_PAGE_SIZE_SQL, ENABLE_FOREIGN_KEYS_SQL, CREATE_TXT_SQL):
             self.engine.exec_sql(stmt)
-        ensure_reading_schema(self.engine)
+        self.dirty = ensure_reading_schema(self.engine) or self.dirty
 
     def _existing_names(self) -> set:
         return {
@@ -203,6 +204,7 @@ class TxtIngester:
         key = self._object_key(txt_prefix, path)
         self.r2.put_object(key, self.blob.encrypt(data, txt_key))
         self._insert_txt_row(epub_path, txt_key, txt_prefix, path)
+        self.dirty = True
         self.local_path.write_bytes(self.engine.to_bytes())
         self.logger.info(
             f"[{processed}/{total}] {epub_path.name} ({len(data)} byte(s)) -> {key} "
@@ -238,11 +240,22 @@ class TxtIngester:
         return {"name": epub_path.name, **catalog_fields(opf_metadata, epub_path.name)}
 
     def _finish(self) -> None:
-        self.logger.verbose("Vacuuming local db...")
-        self.engine.vacuum()
-        data = self.engine.to_bytes()
-        self.local_path.write_bytes(data)
-        self.logger.verbose(f"Uploading local db to {self.account.db_path}...")
-        self.r2.put_object(self.account.db_path, data)
-        self.engine.close()
+        try:
+            if self.dirty:
+                self.logger.verbose("Vacuuming local db...")
+                self.engine.vacuum()
+            data = self.engine.to_bytes()
+            self.local_path.write_bytes(data)
+            if self.dirty:
+                self.logger.verbose(f"Uploading local db to {self.account.db_path}...")
+                self.r2.put_object(
+                    self.account.db_path,
+                    data,
+                    if_match=self.db_etag if self.db_exists else None,
+                    if_none_match=not self.db_exists,
+                )
+            else:
+                self.logger.verbose("Database unchanged; no upload needed.")
+        finally:
+            self.engine.close()
         self.logger.info(f"Ingest complete: db_path={self.account.db_path}")

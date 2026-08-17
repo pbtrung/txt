@@ -233,11 +233,11 @@ The `ctl` join is a round trip, so the Worker does not repeat it per request; mi
 
 | key | contents | TTL |
 |---|---|---|
-| `keys:{uid}` | `type`, `db_binding_hash`, signing version/algorithm/public/wrapped-private key, `umk`, and `cred_store.content` as returned by the §2 join | 24 hours |
+| `keys:v2:{uid}` | `type`, `db_binding_hash`, signing version/algorithm/public/wrapped-private key, `umk`, and `cred_store.content` as returned by the §2 join | 24 hours |
 
-Steady state is one KV read for `/v1/keys`. A cache miss is one `ctl` query.
+Steady state is one KV read for `/v1/keys`. A cache miss is one `ctl` query. The explicit cache-format version prevents a deployment from parsing a pre-signing legacy entry; per-user purge removes both `keys:v2:{uid}` and the old unversioned `keys:{uid}` during the transition.
 
-`keys:{uid}` is cached rather than read every time because the underlying rows change only when an administrator changes them; the 24-hour TTL bounds how long a deprovisioned user keeps being served, and revocation (§7) purges the key explicitly.
+`keys:v2:{uid}` is cached rather than read every time because the underlying rows change only when an administrator changes them; the 24-hour TTL bounds how long a deprovisioned user keeps being served, and revocation (§7) purges the key explicitly.
 
 Rate-limit per `uid` on both endpoints — generous for a client that refreshes on its own credential's expiry — so a looping client cannot exhaust the Worker's capacity for every other user. Rate-limit 403s per uid too: an unprovisioned client retrying in a loop otherwise hits `ctl` on every request.
 
@@ -247,12 +247,12 @@ Rate-limit per `uid` on both endpoints — generous for a client that refreshes 
 
 | event | action |
 |---|---|
-| a user's `umk` or `cred_store` content leaks | purge `keys:{uid}` from KV so the next `/v1/keys` call re-reads `ctl`; rotate that account's `user_root_key`/`umk` and signing key if the leak exposed plaintext `umk` |
-| a user's signing private key leaks | generate a replacement key pair, atomically replace the active signing version/key blobs, and purge `keys:{uid}`; the path binding remains unchanged |
+| a user's `umk` or `cred_store` content leaks | purge `keys:v2:{uid}` (and any legacy `keys:{uid}`) from KV so the next `/v1/keys` call re-reads `ctl`; rotate that account's `user_root_key`/`umk` and signing key if the leak exposed plaintext `umk` |
+| a user's signing private key leaks | generate a replacement key pair, atomically replace the active signing version/key blobs, and purge the user's current and legacy cache keys; the path binding remains unchanged |
 | a temporary R2 credential leaks | nothing to revoke early — it is bounded by its own short expiration (§4.2) |
 | the Worker's R2 signing credential leaks | mint a replacement parent key pair, redeploy; credentials already issued keep working until they expire |
 | the administrator's Platform API token leaks | `DELETE /v1/auth/api-tokens/{name}`, mint a replacement — used only for out-of-band provisioning, never held by the Worker |
-| a user is deprovisioned | delete the `users`, `key_store`, and `cred_store` rows, purge `keys:{uid}` from KV, then delete the user's R2 objects (`db_path` and everything under `db_prefix`) |
+| a user is deprovisioned | delete the `users`, `key_store`, and `cred_store` rows, purge the user's current and legacy cache keys, then delete the user's R2 objects (`db_path` and everything under `db_prefix`) |
 
 Individual R2 credentials cannot be revoked — only left to expire. The short TTL in §4.2 is what bounds exposure in the ordinary case.
 

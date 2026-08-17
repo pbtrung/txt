@@ -1,14 +1,10 @@
-"""--update-db: migrates catalog and CFI reading-state schemas
-(docs/data_model.md §3) for every account this admin can reach -- their own
-db, plus every user backup row account_init.py's admin-backup mechanism has written
-(docs/auth.md §2). Idempotent and resumable at both the per-account and
-per-row level: an account with no database yet is skipped outright with
-neither a local write nor an upload; a partially-migrated one only
-re-populates rows still missing a catalog. An account whose local working
-copy already has the new schema still gets re-uploaded to R2 on every run
--- otherwise an upload interrupted between the local write and the R2
-PUT would leave R2 on the old schema forever, since a resumed run would
-see nothing left to change locally and skip without ever retrying it.
+"""--update-db: migrates catalog and CFI reading-state schemas.
+
+R2 is always the source of truth. Local files are inspection/checkpoint copies,
+never upload bases, because a browser may have changed reading state since an
+older local file was written. Database uploads are conditional on the ETag that
+was downloaded, so a concurrent browser write aborts safely and a rerun starts
+again from the newer remote database.
 """
 
 import base64
@@ -25,7 +21,7 @@ from .leancrypto_wasm import LeancryptoEngine
 from .libsql_client import LibsqlClient
 from .logger import Logger
 from .opf import catalog_fields
-from .r2_client import R2Client
+from .r2_client import R2Client, R2Object
 from .sqlite_engine import SqliteEngine
 from .turso_api import TursoClient, extract_account_name
 
@@ -88,24 +84,30 @@ class DbUpdater:
         db_master_key = base64.b64decode(payload["db_master_key"])
         local_path = self.local_db_dir / db_path
         self.logger.info(f"[{uid}] db_path={db_path} local={local_path}")
+        remote = self._download(db_path)
         engine = SqliteEngine()
-        engine.open(db_master_key, initial_bytes=self._download(db_path, local_path))
+        engine.open(
+            db_master_key,
+            initial_bytes=remote.body if remote is not None else None,
+        )
         engine.exec_sql("PRAGMA page_size = 16384")
         engine.exec_sql("PRAGMA foreign_keys = ON")
         try:
-            self._migrate_db(engine, uid, db_path, local_path)
+            self._migrate_db(engine, uid, db_path, local_path, remote)
         finally:
             engine.close()
 
-    def _download(self, db_path: str, local_path: Path) -> bytes | None:
-        if local_path.exists():
-            self.logger.verbose(f"Resuming from local file {local_path}...")
-            return local_path.read_bytes()
+    def _download(self, db_path: str) -> R2Object | None:
         self.logger.verbose(f"Downloading {db_path} from R2...")
-        return self.r2.get_object(db_path)
+        return self.r2.get_object_with_etag(db_path)
 
     def _migrate_db(
-        self, engine: SqliteEngine, uid: str, db_path: str, local_path: Path
+        self,
+        engine: SqliteEngine,
+        uid: str,
+        db_path: str,
+        local_path: Path,
+        remote: R2Object | None,
     ) -> None:
         if not self._table_exists(engine):
             self.logger.info(f"[{uid}] no database yet, skipping.")
@@ -124,14 +126,21 @@ class DbUpdater:
             engine.exec_sql("ROLLBACK")
             raise
 
-        if changed:
-            self.logger.verbose(f"[{uid}] vacuuming...")
-            engine.vacuum()
-        else:
-            self.logger.verbose(f"[{uid}] schema already migrated, re-syncing R2...")
+        if not changed:
+            local_path.write_bytes(engine.to_bytes())
+            self.logger.info(f"[{uid}] schema already migrated; no upload needed.")
+            return
+
+        self.logger.verbose(f"[{uid}] vacuuming...")
+        engine.vacuum()
         data = engine.to_bytes()
         local_path.write_bytes(data)
-        self.r2.put_object(db_path, data)
+        self.r2.put_object(
+            db_path,
+            data,
+            if_match=remote.etag if remote is not None else None,
+            if_none_match=remote is None,
+        )
         self.logger.info(f"[{uid}] migration complete.")
 
     def _table_exists(self, engine: SqliteEngine) -> bool:

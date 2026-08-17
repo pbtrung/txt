@@ -68,7 +68,7 @@ txt --ingest SRC_DIR --local-db-dir DIR --creds creds.json --verbose
 
 Uploads every `*.epub` in `SRC_DIR` to R2 as one encrypted object each, and records it in the account's `txt` table. `creds.json` is that account's own (already provisioned via `--init-admin`/`--init-user`, so `user_root_key` must already be set), plus an `r2_config` block (`endpoint`, `read_only_*`/`read_write_*` key pairs, `region`, `bucket`) since ingestion reaches R2 directly with the administrator's own bucket credentials.
 
-The local working database lives at `DIR/{db_path}`; a run resumes from that file if present, or from the matching object in R2, or starts fresh otherwise (a fresh database's page size is set to 16 KiB before any table is created). Already-ingested files are skipped (matched by filename against each row's recorded name), so an interrupted run can simply be restarted. The local file is rewritten after every successfully ingested file; only at the end is it `VACUUM`ed and uploaded to `{bucket}/{db_path}`.
+R2 is always the source of truth. Every run downloads `{db_path}` even when `DIR/{db_path}` exists; the local file is only an inspection/checkpoint copy and is never trusted as an upload base. Already-ingested files are skipped by the names in the downloaded database. The local file is rewritten after every ingested file, then the changed database is `VACUUM`ed and uploaded with `If-Match` (or `If-None-Match: *` for its first creation). If a browser changes the database concurrently, the command exits on the precondition failure without overwriting it; rerun to ingest against the newer remote database. Content objects from the failed attempt are harmless orphans that `--clean-bucket` can remove.
 
 ### Migrate every reachable database to `txt.catalog`
 
@@ -76,7 +76,7 @@ The local working database lives at `DIR/{db_path}`; a run resumes from that fil
 txt --update-db admin_creds.json --local-db-dir DIR --verbose
 ```
 
-Walks every account this administrator's creds.json can reach — their own database, plus every user backup row `--init-user` has written (docs/auth.md §2) — and migrates each one still on the old `txt.metadata` column to the flat `txt.catalog` shape (docs/data_model.md §3.1): adds `catalog`, populates it by extracting `title`/`authors`/`subjects`/`publisher` out of each row's existing `metadata`, drops `metadata`, `VACUUM`s, and re-uploads. Only covers accounts with a backup `cred_store` row; anyone provisioned before that mechanism existed needs their own creds.json run individually. Idempotent and resumable at both the per-account and per-row level — an already-migrated account is skipped outright, and a partially-migrated one only re-populates rows still missing a `catalog`.
+Walks every account this administrator's creds.json can reach — their own database, plus every user backup row `--init-user` has written (docs/auth.md §2) — and migrates `txt.metadata` to `txt.catalog`, adds `txt.last_cfi`, and installs the CFI bookmark table/index/cap trigger (docs/data_model.md §3). It always starts from the current R2 object, writes `DIR/{db_path}` only as a checkpoint, and conditionally uploads changed databases against their downloaded ETags. A concurrent write therefore aborts safely; rerun against the new object. Already-current databases are not uploaded.
 
 ### Clean unreferenced R2 objects
 
@@ -120,8 +120,8 @@ npm install
 
 ### Endpoints
 
-- `POST /v1/keys` — verifies the caller's Firebase ID token, looks up its `ctl` row (through a KV cache and per-uid rate limit), and returns `{ type, umk, cred_store }`, still wrapped.
-- `POST /v1/r2-token` — given `{ db_path, db_prefix }` (the values the client just decrypted from `cred_store`), mints a short-lived R2 credential: bucket-wide read-write for the admin, read-only scoped to both `db_path` and `db_prefix` for an ordinary user. Signed locally (Cloudflare's JWT-based temporary-credential scheme) from a single parent R2 key pair — no outbound Cloudflare API call.
+- `POST /v1/keys` — verifies the Firebase ID token and returns the account's wrapped `umk`, credential store, and versioned wrapped signing private key.
+- `POST /v1/r2-token` — verifies the authenticated user's short-lived P-521 path proof and SHA-512 path binding, then returns two credentials: read-write for exactly `db_path`, and read-only for `{db_prefix}/*`.
 
 ### Configuration
 
@@ -137,5 +137,17 @@ npm run format             # prettier --write, 88 columns
 npm run format:check
 npm run lint               # eslint (worker/ + ui/)
 ```
+
+### R2 CORS and write-access rollout
+
+The browser talks directly to the R2 S3 endpoint, so the bucket must permit its exact production origin to make `GET` and `PUT` requests, accept the AWS signing and conditional headers, and expose `ETag`. Start from `docs/r2-cors.example.json`, replace `https://reader.example.com`, and apply it to the bucket through Cloudflare's R2 CORS settings. Keep development origins in a separate rule; do not replace the origin with `*`.
+
+Roll out in this order:
+
+1. Back up `ctl` and the R2 bucket, then re-run account provisioning as needed so every account has `db_binding_hash` and the version-1 P-521 signing fields.
+2. While the deployed UI is still read-only, run `txt --update-db ...` for every reachable account and resolve any legacy-bookmark or conditional-write failure.
+3. Apply and verify the bucket CORS policy, including a preflight that requests `If-Match` and confirms `ETag` is exposed.
+4. Deploy the Worker and UI together with `WORKER_NAME=... npm run deploy`. The versioned `keys:v2:*` cache namespace makes old account-cache entries automatic misses; explicit per-user purges still delete both old and current keys.
+5. Smoke-test unlock, resume, a bookmark create/delete, and a two-tab write conflict before broadening access. Keep the previous deployment available for rollback; added database columns/tables are backward-compatible with the old read-only UI.
 
 Deploying requires `WORKER_NAME` (the existing Cloudflare Worker's name) to be set: `WORKER_NAME=... npm run deploy`.

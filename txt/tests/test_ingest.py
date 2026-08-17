@@ -9,6 +9,7 @@ import txt.ingest as ingest_module
 from txt.account_session import Account
 from txt.creds import Creds
 from txt.ingest import TxtIngester
+from txt.r2_client import R2Object, R2PreconditionFailed
 from txt.sqlite_engine import SqliteEngine
 
 
@@ -39,22 +40,48 @@ class FakeAccountSession:
 
 
 class FakeR2Client:
+    objects = {}
+    versions = {}
+    conflict_keys = set()
+
     def __init__(self, config):
-        self.objects = {}
         self.put_calls = []
+        self.put_conditions = []
+
+    def get_object_with_etag(self, key):
+        if key not in self.objects:
+            return None
+        version = self.versions.setdefault(key, 1)
+        return R2Object(self.objects[key], f'"v{version}"')
 
     def get_object(self, key):
         return self.objects.get(key)
 
-    def put_object(self, key, body):
+    def put_object(self, key, body, *, if_match=None, if_none_match=False):
+        if key in self.conflict_keys:
+            self.conflict_keys.remove(key)
+            self.versions[key] = self.versions.get(key, 1) + 1
+        current = self.objects.get(key)
+        current_etag = (
+            f'"v{self.versions.setdefault(key, 1)}"' if current is not None else None
+        )
+        if if_match is not None and if_match != current_etag:
+            raise R2PreconditionFailed("conflicted with a newer object")
+        if if_none_match and current is not None:
+            raise R2PreconditionFailed("conflicted with a newer object")
         self.put_calls.append((key, body))
+        self.put_conditions.append((key, if_match, if_none_match))
         self.objects[key] = body
+        self.versions[key] = self.versions.get(key, 0) + 1
 
 
 @pytest.fixture(autouse=True)
 def patch_clients(monkeypatch):
     monkeypatch.setattr(ingest_module, "AccountSession", FakeAccountSession)
     monkeypatch.setattr(ingest_module, "R2Client", FakeR2Client)
+    FakeR2Client.objects = {}
+    FakeR2Client.versions = {}
+    FakeR2Client.conflict_keys = set()
 
 
 CREDS = Creds(
@@ -205,6 +232,7 @@ def test_ingest_uploads_one_object_per_epub_plus_final_db(tmp_path):
     assert len(content_puts) == 2
     assert len(db_puts) == 1
     assert all(k.startswith(f"{ACCOUNT.db_prefix}/") for k in content_puts)
+    assert (ACCOUNT.db_path, None, True) in ingester.r2.put_conditions
 
 
 def test_second_run_skips_already_ingested_files(tmp_path):
@@ -224,7 +252,7 @@ def test_second_run_skips_already_ingested_files(tmp_path):
     assert len(content_puts) == 1  # only b.epub uploaded this run
 
 
-def test_resumes_from_local_file_without_touching_r2_first(tmp_path):
+def test_downloads_r2_even_when_a_local_checkpoint_exists(tmp_path):
     src, local = tmp_path / "src", tmp_path / "local"
     src.mkdir()
     _write_epub(src / "a.epub", b"one")
@@ -232,15 +260,16 @@ def test_resumes_from_local_file_without_touching_r2_first(tmp_path):
 
     third = TxtIngester(src, local, CREDS, NullLogger())
     monkeypatch_calls = []
-    real_get_object = FakeR2Client.get_object
+    real_get_object = FakeR2Client.get_object_with_etag
 
     def spy_get_object(self, key):
         monkeypatch_calls.append(key)
         return real_get_object(self, key)
 
-    third.r2.get_object = spy_get_object.__get__(third.r2, FakeR2Client)
+    third.r2.get_object_with_etag = spy_get_object.__get__(third.r2, FakeR2Client)
     third.run()
-    assert monkeypatch_calls == []  # local file existed, R2 never consulted
+    assert monkeypatch_calls == [ACCOUNT.db_path]
+    assert not [key for key, _ in third.r2.put_calls if key == ACCOUNT.db_path]
 
 
 def test_vacuum_runs_before_final_upload(tmp_path):
@@ -253,3 +282,18 @@ def test_vacuum_runs_before_final_upload(tmp_path):
 
     uploaded = dict(ingester.r2.put_calls)[ACCOUNT.db_path]
     assert uploaded == (local / ACCOUNT.db_path).read_bytes()
+
+
+def test_conditional_db_upload_preserves_a_concurrent_browser_change(tmp_path):
+    src, local = tmp_path / "src", tmp_path / "local"
+    src.mkdir()
+    _write_epub(src / "a.epub", b"one")
+    TxtIngester(src, local, CREDS, NullLogger()).run()
+    remote_before = FakeR2Client.objects[ACCOUNT.db_path]
+
+    _write_epub(src / "b.epub", b"two")
+    FakeR2Client.conflict_keys.add(ACCOUNT.db_path)
+    with pytest.raises(R2PreconditionFailed, match="newer object"):
+        TxtIngester(src, local, CREDS, NullLogger()).run()
+
+    assert FakeR2Client.objects[ACCOUNT.db_path] == remote_before

@@ -1,9 +1,20 @@
 from collections.abc import Callable
+from dataclasses import dataclass
 
 import boto3
 import botocore.exceptions
 
 from .creds import R2Config
+
+
+@dataclass(frozen=True)
+class R2Object:
+    body: bytes
+    etag: str
+
+
+class R2PreconditionFailed(RuntimeError):
+    pass
 
 
 class R2Client:
@@ -18,16 +29,53 @@ class R2Client:
         )
 
     def get_object(self, key: str) -> bytes | None:
+        resp = self._get_object_response(key)
+        return resp["Body"].read() if resp is not None else None
+
+    def get_object_with_etag(self, key: str) -> R2Object | None:
+        resp = self._get_object_response(key)
+        if resp is None:
+            return None
+        etag = resp.get("ETag")
+        if not isinstance(etag, str) or not etag:
+            raise ValueError(f"R2 GET {key} returned no ETag")
+        return R2Object(resp["Body"].read(), etag)
+
+    def _get_object_response(self, key: str) -> dict | None:
         try:
-            resp = self._s3.get_object(Bucket=self.bucket, Key=key)
+            return self._s3.get_object(Bucket=self.bucket, Key=key)
         except botocore.exceptions.ClientError as exc:
             if exc.response.get("Error", {}).get("Code") in ("NoSuchKey", "404"):
                 return None
             raise
-        return resp["Body"].read()
 
-    def put_object(self, key: str, body: bytes) -> None:
-        self._s3.put_object(Bucket=self.bucket, Key=key, Body=body)
+    def put_object(
+        self,
+        key: str,
+        body: bytes,
+        *,
+        if_match: str | None = None,
+        if_none_match: bool = False,
+    ) -> str | None:
+        if if_match is not None and if_none_match:
+            raise ValueError("if_match and if_none_match are mutually exclusive")
+        kwargs = {"Bucket": self.bucket, "Key": key, "Body": body}
+        if if_match is not None:
+            kwargs["IfMatch"] = if_match
+        elif if_none_match:
+            kwargs["IfNoneMatch"] = "*"
+        try:
+            resp = self._s3.put_object(**kwargs)
+        except botocore.exceptions.ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code")
+            status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+            if code in ("PreconditionFailed", "412") or status == 412:
+                raise R2PreconditionFailed(
+                    f"R2 PUT {key} conflicted with a newer object"
+                ) from exc
+            raise
+        etag = resp.get("ETag")
+        return etag if isinstance(etag, str) else None
 
     def list_keys(
         self, prefix: str, on_progress: Callable[[int], None] | None = None

@@ -1,10 +1,11 @@
 import io
 
 import botocore.exceptions
+import pytest
 
 import txt.r2_client as r2_client_module
 from txt.creds import R2Config
-from txt.r2_client import R2Client
+from txt.r2_client import R2Client, R2Object, R2PreconditionFailed
 
 CONFIG = R2Config(
     endpoint="https://x.r2.cloudflarestorage.com",
@@ -20,20 +21,23 @@ CONFIG = R2Config(
 class FakeS3Client:
     def __init__(self, pages=None, prefix_pages=None, objects=None):
         self.put_calls = []
+        self.put_conditions = []
         self.delete_calls = []
         self._pages = pages or []
         self._prefix_pages = prefix_pages or []
         self._objects = objects or {}
 
-    def put_object(self, Bucket, Key, Body):
+    def put_object(self, Bucket, Key, Body, IfMatch=None, IfNoneMatch=None):
         self.put_calls.append((Bucket, Key, Body))
+        self.put_conditions.append((IfMatch, IfNoneMatch))
+        return {"ETag": '"new-etag"'}
 
     def get_object(self, Bucket, Key):
         if Key not in self._objects:
             raise botocore.exceptions.ClientError(
                 {"Error": {"Code": "NoSuchKey", "Message": "not found"}}, "GetObject"
             )
-        return {"Body": io.BytesIO(self._objects[Key])}
+        return {"Body": io.BytesIO(self._objects[Key]), "ETag": '"etag"'}
 
     def list_objects_v2(
         self,
@@ -83,6 +87,37 @@ def test_put_object_forwards_bucket_key_and_body(monkeypatch):
     R2Client(CONFIG).put_object("t/prefix/key", b"hello")
 
     assert fake.put_calls == [("my-bucket", "t/prefix/key", b"hello")]
+    assert fake.put_conditions == [(None, None)]
+
+
+def test_put_object_forwards_conditional_headers_and_returns_etag(monkeypatch):
+    fake = FakeS3Client()
+    monkeypatch.setattr(r2_client_module.boto3, "client", lambda *a, **k: fake)
+    client = R2Client(CONFIG)
+
+    assert client.put_object("db", b"one", if_match='"old"') == '"new-etag"'
+    assert client.put_object("new-db", b"two", if_none_match=True) == '"new-etag"'
+
+    assert fake.put_conditions == [('"old"', None), (None, "*")]
+
+
+def test_put_object_maps_precondition_failure(monkeypatch):
+    fake = FakeS3Client()
+
+    def conflict(**kwargs):
+        raise botocore.exceptions.ClientError(
+            {
+                "Error": {"Code": "PreconditionFailed", "Message": "conflict"},
+                "ResponseMetadata": {"HTTPStatusCode": 412},
+            },
+            "PutObject",
+        )
+
+    fake.put_object = conflict
+    monkeypatch.setattr(r2_client_module.boto3, "client", lambda *a, **k: fake)
+
+    with pytest.raises(R2PreconditionFailed, match="newer object"):
+        R2Client(CONFIG).put_object("db", b"one", if_match='"old"')
 
 
 def test_get_object_returns_bytes_when_present(monkeypatch):
@@ -90,6 +125,26 @@ def test_get_object_returns_bytes_when_present(monkeypatch):
     monkeypatch.setattr(r2_client_module.boto3, "client", lambda *a, **k: fake)
 
     assert R2Client(CONFIG).get_object("t/key") == b"hello"
+
+
+def test_get_object_with_etag_returns_both_values(monkeypatch):
+    fake = FakeS3Client(objects={"t/key": b"hello"})
+    monkeypatch.setattr(r2_client_module.boto3, "client", lambda *a, **k: fake)
+
+    assert R2Client(CONFIG).get_object_with_etag("t/key") == R2Object(
+        b"hello", '"etag"'
+    )
+
+
+def test_etag_is_required_only_for_etag_reads(monkeypatch):
+    fake = FakeS3Client(objects={"t/key": b"hello"})
+    fake.get_object = lambda **kwargs: {"Body": io.BytesIO(b"hello")}
+    monkeypatch.setattr(r2_client_module.boto3, "client", lambda *a, **k: fake)
+    client = R2Client(CONFIG)
+
+    assert client.get_object("t/key") == b"hello"
+    with pytest.raises(ValueError, match="returned no ETag"):
+        client.get_object_with_etag("t/key")
 
 
 def test_get_object_returns_none_when_missing(monkeypatch):

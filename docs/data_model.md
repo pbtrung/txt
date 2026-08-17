@@ -120,9 +120,9 @@ Migration is driven by inspecting the tables, columns, indexes, and triggers tha
 1. If `txt.metadata` is present, add and populate `catalog`, then drop `metadata` as in the existing catalog migration.
 2. Add nullable `txt.last_cfi` when absent; existing `last_accessed` values remain valid.
 3. If the legacy `txt_bookmarks(line, ...)` table exists, require it to be empty because a line number cannot be converted reliably to a CFI, then replace it with the CFI table, index, and trigger above. A nonempty legacy table aborts that account rather than losing data.
-4. `VACUUM`, write the local checkpoint, and upload the database only after every step succeeds.
+4. `VACUUM`, write the local checkpoint, and conditionally upload the database only after every step succeeds.
 
-The command reaches every account through the administrator-owned backup `cred_store` row guaranteed by docs/auth.md. It verifies that every `users` row has a decryptable backup before making changes, resumes safely after interruption, and re-uploads an already-migrated local file when the preceding remote upload may not have completed. Provisioning also computes each `users.db_binding_hash` from the decrypted path pair and installs the required versioned signing-key material before the new token endpoint is enabled; there is no unsigned legacy mode.
+The command reaches every account through the administrator-owned backup `cred_store` row guaranteed by docs/auth.md. It verifies that every `users` row has a decryptable backup before making changes. R2 is always its input source; `--local-db-dir` contains checkpoints for inspection only, never a later upload base. A changed database is uploaded with `If-Match` against the downloaded ETag, so a concurrent browser commit aborts without data loss and the operator reruns from the new remote object. An already-migrated database is not uploaded. Provisioning also computes each `users.db_binding_hash` from the decrypted path pair and installs the required versioned signing-key material before the new token endpoint is enabled; there is no unsigned legacy mode.
 
 `txt_key` is unrelated to `db_master_key`: it is the AEAD key for one document's content object, generated fresh per document, so leaking one document's key exposes nothing about any other document or about the database file itself.
 

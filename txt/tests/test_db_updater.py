@@ -9,6 +9,7 @@ import txt.db_updater as db_updater_module
 from txt.creds import load_creds
 from txt.crypto_blob import CryptoBlob
 from txt.db_updater import DbUpdater
+from txt.r2_client import R2Object, R2PreconditionFailed
 from txt.sqlite_engine import SqliteEngine
 
 ADMIN_UID = "uid-admin"
@@ -79,15 +80,37 @@ class FakeLibsqlClient:
 
 class FakeR2Client:
     objects: dict = {}
+    versions: dict = {}
+    put_calls: list = []
+    conflict_replacements: dict = {}
 
     def __init__(self, config):
         pass
 
-    def get_object(self, key):
-        return FakeR2Client.objects.get(key)
+    def get_object_with_etag(self, key):
+        body = FakeR2Client.objects.get(key)
+        if body is None:
+            return None
+        version = FakeR2Client.versions.setdefault(key, 1)
+        return R2Object(body, f'"v{version}"')
 
-    def put_object(self, key, body):
+    def put_object(self, key, body, *, if_match=None, if_none_match=False):
+        if key in FakeR2Client.conflict_replacements:
+            FakeR2Client.objects[key] = FakeR2Client.conflict_replacements.pop(key)
+            FakeR2Client.versions[key] = FakeR2Client.versions.get(key, 1) + 1
+        current = FakeR2Client.objects.get(key)
+        current_etag = (
+            f'"v{FakeR2Client.versions.setdefault(key, 1)}"'
+            if current is not None
+            else None
+        )
+        if if_match is not None and if_match != current_etag:
+            raise R2PreconditionFailed("conflicted with a newer object")
+        if if_none_match and current is not None:
+            raise R2PreconditionFailed("conflicted with a newer object")
+        FakeR2Client.put_calls.append((key, if_match, if_none_match))
         FakeR2Client.objects[key] = body
+        FakeR2Client.versions[key] = FakeR2Client.versions.get(key, 0) + 1
 
 
 @pytest.fixture(autouse=True)
@@ -99,6 +122,9 @@ def patch_clients(monkeypatch):
     FakeLibsqlClient.key_store = {}
     FakeLibsqlClient.cred_store = {}
     FakeR2Client.objects = {}
+    FakeR2Client.versions = {}
+    FakeR2Client.put_calls = []
+    FakeR2Client.conflict_replacements = {}
     yield
 
 
@@ -183,6 +209,8 @@ def test_migrates_admin_own_database(tmp_path, creds_path, engine):
 
     DbUpdater(load_creds(creds_path), tmp_path / "local", NullLogger()).run()
 
+    assert FakeR2Client.put_calls == [(db_path, '"v1"', False)]
+
     verify = _reopen(db_master_key, FakeR2Client.objects[db_path])
     columns = {row[1] for row in verify.query("PRAGMA table_info(txt)")}
     assert "metadata" not in columns
@@ -241,17 +269,18 @@ def test_second_run_is_a_noop(tmp_path, creds_path, engine):
     local_dir = tmp_path / "local"
     DbUpdater(load_creds(creds_path), local_dir, NullLogger()).run()
     first_upload = FakeR2Client.objects[db_path]
+    upload_count = len(FakeR2Client.put_calls)
 
     DbUpdater(load_creds(creds_path), local_dir, NullLogger()).run()
     assert FakeR2Client.objects[db_path] == first_upload
+    assert len(FakeR2Client.put_calls) == upload_count
 
 
-def test_reuploads_when_local_copy_is_migrated_but_r2_is_still_stale(
+def test_ignores_local_checkpoint_and_migrates_the_current_remote_database(
     tmp_path, creds_path, engine
 ):
-    # Simulates an interrupted prior run: the local working copy already
-    # got migrated and written to disk, but the upload to R2 never landed
-    # (network drop, etc.), so R2 is still on the old schema.
+    # A local checkpoint may be older or newer than R2. It is never trusted as
+    # an upload base now that the browser can write reading state remotely.
     db_master_key = secrets.token_bytes(256)
     db_path = "d" * 52
     _register_account(engine, ADMIN_UID, db_master_key, db_path)
@@ -283,7 +312,7 @@ def test_reuploads_when_local_copy_is_migrated_but_r2_is_still_stale(
                 json.dumps(
                     {
                         "name": "dune.epub",
-                        "title": "Dune",
+                        "title": "Stale local title",
                         "authors": [],
                         "subjects": [],
                         "publisher": None,
@@ -299,8 +328,11 @@ def test_reuploads_when_local_copy_is_migrated_but_r2_is_still_stale(
 
     verify = _reopen(db_master_key, FakeR2Client.objects[db_path])
     columns = {row[1] for row in verify.query("PRAGMA table_info(txt)")}
+    [(catalog_blob,)] = verify.query("SELECT catalog FROM txt")
+    catalog = json.loads(brotli.decompress(catalog_blob))
     assert "metadata" not in columns
     assert "catalog" in columns
+    assert catalog["title"] == "Dune"
     verify.close()
 
 
@@ -438,3 +470,21 @@ def test_aborts_nonempty_legacy_bookmarks_without_upload(tmp_path, creds_path, e
 
     assert FakeR2Client.objects[db_path] == original
     assert not (tmp_path / "local" / db_path).exists()
+
+
+def test_conditional_upload_does_not_overwrite_a_concurrent_remote_change(
+    tmp_path, creds_path, engine
+):
+    db_master_key = secrets.token_bytes(256)
+    db_path = "d" * 52
+    _register_account(engine, ADMIN_UID, db_master_key, db_path)
+    original = _build_old_db(db_master_key, [("original.epub", {})])
+    concurrent = _build_old_db(db_master_key, [("concurrent.epub", {})])
+    FakeR2Client.objects[db_path] = original
+    FakeR2Client.conflict_replacements[db_path] = concurrent
+
+    with pytest.raises(R2PreconditionFailed, match="newer object"):
+        DbUpdater(load_creds(creds_path), tmp_path / "local", NullLogger()).run()
+
+    assert FakeR2Client.objects[db_path] == concurrent
+    assert FakeR2Client.put_calls == []
