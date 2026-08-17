@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { bearerToken, verifiedUid } from "../auth";
+import { bearerToken, verifiedIdentity, verifiedUid } from "../auth";
 import { verifyFirebaseIdToken } from "../firebaseAuth";
 
 vi.mock("../firebaseAuth");
@@ -47,5 +47,19 @@ describe("verifiedUid", () => {
       headers: { Authorization: "Bearer good" },
     });
     expect(await verifiedUid(request, "proj")).toBe("uid-123");
+  });
+});
+
+describe("verifiedIdentity", () => {
+  it("preserves the exact verified bearer token", async () => {
+    vi.mocked(verifyFirebaseIdToken).mockResolvedValue({ uid: "uid-123" });
+    const request = new Request("https://x", {
+      headers: { Authorization: "Bearer exact.header.payload" },
+    });
+
+    expect(await verifiedIdentity(request, "proj")).toEqual({
+      uid: "uid-123",
+      idToken: "exact.header.payload",
+    });
   });
 });

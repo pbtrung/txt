@@ -9,15 +9,27 @@ export function bearerToken(request: Request): string | null {
   return header?.startsWith("Bearer ") ? header.slice(7) : null;
 }
 
+export interface VerifiedIdentity {
+  uid: string;
+  idToken: string;
+}
+
+export async function verifiedIdentity(
+  request: Request,
+  projectId: string,
+): Promise<VerifiedIdentity | null> {
+  const idToken = bearerToken(request);
+  if (!idToken) return null;
+  try {
+    return { uid: (await verifyFirebaseIdToken(idToken, projectId)).uid, idToken };
+  } catch {
+    return null;
+  }
+}
+
 export async function verifiedUid(
   request: Request,
   projectId: string,
 ): Promise<string | null> {
-  const idToken = bearerToken(request);
-  if (!idToken) return null;
-  try {
-    return (await verifyFirebaseIdToken(idToken, projectId)).uid;
-  } catch {
-    return null;
-  }
+  return (await verifiedIdentity(request, projectId))?.uid ?? null;
 }

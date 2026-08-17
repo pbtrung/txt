@@ -9,8 +9,8 @@ function blobCell(base64: string) {
   return { type: "blob", base64 };
 }
 
-function nullCell() {
-  return { type: "null" };
+function integerCell(value: number) {
+  return { type: "integer", value: String(value) };
 }
 
 function pipelineResponse(rows: unknown[][]) {
@@ -30,8 +30,11 @@ describe("lookupAccount", () => {
           [
             textCell("user"),
             blobCell("dW1r"),
-            nullCell(),
-            nullCell(),
+            integerCell(1),
+            textCell("ECDSA-P521-SHA512"),
+            blobCell("c2lnLXB1YmxpYw=="),
+            blobCell("c2lnLXByaXZhdGU="),
+            blobCell("YmluZGluZw=="),
             blobCell("Y29udGVudA=="),
           ],
         ]),
@@ -47,6 +50,11 @@ describe("lookupAccount", () => {
     expect(result).toEqual({
       type: "user",
       umk: "dW1r",
+      signVersion: 1,
+      signAlgorithm: "ECDSA-P521-SHA512",
+      signPublicKey: "c2lnLXB1YmxpYw==",
+      signPrivateKey: "c2lnLXByaXZhdGU=",
+      dbBindingHash: "YmluZGluZw==",
       credStoreContent: "Y29udGVudA==",
     });
     const [url, init] = fetchMock.mock.calls[0];
@@ -64,8 +72,11 @@ describe("lookupAccount", () => {
             [
               textCell("admin"),
               blobCell("dW1r"),
-              blobCell("cHVia2V5"),
-              blobCell("cHJpdmtleQ=="),
+              integerCell(1),
+              textCell("ECDSA-P521-SHA512"),
+              blobCell("c2lnLXB1YmxpYw=="),
+              blobCell("c2lnLXByaXZhdGU="),
+              blobCell("YmluZGluZw=="),
               blobCell("Y29udGVudA=="),
             ],
           ]),
@@ -81,6 +92,11 @@ describe("lookupAccount", () => {
     expect(result).toEqual({
       type: "admin",
       umk: "dW1r",
+      signVersion: 1,
+      signAlgorithm: "ECDSA-P521-SHA512",
+      signPublicKey: "c2lnLXB1YmxpYw==",
+      signPrivateKey: "c2lnLXByaXZhdGU=",
+      dbBindingHash: "YmluZGluZw==",
       credStoreContent: "Y29udGVudA==",
     });
   });
@@ -118,8 +134,11 @@ describe("lookupAccount", () => {
             [
               textCell("user"),
               textCell("not-a-blob"),
-              nullCell(),
-              nullCell(),
+              integerCell(1),
+              textCell("ECDSA-P521-SHA512"),
+              blobCell("c2lnLXB1YmxpYw=="),
+              blobCell("c2lnLXByaXZhdGU="),
+              blobCell("YmluZGluZw=="),
               blobCell("Y29udGVudA=="),
             ],
           ]),

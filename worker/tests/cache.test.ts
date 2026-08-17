@@ -18,6 +18,11 @@ function fakeKv(): KVNamespace {
 const ACCOUNT: Account = {
   type: "user",
   umk: "dW1r",
+  signVersion: 1,
+  signAlgorithm: "ECDSA-P521-SHA512",
+  signPublicKey: "c2lnLXB1YmxpYw==",
+  signPrivateKey: "c2lnLXByaXZhdGU=",
+  dbBindingHash: "YmluZGluZw==",
   credStoreContent: "Y29udGVudA==",
 };
 

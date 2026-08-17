@@ -1,11 +1,10 @@
-// docs/auth.md §2/§5 step 2: the ctl join returning identity, wrapped key
-// material, and the wrapped cred_store backup for one uid, over the same
-// libsql HTTP /v2/pipeline protocol txt/libsql_client.py uses server-side.
-// The query selects pubkey/privkey too, matching docs/auth.md §2's own
-// example exactly, even though no Worker endpoint forwards them onward.
+// docs/auth.md §2/§5 step 2: the ctl join returning wrapped key material,
+// the server-authoritative path binding, and the wrapped cred_store backup
+// for one uid over libsql's HTTP pipeline protocol.
 
 const LOOKUP_SQL =
-  "SELECT u.type, k.umk, k.pubkey, k.privkey, c.content FROM users u " +
+  "SELECT u.type, k.umk, k.sign_version, k.sign_algorithm, " +
+  "k.sign_pubkey, k.sign_privkey, u.db_binding_hash, c.content FROM users u " +
   "JOIN key_store k ON k.user_id = u.id " +
   "JOIN cred_store c ON c.owner_id = u.id AND c.for_user_id = u.id " +
   "WHERE u.id = ?";
@@ -15,6 +14,11 @@ export type AccountType = "admin" | "user";
 export interface Account {
   type: AccountType;
   umk: string; // base64
+  signVersion: number;
+  signAlgorithm: string;
+  signPublicKey: string; // base64 SPKI DER
+  signPrivateKey: string; // base64 encrypted PKCS#8 DER
+  dbBindingHash: string; // base64 SHA-512 digest
   credStoreContent: string; // base64
 }
 
@@ -65,12 +69,39 @@ async function queryUsers(
   return data.results[0].response.result.rows;
 }
 
-function rowToAccount([typeCell, umkCell, , , contentCell]: Cell[]): Account {
+function rowToAccount([
+  typeCell,
+  umkCell,
+  signVersionCell,
+  signAlgorithmCell,
+  signPublicKeyCell,
+  signPrivateKeyCell,
+  dbBindingHashCell,
+  contentCell,
+]: Cell[]): Account {
+  const type = cellText(typeCell);
+  if (type !== "admin" && type !== "user") {
+    throw new Error(`invalid account type: ${type}`);
+  }
   return {
-    type: cellText(typeCell) as AccountType,
+    type,
     umk: cellBase64(umkCell),
+    signVersion: cellInteger(signVersionCell),
+    signAlgorithm: cellText(signAlgorithmCell),
+    signPublicKey: cellBase64(signPublicKeyCell),
+    signPrivateKey: cellBase64(signPrivateKeyCell),
+    dbBindingHash: cellBase64(dbBindingHashCell),
     credStoreContent: cellBase64(contentCell),
   };
+}
+
+function cellInteger(cell: Cell): number {
+  if (cell.type !== "integer" || cell.value === undefined) {
+    throw new Error(`expected an integer cell, got ${cell.type}`);
+  }
+  const value = Number(cell.value);
+  if (!Number.isSafeInteger(value)) throw new Error("integer cell is out of range");
+  return value;
 }
 
 function cellText(cell: Cell): string {

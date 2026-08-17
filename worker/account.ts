@@ -14,9 +14,9 @@ export type AccountLookup =
   | { status: "unavailable" };
 
 export async function getAccount(env: Env, uid: string): Promise<AccountLookup> {
+  if (!(await checkRateLimit(env.KEYS_CACHE, uid))) return { status: "rate_limited" };
   const cached = await getCachedAccount(env.KEYS_CACHE, uid);
   if (cached) return { status: "ok", account: cached };
-  if (!(await checkRateLimit(env.KEYS_CACHE, uid))) return { status: "rate_limited" };
   return fetchAndCache(env, uid);
 }
 

@@ -16,6 +16,11 @@ const ENV = {
 const ACCOUNT: Account = {
   type: "user",
   umk: "dW1r",
+  signVersion: 1,
+  signAlgorithm: "ECDSA-P521-SHA512",
+  signPublicKey: "c2lnLXB1YmxpYw==",
+  signPrivateKey: "c2lnLXByaXZhdGU=",
+  dbBindingHash: "YmluZGluZw==",
   credStoreContent: "Y29udGVudA==",
 };
 
@@ -26,22 +31,23 @@ beforeEach(() => {
 });
 
 describe("getAccount", () => {
-  it("returns a cached account without checking the rate limit or ctl", async () => {
+  it("returns a cached account after checking the rate limit", async () => {
     vi.mocked(getCachedAccount).mockResolvedValue(ACCOUNT);
 
     const result = await getAccount(ENV, "uid-123");
 
     expect(result).toEqual({ status: "ok", account: ACCOUNT });
-    expect(checkRateLimit).not.toHaveBeenCalled();
+    expect(checkRateLimit).toHaveBeenCalledWith(ENV.KEYS_CACHE, "uid-123");
     expect(lookupAccount).not.toHaveBeenCalled();
   });
 
-  it("returns rate_limited when the limit is exceeded on a cache miss", async () => {
+  it("returns rate_limited before reading the cache or ctl", async () => {
     vi.mocked(checkRateLimit).mockResolvedValue(false);
 
     const result = await getAccount(ENV, "uid-123");
 
     expect(result).toEqual({ status: "rate_limited" });
+    expect(getCachedAccount).not.toHaveBeenCalled();
     expect(lookupAccount).not.toHaveBeenCalled();
   });
 

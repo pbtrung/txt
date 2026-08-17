@@ -54,7 +54,16 @@ describe("handleKeys", () => {
     vi.mocked(verifyFirebaseIdToken).mockResolvedValue({ uid: "uid-123" });
     vi.mocked(getAccount).mockResolvedValue({
       status: "ok",
-      account: { type: "user", umk: "dW1r", credStoreContent: "Y29udGVudA==" },
+      account: {
+        type: "user",
+        umk: "dW1r",
+        signVersion: 1,
+        signAlgorithm: "ECDSA-P521-SHA512",
+        signPublicKey: "c2lnLXB1YmxpYw==",
+        signPrivateKey: "c2lnLXByaXZhdGU=",
+        dbBindingHash: "YmluZGluZw==",
+        credStoreContent: "Y29udGVudA==",
+      },
     });
 
     const resp = await handleKeys(makeRequest("good"), ENV);
@@ -62,7 +71,13 @@ describe("handleKeys", () => {
     expect(resp.status).toBe(200);
     expect(await resp.json()).toEqual({
       type: "user",
+      uid: "uid-123",
       umk: "dW1r",
+      signing: {
+        version: 1,
+        algorithm: "ECDSA-P521-SHA512",
+        private_key: "c2lnLXByaXZhdGU=",
+      },
       cred_store: "Y29udGVudA==",
     });
   });

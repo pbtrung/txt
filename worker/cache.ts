@@ -4,10 +4,8 @@
 // ctl round trip entirely. The 24-hour TTL bounds how long a deprovisioned
 // user keeps being served; revocation (§7) purges this key explicitly.
 //
-// Rate-limiting is per uid on both endpoints, gating only the ctl work a
-// cache miss triggers -- a cache hit never touches this counter, since it
-// never touches the resource the limit protects. No specific number is
-// mandated in docs/auth.md §6, so this is a judgment call.
+// Rate-limiting is per uid on both endpoints and applies before cache lookup,
+// so repeated credential minting cannot bypass it with a warm account cache.
 
 import type { Account } from "./ctl";
 
