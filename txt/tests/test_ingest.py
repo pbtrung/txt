@@ -5,6 +5,7 @@ import zipfile
 import brotli
 import pytest
 
+import txt.database_schema as schema_module
 import txt.ingest as ingest_module
 from txt.account_session import Account
 from txt.creds import Creds
@@ -110,7 +111,7 @@ def _reopen(local_path):
     # _ensure_schema, which does this on every run) before any other read.
     engine = SqliteEngine()
     engine.open(ACCOUNT.db_master_key, initial_bytes=local_path.read_bytes())
-    engine.exec_sql(ingest_module.SET_PAGE_SIZE_SQL)
+    engine.exec_sql(schema_module.SET_PAGE_SIZE_SQL)
     return engine
 
 

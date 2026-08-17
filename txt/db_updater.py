@@ -15,8 +15,15 @@ import brotli
 
 from .creds import Creds
 from .crypto_blob import CryptoBlob
+from .database_schema import (
+    PAGE_SIZE,
+    configure_database,
+    ensure_reading_schema,
+    table_columns,
+    table_exists,
+    validate_schema,
+)
 from .firebase_auth import FirebaseAuth
-from .ingest import PAGE_SIZE, ensure_reading_schema
 from .leancrypto_wasm import LeancryptoEngine
 from .libsql_client import LibsqlClient
 from .logger import Logger
@@ -24,18 +31,6 @@ from .opf import catalog_fields
 from .r2_client import R2Client, R2Object
 from .sqlite_engine import SqliteEngine
 from .turso_api import TursoClient, extract_account_name
-
-REQUIRED_TXT_COLUMNS = {
-    "id",
-    "txt_key",
-    "txt_prefix",
-    "path",
-    "catalog",
-    "last_accessed",
-    "last_cfi",
-    "created_at",
-}
-REQUIRED_BOOKMARK_COLUMNS = {"id", "txt_id", "cfi", "preview", "created_at"}
 
 
 class DbUpdater:
@@ -109,8 +104,7 @@ class DbUpdater:
             db_master_key,
             initial_bytes=remote.body if remote is not None else None,
         )
-        engine.exec_sql("PRAGMA page_size = 16384")
-        engine.exec_sql("PRAGMA foreign_keys = ON")
+        configure_database(engine)
         try:
             self._migrate_db(engine, uid, db_path, local_path, remote)
         finally:
@@ -178,13 +172,10 @@ class DbUpdater:
         self.logger.info(f"[{uid}] migration complete.")
 
     def _table_exists(self, engine: SqliteEngine) -> bool:
-        rows = engine.query(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'txt'"
-        )
-        return bool(rows)
+        return table_exists(engine, "txt")
 
     def _columns(self, engine: SqliteEngine) -> set:
-        return {row[1] for row in engine.query("PRAGMA table_info(txt)")}
+        return table_columns(engine, "txt")
 
     def _add_catalog_column(self, engine: SqliteEngine) -> None:
         if "catalog" not in self._columns(engine):
@@ -201,95 +192,11 @@ class DbUpdater:
             engine.execute("UPDATE txt SET catalog = ? WHERE id = ?", [catalog, row_id])
 
     def _validate_schema(self, engine: SqliteEngine, uid: str) -> None:
-        errors = []
-        [(page_size,)] = engine.query("PRAGMA page_size")
-        page_size = int(page_size)
-        if page_size != PAGE_SIZE:
-            errors.append(f"page_size is {page_size}, expected {PAGE_SIZE}")
-        [(foreign_keys,)] = engine.query("PRAGMA foreign_keys")
-        if int(foreign_keys) != 1:
-            errors.append("foreign_keys is not enabled")
-
-        txt_columns = self._columns(engine)
-        missing_txt = REQUIRED_TXT_COLUMNS - txt_columns
-        if missing_txt:
-            errors.append(f"txt missing columns: {', '.join(sorted(missing_txt))}")
-        if "metadata" in txt_columns:
-            errors.append("txt.metadata still exists")
-        if "autoincrement" not in self._compact_sql(
-            self._object_sql(engine, "table", "txt")
-        ):
-            errors.append("txt.id is not AUTOINCREMENT")
-        if "catalog" in txt_columns:
-            [(null_catalogs,)] = engine.query(
-                "SELECT count(*) FROM txt WHERE catalog IS NULL"
-            )
-            if int(null_catalogs):
-                errors.append(f"txt has {null_catalogs} null catalog value(s)")
-
-        bookmark_columns = {
-            row[1] for row in engine.query("PRAGMA table_info(txt_bookmarks)")
-        }
-        missing_bookmarks = REQUIRED_BOOKMARK_COLUMNS - bookmark_columns
-        if missing_bookmarks:
-            errors.append(
-                "txt_bookmarks missing columns: " + ", ".join(sorted(missing_bookmarks))
-            )
-        if "line" in bookmark_columns:
-            errors.append("txt_bookmarks.line still exists")
-
-        bookmark_sql = self._object_sql(engine, "table", "txt_bookmarks")
-        compact_bookmark_sql = self._compact_sql(bookmark_sql)
-        if "autoincrement" not in compact_bookmark_sql:
-            errors.append("txt_bookmarks.id is not AUTOINCREMENT")
-        if "unique(txt_id,cfi)" not in compact_bookmark_sql:
-            errors.append("txt_bookmarks is missing UNIQUE(txt_id, cfi)")
-        if "length(cast(previewasblob))<=100" not in compact_bookmark_sql:
-            errors.append("txt_bookmarks is missing the 100-byte preview limit")
-
-        index_columns = [
-            row[2]
-            for row in engine.query("PRAGMA index_info(idx_txt_bookmarks_txt_id)")
-        ]
-        if index_columns != ["txt_id", "id"]:
-            errors.append("idx_txt_bookmarks_txt_id has the wrong columns")
-
-        trigger_sql = self._compact_sql(
-            self._object_sql(engine, "trigger", "trg_txt_bookmarks_cap")
-        )
-        if "orderbyiddesc" not in trigger_sql or "limit20" not in trigger_sql:
-            errors.append("trg_txt_bookmarks_cap does not enforce the newest-20 cap")
-
-        foreign_key_rows = engine.query("PRAGMA foreign_key_list(txt_bookmarks)")
-        if not any(
-            len(row) >= 7
-            and row[2] == "txt"
-            and row[3] == "txt_id"
-            and row[4] == "id"
-            and str(row[6]).upper() == "CASCADE"
-            for row in foreign_key_rows
-        ):
-            errors.append("txt_bookmarks is missing its cascading txt foreign key")
-
-        quick_check = [str(row[0]) for row in engine.query("PRAGMA quick_check")]
-        if quick_check != ["ok"]:
-            errors.append("database quick_check failed: " + "; ".join(quick_check))
-
-        if errors:
-            raise ValueError(f"[{uid}] schema validation failed: {'; '.join(errors)}")
-
-        [(txt_count,)] = engine.query("SELECT count(*) FROM txt")
-        [(bookmark_count,)] = engine.query("SELECT count(*) FROM txt_bookmarks")
+        try:
+            stats = validate_schema(engine)
+        except ValueError as error:
+            raise ValueError(f"[{uid}] {error}") from error
         self.logger.info(
             f"[{uid}] schema check passed: page_size={PAGE_SIZE}, "
-            f"txt_rows={txt_count}, bookmarks={bookmark_count}."
+            f"txt_rows={stats.txt_rows}, bookmarks={stats.bookmarks}."
         )
-
-    def _object_sql(self, engine: SqliteEngine, kind: str, name: str) -> str:
-        rows = engine.query(
-            "SELECT sql FROM sqlite_master WHERE type = ? AND name = ?", [kind, name]
-        )
-        return rows[0][0] if rows and isinstance(rows[0][0], str) else ""
-
-    def _compact_sql(self, sql: str) -> str:
-        return "".join(sql.lower().split())
