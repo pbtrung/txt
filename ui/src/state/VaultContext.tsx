@@ -17,6 +17,7 @@ import { ensureSchema } from "../data/schema";
 import { unwrapKeys } from "../data/session";
 import { SqliteDatabase } from "../data/sqlite";
 import { WorkerClient } from "../data/workerClient";
+import type { R2SigningIdentity } from "../data/workerClient";
 import { fromBase64 } from "../util/base64";
 import { errorMessage } from "../util/errorMessage";
 
@@ -40,7 +41,12 @@ export interface VaultSession {
   db: SqliteDatabase;
   displayName: string;
   dbPrefix: string;
-  r2: R2Client;
+  dbPath: string;
+  dbMasterKey: Uint8Array;
+  r2: R2Client; // immutable content-prefix reads
+  dbR2: R2Client; // exact database-object reads and writes
+  worker: WorkerClient;
+  signing: R2SigningIdentity;
 }
 
 interface VaultContextValue {
@@ -80,13 +86,14 @@ class SessionResolver {
     this.onPhase(2);
     const keys = await worker.fetchKeys();
     this.onPhase(3);
-    const { credStore } = await unwrapKeys(keys, creds.user_root_key);
+    const { credStore, signing } = await unwrapKeys(keys, creds.user_root_key);
     this.onPhase(4);
     const credential = await worker.fetchR2Token(
       credStore.db_path,
       credStore.db_prefix,
+      signing,
     );
-    return this.openSession(credStore, credential);
+    return this.openSession(credStore, credential, worker, signing);
   }
 
   private async readCredentials(): Promise<BrowserCreds> {
@@ -101,21 +108,29 @@ class SessionResolver {
       creds.firebase_email,
       creds.firebase_password,
     );
-    return new WorkerClient(session.idToken);
+    return new WorkerClient(session);
   }
 
   private async openSession(
     credStore: Awaited<ReturnType<typeof unwrapKeys>>["credStore"],
-    credential: Awaited<ReturnType<WorkerClient["fetchR2Token"]>>,
+    credentials: Awaited<ReturnType<WorkerClient["fetchR2Token"]>>,
+    worker: WorkerClient,
+    signing: R2SigningIdentity,
   ): Promise<VaultSession> {
-    const r2 = new R2Client(credential);
+    const dbR2 = new R2Client(credentials.dbPath);
+    const r2 = new R2Client(credentials.dbPrefix);
     const key = fromBase64(credStore.db_master_key);
-    const db = await openDatabase(r2, credStore.db_path, key);
+    const db = await openDatabase(dbR2, credStore.db_path, key);
     return {
       db,
       displayName: credStore.display_name,
       dbPrefix: credStore.db_prefix,
+      dbPath: credStore.db_path,
+      dbMasterKey: key,
       r2,
+      dbR2,
+      worker,
+      signing,
     };
   }
 }

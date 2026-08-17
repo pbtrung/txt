@@ -5,6 +5,7 @@ const CREDENTIAL = {
   accessKeyId: "ak",
   secretAccessKey: "sk",
   sessionToken: "st",
+  expiration: "2026-12-01T00:00:00.000Z",
   endpoint: "https://acct.r2.cloudflarestorage.com",
   region: "auto",
   bucket: "b",

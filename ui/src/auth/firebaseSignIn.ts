@@ -1,16 +1,60 @@
-// A plain REST call to Firebase's Identity Toolkit, mirroring
-// txt/firebase_auth.py's FirebaseAuth.sign_in -- not the Firebase client
-// SDK, which would need a full firebaseConfig (authDomain, projectId, ...)
-// this client's reduced creds.json doesn't carry. The browser additionally
-// needs the idToken itself (to call the Worker's /v1/keys), which the
-// Python side never does since it only ever needs the uid.
+// Firebase REST authentication without the full client SDK. ID and refresh
+// tokens live only in this in-memory session; nothing is persisted by the UI.
 import { objectRecord, stringField } from "../util/validation";
 
 const SIGN_IN_URL =
   "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword";
+const REFRESH_URL = "https://securetoken.googleapis.com/v1/token";
+const REFRESH_SKEW_MS = 60_000;
 
-interface FirebaseSession {
-  idToken: string;
+export interface FirebaseTokenProvider {
+  getIdToken(forceRefresh?: boolean): Promise<string>;
+}
+
+export class FirebaseSession implements FirebaseTokenProvider {
+  private refreshInFlight: Promise<string> | null = null;
+
+  constructor(
+    private readonly apiKey: string,
+    private idToken: string,
+    private refreshToken: string,
+    private expiresAt: number,
+  ) {}
+
+  async getIdToken(forceRefresh = false): Promise<string> {
+    if (!forceRefresh && Date.now() + REFRESH_SKEW_MS < this.expiresAt) {
+      return this.idToken;
+    }
+    if (!this.refreshInFlight) {
+      this.refreshInFlight = this.refresh().finally(() => {
+        this.refreshInFlight = null;
+      });
+    }
+    return this.refreshInFlight;
+  }
+
+  private async refresh(): Promise<string> {
+    const body = new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: this.refreshToken,
+    });
+    const response = await fetch(
+      `${REFRESH_URL}?key=${encodeURIComponent(this.apiKey)}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body,
+      },
+    );
+    if (!response.ok) {
+      throw new Error(`Firebase token refresh failed: ${response.status}`);
+    }
+    const data = objectRecord(await response.json(), "Firebase refresh response");
+    this.idToken = stringField(data, "id_token", "Firebase refresh response");
+    this.refreshToken = stringField(data, "refresh_token", "Firebase refresh response");
+    this.expiresAt = expiryFromNow(data, "Firebase refresh response", "expires_in");
+    return this.idToken;
+  }
 }
 
 export async function signIn(
@@ -18,12 +62,30 @@ export async function signIn(
   email: string,
   password: string,
 ): Promise<FirebaseSession> {
-  const resp = await fetch(`${SIGN_IN_URL}?key=${encodeURIComponent(apiKey)}`, {
+  const response = await fetch(`${SIGN_IN_URL}?key=${encodeURIComponent(apiKey)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password, returnSecureToken: true }),
   });
-  if (!resp.ok) throw new Error(`Firebase sign-in failed: ${resp.status}`);
-  const data = objectRecord(await resp.json(), "Firebase sign-in response");
-  return { idToken: stringField(data, "idToken", "Firebase sign-in response") };
+  if (!response.ok) throw new Error(`Firebase sign-in failed: ${response.status}`);
+  const data = objectRecord(await response.json(), "Firebase sign-in response");
+  return new FirebaseSession(
+    apiKey,
+    stringField(data, "idToken", "Firebase sign-in response"),
+    stringField(data, "refreshToken", "Firebase sign-in response"),
+    expiryFromNow(data, "Firebase sign-in response", "expiresIn"),
+  );
+}
+
+function expiryFromNow(
+  data: Record<string, unknown>,
+  label: string,
+  field: string,
+): number {
+  const raw = stringField(data, field, label);
+  const seconds = Number(raw);
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    throw new Error(`${label} has an invalid ${field}`);
+  }
+  return Date.now() + seconds * 1000;
 }

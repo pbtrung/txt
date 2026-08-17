@@ -6,6 +6,7 @@ import { decrypt, decryptJson } from "../crypto/cryptoBlob";
 import { fromBase64 } from "../util/base64";
 import { objectRecord, stringField } from "../util/validation";
 import type { KeysResponse } from "./workerClient";
+import type { R2SigningIdentity } from "./workerClient";
 
 interface CredStorePayload {
   display_name: string;
@@ -17,6 +18,7 @@ interface CredStorePayload {
 interface UnwrappedSession {
   umk: Uint8Array;
   credStore: CredStorePayload;
+  signing: R2SigningIdentity;
 }
 
 export async function unwrapKeys(
@@ -27,7 +29,23 @@ export async function unwrapKeys(
   const umk = await decrypt(fromBase64(keys.umk), ikm);
   const payload = await decryptJson<unknown>(fromBase64(keys.credStore), umk);
   const credStore = parseCredStore(payload);
-  return { umk, credStore };
+  const privateDer = await decrypt(fromBase64(keys.signing.privateKey), umk);
+  try {
+    const privateKey = await crypto.subtle.importKey(
+      "pkcs8",
+      new Uint8Array(privateDer),
+      { name: "ECDSA", namedCurve: "P-521" },
+      false,
+      ["sign"],
+    );
+    return {
+      umk,
+      credStore,
+      signing: { uid: keys.uid, version: keys.signing.version, privateKey },
+    };
+  } finally {
+    privateDer.fill(0);
+  }
 }
 
 function parseCredStore(value: unknown): CredStorePayload {
