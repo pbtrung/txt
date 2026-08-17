@@ -195,12 +195,6 @@
   font-size: 16px;
 }
 
-@media (min-width: 768px) {
-  .reader-bookmark-menu {
-    font-size: 18px;
-  }
-}
-
 .bookmark-menu-row .dropdown-item {
   min-width: 0;
 }
