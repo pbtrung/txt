@@ -106,6 +106,8 @@ export class EpubRenderer {
   private rendition: Rendition | null = null;
   private host: HTMLElement | null = null;
   private hostResizeObserver: ResizeObserver | null = null;
+  private initialDisplayComplete = false;
+  private hostResizePending = false;
   private pendingFontLayouts = new Set<Promise<void>>();
   private hostWidth = 0;
   private preferredColumns: 1 | 2 = 1;
@@ -164,22 +166,23 @@ export class EpubRenderer {
     // sandboxed as allow-same-origin without the dangerous allow-scripts pair.
     this.host = element;
     this.hostWidth = element.clientWidth;
-    this.rendition = this.book.renderTo(element, {
+    const rendition = this.book.renderTo(element, {
       width: "100%",
       height: "100%",
       allowScriptedContent: false,
     });
-    this.rendition.themes.registerCss("default", READER_THEME_CSS);
+    this.rendition = rendition;
+    rendition.themes.registerCss("default", READER_THEME_CSS);
     // themes.font(), not a plain CSS rule: it applies as an inline
     // `!important` style per section (Rendition's own override mechanism),
     // which is what it takes to beat a book's own stylesheet -- nearly
     // every real EPUB sets its own font-family on body/paragraphs.
-    this.rendition.themes.font(READER_FONT_FAMILY);
-    this.rendition.on("rendered", (section, view) => {
+    rendition.themes.font(READER_FONT_FAMILY);
+    rendition.on("rendered", (section, view) => {
       this.applyLayoutFor(section);
       this.reflowAfterFontsLoad(section, view.document);
     });
-    this.rendition.on("relocated", (location: Location) => {
+    rendition.on("relocated", (location: Location) => {
       this.currentCfi = location.start.cfi;
       const userInitiated = this.navigationPending;
       this.navigationPending = false;
@@ -188,16 +191,20 @@ export class EpubRenderer {
     });
     this.observeHostSize(element);
     void this.loadCoverHref();
+    let displayed = false;
     if (initialCfi) {
       try {
-        await this.rendition.display(initialCfi);
-        await this.waitForFontLayouts();
-        return;
+        await rendition.display(initialCfi);
+        displayed = true;
       } catch {
         // A stale or malformed CFI must not prevent the book from opening.
       }
     }
-    await this.rendition.display();
+    if (this.destroyed || this.rendition !== rendition) return;
+    if (!displayed) await rendition.display();
+    if (this.destroyed || this.rendition !== rendition) return;
+    this.initialDisplayComplete = true;
+    this.flushHostResize();
     await this.waitForFontLayouts();
   }
 
@@ -284,17 +291,28 @@ export class EpubRenderer {
   private observeHostSize(host: HTMLElement): void {
     if (typeof ResizeObserver === "undefined") return;
     this.hostResizeObserver = new ResizeObserver(() => {
-      if (!this.rendition || this.destroyed) return;
-      const width = host.clientWidth;
-      const height = host.clientHeight;
-      if (width <= 0 || height <= 0) return;
-      this.hostWidth = width;
-      const current = this.rendition.currentLocation()?.start;
-      if (current) this.applyLayoutFor(current);
-      else this.applyPreferredColumns();
-      this.rendition.resize(width, height, current?.cfi);
+      this.hostResizePending = true;
+      this.flushHostResize();
     });
     this.hostResizeObserver.observe(host);
+  }
+
+  private flushHostResize(): void {
+    if (!this.hostResizePending || !this.initialDisplayComplete) return;
+    const rendition = this.rendition;
+    const host = this.host;
+    if (!rendition || !host || this.destroyed) return;
+    const manager = rendition.manager;
+    if (!manager || !manager.isRendered()) return;
+    const width = host.clientWidth;
+    const height = host.clientHeight;
+    if (width <= 0 || height <= 0) return;
+    this.hostResizePending = false;
+    this.hostWidth = width;
+    const current = rendition.currentLocation()?.start;
+    if (current) this.applyLayoutFor(current);
+    else this.applyPreferredColumns();
+    rendition.resize(width, height, current?.cfi);
   }
 
   setColumns(count: 1 | 2): void {
@@ -424,6 +442,8 @@ export class EpubRenderer {
     this.hostResizeObserver?.disconnect();
     this.hostResizeObserver = null;
     this.host = null;
+    this.initialDisplayComplete = false;
+    this.hostResizePending = false;
     this.pendingFontLayouts.clear();
     this.rendition?.destroy();
     this.rendition = null;

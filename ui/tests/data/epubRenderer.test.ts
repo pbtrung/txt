@@ -13,7 +13,7 @@ const renditionMock = {
   on: vi.fn(),
   spread: vi.fn(),
   settings: {} as { gap?: number },
-  manager: { settings: {} as { gap?: number } },
+  manager: { settings: {} as { gap?: number }, isRendered: vi.fn(() => true) },
   currentLocation: vi.fn().mockReturnValue(undefined),
   getRange: vi.fn().mockReturnValue(null),
   getContents: vi.fn().mockReturnValue([]),
@@ -44,6 +44,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   renditionMock.settings = {};
   renditionMock.manager.settings = {};
+  renditionMock.manager.isRendered.mockReturnValue(true);
   renditionMock.currentLocation.mockReturnValue(undefined);
   renditionMock.getRange.mockReturnValue(null);
   renditionMock.getContents.mockReturnValue([]);
@@ -377,7 +378,7 @@ describe("EpubRenderer", () => {
     expect(renditionMock.spread).toHaveBeenLastCalledWith("auto", 900);
   });
 
-  it("reapplies the spread after the host width changes", () => {
+  it("reapplies the spread after the host width changes", async () => {
     let resize!: ResizeObserverCallback;
     const observe = vi.fn();
     const disconnect = vi.fn();
@@ -398,7 +399,7 @@ describe("EpubRenderer", () => {
       clientHeight: { value: 700 },
     });
 
-    renderer.renderTo(host);
+    await renderer.renderTo(host);
     renderer.setColumns(2);
     renditionMock.spread.mockClear();
     resize([], {} as ResizeObserver);
@@ -411,7 +412,7 @@ describe("EpubRenderer", () => {
     expect(disconnect).toHaveBeenCalledOnce();
   });
 
-  it("centers the spread when the first-open host becomes measurable", () => {
+  it("defers a first-open host resize until the rendition is ready", async () => {
     let resize!: ResizeObserverCallback;
     class ResizeObserverMock {
       observe = vi.fn();
@@ -430,8 +431,15 @@ describe("EpubRenderer", () => {
       clientWidth: { get: () => width },
       clientHeight: { value: 700 },
     });
+    let resolveDisplay!: () => void;
+    renditionMock.display.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveDisplay = resolve;
+        }),
+    );
 
-    renderer.renderTo(host);
+    const rendering = renderer.renderTo(host);
     renderer.setColumns(2);
     renditionMock.spread.mockClear();
     width = 1100;
@@ -439,6 +447,11 @@ describe("EpubRenderer", () => {
       start: { cfi: "epubcfi(/6/8)", index: 4 },
     });
     resize([], {} as ResizeObserver);
+
+    expect(renditionMock.resize).not.toHaveBeenCalled();
+
+    resolveDisplay();
+    await rendering;
 
     expect(renditionMock.settings.gap).toBe(100);
     expect(renditionMock.spread).toHaveBeenCalledWith("auto", 900);
