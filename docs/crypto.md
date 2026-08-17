@@ -27,7 +27,7 @@ Every account has a separate signing key for proving possession when calling `/v
 
 | version | algorithm | public-key encoding | private-key encoding | signature encoding |
 |---:|---|---|---|---|
-| 1 | ECDSA P-521 with SHA-512 | SubjectPublicKeyInfo DER | PKCS#8 DER, wrapped by `umk` | Web Crypto raw `r || s`, exactly 132 bytes |
+| 1 | ECDSA P-521 with SHA-512 | SubjectPublicKeyInfo DER | PKCS#8 DER, wrapped by `umk` | Web Crypto raw signature: 66-byte `r` followed by 66-byte `s` (132 bytes total) |
 | 2 (reserved) | P-521 plus ML-DSA-87 hybrid | versioned composite envelope | versioned composite envelope, wrapped by `umk` | versioned envelope containing both signatures |
 
 Version 2 is reserved as the migration direction, not accepted today. When enabled, the Worker must verify both the P-521 and ML-DSA-87 components over the identical canonical message; accepting either component alone would permit downgrade. Version-specific public/private blobs are opaque to the generic endpoint layer, so adding the hybrid does not change the JSON envelope. P-521 offers approximately 256-bit classical security but is not post-quantum secure.
@@ -56,7 +56,9 @@ crypto.subtle.sign(
 )
 ```
 
-The Worker imports `key_store.sign_pubkey` as P-521 SPKI, requires a 132-byte signature, rebuilds the canonical proof independently, and verifies it with the same Web Crypto parameters. A valid signature proves access to the unwrapped per-user private key; it does not authorize the paths. Authorization is the separate equality check between the final 64-byte SHA-512 value above and `users.db_binding_hash`.
+Web Crypto returns the P-521 ECDSA signature as two fixed-width integers in order: `r` followed by `s`. Each integer is a 66-byte unsigned big-endian value, left-padded with zero bytes when necessary. The resulting signature is exactly 132 bytes (`r`, 66 bytes, plus `s`, 66 bytes). This is the raw IEEE P1363 form, not an ASN.1 DER sequence.
+
+The Worker imports `key_store.sign_pubkey` as P-521 SPKI, requires that exact 132-byte signature format, rebuilds the canonical proof independently, and verifies it with the same Web Crypto parameters. A valid signature proves access to the unwrapped per-user private key; it does not authorize the paths. Authorization is the separate equality check between the final 64-byte SHA-512 value above and `users.db_binding_hash`.
 
 ## Blob Format
 
