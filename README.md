@@ -78,6 +78,14 @@ txt --update-db admin_creds.json --local-db-dir DIR --verbose
 
 Walks every account this administrator's creds.json can reach — their own database, plus every user backup row `--init-user` has written (docs/auth.md §2) — and migrates each one still on the old `txt.metadata` column to the flat `txt.catalog` shape (docs/data_model.md §3.1): adds `catalog`, populates it by extracting `title`/`authors`/`subjects`/`publisher` out of each row's existing `metadata`, drops `metadata`, `VACUUM`s, and re-uploads. Only covers accounts with a backup `cred_store` row; anyone provisioned before that mechanism existed needs their own creds.json run individually. Idempotent and resumable at both the per-account and per-row level — an already-migrated account is skipped outright, and a partially-migrated one only re-populates rows still missing a `catalog`.
 
+### Clean unreferenced R2 objects
+
+```
+txt --clean-bucket admin_creds.json --verbose --dry-run
+```
+
+Builds an exact allowlist from every account this administrator can reach. It downloads and decrypts each `db_path` database, retains that database object plus only the content objects referenced by its `txt_prefix`/`path` rows, then treats every other object in the configured R2 bucket as stale. This includes unreferenced uploads under a valid `{db_prefix}/`, such as objects left behind by a failed commit. A missing database references no content objects. `--dry-run` reports stale objects without deleting them; omit it to delete them. The command refuses to clean when no account rows are reachable, when any `users` row lacks an admin backup in `cred_store`, or when a database cannot be read safely.
+
 ### Common to every CLI command
 
 `-v`/`--verbose` logs each step's progress.

@@ -3,6 +3,7 @@ from pathlib import Path
 import click
 
 from .account_init import AccountInitializer
+from .bucket_cleaner import BucketCleaner
 from .creds import load_creds, load_user_creds
 from .db_updater import DbUpdater
 from .ingest import TxtIngester
@@ -72,6 +73,17 @@ from .replace_images import ImageReplacer
         "creds.json can reach (needs --local-db-dir)"
     ),
 )
+@click.option(
+    "--clean-bucket",
+    "clean_bucket_creds_path",
+    metavar="CREDS_JSON",
+    help="Delete R2 objects not referenced by accounts reachable from this admin",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Report bucket objects that would be deleted without deleting them",
+)
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose progress logging")
 @click.pass_context
 def cli(
@@ -85,6 +97,8 @@ def cli(
     local_db_dir: str | None,
     ingest_creds_path: str | None,
     update_db_creds_path: str | None,
+    clean_bucket_creds_path: str | None,
+    dry_run: bool,
     verbose: bool,
 ) -> None:
     logger = Logger(verbose)
@@ -93,6 +107,8 @@ def cli(
 
 
 def _dispatch(opts: dict, logger: Logger) -> bool:
+    if opts["dry_run"] and not opts["clean_bucket_creds_path"]:
+        raise click.UsageError("--dry-run requires --clean-bucket CREDS_JSON")
     if opts["admin_creds_path"]:
         _run_init_admin(opts["admin_creds_path"], logger)
     elif opts["init_user"]:
@@ -110,6 +126,8 @@ def _dispatch(opts: dict, logger: Logger) -> bool:
         )
     elif opts["update_db_creds_path"]:
         _run_update_db(opts["update_db_creds_path"], opts["local_db_dir"], logger)
+    elif opts["clean_bucket_creds_path"]:
+        _run_clean_bucket(opts["clean_bucket_creds_path"], opts["dry_run"], logger)
     else:
         return False
     return True
@@ -151,6 +169,10 @@ def _run_update_db(creds_path: str, local_db_dir: str | None, logger: Logger) ->
     if not local_db_dir:
         raise click.UsageError("--update-db requires --local-db-dir DIR")
     DbUpdater(load_creds(creds_path), Path(local_db_dir), logger).run()
+
+
+def _run_clean_bucket(creds_path: str, dry_run: bool, logger: Logger) -> None:
+    BucketCleaner(load_creds(creds_path), logger, dry_run=dry_run).run()
 
 
 def run(argv: list | None = None) -> None:

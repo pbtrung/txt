@@ -1,5 +1,6 @@
 from click.testing import CliRunner
 
+import txt.cli as cli_module
 from txt.cli import cli
 
 
@@ -52,3 +53,38 @@ def test_update_db_without_local_db_dir_is_a_usage_error(tmp_path):
     result = CliRunner().invoke(cli, ["--update-db", str(creds_path)])
     assert result.exit_code != 0
     assert "--local-db-dir" in result.output
+
+
+def test_clean_bucket_passes_dry_run_and_verbose_to_cleaner(monkeypatch, tmp_path):
+    captured = {}
+
+    class FakeCleaner:
+        def __init__(self, creds, logger, dry_run):
+            captured.update(creds=creds, logger=logger, dry_run=dry_run)
+
+        def run(self):
+            captured["ran"] = True
+
+    creds_path = tmp_path / "creds.json"
+    creds_path.write_text("{}")
+    creds = object()
+    monkeypatch.setattr(cli_module, "load_creds", lambda path: creds)
+    monkeypatch.setattr(cli_module, "BucketCleaner", FakeCleaner)
+
+    result = CliRunner().invoke(
+        cli,
+        ["--clean-bucket", str(creds_path), "--verbose", "--dry-run"],
+    )
+
+    assert result.exit_code == 0
+    assert captured["creds"] is creds
+    assert captured["logger"].verbose_enabled is True
+    assert captured["dry_run"] is True
+    assert captured["ran"] is True
+
+
+def test_dry_run_without_clean_bucket_is_a_usage_error():
+    result = CliRunner().invoke(cli, ["--dry-run"])
+
+    assert result.exit_code != 0
+    assert "--dry-run requires --clean-bucket" in result.output
