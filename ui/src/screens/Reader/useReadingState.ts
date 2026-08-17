@@ -66,25 +66,33 @@ export function useReadingState(
   const currentSaved =
     currentCfi !== null && bookmarks.some((bookmark) => bookmark.cfi === currentCfi);
 
-  const toggleCurrent = useCallback(async () => {
-    if (!renderer || bookmarkBusy) return;
-    const current = renderer.currentBookmark();
-    if (!current) return;
-    setBookmarkBusy(true);
-    setLocalError(null);
-    try {
-      await session.database.mutate(
-        bookmarks.some((bookmark) => bookmark.cfi === current.cfi)
-          ? deleteBookmarkMutation(document.txtId, current.cfi)
-          : saveBookmarkMutation(document.txtId, current.cfi, current.preview),
-      );
-      setRefresh((value) => value + 1);
-    } catch (error) {
-      setLocalError(errorMessage(error));
-    } finally {
-      setBookmarkBusy(false);
-    }
-  }, [bookmarkBusy, bookmarks, document.txtId, renderer, session.database]);
+  const toggleCurrent = useCallback(
+    async (pageNumber: number) => {
+      if (!renderer || bookmarkBusy) return;
+      const current = renderer.currentBookmark();
+      if (!current) return;
+      setBookmarkBusy(true);
+      setLocalError(null);
+      try {
+        await session.database.mutate(
+          bookmarks.some((bookmark) => bookmark.cfi === current.cfi)
+            ? deleteBookmarkMutation(document.txtId, current.cfi)
+            : saveBookmarkMutation(
+                document.txtId,
+                current.cfi,
+                pageNumber,
+                current.preview,
+              ),
+        );
+        setRefresh((value) => value + 1);
+      } catch (error) {
+        setLocalError(errorMessage(error));
+      } finally {
+        setBookmarkBusy(false);
+      }
+    },
+    [bookmarkBusy, bookmarks, document.txtId, renderer, session.database],
+  );
 
   const remove = useCallback(
     async (cfi: string) => {

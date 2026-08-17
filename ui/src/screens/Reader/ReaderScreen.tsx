@@ -67,7 +67,7 @@ function ReadyReader({
           bookmarks={reading.bookmarks}
           status={reading.databaseStatus}
           error={reading.error}
-          onBookmark={() => void reading.toggleCurrent()}
+          onBookmark={() => void reading.toggleCurrent(page.current)}
           onRemove={(cfi) => void reading.remove(cfi)}
           onRetry={() => void reading.retry()}
         />

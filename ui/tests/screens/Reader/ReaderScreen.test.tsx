@@ -46,6 +46,7 @@ import { EpubRenderer } from "../../../src/data/epubRenderer";
 import { useVault, type VaultSession } from "../../../src/state/VaultContext";
 import { ReaderScreen } from "../../../src/screens/Reader/ReaderScreen";
 import { useReaderDocument } from "../../../src/screens/Reader/useReaderDocument";
+import { useReadingState } from "../../../src/screens/Reader/useReadingState";
 
 afterEach(() => {
   cleanup();
@@ -342,6 +343,8 @@ describe("ReaderScreen", () => {
     await userEvent.click(
       screen.getByRole("menuitem", { name: "Add current bookmark" }),
     );
+    const reading = vi.mocked(useReadingState).mock.results.at(-1)!.value;
+    expect(reading.toggleCurrent).toHaveBeenCalledWith(1);
   });
 
   it("has a back-to-library link", () => {

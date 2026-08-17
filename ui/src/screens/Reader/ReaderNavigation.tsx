@@ -4,6 +4,7 @@ import type { DatabaseStoreStatus } from "../../data/databaseStore";
 import type { EpubRenderer, PagePosition } from "../../data/epubRenderer";
 import type { BookmarkRecord } from "../../data/readingState";
 import { classNames } from "../../util/classNames";
+import { BookmarkRow } from "./BookmarkRow";
 
 const FONT_SIZES_PX = [16, 18, 20, 22] as const;
 
@@ -177,7 +178,7 @@ function BookmarkOptions({
       <BookmarkStatus {...{ status, error, onRetry }} />
       {bookmarks.length ? (
         bookmarks.map((bookmark) => (
-          <BookmarkOption
+          <BookmarkRow
             key={bookmark.id}
             {...{ bookmark, bookmarkBusy, onNavigate, onRemove }}
           />
@@ -185,38 +186,6 @@ function BookmarkOptions({
       ) : (
         <span className="dropdown-item-text text-muted">No bookmarks yet.</span>
       )}
-    </div>
-  );
-}
-
-function BookmarkOption({
-  bookmark,
-  bookmarkBusy,
-  onNavigate,
-  onRemove,
-}: {
-  bookmark: BookmarkRecord;
-  bookmarkBusy: boolean;
-  onNavigate: (cfi: string) => void;
-  onRemove: (cfi: string) => void;
-}) {
-  return (
-    <div className="d-flex align-items-center px-2 bookmark-menu-row">
-      <button
-        type="button"
-        role="menuitem"
-        className="dropdown-item text-truncate"
-        onClick={() => onNavigate(bookmark.cfi)}
-      >
-        {bookmark.preview || "Saved location"}
-      </button>
-      <IconButton
-        label="Delete bookmark"
-        icon="x-lg"
-        className="border-0 flex-shrink-0"
-        disabled={bookmarkBusy}
-        onClick={() => onRemove(bookmark.cfi)}
-      />
     </div>
   );
 }

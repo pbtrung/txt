@@ -8,6 +8,7 @@ const PREVIEW_BYTES = 100;
 export interface BookmarkRecord {
   id: number;
   cfi: string;
+  pageNumber: number | null;
   preview: string;
   createdAt: number;
 }
@@ -160,13 +161,14 @@ export async function listBookmarks(
   return database.read((db) =>
     db
       .query(
-        "SELECT id, cfi, preview, created_at FROM txt_bookmarks " +
+        "SELECT id, cfi, page_number, preview, created_at FROM txt_bookmarks " +
           "WHERE txt_id = ? ORDER BY created_at DESC, id DESC",
         [txtId],
       )
-      .map(([id, cfi, preview, createdAt]) => ({
+      .map(([id, cfi, pageNumber, preview, createdAt]) => ({
         id: id as number,
         cfi: cfi as string,
+        pageNumber: pageNumber as number | null,
         preview: preview as string,
         createdAt: createdAt as number,
       })),
@@ -176,6 +178,7 @@ export async function listBookmarks(
 export function saveBookmarkMutation(
   txtId: number,
   cfi: string,
+  pageNumber: number,
   preview: string,
   createdAt = Date.now(),
 ): DatabaseMutation {
@@ -184,13 +187,18 @@ export function saveBookmarkMutation(
     description: "save bookmark",
     apply: (db) =>
       db.execute(
-        "INSERT INTO txt_bookmarks (txt_id, cfi, preview, created_at) " +
-          "VALUES (?, ?, ?, ?) " +
+        "INSERT INTO txt_bookmarks (txt_id, cfi, page_number, preview, created_at) " +
+          "VALUES (?, ?, ?, ?, ?) " +
           "ON CONFLICT(txt_id, cfi) DO UPDATE SET " +
-          "preview = excluded.preview, created_at = excluded.created_at",
-        [txtId, cfi, safePreview, createdAt],
+          "page_number = excluded.page_number, preview = excluded.preview, " +
+          "created_at = excluded.created_at",
+        [txtId, cfi, validPageNumber(pageNumber), safePreview, createdAt],
       ),
   };
+}
+
+function validPageNumber(pageNumber: number): number | null {
+  return Number.isInteger(pageNumber) && pageNumber >= 1 ? pageNumber : null;
 }
 
 export function deleteBookmarkMutation(txtId: number, cfi: string): DatabaseMutation {

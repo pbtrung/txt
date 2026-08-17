@@ -18,6 +18,7 @@ describe("BookmarkMenu", () => {
           {
             id: 1,
             cfi: "epubcfi(/6/4)",
+            pageNumber: 12,
             preview: "Fear is the mind-killer.",
             createdAt: 42,
           },
@@ -35,6 +36,7 @@ describe("BookmarkMenu", () => {
     await userEvent.click(screen.getByRole("button", { name: "Bookmarks" }));
     const menu = screen.getByRole("menu", { name: "Bookmark options" });
     expect(menu).toHaveClass("reader-bookmark-menu", "show");
+    expect(screen.getByText("Page 12")).toBeInTheDocument();
 
     await userEvent.click(screen.getByText("Fear is the mind-killer."));
     expect(display).toHaveBeenCalledWith("epubcfi(/6/4)");

@@ -127,11 +127,16 @@ describe("ReadingSession", () => {
 describe("bookmark mutations", () => {
   it("normalizes and truncates previews to 100 UTF-8 bytes", () => {
     const execute = vi.fn();
-    saveBookmarkMutation(3, "epubcfi(/6/2)", `  ${"é".repeat(60)}   tail  `, 42).apply({
-      execute,
-    } as unknown as SqliteDatabase);
+    saveBookmarkMutation(
+      3,
+      "epubcfi(/6/2)",
+      12,
+      `  ${"é".repeat(60)}   tail  `,
+      42,
+    ).apply({ execute } as unknown as SqliteDatabase);
 
-    const preview = execute.mock.calls[0][1][2] as string;
+    const preview = execute.mock.calls[0][1][3] as string;
+    expect(execute.mock.calls[0][1][2]).toBe(12);
     expect(new TextEncoder().encode(preview)).toHaveLength(100);
     expect(preview).toBe("é".repeat(50));
     expect(truncateUtf8("abc", 2)).toBe("ab");
@@ -139,16 +144,28 @@ describe("bookmark mutations", () => {
 
   it("loads newest bookmarks and deletes by document and CFI", async () => {
     const query = vi.fn().mockReturnValue([
-      [2, "epubcfi(/6/4)", "Second", 20],
-      [1, "epubcfi(/6/2)", "First", 10],
+      [2, "epubcfi(/6/4)", 8, "Second", 20],
+      [1, "epubcfi(/6/2)", null, "First", 10],
     ]);
     const database = {
       read: async (reader: (db: unknown) => unknown) => reader({ query }),
     } as unknown as LibraryDatabaseStore;
 
     await expect(listBookmarks(database, 3)).resolves.toEqual([
-      { id: 2, cfi: "epubcfi(/6/4)", preview: "Second", createdAt: 20 },
-      { id: 1, cfi: "epubcfi(/6/2)", preview: "First", createdAt: 10 },
+      {
+        id: 2,
+        cfi: "epubcfi(/6/4)",
+        pageNumber: 8,
+        preview: "Second",
+        createdAt: 20,
+      },
+      {
+        id: 1,
+        cfi: "epubcfi(/6/2)",
+        pageNumber: null,
+        preview: "First",
+        createdAt: 10,
+      },
     ]);
 
     const execute = vi.fn();
