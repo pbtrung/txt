@@ -34,12 +34,20 @@ class FakeR2Client:
         self.get_calls.append(key)
         return self.objects.get(key)
 
-    def list_keys(self, prefix):
+    def list_keys(self, prefix, on_progress=None):
         self.list_prefixes.append(prefix)
+        if on_progress is not None:
+            for count in range(1000, len(self.objects) + 1, 1000):
+                on_progress(count)
+            if len(self.objects) % 1000 or not self.objects:
+                on_progress(len(self.objects))
         return list(self.objects)
 
-    def delete_keys(self, keys):
-        self.deleted.extend(keys)
+    def delete_keys(self, keys, on_progress=None):
+        for start in range(0, len(keys), 1000):
+            self.deleted.extend(keys[start : start + 1000])
+            if on_progress is not None:
+                on_progress(len(self.deleted))
 
 
 class FakeSqliteEngine:
@@ -188,6 +196,23 @@ def test_dry_run_reports_stale_objects_without_deleting(monkeypatch):
     assert cleaner.r2.deleted == []
     assert "Would delete books/stale" in cleaner.logger.verbose_messages
     assert cleaner.logger.info_messages[-1] == "Dry run: would delete 1 object(s)."
+
+
+def test_reports_listing_and_deletion_progress_per_thousand_objects(monkeypatch):
+    objects = {f"orphan-{index:04d}": b"stale" for index in range(2501)}
+    cleaner = build_cleaner(
+        monkeypatch,
+        [account("admin", "missing-db", "books")],
+        objects,
+    )
+
+    cleaner.run()
+
+    for count in ("1,000", "2,000", "2,501"):
+        assert f"Listed {count} bucket object(s)..." in cleaner.logger.info_messages
+        assert (
+            f"Deleted {count}/2,501 stale object(s)..." in cleaner.logger.info_messages
+        )
 
 
 def test_missing_database_means_prefix_has_no_referenced_content(monkeypatch):

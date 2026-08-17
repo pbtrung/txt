@@ -86,6 +86,8 @@ txt --clean-bucket admin_creds.json --verbose --dry-run
 
 Builds an exact allowlist from every account this administrator can reach. It downloads and decrypts each `db_path` database, retains that database object plus only the content objects referenced by its `txt_prefix`/`path` rows, then treats every other object in the configured R2 bucket as stale. This includes unreferenced uploads under a valid `{db_prefix}/`, such as objects left behind by a failed commit. A missing database references no content objects. `--dry-run` reports stale objects without deleting them; omit it to delete them. The command refuses to clean when no account rows are reachable, when any `users` row lacks an admin backup in `cred_store`, or when a database cannot be read safely.
 
+Cleanup progress is printed to the console and appended to `run.log`, including cumulative progress after every R2 listing or deletion batch of up to 1,000 objects. Use `--log-file FILE` to choose another path. With `--verbose`, each stale object is also recorded individually.
+
 ### Common to every CLI command
 
 `-v`/`--verbose` logs each step's progress.

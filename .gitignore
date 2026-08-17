@@ -25,5 +25,6 @@ dist/
 
 # Secrets / data
 *.db
+*.log
 creds/
 replaced_txt_*/

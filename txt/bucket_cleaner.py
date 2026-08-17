@@ -31,6 +31,9 @@ class BucketCleaner:
         self.blob = CryptoBlob(self.engine)
 
     def run(self) -> None:
+        self.logger.info(
+            f"Starting bucket cleanup ({'dry run' if self.dry_run else 'delete mode'})."
+        )
         admin_uid = self._sign_in()
         ctl = self._connect_ctl()
         admin_umk = self._admin_umk(ctl, admin_uid)
@@ -40,8 +43,19 @@ class BucketCleaner:
                 "No accounts are reachable from this admin; refusing to clean bucket"
             )
 
+        self.logger.info(
+            f"Building allowlist from {len(accounts)} account database(s)..."
+        )
         allowlist = self._storage_allowlist(accounts)
-        bucket_keys = set(self.r2.list_keys(""))
+        self.logger.info(f"Allowlist contains {len(allowlist)} exact R2 object key(s).")
+        self.logger.info("Listing all R2 bucket objects...")
+        bucket_keys = set(
+            self.r2.list_keys(
+                "",
+                lambda count: self.logger.info(f"Listed {count:,} bucket object(s)..."),
+            )
+        )
+        self.logger.info(f"Finished listing {len(bucket_keys):,} bucket object(s).")
         retained = bucket_keys & allowlist
         stale = sorted(bucket_keys - retained)
 
@@ -56,7 +70,14 @@ class BucketCleaner:
         if self.dry_run:
             self.logger.info(f"Dry run: would delete {len(stale)} object(s).")
             return
-        self.r2.delete_keys(stale)
+        if stale:
+            self.logger.info(f"Deleting {len(stale):,} stale object(s)...")
+        self.r2.delete_keys(
+            stale,
+            lambda count: self.logger.info(
+                f"Deleted {count:,}/{len(stale):,} stale object(s)..."
+            ),
+        )
         self.logger.info(f"Deleted {len(stale)} object(s).")
 
     def _sign_in(self) -> str:
@@ -101,7 +122,11 @@ class BucketCleaner:
 
     def _storage_allowlist(self, accounts: list[tuple[str, dict]]) -> set[str]:
         allowlist: set[str] = set()
-        for uid, payload in accounts:
+        for index, (uid, payload) in enumerate(accounts, start=1):
+            self.logger.info(
+                f"[{index}/{len(accounts)}] Reading database references "
+                f"for uid={uid}..."
+            )
             db_path = payload.get("db_path")
             db_prefix = payload.get("db_prefix")
             if not isinstance(db_path, str) or not db_path:
@@ -113,8 +138,9 @@ class BucketCleaner:
             content_keys = self._content_keys(uid, db_path, db_prefix, db_master_key)
             allowlist.add(db_path)
             allowlist.update(content_keys)
-            self.logger.verbose(
-                f"[{uid}] db_path={db_path}, db_prefix={db_prefix}/, "
+            self.logger.info(
+                f"[{index}/{len(accounts)}] uid={uid}, db_path={db_path}, "
+                f"db_prefix={db_prefix}/, "
                 f"{len(content_keys)} referenced content object(s)"
             )
         return allowlist

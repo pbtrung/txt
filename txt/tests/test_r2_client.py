@@ -35,7 +35,14 @@ class FakeS3Client:
             )
         return {"Body": io.BytesIO(self._objects[Key])}
 
-    def list_objects_v2(self, Bucket, Prefix, ContinuationToken=None, Delimiter=None):
+    def list_objects_v2(
+        self,
+        Bucket,
+        Prefix,
+        ContinuationToken=None,
+        Delimiter=None,
+        MaxKeys=None,
+    ):
         index = 0 if ContinuationToken is None else int(ContinuationToken)
         pages = self._prefix_pages if Delimiter else self._pages
         page = pages[index]
@@ -99,6 +106,16 @@ def test_list_keys_follows_pagination(monkeypatch):
     assert R2Client(CONFIG).list_keys("t/") == ["a", "b", "c"]
 
 
+def test_list_keys_reports_progress_after_each_page(monkeypatch):
+    fake = FakeS3Client(pages=[[f"a{i}" for i in range(1000)], ["last"]])
+    monkeypatch.setattr(r2_client_module.boto3, "client", lambda *a, **k: fake)
+    progress = []
+
+    R2Client(CONFIG).list_keys("", progress.append)
+
+    assert progress == [1000, 1001]
+
+
 def test_list_keys_single_page(monkeypatch):
     fake = FakeS3Client(pages=[["only"]])
     monkeypatch.setattr(r2_client_module.boto3, "client", lambda *a, **k: fake)
@@ -116,6 +133,16 @@ def test_delete_keys_batches_at_1000(monkeypatch):
     assert len(fake.delete_calls) == 2
     assert len(fake.delete_calls[0][1]) == 1000
     assert len(fake.delete_calls[1][1]) == 500
+
+
+def test_delete_keys_reports_progress_after_each_batch(monkeypatch):
+    fake = FakeS3Client()
+    monkeypatch.setattr(r2_client_module.boto3, "client", lambda *a, **k: fake)
+    progress = []
+
+    R2Client(CONFIG).delete_keys([f"k{i}" for i in range(1500)], progress.append)
+
+    assert progress == [1000, 1500]
 
 
 def test_delete_keys_noop_for_empty_list(monkeypatch):

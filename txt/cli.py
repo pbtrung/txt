@@ -84,6 +84,14 @@ from .replace_images import ImageReplacer
     is_flag=True,
     help="Report bucket objects that would be deleted without deleting them",
 )
+@click.option(
+    "--log-file",
+    "log_file_path",
+    type=click.Path(dir_okay=False),
+    default="run.log",
+    show_default=True,
+    help="Mirror --clean-bucket output to FILE",
+)
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose progress logging")
 @click.pass_context
 def cli(
@@ -99,11 +107,18 @@ def cli(
     update_db_creds_path: str | None,
     clean_bucket_creds_path: str | None,
     dry_run: bool,
+    log_file_path: str,
     verbose: bool,
 ) -> None:
-    logger = Logger(verbose)
-    if not _dispatch(ctx.params, logger):
-        click.echo(ctx.get_help())
+    cleanup_log = Path(log_file_path) if clean_bucket_creds_path else None
+    logger = Logger(verbose, cleanup_log)
+    try:
+        if cleanup_log is not None:
+            logger.info(f"Logging bucket cleanup to {cleanup_log}")
+        if not _dispatch(ctx.params, logger):
+            click.echo(ctx.get_help())
+    finally:
+        logger.close()
 
 
 def _dispatch(opts: dict, logger: Logger) -> bool:

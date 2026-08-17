@@ -70,6 +70,7 @@ def test_clean_bucket_passes_dry_run_and_verbose_to_cleaner(monkeypatch, tmp_pat
     creds = object()
     monkeypatch.setattr(cli_module, "load_creds", lambda path: creds)
     monkeypatch.setattr(cli_module, "BucketCleaner", FakeCleaner)
+    monkeypatch.chdir(tmp_path)
 
     result = CliRunner().invoke(
         cli,
@@ -81,6 +82,7 @@ def test_clean_bucket_passes_dry_run_and_verbose_to_cleaner(monkeypatch, tmp_pat
     assert captured["logger"].verbose_enabled is True
     assert captured["dry_run"] is True
     assert captured["ran"] is True
+    assert "Logging bucket cleanup to run.log" in (tmp_path / "run.log").read_text()
 
 
 def test_dry_run_without_clean_bucket_is_a_usage_error():
