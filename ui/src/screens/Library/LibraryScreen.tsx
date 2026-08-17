@@ -12,7 +12,8 @@ import { parseSearch } from "./libraryModel";
 import type { LibraryView } from "./libraryView";
 import { useLibraryBooks } from "./useLibraryBooks";
 
-const INITIAL_VIEW: LibraryView = { kind: "books", filter: null };
+const INITIAL_VIEW: LibraryView = { kind: "recent" };
+const ALL_BOOKS_VIEW: LibraryView = { kind: "books", filter: null };
 
 export function LibraryScreen() {
   const { session, lock } = useVault();
@@ -35,7 +36,9 @@ export function LibraryScreen() {
   };
   const search = (next: string) => {
     setQuery(next);
-    if (parseSearch(next).activity) setView(INITIAL_VIEW);
+    if (parseSearch(next).activity || (next.trim() && view.kind === "recent")) {
+      setView(ALL_BOOKS_VIEW);
+    }
   };
   const clearActivity = async (kind: "access" | "bookmarks", txtId: number) => {
     if (!session) return;

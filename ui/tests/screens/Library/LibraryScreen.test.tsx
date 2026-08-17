@@ -53,12 +53,15 @@ const LIBRARY: LibraryBook[] = [
     authors: ["Frank Herbert"],
     subjects: ["Science Fiction"],
     publisher: "Ace",
+    lastAccessed: 100,
   }),
   book({
     txtId: 2,
     title: "A Wizard of Earthsea",
     authors: ["Ursula K. Le Guin"],
     subjects: ["Fantasy"],
+    bookmarkCount: 1,
+    lastBookmarked: 200,
   }),
 ];
 
@@ -108,9 +111,9 @@ describe("LibraryScreen", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("database failed");
   });
 
-  it("lists every book once loaded, under All Books", () => {
+  it("opens on Recent and lists recent activity", () => {
     renderScreen(LIBRARY);
-    expect(screen.getByRole("heading", { name: "All Books" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Recent" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Dune/ })).toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: /A Wizard of Earthsea/ }),
@@ -147,7 +150,7 @@ describe("LibraryScreen", () => {
 
   it("shows an empty-library message when there are no books at all", () => {
     renderScreen([]);
-    expect(screen.getByText("Your library is empty.")).toBeInTheDocument();
+    expect(screen.getByText("No recent activity yet.")).toBeInTheDocument();
   });
 
   it("shows a no-matches message when a search matches nothing", async () => {
@@ -164,7 +167,7 @@ describe("LibraryScreen", () => {
     );
   });
 
-  it("marks active books and shows bookmark/access badges before authors", () => {
+  it("marks active books and shows bookmark/access badges before authors", async () => {
     const accessed = new Date(2026, 7, 17, 14, 5, 9).getTime();
     renderScreen([
       book({
@@ -174,6 +177,7 @@ describe("LibraryScreen", () => {
         lastAccessed: accessed,
       }),
     ]);
+    await userEvent.click(screen.getByRole("button", { name: /^All Books/ }));
 
     const row = screen.getByRole("link", { name: /Active book/ });
     expect(row.querySelector(".book-row-icon")).toHaveClass("book-row-icon-active");
@@ -184,7 +188,7 @@ describe("LibraryScreen", () => {
 
   it("shows nav rows with counts for All Books/Authors/Subjects/Publishers", () => {
     renderScreen(LIBRARY);
-    expect(screen.getByRole("button", { name: /^Recent/ })).toHaveTextContent("0");
+    expect(screen.getByRole("button", { name: /^Recent/ })).toHaveTextContent("2");
     expect(screen.getByRole("button", { name: /^All Books/ })).toHaveTextContent("2");
     expect(screen.getByRole("button", { name: /^Authors/ })).toHaveTextContent("2");
     expect(screen.getByRole("button", { name: /^Subjects/ })).toHaveTextContent("2");
