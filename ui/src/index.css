@@ -194,6 +194,16 @@
   overflow-y: auto;
 }
 
+.reader-bookmark-control {
+  margin-left: 16px;
+}
+
+@media (min-width: 768px) {
+  .reader-bookmark-control {
+    margin-left: 18px;
+  }
+}
+
 .bookmark-menu-row .dropdown-item {
   min-width: 0;
 }

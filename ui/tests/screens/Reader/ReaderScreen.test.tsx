@@ -335,7 +335,8 @@ describe("ReaderScreen", () => {
 
     await userEvent.click(bookmark);
 
-    expect(bookmark.parentElement).toHaveClass("ms-auto", "dropup");
+    expect(bookmark.parentElement).toHaveClass("reader-bookmark-control", "dropup");
+    expect(bookmark.parentElement).not.toHaveClass("ms-auto");
     expect(screen.queryByRole("button", { name: "View bookmarks" })).toBeNull();
     expect(screen.getByRole("menu", { name: "Bookmark options" })).toHaveClass("show");
     expect(screen.getByText("No bookmarks yet.")).toBeInTheDocument();
