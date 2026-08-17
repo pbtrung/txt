@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS txt_bookmarks (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   txt_id INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
   cfi TEXT NOT NULL,
+  page_number INTEGER CHECK (page_number IS NULL OR page_number >= 1),
   preview TEXT NOT NULL CHECK (length(CAST(preview AS BLOB)) <= 100),
   created_at INTEGER NOT NULL,
   UNIQUE (txt_id, cfi)
@@ -102,5 +103,14 @@ function ensureReadingSchema(db: Executable): void {
     CREATE_TXT_BOOKMARKS_CAP_TRIGGER_SQL,
   ]) {
     db.execSql(statement);
+  }
+  const bookmarkColumns = new Set(
+    db.query("PRAGMA table_info(txt_bookmarks)").map((row) => row[1] as string),
+  );
+  if (!bookmarkColumns.has("page_number")) {
+    db.execSql(
+      "ALTER TABLE txt_bookmarks ADD COLUMN page_number INTEGER " +
+        "CHECK (page_number IS NULL OR page_number >= 1)",
+    );
   }
 }

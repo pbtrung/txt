@@ -236,6 +236,7 @@ def test_migrates_admin_own_database(tmp_path, creds_path, engine):
         row[1] for row in verify.query("PRAGMA table_info(txt_bookmarks)")
     }
     assert "cfi" in bookmark_columns
+    assert "page_number" in bookmark_columns
     assert "line" not in bookmark_columns
     [(catalog_blob,)] = verify.query("SELECT catalog FROM txt")
     catalog = json.loads(brotli.decompress(catalog_blob))
@@ -269,6 +270,7 @@ def test_logs_download_migration_and_schema_validation_progress(
     assert "current txt columns" in output
     assert "migrating metadata to catalog" in output
     assert "ensuring CFI reading-state schema" in output
+    assert "resetting legacy last_accessed values" in output
     assert "validating complete database schema" in output
     assert "schema check passed: page_size=16384, txt_rows=1, bookmarks=0" in output
     assert "uploading " in output and "with R2 precondition" in output
@@ -315,6 +317,32 @@ def test_second_run_is_a_noop(tmp_path, creds_path, engine):
     DbUpdater(load_creds(creds_path), local_dir, NullLogger()).run()
     assert FakeR2Client.objects[db_path] == first_upload
     assert len(FakeR2Client.put_calls) == upload_count
+
+
+def test_page_number_migration_resets_legacy_access_once(tmp_path, creds_path, engine):
+    db_master_key = secrets.token_bytes(256)
+    db_path = "d" * 52
+    _register_account(engine, ADMIN_UID, db_master_key, db_path)
+    data = _build_old_db(db_master_key, [("a.epub", {})])
+    legacy = _reopen(db_master_key, data)
+    legacy.exec_sql("UPDATE txt SET last_accessed = 1234, created_at = 10")
+    FakeR2Client.objects[db_path] = legacy.to_bytes()
+    legacy.close()
+
+    local_dir = tmp_path / "local"
+    DbUpdater(load_creds(creds_path), local_dir, NullLogger()).run()
+
+    migrated = _reopen(db_master_key, FakeR2Client.objects[db_path])
+    assert migrated.query("SELECT last_accessed FROM txt") == [(0,)]
+    bookmark_columns = {
+        row[1] for row in migrated.query("PRAGMA table_info(txt_bookmarks)")
+    }
+    assert "page_number" in bookmark_columns
+    migrated.close()
+
+    uploads = len(FakeR2Client.put_calls)
+    DbUpdater(load_creds(creds_path), local_dir, NullLogger()).run()
+    assert len(FakeR2Client.put_calls) == uploads
 
 
 def test_ignores_local_checkpoint_and_migrates_the_current_remote_database(
@@ -506,6 +534,7 @@ def test_rebuilds_empty_legacy_bookmarks(tmp_path, creds_path, engine):
     }
     verify.close()
     assert "cfi" in bookmark_columns
+    assert "page_number" in bookmark_columns
     assert "line" not in bookmark_columns
 
 

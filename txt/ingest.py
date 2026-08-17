@@ -114,7 +114,7 @@ class TxtIngester:
         self.engine.execute(
             "INSERT INTO txt (txt_key, txt_prefix, path, catalog, last_accessed, "
             "created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            [txt_key, txt_prefix, path, catalog, now, now],
+            [txt_key, txt_prefix, path, catalog, 0, now],
         )
 
     def _catalog_payload(self, epub_path: Path) -> dict:

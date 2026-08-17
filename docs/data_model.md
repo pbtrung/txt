@@ -48,7 +48,7 @@ CREATE TABLE txt (
     txt_prefix    BLOB    NOT NULL,   -- 32 random bytes; first key segment of the content object (§1)
     path          BLOB    NOT NULL,   -- 32 random bytes; second key segment of the content object (§1)
     catalog       BLOB    NOT NULL,   -- brotli(JSON): {name, title, authors, subjects, publisher} (§3.1)
-    last_accessed INTEGER NOT NULL,   -- unix ms; set after the Reader's six-second grace period
+    last_accessed INTEGER NOT NULL,   -- unix ms; initially 0, set after the Reader's six-second grace period
     last_cfi      TEXT,               -- last stable EPUB CFI reported by the rendition, null until first location
     created_at    INTEGER NOT NULL    -- unix ms
 );
@@ -57,6 +57,7 @@ CREATE TABLE txt_bookmarks (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     txt_id     INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
     cfi        TEXT    NOT NULL,
+    page_number INTEGER CHECK (page_number IS NULL OR page_number >= 1),
     preview    TEXT    NOT NULL CHECK (length(CAST(preview AS BLOB)) <= 100),
     created_at INTEGER NOT NULL,   -- unix ms, display only
     UNIQUE (txt_id, cfi)
@@ -103,9 +104,9 @@ An open becomes a qualifying reading session only after the Reader has successfu
 
 When the grace period completes, one semantic mutation sets `last_accessed` for recent-book sorting and stores the latest stable CFI in `last_cfi`. After that, user-driven relocation events update `last_cfi` after a two-second debounce. Reading-state mutations are coalesced and uploaded at most once every 15 seconds to avoid replacing the whole database on every page turn. The client attempts a final flush when the page becomes hidden or the Reader switches books, but only for a session that passed the grace period; correctness does not depend solely on an unload-time request.
 
-An EPUB Canonical Fragment Identifier (CFI) identifies a content position independently of viewport width, font size, column count, and generated page numbering. Page and line numbers are therefore presentation only and are never persisted. On open, a non-null `last_cfi` is passed to the renderer's `display(cfi)`; an invalid CFI falls back to the beginning without discarding the rest of the database.
+An EPUB Canonical Fragment Identifier (CFI) identifies a content position independently of viewport width, font size, column count, and generated page numbering. It remains the bookmark's navigation authority. `page_number` is only the positive page number shown when the bookmark was created; it is a nullable display hint because reflow can change page numbering. On open, a non-null `last_cfi` is passed to the renderer's `display(cfi)`; an invalid CFI falls back to the beginning without discarding the rest of the database.
 
-A manual bookmark stores the current page-start CFI and a short nearby plain-text preview. A future text-selection bookmark may store the CFI range emitted by the renderer without changing the schema. Re-bookmarking the same `(txt_id, cfi)` updates its preview and display timestamp rather than adding a duplicate. Bookmark creation and deletion are uploaded immediately; deletion is replayed by `(txt_id, cfi)` during conflict recovery rather than by local numeric `id`.
+A manual bookmark stores the current page-start CFI, the current display page number, and a short nearby plain-text preview. A future text-selection bookmark may store the CFI range emitted by the renderer without changing the schema. Re-bookmarking the same `(txt_id, cfi)` updates its page number, preview, and display timestamp rather than adding a duplicate. Bookmark creation and deletion are uploaded immediately; deletion is replayed by `(txt_id, cfi)` during conflict recovery rather than by local numeric `id`.
 
 `preview` is capped at 100 UTF-8 bytes rather than 100 characters (`CAST(... AS BLOB)`), since one character can occupy up to four bytes. `trg_txt_bookmarks_cap` keeps at most 20 bookmarks per document, deleting the oldest by `id`. `AUTOINCREMENT` makes that ordering monotonic even after manual deletions and avoids relying on client clocks. `idx_txt_bookmarks_txt_id` supports listing one document's bookmarks and the cap trigger without a table scan.
 
@@ -118,9 +119,10 @@ Migration is driven by inspecting the tables, columns, indexes, and triggers tha
 `txt --update-db admin_creds.json --local-db-dir DIR --verbose` migrates every reachable database transactionally and idempotently before the writing UI is deployed:
 
 1. If `txt.metadata` is present, add and populate `catalog`, then drop `metadata` as in the existing catalog migration.
-2. Add nullable `txt.last_cfi` when absent; existing `last_accessed` values remain valid.
+2. Add nullable `txt.last_cfi` when absent.
 3. If the legacy `txt_bookmarks(line, ...)` table exists, require it to be empty because a line number cannot be converted reliably to a CFI, then replace it with the CFI table, index, and trigger above. A nonempty legacy table aborts that account rather than losing data.
-4. `VACUUM`, write the local checkpoint, and conditionally upload the database only after every step succeeds.
+4. Add nullable `txt_bookmarks.page_number` when absent. This column is also the one-time migration marker for correcting the original ingestion bug: in the same transaction, `--update-db` resets every existing `txt.last_accessed` to `0`. Subsequent runs see the column and never repeat the reset. New ingestion always initializes `last_accessed` to `0` rather than `created_at`.
+5. `VACUUM`, write the local checkpoint, and conditionally upload the database only after every step succeeds.
 
 The command reaches every account through the administrator-owned backup `cred_store` row guaranteed by docs/auth.md. It verifies that every `users` row has a decryptable backup before making changes. R2 is always its input source; `--local-db-dir` contains checkpoints for inspection only, never a later upload base. A changed database is uploaded with `If-Match` against the downloaded ETag, so a concurrent browser commit aborts without data loss and the operator reruns from the new remote object. An already-migrated database is not uploaded. Provisioning also computes each `users.db_binding_hash` from the decrypted path pair and installs the required versioned signing-key material before the new token endpoint is enabled; there is no unsigned legacy mode.
 

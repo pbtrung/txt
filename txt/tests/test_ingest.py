@@ -142,6 +142,7 @@ def test_fresh_database_gets_16kib_page_size(tmp_path):
             row[1] for row in engine.query("PRAGMA table_info(txt_bookmarks)")
         }
         assert "cfi" in bookmark_columns
+        assert "page_number" in bookmark_columns
         assert "line" not in bookmark_columns
         [(bookmark_sql,)] = engine.query(
             "SELECT sql FROM sqlite_master "
@@ -149,6 +150,11 @@ def test_fresh_database_gets_16kib_page_size(tmp_path):
         )
         assert "AUTOINCREMENT" in bookmark_sql
         assert "<= 100" in bookmark_sql
+        [(last_accessed, created_at)] = engine.query(
+            "SELECT last_accessed, created_at FROM txt"
+        )
+        assert last_accessed == 0
+        assert created_at > 0
     finally:
         engine.close()
 

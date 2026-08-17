@@ -116,8 +116,8 @@ class DbUpdater:
         engine.exec_sql("BEGIN IMMEDIATE")
         try:
             changed = self._migrate_catalog(engine, uid, columns)
-            self.logger.verbose(f"[{uid}] ensuring CFI reading-state schema...")
-            changed = ensure_reading_schema(engine, manage_transaction=False) or changed
+            reset_access = self._needs_access_reset(engine)
+            changed = self._migrate_reading_state(engine, uid, changed, reset_access)
             self.logger.verbose(f"[{uid}] validating complete database schema...")
             self._validate_schema(engine, uid)
             engine.exec_sql("COMMIT")
@@ -125,6 +125,20 @@ class DbUpdater:
         except Exception:
             engine.exec_sql("ROLLBACK")
             raise
+
+    def _migrate_reading_state(self, engine, uid, changed, reset_access) -> bool:
+        self.logger.verbose(f"[{uid}] ensuring CFI reading-state schema...")
+        changed = ensure_reading_schema(engine, manage_transaction=False) or changed
+        if not reset_access:
+            return changed
+        self.logger.verbose(f"[{uid}] resetting legacy last_accessed values...")
+        engine.exec_sql("UPDATE txt SET last_accessed = 0")
+        return True
+
+    def _needs_access_reset(self, engine) -> bool:
+        if not table_exists(engine, "txt_bookmarks"):
+            return True
+        return "page_number" not in table_columns(engine, "txt_bookmarks")
 
     def _migrate_catalog(self, engine, uid: str, columns: set) -> bool:
         if "metadata" not in columns:

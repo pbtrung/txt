@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS txt_bookmarks (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   txt_id INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
   cfi TEXT NOT NULL,
+  page_number INTEGER CHECK (page_number IS NULL OR page_number >= 1),
   preview TEXT NOT NULL CHECK (length(CAST(preview AS BLOB)) <= 100),
   created_at INTEGER NOT NULL,
   UNIQUE (txt_id, cfi)
@@ -60,7 +61,14 @@ REQUIRED_TXT_COLUMNS = {
     "last_cfi",
     "created_at",
 }
-REQUIRED_BOOKMARK_COLUMNS = {"id", "txt_id", "cfi", "preview", "created_at"}
+REQUIRED_BOOKMARK_COLUMNS = {
+    "id",
+    "txt_id",
+    "cfi",
+    "page_number",
+    "preview",
+    "created_at",
+}
 
 
 @dataclass(frozen=True)
@@ -143,6 +151,7 @@ def ensure_reading_schema(
 def _ensure_reading_objects(engine: SqliteEngine) -> bool:
     changed = _ensure_last_cfi(engine)
     changed = _ensure_bookmark_table(engine) or changed
+    changed = _ensure_bookmark_page_number(engine) or changed
     changed = _ensure_bookmark_support(engine) or changed
     return changed
 
@@ -165,6 +174,16 @@ def _ensure_bookmark_table(engine: SqliteEngine) -> bool:
     if "cfi" not in columns:
         raise ValueError("txt_bookmarks has an unsupported schema")
     return False
+
+
+def _ensure_bookmark_page_number(engine: SqliteEngine) -> bool:
+    if "page_number" in table_columns(engine, "txt_bookmarks"):
+        return False
+    engine.exec_sql(
+        "ALTER TABLE txt_bookmarks ADD COLUMN page_number INTEGER "
+        "CHECK (page_number IS NULL OR page_number >= 1)"
+    )
+    return True
 
 
 def _replace_legacy_bookmarks(engine: SqliteEngine) -> None:
@@ -243,6 +262,9 @@ def _validate_bookmark_sql(engine: SqliteEngine, errors: list[str]) -> None:
     checks = {
         "autoincrement": "txt_bookmarks.id is not AUTOINCREMENT",
         "unique(txt_id,cfi)": "txt_bookmarks is missing UNIQUE(txt_id, cfi)",
+        "page_numberisnullorpage_number>=1": (
+            "txt_bookmarks is missing the positive page-number constraint"
+        ),
         "length(cast(previewasblob))<=100": (
             "txt_bookmarks is missing the 100-byte preview limit"
         ),
