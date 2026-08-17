@@ -97,7 +97,7 @@ export function BookmarkMenu({
   const rootRef = useRef<HTMLDivElement>(null);
   useDismissibleMenu(open, rootRef, () => setOpen(false));
   return (
-    <div className="dropup reader-bookmark-control" ref={rootRef}>
+    <div className="dropup ms-auto reader-bookmark-control" ref={rootRef}>
       <IconButton
         label="Bookmarks"
         icon={bookmarkSaved ? "bookmark-fill" : "bookmark"}

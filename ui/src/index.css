@@ -194,13 +194,13 @@
   overflow-y: auto;
 }
 
-.reader-bookmark-control {
-  margin-left: 16px;
+.reader-bookmark-control > .btn {
+  font-size: 16px;
 }
 
 @media (min-width: 768px) {
-  .reader-bookmark-control {
-    margin-left: 18px;
+  .reader-bookmark-control > .btn {
+    font-size: 18px;
   }
 }
 
