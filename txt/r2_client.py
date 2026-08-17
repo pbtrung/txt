@@ -57,6 +57,12 @@ class R2Client:
         if_match: str | None = None,
         if_none_match: bool = False,
     ) -> str | None:
+        kwargs = self._put_kwargs(key, body, if_match, if_none_match)
+        response = self._put_response(key, kwargs)
+        etag = response.get("ETag")
+        return etag if isinstance(etag, str) else None
+
+    def _put_kwargs(self, key, body, if_match, if_none_match) -> dict:
         if if_match is not None and if_none_match:
             raise ValueError("if_match and if_none_match are mutually exclusive")
         kwargs = {"Bucket": self.bucket, "Key": key, "Body": body}
@@ -64,18 +70,17 @@ class R2Client:
             kwargs["IfMatch"] = if_match
         elif if_none_match:
             kwargs["IfNoneMatch"] = "*"
+        return kwargs
+
+    def _put_response(self, key: str, kwargs: dict) -> dict:
         try:
-            resp = self._s3.put_object(**kwargs)
+            return self._s3.put_object(**kwargs)
         except botocore.exceptions.ClientError as exc:
-            code = exc.response.get("Error", {}).get("Code")
-            status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
-            if code in ("PreconditionFailed", "412") or status == 412:
+            if _is_precondition_failure(exc):
                 raise R2PreconditionFailed(
                     f"R2 PUT {key} conflicted with a newer object"
                 ) from exc
             raise
-        etag = resp.get("ETag")
-        return etag if isinstance(etag, str) else None
 
     def list_keys(
         self, prefix: str, on_progress: Callable[[int], None] | None = None
@@ -117,3 +122,9 @@ class R2Client:
             )
             if on_progress is not None:
                 on_progress(i + len(batch))
+
+
+def _is_precondition_failure(error: botocore.exceptions.ClientError) -> bool:
+    code = error.response.get("Error", {}).get("Code")
+    status = error.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+    return code in ("PreconditionFailed", "412") or status == 412

@@ -55,6 +55,31 @@ _VALTYPE = {
 }
 
 
+class WasmCall:
+    def __init__(self, engine):
+        self.engine = engine
+        self.ptrs = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.engine._free_all(*self.ptrs)
+
+    def write(self, data: bytes) -> int:
+        ptr = self.engine._write(data)
+        self.ptrs.append(ptr)
+        return ptr
+
+    def allocate(self, size: int) -> int:
+        ptr = self.engine._malloc(size)
+        self.ptrs.append(ptr)
+        return ptr
+
+    def read(self, ptr: int, size: int) -> bytes:
+        return self.engine._read(ptr, size)
+
+
 def _stub_functype(params, results):
     return wasmtime.FuncType(
         [_VALTYPE[p] for p in params], [_VALTYPE[r] for r in results]
@@ -175,93 +200,63 @@ class LeancryptoEngine:
             self._free(ptr)
 
     def hkdf_sha3_512(self, ikm: bytes, salt: bytes, info: bytes, dlen: int) -> bytes:
-        ikm_ptr, salt_ptr, info_ptr, out_ptr = (
-            self._write(ikm),
-            self._write(salt),
-            self._write(info),
-            self._malloc(dlen),
-        )
-        try:
-            self._call(
-                "lc_wasm_hkdf_sha3_512",
-                ikm_ptr,
-                len(ikm),
-                salt_ptr,
-                len(salt),
-                info_ptr,
-                len(info),
-                out_ptr,
-                dlen,
-            )
-            return self._read(out_ptr, dlen)
-        finally:
-            self._free_all(ikm_ptr, salt_ptr, info_ptr, out_ptr)
+        with WasmCall(self) as call:
+            args = self._hkdf_args(call, ikm, salt, info)
+            out_ptr = call.allocate(dlen)
+            self._call("lc_wasm_hkdf_sha3_512", *args, out_ptr, dlen)
+            return call.read(out_ptr, dlen)
+
+    def _hkdf_args(self, call: WasmCall, ikm, salt, info) -> list:
+        return [
+            call.write(ikm),
+            len(ikm),
+            call.write(salt),
+            len(salt),
+            call.write(info),
+            len(info),
+        ]
 
     def aead_encrypt(
         self, key: bytes, nonce: bytes, aad: bytes, plaintext: bytes
     ) -> tuple[bytes, bytes]:
-        key_ptr, nonce_ptr, aad_ptr = (
-            self._write(key),
-            self._write(nonce),
-            self._write(aad),
-        )
-        pt_ptr, ct_ptr, tag_ptr = (
-            self._write(plaintext),
-            self._malloc(len(plaintext) or 1),
-            self._malloc(self.tag_size),
-        )
-        try:
-            self._call(
-                "lc_wasm_aead_encrypt",
-                key_ptr,
-                self.key_size,
-                nonce_ptr,
-                self.nonce_size,
-                aad_ptr,
-                len(aad),
-                pt_ptr,
-                len(plaintext),
-                ct_ptr,
-                tag_ptr,
-                self.tag_size,
-            )
-            return self._read(ct_ptr, len(plaintext)), self._read(
-                tag_ptr, self.tag_size
-            )
-        finally:
-            self._free_all(key_ptr, nonce_ptr, aad_ptr, pt_ptr, ct_ptr, tag_ptr)
+        self._validate_aead(key, nonce)
+        with WasmCall(self) as call:
+            args = self._aead_args(call, key, nonce, aad, plaintext)
+            ct_ptr = call.allocate(len(plaintext) or 1)
+            tag_ptr = call.allocate(self.tag_size)
+            self._call("lc_wasm_aead_encrypt", *args, ct_ptr, tag_ptr, self.tag_size)
+            return call.read(ct_ptr, len(plaintext)), call.read(tag_ptr, self.tag_size)
 
     def aead_decrypt(
         self, key: bytes, nonce: bytes, aad: bytes, ciphertext: bytes, tag: bytes
     ) -> bytes:
-        key_ptr, nonce_ptr, aad_ptr = (
-            self._write(key),
-            self._write(nonce),
-            self._write(aad),
-        )
-        ct_ptr, tag_ptr, pt_ptr = (
-            self._write(ciphertext),
-            self._write(tag),
-            self._malloc(len(ciphertext) or 1),
-        )
-        try:
-            self._call(
-                "lc_wasm_aead_decrypt",
-                key_ptr,
-                self.key_size,
-                nonce_ptr,
-                self.nonce_size,
-                aad_ptr,
-                len(aad),
-                ct_ptr,
-                len(ciphertext),
-                pt_ptr,
-                tag_ptr,
-                self.tag_size,
-            )
-            return self._read(pt_ptr, len(ciphertext))
-        finally:
-            self._free_all(key_ptr, nonce_ptr, aad_ptr, ct_ptr, tag_ptr, pt_ptr)
+        self._validate_aead(key, nonce, tag)
+        with WasmCall(self) as call:
+            args = self._aead_args(call, key, nonce, aad, ciphertext)
+            pt_ptr = call.allocate(len(ciphertext) or 1)
+            tag_ptr = call.write(tag)
+            self._call("lc_wasm_aead_decrypt", *args, pt_ptr, tag_ptr, self.tag_size)
+            return call.read(pt_ptr, len(ciphertext))
+
+    def _aead_args(self, call: WasmCall, key, nonce, aad, data) -> list:
+        return [
+            call.write(key),
+            self.key_size,
+            call.write(nonce),
+            self.nonce_size,
+            call.write(aad),
+            len(aad),
+            call.write(data),
+            len(data),
+        ]
+
+    def _validate_aead(self, key: bytes, nonce: bytes, tag: bytes | None = None):
+        if len(key) != self.key_size:
+            raise ValueError(f"AEAD key must be {self.key_size} bytes")
+        if len(nonce) != self.nonce_size:
+            raise ValueError(f"AEAD nonce must be {self.nonce_size} bytes")
+        if tag is not None and len(tag) != self.tag_size:
+            raise ValueError(f"AEAD tag must be {self.tag_size} bytes")
 
     def kem_keypair(self) -> tuple[bytes, bytes]:
         pk_ptr, sk_ptr = self._malloc(KEM_PK_SIZE), self._malloc(KEM_SK_SIZE)

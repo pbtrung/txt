@@ -44,6 +44,20 @@ def test_aead_decrypt_rejects_wrong_key(engine):
         engine.aead_decrypt(wrong_key, nonce, aad, ciphertext, tag)
 
 
+@pytest.mark.parametrize(("field", "size"), [("key", 63), ("nonce", 63)])
+def test_aead_rejects_invalid_input_sizes(engine, field, size):
+    inputs = {"key": bytes(64), "nonce": bytes(64)}
+    inputs[field] = bytes(size)
+
+    with pytest.raises(ValueError, match=field):
+        engine.aead_encrypt(inputs["key"], inputs["nonce"], b"", b"payload")
+
+
+def test_aead_decrypt_rejects_invalid_tag_size(engine):
+    with pytest.raises(ValueError, match="tag"):
+        engine.aead_decrypt(bytes(64), bytes(64), b"", b"payload", bytes(63))
+
+
 def test_hkdf_is_deterministic_and_non_trivial(engine):
     ikm, salt, info = bytes(range(200)), bytes(range(64)), b"txt:test"
     out1 = engine.hkdf_sha3_512(ikm, salt, info, 64)
