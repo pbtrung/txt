@@ -122,7 +122,7 @@ Migration is driven by inspecting the tables, columns, indexes, and triggers tha
 3. If the legacy `txt_bookmarks(line, ...)` table exists, require it to be empty because a line number cannot be converted reliably to a CFI, then replace it with the CFI table, index, and trigger above. A nonempty legacy table aborts that account rather than losing data.
 4. `VACUUM`, write the local checkpoint, and upload the database only after every step succeeds.
 
-The command reaches every account the administrator's creds can decrypt through the backup `cred_store` rows described in docs/auth.md. It refuses an incomplete account set, resumes safely after interruption, and re-uploads an already-migrated local file when the preceding remote upload may not have completed. Deployment also backfills the `users.db_path_hash`/`db_prefix_hash` authorization bindings from the same decrypted payloads before the new token endpoint is enabled.
+The command reaches every account through the administrator-owned backup `cred_store` row guaranteed by docs/auth.md. It verifies that every `users` row has a decryptable backup before making changes, resumes safely after interruption, and re-uploads an already-migrated local file when the preceding remote upload may not have completed. Deployment also backfills the `users.db_path_hash`/`db_prefix_hash` authorization bindings from the same decrypted payloads before the new token endpoint is enabled.
 
 `txt_key` is unrelated to `db_master_key`: it is the AEAD key for one document's content object, generated fresh per document, so leaking one document's key exposes nothing about any other document or about the database file itself.
 
