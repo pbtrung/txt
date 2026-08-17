@@ -1,13 +1,13 @@
-import base64
 from dataclasses import dataclass
 
+from .account_data import StorageAccount, parse_storage_account
+from .control_session import ControlFactories, ControlSession, decrypt_umk
 from .creds import Creds
-from .crypto_blob import CryptoBlob
 from .firebase_auth import FirebaseAuth
 from .leancrypto_wasm import LeancryptoEngine
 from .libsql_client import LibsqlClient
 from .logger import Logger
-from .turso_api import TursoClient, extract_account_name
+from .turso_api import TursoClient
 
 # docs/auth.md §2's own ctl join, minus the admin-only pubkey/privkey columns
 # this caller never needs.
@@ -28,6 +28,19 @@ class Account:
     db_path: str
     db_prefix: str
 
+    @classmethod
+    def from_storage(
+        cls, storage: StorageAccount, account_type: str, display_name: str
+    ) -> Account:
+        return cls(
+            uid=storage.uid,
+            account_type=account_type,
+            display_name=display_name,
+            db_master_key=storage.db_master_key,
+            db_path=storage.db_path,
+            db_prefix=storage.db_prefix,
+        )
+
 
 class AccountSession:
     """Sign in, look up this account's row in ctl, and decrypt its own
@@ -38,42 +51,22 @@ class AccountSession:
     def __init__(self, creds: Creds, logger: Logger):
         self.creds = creds
         self.logger = logger
-        account_name = extract_account_name(
-            creds.turso_ctl_db_url, creds.turso_ctl_db_name
+        self.control = ControlSession(
+            creds,
+            logger,
+            factories=ControlFactories(FirebaseAuth, TursoClient, LibsqlClient),
+            engine=LeancryptoEngine(),
         )
-        self.turso = TursoClient(creds.turso_org_token, account_name)
-        self.engine = LeancryptoEngine()
-        self.blob = CryptoBlob(self.engine)
+        self.blob = self.control.blob
 
     def connect(self) -> Account:
-        uid = self._sign_in()
-        ctl = self._connect_ctl()
+        uid = self.control.sign_in()
+        ctl = self.control.connect()
         account_type, wrapped_umk, wrapped_content = self._lookup(ctl, uid)
-        ikm = base64.b64decode(self.creds.user_root_key)
-        umk = self.blob.decrypt(wrapped_umk, ikm)
+        umk = decrypt_umk(wrapped_umk, self.creds.user_root_key, self.blob, uid)
         payload = self.blob.decrypt_json(wrapped_content, umk)
-        return Account(
-            uid=uid,
-            account_type=account_type,
-            display_name=payload["display_name"],
-            db_master_key=base64.b64decode(payload["db_master_key"]),
-            db_path=payload["db_path"],
-            db_prefix=payload["db_prefix"],
-        )
-
-    def _sign_in(self) -> str:
-        self.logger.verbose(f"Signing in to Firebase as {self.creds.firebase_email}...")
-        auth = FirebaseAuth(self.creds.firebase_api_key)
-        uid = auth.sign_in(self.creds.firebase_email, self.creds.firebase_password)
-        self.logger.verbose(f"Firebase sign-in succeeded, uid={uid}")
-        return uid
-
-    def _connect_ctl(self) -> LibsqlClient:
-        self.logger.verbose(
-            f"Minting a database token for {self.creds.turso_ctl_db_name}..."
-        )
-        token = self.turso.mint_db_token(self.creds.turso_ctl_db_name)
-        return LibsqlClient(self.creds.turso_ctl_db_url, token)
+        storage = parse_storage_account(uid, payload)
+        return Account.from_storage(storage, account_type, payload["display_name"])
 
     def _lookup(self, ctl: LibsqlClient, uid: str) -> tuple[str, bytes, bytes]:
         rows = ctl.query(CTL_LOOKUP_SQL, [uid])

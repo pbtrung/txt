@@ -1,19 +1,19 @@
 import base64
-import hashlib
 import secrets
 import time
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
+from .account_data import parse_storage_account, storage_binding
+from .control_session import ControlFactories, ControlSession, unwrap_umk
 from .creds import Creds, UserCreds, ensure_user_root_key
-from .crypto_blob import CryptoBlob
 from .firebase_auth import FirebaseAuth
 from .leancrypto_wasm import LeancryptoEngine
 from .libsql_client import LibsqlClient
 from .logger import Logger
-from .random_token import CROCKFORD_ALPHABET, generate_random_prefix
-from .turso_api import TursoClient, extract_account_name
+from .random_token import generate_random_prefix
+from .turso_api import TursoClient
 
 # docs/auth.md §2.
 CREATE_USERS_TABLE_SQL = """
@@ -89,12 +89,14 @@ class AccountInitializer:
         self.target_creds_path = target_creds_path
         self.logger = logger
         self.account_type = account_type
-        account_name = extract_account_name(
-            admin_creds.turso_ctl_db_url, admin_creds.turso_ctl_db_name
-        )
-        self.turso = TursoClient(admin_creds.turso_org_token, account_name)
         self.engine = LeancryptoEngine()
-        self.blob = CryptoBlob(self.engine)
+        self.control = ControlSession(
+            admin_creds,
+            logger,
+            factories=ControlFactories(FirebaseAuth, TursoClient, LibsqlClient),
+            engine=self.engine,
+        )
+        self.blob = self.control.blob
 
     def run(self) -> None:
         self.logger.verbose(f"Starting {self.account_type} bootstrap...")
@@ -113,18 +115,10 @@ class AccountInitializer:
         self.logger.info(f"{self.account_type.capitalize()} {uid} ready in ctl.")
 
     def _sign_in(self, creds: Creds | UserCreds) -> str:
-        self.logger.verbose(f"Signing in to Firebase as {creds.firebase_email}...")
-        auth = FirebaseAuth(creds.firebase_api_key)
-        uid = auth.sign_in(creds.firebase_email, creds.firebase_password)
-        self.logger.verbose(f"Firebase sign-in succeeded, uid={uid}")
-        return uid
+        return self.control.sign_in(creds)
 
     def _ensure_schema(self) -> LibsqlClient:
-        self.logger.verbose(
-            f"Minting a database token for {self.admin_creds.turso_ctl_db_name}..."
-        )
-        token = self.turso.mint_db_token(self.admin_creds.turso_ctl_db_name)
-        ctl = LibsqlClient(self.admin_creds.turso_ctl_db_url, token)
+        ctl = self.control.connect()
         self.logger.verbose("Ensuring ctl schema exists...")
         for stmt in (
             CREATE_USERS_TABLE_SQL,
@@ -312,19 +306,7 @@ class AccountInitializer:
         return payload
 
     def _ensure_path_binding(self, ctl: LibsqlClient, uid: str, payload: dict) -> None:
-        try:
-            db_path = payload["db_path"]
-            db_prefix = payload["db_prefix"]
-        except KeyError as exc:
-            raise ValueError(f"cred_store paths missing for uid={uid}") from exc
-        for name, value in (("db_path", db_path), ("db_prefix", db_prefix)):
-            if (
-                not isinstance(value, str)
-                or len(value) != 52
-                or any(char not in CROCKFORD_ALPHABET for char in value)
-            ):
-                raise ValueError(f"invalid {name} in cred_store for uid={uid}")
-        binding = hashlib.sha512((db_path + db_prefix).encode()).digest()
+        binding = storage_binding(parse_storage_account(uid, payload))
         rows = ctl.query("SELECT db_binding_hash FROM users WHERE id = ?", [uid])
         current = rows[0][0] if rows else None
         if current in (None, _EMPTY_BINDING):
@@ -351,11 +333,9 @@ class AccountInitializer:
         ):
             self.logger.verbose(f"admin backup row for {user_uid} already exists.")
             return
-        admin_ikm = base64.b64decode(self.admin_creds.user_root_key)
-        admin_wrapped_umk = ctl.query(
-            "SELECT umk FROM key_store WHERE user_id = ?", [admin_uid]
-        )[0][0]
-        admin_umk = self.blob.decrypt(admin_wrapped_umk, admin_ikm)
+        admin_umk = unwrap_umk(
+            ctl, admin_uid, self.admin_creds.user_root_key, self.blob
+        )
         user_content = ctl.query(
             "SELECT content FROM cred_store WHERE owner_id = ? AND for_user_id = ?",
             [user_uid, user_uid],

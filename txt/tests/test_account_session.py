@@ -122,3 +122,13 @@ def test_connect_raises_on_wrong_user_root_key(creds_path, user_root_key, engine
     creds.user_root_key = base64.b64encode(secrets.token_bytes(256)).decode()
     with pytest.raises(ValueError):
         AccountSession(creds, NullLogger()).connect()
+
+
+def test_connect_rejects_invalid_user_root_key(creds_path, user_root_key, engine):
+    row, _payload = _wrapped_row(engine, user_root_key, "user")
+    FakeLibsqlClient.preset_rows = [row]
+    creds = load_creds(creds_path)
+    creds.user_root_key = "not base64!"
+
+    with pytest.raises(ValueError, match="user_root_key"):
+        AccountSession(creds, NullLogger()).connect()

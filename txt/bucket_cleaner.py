@@ -1,10 +1,13 @@
 """Remove R2 objects not referenced by any account reachable by an admin."""
 
-import base64
-import binascii
-
+from .account_data import StorageAccount
+from .control_session import (
+    ControlFactories,
+    ControlSession,
+    load_reachable_accounts,
+    unwrap_umk,
+)
 from .creds import Creds
-from .crypto_blob import CryptoBlob
 from .firebase_auth import FirebaseAuth
 from .leancrypto_wasm import LeancryptoEngine
 from .libsql_client import LibsqlClient
@@ -12,7 +15,7 @@ from .logger import Logger
 from .r2_client import R2Client
 from .random_token import to_base32_crockford
 from .sqlite_engine import SqliteEngine
-from .turso_api import TursoClient, extract_account_name
+from .turso_api import TursoClient
 
 
 class BucketCleaner:
@@ -22,13 +25,14 @@ class BucketCleaner:
         self.creds = creds
         self.logger = logger
         self.dry_run = dry_run
-        account_name = extract_account_name(
-            creds.turso_ctl_db_url, creds.turso_ctl_db_name
+        self.control = ControlSession(
+            creds,
+            logger,
+            factories=ControlFactories(FirebaseAuth, TursoClient, LibsqlClient),
+            engine=LeancryptoEngine(),
         )
-        self.turso = TursoClient(creds.turso_org_token, account_name)
         self.r2 = R2Client(creds.r2_config)
-        self.engine = LeancryptoEngine()
-        self.blob = CryptoBlob(self.engine)
+        self.blob = self.control.blob
 
     def run(self) -> None:
         self.logger.info(
@@ -81,83 +85,40 @@ class BucketCleaner:
         self.logger.info(f"Deleted {len(stale)} object(s).")
 
     def _sign_in(self) -> str:
-        self.logger.verbose(f"Signing in to Firebase as {self.creds.firebase_email}...")
-        auth = FirebaseAuth(self.creds.firebase_api_key)
-        uid = auth.sign_in(self.creds.firebase_email, self.creds.firebase_password)
-        self.logger.verbose(f"Firebase sign-in succeeded, uid={uid}")
-        return uid
+        return self.control.sign_in()
 
     def _connect_ctl(self) -> LibsqlClient:
-        self.logger.verbose(
-            f"Minting a database token for {self.creds.turso_ctl_db_name}..."
-        )
-        token = self.turso.mint_db_token(self.creds.turso_ctl_db_name)
-        return LibsqlClient(self.creds.turso_ctl_db_url, token)
+        return self.control.connect()
 
     def _admin_umk(self, ctl: LibsqlClient, admin_uid: str) -> bytes:
-        rows = ctl.query("SELECT umk FROM key_store WHERE user_id = ?", [admin_uid])
-        if not rows:
-            raise ValueError(f"Admin uid={admin_uid} has no key_store row")
-        ikm = base64.b64decode(self.creds.user_root_key)
-        return self.blob.decrypt(rows[0][0], ikm)
+        return unwrap_umk(ctl, admin_uid, self.creds.user_root_key, self.blob)
 
     def _reachable_accounts(
         self, ctl: LibsqlClient, admin_uid: str, admin_umk: bytes
-    ) -> list[tuple[str, dict]]:
-        user_ids = {row[0] for row in ctl.query("SELECT id FROM users")}
-        rows = ctl.query(
-            "SELECT for_user_id, content FROM cred_store WHERE owner_id = ?",
-            [admin_uid],
+    ) -> list[StorageAccount]:
+        return load_reachable_accounts(
+            ctl, admin_uid, admin_umk, self.blob, require_all=True
         )
-        reachable_ids = {row[0] for row in rows}
-        missing = sorted(user_ids - reachable_ids)
-        if missing:
-            raise ValueError(
-                "Refusing to clean bucket: no admin cred_store backup for uid(s): "
-                + ", ".join(missing)
-            )
-        return [
-            (uid, self.blob.decrypt_json(content, admin_umk)) for uid, content in rows
-        ]
 
-    def _storage_allowlist(self, accounts: list[tuple[str, dict]]) -> set[str]:
+    def _storage_allowlist(self, accounts: list[StorageAccount]) -> set[str]:
         allowlist: set[str] = set()
-        for index, (uid, payload) in enumerate(accounts, start=1):
+        for index, account in enumerate(accounts, start=1):
+            uid = account.uid
             self.logger.info(
                 f"[{index}/{len(accounts)}] Reading database references "
                 f"for uid={uid}..."
             )
-            db_path = payload.get("db_path")
-            db_prefix = payload.get("db_prefix")
-            if not isinstance(db_path, str) or not db_path:
-                raise ValueError(f"Account uid={uid} has an invalid db_path")
-            if not isinstance(db_prefix, str) or not db_prefix:
-                raise ValueError(f"Account uid={uid} has an invalid db_prefix")
-
-            db_master_key = self._decode_db_master_key(uid, payload)
-            content_keys = self._content_keys(uid, db_path, db_prefix, db_master_key)
-            allowlist.add(db_path)
+            content_keys = self._content_keys(
+                uid, account.db_path, account.db_prefix, account.db_master_key
+            )
+            allowlist.add(account.db_path)
             allowlist.update(content_keys)
             self.logger.info(
-                f"[{index}/{len(accounts)}] uid={uid}, db_path={db_path}, "
-                f"db_prefix={db_prefix}/, "
+                f"[{index}/{len(accounts)}] uid={uid}, db_path={account.db_path}, "
+                f"db_prefix={account.db_prefix}/, "
                 f"{len(content_keys)} referenced content object(s)"
             )
         return allowlist
-
-    def _decode_db_master_key(self, uid: str, payload: dict) -> bytes:
-        value = payload.get("db_master_key")
-        if not isinstance(value, str) or not value:
-            raise ValueError(f"Account uid={uid} has an invalid db_master_key")
-        try:
-            key = base64.b64decode(value, validate=True)
-        except ValueError, binascii.Error:
-            raise ValueError(
-                f"Account uid={uid} has an invalid db_master_key"
-            ) from None
-        if len(key) != 256:
-            raise ValueError(f"Account uid={uid} has an invalid db_master_key")
-        return key
 
     def _content_keys(
         self, uid: str, db_path: str, db_prefix: str, db_master_key: bytes

@@ -69,6 +69,7 @@ class FakeTursoClient:
 class FakeLibsqlClient:
     key_store: dict = {}  # uid -> wrapped_umk
     cred_store: dict = {}  # for_user_id -> content (owner is always the admin here)
+    user_ids: set = set()
 
     def __init__(self, url, token):
         self.url = url
@@ -86,6 +87,8 @@ class FakeLibsqlClient:
             return [
                 [uid, content] for uid, content in FakeLibsqlClient.cred_store.items()
             ]
+        if normalized == "SELECT id FROM users":
+            return [[uid] for uid in FakeLibsqlClient.user_ids]
         return []
 
 
@@ -132,6 +135,7 @@ def patch_clients(monkeypatch):
     monkeypatch.setattr(db_updater_module, "R2Client", FakeR2Client)
     FakeLibsqlClient.key_store = {}
     FakeLibsqlClient.cred_store = {}
+    FakeLibsqlClient.user_ids = set()
     FakeR2Client.objects = {}
     FakeR2Client.versions = {}
     FakeR2Client.put_calls = []
@@ -206,6 +210,7 @@ def _register_account(engine, uid: str, db_master_key: bytes, db_path: str) -> b
         "db_prefix": "p" * 52,
     }
     FakeLibsqlClient.cred_store[uid] = blob.encrypt_json(payload, admin_umk)
+    FakeLibsqlClient.user_ids.add(uid)
     return admin_umk
 
 
@@ -278,7 +283,7 @@ def test_migrates_every_reachable_account(tmp_path, creds_path, engine):
     )
 
     user_db_master_key = secrets.token_bytes(256)
-    user_db_path = "u" * 52
+    user_db_path = "v" * 52
     _register_account(engine, USER_UID, user_db_master_key, user_db_path)
     FakeR2Client.objects[user_db_path] = _build_old_db(
         user_db_master_key, [("user-book.epub", {})]
@@ -435,6 +440,16 @@ def test_skips_account_with_no_database_yet(tmp_path, creds_path, engine):
     DbUpdater(load_creds(creds_path), tmp_path / "local", NullLogger()).run()
 
     assert db_path not in FakeR2Client.objects
+
+
+def test_refuses_to_skip_user_without_admin_backup(tmp_path, creds_path, engine):
+    _register_account(engine, ADMIN_UID, secrets.token_bytes(256), "d" * 52)
+    FakeLibsqlClient.user_ids.add(USER_UID)
+
+    with pytest.raises(ValueError, match=USER_UID):
+        DbUpdater(load_creds(creds_path), tmp_path / "local", NullLogger()).run()
+
+    assert FakeR2Client.put_calls == []
 
 
 def _build_db_with_legacy_bookmarks(

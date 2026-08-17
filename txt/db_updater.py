@@ -7,14 +7,14 @@ was downloaded, so a concurrent browser write aborts safely and a rerun starts
 again from the newer remote database.
 """
 
-import base64
 import json
 from pathlib import Path
 
 import brotli
 
+from .account_data import StorageAccount
+from .control_session import ControlFactories, ControlSession
 from .creds import Creds
-from .crypto_blob import CryptoBlob
 from .database_schema import (
     PAGE_SIZE,
     configure_database,
@@ -30,7 +30,7 @@ from .logger import Logger
 from .opf import catalog_fields
 from .r2_client import R2Client, R2Object
 from .sqlite_engine import SqliteEngine
-from .turso_api import TursoClient, extract_account_name
+from .turso_api import TursoClient
 
 
 class DbUpdater:
@@ -38,57 +38,26 @@ class DbUpdater:
         self.creds = creds
         self.local_db_dir = local_db_dir
         self.logger = logger
-        account_name = extract_account_name(
-            creds.turso_ctl_db_url, creds.turso_ctl_db_name
+        self.control = ControlSession(
+            creds,
+            logger,
+            factories=ControlFactories(FirebaseAuth, TursoClient, LibsqlClient),
+            engine=LeancryptoEngine(),
         )
-        self.turso = TursoClient(creds.turso_org_token, account_name)
         self.r2 = R2Client(creds.r2_config)
-        self.engine = LeancryptoEngine()
-        self.blob = CryptoBlob(self.engine)
 
     def run(self) -> None:
-        admin_uid = self._sign_in()
-        ctl = self._connect_ctl()
-        admin_umk = self._admin_umk(ctl, admin_uid)
-        accounts = self._reachable_accounts(ctl, admin_uid, admin_umk)
+        admin_uid, ctl, admin_umk = self.control.admin_context()
+        accounts = self.control.reachable_accounts(
+            ctl, admin_uid, admin_umk, complete=True
+        )
         self.logger.info(f"{len(accounts)} account(s) reachable from this admin.")
         self.local_db_dir.mkdir(parents=True, exist_ok=True)
-        for for_user_id, payload in accounts:
-            self._migrate_account(for_user_id, payload)
+        for account in accounts:
+            self._migrate_account(account)
 
-    def _sign_in(self) -> str:
-        self.logger.verbose(f"Signing in to Firebase as {self.creds.firebase_email}...")
-        auth = FirebaseAuth(self.creds.firebase_api_key)
-        uid = auth.sign_in(self.creds.firebase_email, self.creds.firebase_password)
-        self.logger.verbose(f"Firebase sign-in succeeded, uid={uid}")
-        return uid
-
-    def _connect_ctl(self) -> LibsqlClient:
-        token = self.turso.mint_db_token(self.creds.turso_ctl_db_name)
-        return LibsqlClient(self.creds.turso_ctl_db_url, token)
-
-    def _admin_umk(self, ctl: LibsqlClient, admin_uid: str) -> bytes:
-        ikm = base64.b64decode(self.creds.user_root_key)
-        wrapped_umk = ctl.query(
-            "SELECT umk FROM key_store WHERE user_id = ?", [admin_uid]
-        )[0][0]
-        return self.blob.decrypt(wrapped_umk, ikm)
-
-    def _reachable_accounts(
-        self, ctl: LibsqlClient, admin_uid: str, admin_umk: bytes
-    ) -> list:
-        rows = ctl.query(
-            "SELECT for_user_id, content FROM cred_store WHERE owner_id = ?",
-            [admin_uid],
-        )
-        return [
-            (for_user_id, self.blob.decrypt_json(content, admin_umk))
-            for for_user_id, content in rows
-        ]
-
-    def _migrate_account(self, uid: str, payload: dict) -> None:
-        db_path = payload["db_path"]
-        db_master_key = base64.b64decode(payload["db_master_key"])
+    def _migrate_account(self, account: StorageAccount) -> None:
+        uid, db_path = account.uid, account.db_path
         local_path = self.local_db_dir / db_path
         self.logger.info(f"[{uid}] db_path={db_path} local={local_path}")
         remote = self._download(db_path)
@@ -101,7 +70,7 @@ class DbUpdater:
         self.logger.verbose(f"[{uid}] opening and decrypting database...")
         engine = SqliteEngine()
         engine.open(
-            db_master_key,
+            account.db_master_key,
             initial_bytes=remote.body if remote is not None else None,
         )
         configure_database(engine)
