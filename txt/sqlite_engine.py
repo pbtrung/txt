@@ -14,7 +14,7 @@ import time
 
 import wasmtime
 
-from .leancrypto_wasm import LeancryptoEngine
+from .leancrypto_wasm import LeancryptoEngine, WasmCall
 
 DB_FILENAME = "/db.sqlite"
 
@@ -91,171 +91,205 @@ def _resize_file(files: dict, name: str, new_len: int) -> None:
         entry.extend(b"\x00" * (new_len - len(entry)))
 
 
-def _make_io_methods(engine, files: dict, open_files: dict):
-    def x_close(p_file):
-        info = open_files.pop(p_file, None)
+class IoMethods:
+    def __init__(self, engine, files: dict, open_files: dict):
+        self.engine, self.files, self.open_files = engine, files, open_files
+
+    def x_close(self, p_file):
+        info = self.open_files.pop(p_file, None)
         if info and info["delete_on_close"]:
-            files.pop(info["name"], None)
+            self.files.pop(info["name"], None)
         return SQLITE_OK
 
-    def x_read(p_file, p_buf, i_amt, i_ofst):
-        entry = files[open_files[p_file]["name"]]
+    def x_read(self, p_file, p_buf, i_amt, i_ofst):
+        entry = self.files[self.open_files[p_file]["name"]]
         avail = len(entry) - i_ofst
         if avail <= 0:
-            engine.memory.write(engine.store, b"\x00" * i_amt, p_buf)
+            self._write_zeros(p_buf, i_amt)
             return SQLITE_IOERR_SHORT_READ
         n = min(avail, i_amt)
-        engine.memory.write(engine.store, bytes(entry[i_ofst : i_ofst + n]), p_buf)
+        data = bytes(entry[i_ofst : i_ofst + n])
+        self.engine.memory.write(self.engine.store, data, p_buf)
         if n < i_amt:
-            engine.memory.write(engine.store, b"\x00" * (i_amt - n), p_buf + n)
+            self._write_zeros(p_buf + n, i_amt - n)
             return SQLITE_IOERR_SHORT_READ
         return SQLITE_OK
 
-    def x_write(p_file, p_buf, i_amt, i_ofst):
-        name = open_files[p_file]["name"]
-        if i_ofst + i_amt > len(files[name]):
-            _resize_file(files, name, i_ofst + i_amt)
-        data = bytes(engine.memory.read(engine.store, p_buf, p_buf + i_amt))
-        files[name][i_ofst : i_ofst + i_amt] = data
+    def _write_zeros(self, ptr: int, size: int) -> None:
+        self.engine.memory.write(self.engine.store, b"\x00" * size, ptr)
+
+    def x_write(self, p_file, p_buf, i_amt, i_ofst):
+        name = self.open_files[p_file]["name"]
+        _ensure_file_size(self.files, name, i_ofst + i_amt)
+        data = bytes(self.engine.memory.read(self.engine.store, p_buf, p_buf + i_amt))
+        self.files[name][i_ofst : i_ofst + i_amt] = data
         return SQLITE_OK
 
-    def x_truncate(p_file, size):
-        _resize_file(files, open_files[p_file]["name"], size)
+    def x_truncate(self, p_file, size):
+        _resize_file(self.files, self.open_files[p_file]["name"], size)
         return SQLITE_OK
 
-    def x_file_size(p_file, p_size):
-        _write_i64(engine, p_size, len(files[open_files[p_file]["name"]]))
+    def x_file_size(self, p_file, p_size):
+        size = len(self.files[self.open_files[p_file]["name"]])
+        _write_i64(self.engine, p_size, size)
         return SQLITE_OK
 
-    def x_check_reserved_lock(p_file, p_res_out):
-        _write_i32(engine, p_res_out, 0)
+    def x_check_reserved_lock(self, p_file, p_res_out):
+        _write_i32(self.engine, p_res_out, 0)
         return SQLITE_OK
 
-    return {
-        "x_close": x_close,
-        "x_read": x_read,
-        "x_write": x_write,
-        "x_truncate": x_truncate,
-        "x_sync": lambda p_file, flags: SQLITE_OK,
-        "x_file_size": x_file_size,
-        "x_lock": lambda p_file, e_lock: SQLITE_OK,
-        "x_unlock": lambda p_file, e_lock: SQLITE_OK,
-        "x_check_reserved_lock": x_check_reserved_lock,
-        "x_file_control": lambda p_file, op, p_arg: SQLITE_NOTFOUND,
-        "x_sector_size": lambda p_file: 4096,
-        "x_device_characteristics": lambda p_file: 0,
-    }
+    @staticmethod
+    def x_sync(p_file, flags):
+        return SQLITE_OK
+
+    @staticmethod
+    def x_lock(p_file, e_lock):
+        return SQLITE_OK
+
+    @staticmethod
+    def x_unlock(p_file, e_lock):
+        return SQLITE_OK
+
+    @staticmethod
+    def x_file_control(p_file, op, p_arg):
+        return SQLITE_NOTFOUND
+
+    @staticmethod
+    def x_sector_size(p_file):
+        return 4096
+
+    @staticmethod
+    def x_device_characteristics(p_file):
+        return 0
 
 
-def _make_vfs_methods(engine, files: dict, open_files: dict, state: dict):
-    def x_open(p_vfs, z_name, p_file, flags, p_out_flags):
-        if z_name:
-            fname = _read_cstring(engine, z_name)
-        else:
-            fname = f":jsvfs-temp-{state['temp_counter']}:"
-            state["temp_counter"] += 1
-        files.setdefault(fname, bytearray())
-        _write_i32(engine, p_file, state["io_methods_ptr"])
-        open_files[p_file] = {
-            "name": fname,
+class VfsMethods:
+    def __init__(self, engine, files: dict, open_files: dict):
+        self.engine, self.files, self.open_files = engine, files, open_files
+        self.io_methods_ptr = 0
+        self.temp_counter = 0
+
+    def x_open(self, p_vfs, z_name, p_file, flags, p_out_flags):
+        name = self._filename(z_name)
+        self.files.setdefault(name, bytearray())
+        _write_i32(self.engine, p_file, self.io_methods_ptr)
+        self.open_files[p_file] = {
+            "name": name,
             "delete_on_close": bool(flags & 0x00000008),
         }
         if p_out_flags:
-            _write_i32(engine, p_out_flags, flags)
+            _write_i32(self.engine, p_out_flags, flags)
         return SQLITE_OK
 
-    def x_delete(p_vfs, z_name, sync_dir):
-        files.pop(_read_cstring(engine, z_name), None)
+    def _filename(self, name_ptr: int) -> str:
+        if name_ptr:
+            return _read_cstring(self.engine, name_ptr)
+        name = f":jsvfs-temp-{self.temp_counter}:"
+        self.temp_counter += 1
+        return name
+
+    def x_delete(self, p_vfs, z_name, sync_dir):
+        self.files.pop(_read_cstring(self.engine, z_name), None)
         return SQLITE_OK
 
-    def x_access(p_vfs, z_name, flags, p_res_out):
-        exists = _read_cstring(engine, z_name) in files
+    def x_access(self, p_vfs, z_name, flags, p_res_out):
+        exists = _read_cstring(self.engine, z_name) in self.files
         value = (1 if exists else 0) if flags == SQLITE_ACCESS_EXISTS else 1
-        _write_i32(engine, p_res_out, value)
+        _write_i32(self.engine, p_res_out, value)
         return SQLITE_OK
 
-    def x_full_pathname(p_vfs, z_name, n_out, z_out):
-        _write_cstring(engine, _read_cstring(engine, z_name), z_out, n_out)
+    def x_full_pathname(self, p_vfs, z_name, n_out, z_out):
+        name = _read_cstring(self.engine, z_name)
+        _write_cstring(self.engine, name, z_out, n_out)
         return SQLITE_OK
 
-    def x_randomness(p_vfs, n_byte, z_out):
-        engine.memory.write(engine.store, secrets.token_bytes(n_byte), z_out)
+    def x_randomness(self, p_vfs, n_byte, z_out):
+        self.engine.memory.write(self.engine.store, secrets.token_bytes(n_byte), z_out)
         return n_byte
 
-    def x_current_time(p_vfs, p_time_out):
+    def x_current_time(self, p_vfs, p_time_out):
         julian_day = 2440587.5 + time.time() * 1000 / 86400000
-        engine.memory.write(engine.store, struct.pack("<d", julian_day), p_time_out)
+        packed = struct.pack("<d", julian_day)
+        self.engine.memory.write(self.engine.store, packed, p_time_out)
         return SQLITE_OK
 
-    def x_get_last_error(p_vfs, n_buf, z_buf):
+    def x_get_last_error(self, p_vfs, n_buf, z_buf):
         if n_buf > 0:
-            engine.memory.write(engine.store, b"\x00", z_buf)
+            self.engine.memory.write(self.engine.store, b"\x00", z_buf)
         return SQLITE_OK
 
-    return {
-        "x_open": x_open,
-        "x_delete": x_delete,
-        "x_access": x_access,
-        "x_full_pathname": x_full_pathname,
-        "x_randomness": x_randomness,
-        "x_sleep": lambda p_vfs, microseconds: microseconds,
-        "x_current_time": x_current_time,
-        "x_get_last_error": x_get_last_error,
-    }
+    @staticmethod
+    def x_sleep(p_vfs, microseconds):
+        return microseconds
 
 
-def _method_specs(vfs: dict, io: dict) -> list:
-    i32 = "i32"
-    return [
-        (vfs["x_open"], [i32] * 5),
-        (vfs["x_delete"], [i32] * 3),
-        (vfs["x_access"], [i32] * 4),
-        (vfs["x_full_pathname"], [i32] * 4),
-        (vfs["x_randomness"], [i32] * 3),
-        (vfs["x_sleep"], [i32] * 2),
-        (vfs["x_current_time"], [i32] * 2),
-        (vfs["x_get_last_error"], [i32] * 3),
-        (io["x_close"], [i32]),
-        (io["x_read"], [i32, i32, i32, "i64"]),
-        (io["x_write"], [i32, i32, i32, "i64"]),
-        (io["x_truncate"], [i32, "i64"]),
-        (io["x_sync"], [i32] * 2),
-        (io["x_file_size"], [i32] * 2),
-        (io["x_lock"], [i32] * 2),
-        (io["x_unlock"], [i32] * 2),
-        (io["x_check_reserved_lock"], [i32] * 2),
-        (io["x_file_control"], [i32] * 3),
-        (io["x_sector_size"], [i32]),
-        (io["x_device_characteristics"], [i32]),
-    ]
+VFS_SPECS = (
+    ("x_open", ["i32"] * 5),
+    ("x_delete", ["i32"] * 3),
+    ("x_access", ["i32"] * 4),
+    ("x_full_pathname", ["i32"] * 4),
+    ("x_randomness", ["i32"] * 3),
+    ("x_sleep", ["i32"] * 2),
+    ("x_current_time", ["i32"] * 2),
+    ("x_get_last_error", ["i32"] * 3),
+)
+IO_SPECS = (
+    ("x_close", ["i32"]),
+    ("x_read", ["i32", "i32", "i32", "i64"]),
+    ("x_write", ["i32", "i32", "i32", "i64"]),
+    ("x_truncate", ["i32", "i64"]),
+    ("x_sync", ["i32"] * 2),
+    ("x_file_size", ["i32"] * 2),
+    ("x_lock", ["i32"] * 2),
+    ("x_unlock", ["i32"] * 2),
+    ("x_check_reserved_lock", ["i32"] * 2),
+    ("x_file_control", ["i32"] * 3),
+    ("x_sector_size", ["i32"]),
+    ("x_device_characteristics", ["i32"]),
+)
+
+
+def _ensure_file_size(files: dict, name: str, size: int) -> None:
+    if size > len(files[name]):
+        _resize_file(files, name, size)
+
+
+def _method_specs(vfs: VfsMethods, io: IoMethods) -> list:
+    return _owner_specs(vfs, VFS_SPECS) + _owner_specs(io, IO_SPECS)
+
+
+def _owner_specs(owner, specs: tuple) -> list:
+    return [(getattr(owner, name), params) for name, params in specs]
 
 
 def register_js_vfs(engine, name: str = "jsvfs", make_default: bool = True) -> dict:
     files: dict[str, bytearray] = {}
     open_files: dict[int, dict] = {}
-    state = {"io_methods_ptr": 0, "temp_counter": 0}
-    io = _make_io_methods(engine, files, open_files)
-    vfs = _make_vfs_methods(engine, files, open_files, state)
+    io = IoMethods(engine, files, open_files)
+    vfs = VfsMethods(engine, files, open_files)
+    ptr_buf = _register_callbacks(engine, _method_specs(vfs, io))
+    _register_vfs(engine, name, make_default, ptr_buf)
+    vfs.io_methods_ptr = engine._exports["sqlite3_js_vfs_io_methods"](engine.store)
+    return files
 
-    method_ptrs = [
-        _add_function(engine, fn, params, ["i32"])
-        for fn, params in _method_specs(vfs, io)
-    ]
-    ptr_buf = engine._malloc(len(method_ptrs) * 4)
-    for i, ptr in enumerate(method_ptrs):
+
+def _register_callbacks(engine, specs: list) -> int:
+    pointers = [_add_function(engine, fn, params, ["i32"]) for fn, params in specs]
+    ptr_buf = engine._malloc(len(pointers) * 4)
+    for i, ptr in enumerate(pointers):
         _write_i32(engine, ptr_buf + i * 4, ptr)
-    name_ptr = engine._write(name.encode("utf-8") + b"\x00")
+    return ptr_buf
 
-    rc = engine._exports["sqlite3_js_vfs_register"](
-        engine.store, name_ptr, 4, 512, 1 if make_default else 0, ptr_buf
-    )
-    engine._free(name_ptr)
-    engine._free(ptr_buf)
+
+def _register_vfs(engine, name: str, make_default: bool, ptr_buf: int) -> None:
+    with WasmCall(engine) as call:
+        call.ptrs.append(ptr_buf)
+        name_ptr = call.write(name.encode("utf-8") + b"\x00")
+        rc = engine._exports["sqlite3_js_vfs_register"](
+            engine.store, name_ptr, 4, 512, int(make_default), ptr_buf
+        )
     if rc != SQLITE_OK:
         raise ValueError(f"sqlite3_js_vfs_register('{name}') failed: rc={rc}")
-
-    state["io_methods_ptr"] = engine._exports["sqlite3_js_vfs_io_methods"](engine.store)
-    return files
 
 
 class SqliteEngine(LeancryptoEngine):
@@ -273,7 +307,8 @@ class SqliteEngine(LeancryptoEngine):
         return bytes(self.files.get(DB_FILENAME, b""))
 
     def close(self) -> None:
-        self._exports["sqlite3_close"](self.store, self.db)
+        if self.db:
+            self._exports["sqlite3_close"](self.store, self.db)
         self.db = 0
 
     def last_insert_rowid(self) -> int:
@@ -291,7 +326,11 @@ class SqliteEngine(LeancryptoEngine):
         self._free_all(fn_ptr, pp_db)
         if rc != SQLITE_OK:
             raise ValueError(f"sqlite3_open_v2 failed: rc={rc}")
-        self._key_db(db, key)
+        try:
+            self._key_db(db, key)
+        except Exception:
+            self._exports["sqlite3_close"](self.store, db)
+            raise
         return db
 
     def _key_db(self, db: int, key: bytes) -> None:
@@ -314,18 +353,33 @@ class SqliteEngine(LeancryptoEngine):
 
     def execute(self, sql: str, params: list | None = None) -> None:
         stmt = self._prepare(sql, params or [])
-        rc = self._exports["sqlite3_step"](self.store, stmt)
-        self._exports["sqlite3_finalize"](self.store, stmt)
-        if rc != SQLITE_DONE:
-            raise ValueError(f"{sql!r} step failed: rc={rc}, {self._errmsg()}")
+        try:
+            rc = self._exports["sqlite3_step"](self.store, stmt)
+            if rc != SQLITE_DONE:
+                raise ValueError(f"{sql!r} step failed: rc={rc}, {self._errmsg()}")
+        finally:
+            self._finalize(stmt)
 
     def query(self, sql: str, params: list | None = None) -> list:
         stmt = self._prepare(sql, params or [])
+        try:
+            return self._query_rows(stmt, sql)
+        finally:
+            self._finalize(stmt)
+
+    def _query_rows(self, stmt: int, sql: str) -> list:
         rows = []
-        while self._exports["sqlite3_step"](self.store, stmt) == SQLITE_ROW:
-            rows.append(self._row(stmt))
+        while True:
+            rc = self._exports["sqlite3_step"](self.store, stmt)
+            if rc == SQLITE_ROW:
+                rows.append(self._row(stmt))
+            elif rc == SQLITE_DONE:
+                return rows
+            else:
+                raise ValueError(f"{sql!r} step failed: rc={rc}, {self._errmsg()}")
+
+    def _finalize(self, stmt: int) -> None:
         self._exports["sqlite3_finalize"](self.store, stmt)
-        return rows
 
     def _prepare(self, sql: str, params: list) -> int:
         sql_ptr = self._write(sql.encode() + b"\x00")
@@ -337,28 +391,42 @@ class SqliteEngine(LeancryptoEngine):
         self._free_all(sql_ptr, pp_stmt)
         if rc != SQLITE_OK:
             raise ValueError(f"prepare {sql!r} failed: rc={rc}, {self._errmsg()}")
-        for i, value in enumerate(params, start=1):
-            self._bind(stmt, i, value)
+        self._bind_all(stmt, params)
         return stmt
+
+    def _bind_all(self, stmt: int, params: list) -> None:
+        try:
+            for i, value in enumerate(params, start=1):
+                self._bind(stmt, i, value)
+        except Exception:
+            self._finalize(stmt)
+            raise
 
     def _bind(self, stmt: int, idx: int, value) -> None:
         if isinstance(value, bool) or isinstance(value, int):
-            self._exports["sqlite3_bind_int64"](self.store, stmt, idx, int(value))
-        elif isinstance(value, (bytes, bytearray)):
-            ptr = self._write(bytes(value))
-            self._exports["sqlite3_bind_blob"](
-                self.store, stmt, idx, ptr, len(value), SQLITE_TRANSIENT
-            )
+            rc = self._exports["sqlite3_bind_int64"](self.store, stmt, idx, int(value))
+        elif isinstance(value, (bytes, bytearray, memoryview)):
+            rc = self._bind_bytes(stmt, idx, bytes(value), "sqlite3_bind_blob")
         elif isinstance(value, str):
-            encoded = value.encode("utf-8")
-            ptr = self._write(encoded)
-            self._exports["sqlite3_bind_text"](
-                self.store, stmt, idx, ptr, len(encoded), SQLITE_TRANSIENT
-            )
+            rc = self._bind_bytes(stmt, idx, value.encode(), "sqlite3_bind_text")
         elif value is None:
-            self._exports["sqlite3_bind_null"](self.store, stmt, idx)
+            rc = self._exports["sqlite3_bind_null"](self.store, stmt, idx)
         else:
             raise TypeError(f"unsupported bind type: {type(value)}")
+        self._check_bind_result(rc, idx)
+
+    def _bind_bytes(self, stmt: int, idx: int, value: bytes, export: str) -> int:
+        ptr = self._write(value) if value else self._malloc(1)
+        try:
+            return self._exports[export](
+                self.store, stmt, idx, ptr, len(value), SQLITE_TRANSIENT
+            )
+        finally:
+            self._free(ptr)
+
+    def _check_bind_result(self, rc: int, idx: int) -> None:
+        if rc != SQLITE_OK:
+            raise ValueError(f"bind parameter {idx} failed: rc={rc}, {self._errmsg()}")
 
     def _row(self, stmt: int) -> tuple:
         count = self._exports["sqlite3_column_count"](self.store, stmt)

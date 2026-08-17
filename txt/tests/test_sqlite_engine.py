@@ -69,6 +69,15 @@ def test_bind_and_column_types_round_trip(engine):
     assert row == (7, "abc", b"\x00\x01\x02", None)
 
 
+def test_empty_and_memoryview_values_remain_blobs(engine):
+    engine.exec_sql("CREATE TABLE t (empty_text TEXT, empty_blob BLOB, view BLOB)")
+    engine.execute("INSERT INTO t VALUES (?, ?, ?)", ["", b"", memoryview(b"view")])
+
+    assert engine.query("SELECT empty_text, empty_blob, view FROM t") == [
+        ("", b"", b"view")
+    ]
+
+
 def test_last_insert_rowid(engine):
     engine.exec_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)")
     engine.execute("INSERT INTO t (v) VALUES (?)", ["a"])
@@ -88,3 +97,8 @@ def test_vacuum_preserves_data(engine):
 def test_bad_sql_raises(engine):
     with pytest.raises(ValueError):
         engine.exec_sql("NOT VALID SQL")
+
+
+def test_query_step_error_raises(engine):
+    with pytest.raises(ValueError, match="step failed"):
+        engine.query("SELECT abs(-9223372036854775808)")
