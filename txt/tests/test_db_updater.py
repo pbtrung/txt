@@ -39,6 +39,17 @@ class NullLogger:
         pass
 
 
+class CaptureLogger:
+    def __init__(self):
+        self.messages = []
+
+    def verbose(self, message):
+        self.messages.append(message)
+
+    def info(self, message):
+        self.messages.append(message)
+
+
 class FakeFirebaseAuth:
     def __init__(self, api_key):
         pass
@@ -231,6 +242,31 @@ def test_migrates_admin_own_database(tmp_path, creds_path, engine):
         "subjects": [],
         "publisher": None,
     }
+
+
+def test_logs_download_migration_and_schema_validation_progress(
+    tmp_path, creds_path, engine
+):
+    db_master_key = secrets.token_bytes(256)
+    db_path = "d" * 52
+    _register_account(engine, ADMIN_UID, db_master_key, db_path)
+    FakeR2Client.objects[db_path] = _build_old_db(
+        db_master_key, [("dune.epub", {"title": "Dune"})]
+    )
+    logger = CaptureLogger()
+
+    DbUpdater(load_creds(creds_path), tmp_path / "local", logger).run()
+
+    output = "\n".join(logger.messages)
+    assert f"Downloading {db_path} from R2" in output
+    assert "downloaded " in output and 'etag="v1"' in output
+    assert "opening and decrypting database" in output
+    assert "current txt columns" in output
+    assert "migrating metadata to catalog" in output
+    assert "ensuring CFI reading-state schema" in output
+    assert "validating complete database schema" in output
+    assert "schema check passed: page_size=16384, txt_rows=1, bookmarks=0" in output
+    assert "uploading " in output and "with R2 precondition" in output
 
 
 def test_migrates_every_reachable_account(tmp_path, creds_path, engine):
@@ -487,4 +523,42 @@ def test_conditional_upload_does_not_overwrite_a_concurrent_remote_change(
         DbUpdater(load_creds(creds_path), tmp_path / "local", NullLogger()).run()
 
     assert FakeR2Client.objects[db_path] == concurrent
+    assert FakeR2Client.put_calls == []
+
+
+def test_rejects_an_invalid_final_schema_without_upload(tmp_path, creds_path, engine):
+    db_master_key = secrets.token_bytes(256)
+    db_path = "d" * 52
+    _register_account(engine, ADMIN_UID, db_master_key, db_path)
+    malformed = SqliteEngine()
+    malformed.open(db_master_key)
+    malformed.exec_sql("PRAGMA page_size = 16384")
+    malformed.exec_sql("""
+        CREATE TABLE txt (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          txt_key BLOB NOT NULL,
+          txt_prefix BLOB NOT NULL,
+          path BLOB NOT NULL,
+          catalog BLOB NOT NULL,
+          last_accessed INTEGER NOT NULL,
+          last_cfi TEXT,
+          created_at INTEGER NOT NULL
+        );
+        CREATE TABLE txt_bookmarks (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          txt_id INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
+          cfi TEXT NOT NULL,
+          preview TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          UNIQUE (txt_id, cfi)
+        );
+        """)
+    original = malformed.to_bytes()
+    malformed.close()
+    FakeR2Client.objects[db_path] = original
+
+    with pytest.raises(ValueError, match="missing the 100-byte preview limit"):
+        DbUpdater(load_creds(creds_path), tmp_path / "local", NullLogger()).run()
+
+    assert FakeR2Client.objects[db_path] == original
     assert FakeR2Client.put_calls == []

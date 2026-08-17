@@ -69,8 +69,8 @@ from .replace_images import ImageReplacer
     "update_db_creds_path",
     metavar="CREDS_JSON",
     help=(
-        "Migrate txt.metadata to txt.catalog for every account this admin's "
-        "creds.json can reach (needs --local-db-dir)"
+        "Migrate and validate the complete catalog/CFI schema for every account "
+        "this admin's creds.json can reach (needs --local-db-dir)"
     ),
 )
 @click.option(

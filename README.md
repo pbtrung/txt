@@ -76,7 +76,7 @@ R2 is always the source of truth. Every run downloads `{db_path}` even when `DIR
 txt --update-db admin_creds.json --local-db-dir DIR --verbose
 ```
 
-Walks every account this administrator's creds.json can reach — their own database, plus every user backup row `--init-user` has written (docs/auth.md §2) — and migrates `txt.metadata` to `txt.catalog`, adds `txt.last_cfi`, and installs the CFI bookmark table/index/cap trigger (docs/data_model.md §3). It always starts from the current R2 object, writes `DIR/{db_path}` only as a checkpoint, and conditionally uploads changed databases against their downloaded ETags. A concurrent write therefore aborts safely; rerun against the new object. Already-current databases are not uploaded.
+Walks every account this administrator's creds.json can reach — their own database, plus every user backup row `--init-user` has written (docs/auth.md §2) — and migrates `txt.metadata` to `txt.catalog`, adds `txt.last_cfi`, and installs the CFI bookmark table/index/cap trigger (docs/data_model.md §3). With `--verbose`, it logs each download, open/decrypt, migration, validation, checkpoint, and conditional-upload stage. Before writing anything back, it checks the page size, foreign-key mode, required columns, catalog completeness, bookmark constraints/index/trigger/cascade, and SQLite `quick_check`; an invalid final schema aborts without upload. It always starts from the current R2 object, writes `DIR/{db_path}` only as a checkpoint, and conditionally uploads changed databases against their downloaded ETags. A concurrent write therefore aborts safely; rerun against the new object. Already-current databases are validated but not uploaded.
 
 ### Clean unreferenced R2 objects
 
