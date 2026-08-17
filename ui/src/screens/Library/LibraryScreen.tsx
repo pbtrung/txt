@@ -7,6 +7,7 @@ import { useVault } from "../../state/VaultContext";
 import { LibraryContent } from "./LibraryContent";
 import { LibraryHeader } from "./LibraryHeader";
 import { LibrarySidebar } from "./LibrarySidebar";
+import { parseSearch } from "./libraryModel";
 import type { LibraryView } from "./libraryView";
 import { useLibraryBooks } from "./useLibraryBooks";
 
@@ -31,11 +32,15 @@ export function LibraryScreen() {
     setQuery("");
     setDrawerOpen(false);
   };
+  const search = (next: string) => {
+    setQuery(next);
+    if (parseSearch(next).activity) setView(INITIAL_VIEW);
+  };
   return (
     <div className="d-flex flex-column vh-100 mx-auto max-w-md-80 px-2 px-md-0">
       <LibraryHeader
         query={query}
-        onQuery={setQuery}
+        onQuery={search}
         onOpenMenu={() => setDrawerOpen(true)}
       />
       <div className="d-flex flex-grow-1 overflow-hidden">

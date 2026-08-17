@@ -5,6 +5,7 @@ import {
   booksForDimensionValue,
   browseEntries,
   matchesSearch,
+  parseSearch,
   recentBookCount,
   recentlyAccessed,
   recentlyBookmarked,
@@ -100,6 +101,36 @@ describe("matchesSearch", () => {
 
   it("matches everything for a blank query", () => {
     expect(matchesSearch(LIBRARY[0], "   ")).toBe(true);
+  });
+
+  it("filters accessed and bookmarked books with a:/b: expressions", () => {
+    const accessed = book({ title: "Dune", lastAccessed: 42 });
+    const bookmarked = book({ title: "Earthsea", bookmarkCount: 1 });
+
+    expect(matchesSearch(accessed, "a:*")).toBe(true);
+    expect(matchesSearch(bookmarked, "a:*")).toBe(false);
+    expect(matchesSearch(accessed, "a:'dune'")).toBe(true);
+    expect(matchesSearch(accessed, "a:'earth'")).toBe(false);
+    expect(matchesSearch(bookmarked, "b:*")).toBe(true);
+    expect(matchesSearch(bookmarked, "b:'earth'")).toBe(true);
+    expect(matchesSearch(accessed, "b:'dune'")).toBe(false);
+  });
+});
+
+describe("parseSearch", () => {
+  it("parses activity wildcards and quoted text case-insensitively", () => {
+    expect(parseSearch(" A:* ")).toEqual({ activity: "access", text: "" });
+    expect(parseSearch("B:'Some Text'")).toEqual({
+      activity: "bookmark",
+      text: "some text",
+    });
+  });
+
+  it("leaves malformed activity expressions as ordinary searches", () => {
+    expect(parseSearch("a:unquoted")).toEqual({
+      activity: null,
+      text: "a:unquoted",
+    });
   });
 });
 

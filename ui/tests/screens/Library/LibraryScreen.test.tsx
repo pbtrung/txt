@@ -119,6 +119,26 @@ describe("LibraryScreen", () => {
     expect(screen.queryByRole("link", { name: /Dune/ })).not.toBeInTheDocument();
   });
 
+  it("supports access and bookmark search expressions", async () => {
+    renderScreen([
+      book({ txtId: 1, title: "Read Dune", lastAccessed: 100 }),
+      book({ txtId: 2, title: "Marked Earthsea", bookmarkCount: 1 }),
+      book({ txtId: 3, title: "Inactive book" }),
+    ]);
+    const searchbox = screen.getByRole("searchbox");
+
+    await userEvent.click(screen.getByRole("button", { name: /^Recent/ }));
+    await userEvent.type(searchbox, "a:*");
+    expect(screen.getByRole("heading", { name: "All Books" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Read Dune/ })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Marked Earthsea/ })).toBeNull();
+
+    await userEvent.clear(searchbox);
+    await userEvent.type(searchbox, "b:'earth'");
+    expect(screen.getByRole("link", { name: /Marked Earthsea/ })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Inactive book/ })).toBeNull();
+  });
+
   it("shows an empty-library message when there are no books at all", () => {
     renderScreen([]);
     expect(screen.getByText("Your library is empty.")).toBeInTheDocument();

@@ -25,13 +25,30 @@ export function recentBookCount(books: LibraryBook[]): number {
 }
 
 export function matchesSearch(book: LibraryBook, query: string): boolean {
-  const q = query.trim().toLowerCase();
-  if (!q) return true;
+  const search = parseSearch(query);
+  if (search.activity === "access" && book.lastAccessed <= 0) return false;
+  if (search.activity === "bookmark" && book.bookmarkCount <= 0) return false;
+  if (!search.text) return true;
   const haystack = [book.title, ...book.authors, book.publisher, ...book.subjects]
     .filter((s): s is string => Boolean(s))
     .join(" ")
     .toLowerCase();
-  return haystack.includes(q);
+  return haystack.includes(search.text);
+}
+
+interface ParsedSearch {
+  activity: "access" | "bookmark" | null;
+  text: string;
+}
+
+export function parseSearch(query: string): ParsedSearch {
+  const normalized = query.trim().toLowerCase();
+  const match = /^([ab]):(?:\*|'([^']*)')$/.exec(normalized);
+  if (!match) return { activity: null, text: normalized };
+  return {
+    activity: match[1] === "a" ? "access" : "bookmark",
+    text: match[2] ?? "",
+  };
 }
 
 export type BrowseDimension = "author" | "subject" | "publisher";
