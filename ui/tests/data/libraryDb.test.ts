@@ -1,7 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { brotliCompress } from "../../src/crypto/brotli";
 import { ensureSchema } from "../../src/data/schema";
-import { loadLibraryBooks } from "../../src/data/libraryDb";
+import {
+  clearBookmarksMutation,
+  clearLastAccessMutation,
+  loadLibraryBooks,
+} from "../../src/data/libraryDb";
 import { SqliteDatabase } from "../../src/data/sqlite";
 
 async function catalogBlob(catalog: Record<string, unknown>): Promise<Uint8Array> {
@@ -111,5 +115,26 @@ describe("loadLibraryBooks (real sqlcipher.wasm)", () => {
 
     expect(await loadLibraryBooks(db)).toEqual([]);
     db.close();
+  });
+});
+
+describe("library activity mutations", () => {
+  it("clears access without changing location and removes all book bookmarks", () => {
+    const execute = vi.fn();
+    const database = { execute } as unknown as SqliteDatabase;
+
+    clearLastAccessMutation(7).apply(database);
+    clearBookmarksMutation(7).apply(database);
+
+    expect(execute).toHaveBeenNthCalledWith(
+      1,
+      "UPDATE txt SET last_accessed = 0 WHERE id = ?",
+      [7],
+    );
+    expect(execute).toHaveBeenNthCalledWith(
+      2,
+      "DELETE FROM txt_bookmarks WHERE txt_id = ?",
+      [7],
+    );
   });
 });

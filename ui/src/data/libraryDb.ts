@@ -3,6 +3,7 @@
 // JSON) into plain LibraryBook records for the Library screen's
 // search/browse-by-author/subject/publisher.
 import { decodeCatalog } from "./catalog";
+import type { DatabaseMutation } from "./databaseStore";
 import type { SqliteDatabase } from "./sqlite";
 
 export interface LibraryBook {
@@ -38,4 +39,18 @@ export async function loadLibraryBooks(db: SqliteDatabase): Promise<LibraryBook[
       "GROUP BY t.id ORDER BY t.id",
   );
   return Promise.all(rows.map(toBook));
+}
+
+export function clearLastAccessMutation(txtId: number): DatabaseMutation {
+  return {
+    description: "clear last access",
+    apply: (db) => db.execute("UPDATE txt SET last_accessed = 0 WHERE id = ?", [txtId]),
+  };
+}
+
+export function clearBookmarksMutation(txtId: number): DatabaseMutation {
+  return {
+    description: "clear bookmarks",
+    apply: (db) => db.execute("DELETE FROM txt_bookmarks WHERE txt_id = ?", [txtId]),
+  };
 }

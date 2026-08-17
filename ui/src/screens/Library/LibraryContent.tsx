@@ -21,11 +21,15 @@ export function LibraryContent({
   view,
   query,
   onNavigate,
+  onClearAccess,
+  onClearBookmarks,
 }: {
   books: LibraryBook[];
   view: LibraryView;
   query: string;
   onNavigate: (view: LibraryView) => void;
+  onClearAccess: (txtId: number) => void;
+  onClearBookmarks: (txtId: number) => void;
 }) {
   const filteredBooks = useMemo(
     () => (view.kind === "books" ? visibleBooks(books, query, view.filter) : []),
@@ -35,7 +39,7 @@ export function LibraryContent({
     <div className="d-flex flex-column flex-grow-1 overflow-hidden">
       <ContentHeader view={view} onNavigate={onNavigate} />
       {view.kind === "recent" ? (
-        <RecentBooks books={books} />
+        <RecentBooks {...{ books, onClearAccess, onClearBookmarks }} />
       ) : view.kind === "entries" ? (
         <EntriesList {...{ books, query, onNavigate }} dimension={view.dimension} />
       ) : (
@@ -67,7 +71,15 @@ function ContentHeader({
   );
 }
 
-function RecentBooks({ books }: { books: LibraryBook[] }) {
+function RecentBooks({
+  books,
+  onClearAccess,
+  onClearBookmarks,
+}: {
+  books: LibraryBook[];
+  onClearAccess: (txtId: number) => void;
+  onClearBookmarks: (txtId: number) => void;
+}) {
   const accessed = useMemo(() => recentlyAccessed(books), [books]);
   const bookmarked = useMemo(() => recentlyBookmarked(books), [books]);
   if (!accessed.length && !bookmarked.length) {
@@ -75,19 +87,32 @@ function RecentBooks({ books }: { books: LibraryBook[] }) {
   }
   return (
     <div className="flex-grow-1 overflow-y-auto px-2 px-md-3">
-      <RecentSection title="Recent access" books={accessed} />
-      <RecentSection title="Bookmarks" books={bookmarked} />
+      <RecentSection title="Recent access" books={accessed} onRemove={onClearAccess} />
+      <RecentSection title="Bookmarks" books={bookmarked} onRemove={onClearBookmarks} />
     </div>
   );
 }
 
-function RecentSection({ title, books }: { title: string; books: LibraryBook[] }) {
+function RecentSection({
+  title,
+  books,
+  onRemove,
+}: {
+  title: string;
+  books: LibraryBook[];
+  onRemove: (txtId: number) => void;
+}) {
   if (!books.length) return null;
   return (
     <section className="mb-3" aria-label={title}>
       <h3 className="h6 text-muted px-2 py-2 mb-0">{title}</h3>
       {books.map((book) => (
-        <BookRow key={book.txtId} book={book} />
+        <BookRow
+          key={book.txtId}
+          book={book}
+          removeLabel={`Remove ${book.title} from ${title}`}
+          onRemove={() => onRemove(book.txtId)}
+        />
       ))}
     </section>
   );

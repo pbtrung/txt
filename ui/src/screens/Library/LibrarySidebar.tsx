@@ -54,6 +54,9 @@ function LibraryNav({
           active={view.kind === "recent"}
           onClick={() => onNavigate({ kind: "recent" })}
         />
+        <div className="px-3 pt-3 pb-1 small fw-semibold text-uppercase text-muted">
+          Browse
+        </div>
         <NavRow
           label="All Books"
           count={books.length}

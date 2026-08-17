@@ -16,7 +16,10 @@ describe("useLibraryBooks", () => {
 
   it("returns [] immediately when there's no database yet", () => {
     const { result } = renderHook(() => useLibraryBooks(null));
-    expect(result.current).toEqual({ status: "ready", books: [] });
+    expect(result.current).toMatchObject({ status: "ready", books: [] });
+    expect(result.current.status === "ready" && result.current.reload).toBeTypeOf(
+      "function",
+    );
   });
 
   it("loads real database bytes, starting from a loading (null) state", async () => {
@@ -58,6 +61,7 @@ describe("useLibraryBooks", () => {
           lastBookmarked: null,
         },
       ],
+      reload: expect.any(Function),
     });
     db.close();
   });

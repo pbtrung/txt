@@ -1,14 +1,14 @@
 // The session-selector hook: loads the txt table's catalog out of the
 // already-unlocked session's open SqliteDatabase (VaultContext) into plain
 // LibraryBook records.
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { LibraryDatabaseStore } from "../../data/databaseStore";
 import { loadLibraryBooks, type LibraryBook } from "../../data/libraryDb";
 import { errorMessage } from "../../util/errorMessage";
 
 export type LibraryState =
   | { status: "loading" }
-  | { status: "ready"; books: LibraryBook[] }
+  | { status: "ready"; books: LibraryBook[]; reload: () => void }
   | { status: "error"; error: string };
 
 interface LoadedLibrary {
@@ -18,13 +18,15 @@ interface LoadedLibrary {
 
 export function useLibraryBooks(database: LibraryDatabaseStore | null): LibraryState {
   const [loaded, setLoaded] = useState<LoadedLibrary | null>(null);
+  const [revision, setRevision] = useState(0);
+  const reload = useCallback(() => setRevision((value) => value + 1), []);
   useEffect(() => {
     if (!database) return;
     const source = database;
     let cancelled = false;
     source
       .read(loadLibraryBooks)
-      .then((books) => setLoadedUnlessCancelled({ status: "ready", books }))
+      .then((books) => setLoadedUnlessCancelled({ status: "ready", books, reload }))
       .catch((error: unknown) =>
         setLoadedUnlessCancelled({ status: "error", error: errorMessage(error) }),
       );
@@ -34,7 +36,7 @@ export function useLibraryBooks(database: LibraryDatabaseStore | null): LibraryS
     return () => {
       cancelled = true;
     };
-  }, [database]);
-  if (!database) return { status: "ready", books: [] };
+  }, [database, reload, revision]);
+  if (!database) return { status: "ready", books: [], reload };
   return loaded?.database === database ? loaded.state : { status: "loading" };
 }

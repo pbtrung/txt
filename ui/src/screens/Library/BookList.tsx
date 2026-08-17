@@ -4,7 +4,7 @@ import { Link } from "react-router-dom";
 import type { LibraryBook } from "../../data/libraryDb";
 import { classNames } from "../../util/classNames";
 
-const ROW_HEIGHT_PX = 64;
+const ROW_HEIGHT_PX = 72;
 
 export function BookList({
   books,
@@ -66,45 +66,78 @@ function VirtualBookRow({
   );
 }
 
-export function BookRow({ book }: { book: LibraryBook }) {
+export function BookRow({
+  book,
+  onRemove,
+  removeLabel,
+}: {
+  book: LibraryBook;
+  onRemove?: () => void;
+  removeLabel?: string;
+}) {
   const active = book.lastAccessed > 0 || book.bookmarkCount > 0;
   return (
-    <Link
-      to={`/read/${book.txtId}`}
-      className="d-block py-2 px-2 rounded-3 text-decoration-none text-body book-row"
-      style={{ height: ROW_HEIGHT_PX }}
-    >
-      <span className="d-block overflow-hidden min-w-0">
-        <span className="d-flex align-items-center gap-2">
-          <span
-            className={classNames(
-              "book-row-icon flex-shrink-0 d-flex align-items-center justify-content-center rounded-circle",
-              active && "book-row-icon-active",
-            )}
-          >
-            <i className="bi bi-journal-bookmark" aria-hidden="true" />
-          </span>
-          <span className="text-truncate fw-medium">{book.title}</span>
-        </span>
-        <span className="d-flex align-items-center gap-1 min-w-0 book-row-meta">
-          {book.bookmarkCount > 0 && <BookmarkBadge count={book.bookmarkCount} />}
-          {book.lastAccessed > 0 && (
+    <div className="position-relative" style={{ height: ROW_HEIGHT_PX }}>
+      <Link
+        to={`/read/${book.txtId}`}
+        className={classNames(
+          "d-block py-2 px-2 rounded-3 text-decoration-none text-body book-row h-100",
+          onRemove && "pe-5",
+        )}
+      >
+        <span className="d-block overflow-hidden min-w-0">
+          <span className="d-flex align-items-center gap-2">
             <span
-              className="badge rounded-pill text-bg-light border fw-normal flex-shrink-0"
-              aria-label={`Last accessed ${formatLastAccessed(book.lastAccessed)}`}
+              className={classNames(
+                "book-row-icon flex-shrink-0 d-flex align-items-center justify-content-center rounded-circle",
+                active && "book-row-icon-active",
+              )}
             >
-              <i className="bi bi-clock-history me-1" aria-hidden="true" />
-              {formatLastAccessed(book.lastAccessed)}
+              <i className="bi bi-journal-bookmark" aria-hidden="true" />
             </span>
-          )}
-          {book.authors.length > 0 && (
-            <span className="text-truncate small text-muted min-w-0">
-              {book.authors.join(", ")}
-            </span>
-          )}
+            <span className="text-truncate fw-medium">{book.title}</span>
+          </span>
+          <BookMetadata book={book} />
         </span>
-      </span>
-    </Link>
+      </Link>
+      {onRemove && (
+        <button
+          type="button"
+          className="btn btn-sm border-0 position-absolute top-50 end-0 translate-middle-y me-1"
+          aria-label={removeLabel}
+          onClick={onRemove}
+        >
+          <i className="bi bi-x-lg" aria-hidden="true" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+function BookMetadata({ book }: { book: LibraryBook }) {
+  return (
+    <span className="d-flex align-items-center gap-1 min-w-0 book-row-meta mt-1">
+      {book.bookmarkCount > 0 && <BookmarkBadge count={book.bookmarkCount} />}
+      {book.lastAccessed > 0 && <LastAccessedBadge timestamp={book.lastAccessed} />}
+      {book.authors.length > 0 && (
+        <span className="text-truncate small text-muted min-w-0">
+          {book.authors.join(", ")}
+        </span>
+      )}
+    </span>
+  );
+}
+
+function LastAccessedBadge({ timestamp }: { timestamp: number }) {
+  const formatted = formatLastAccessed(timestamp);
+  return (
+    <span
+      className="badge rounded-pill text-bg-light border fw-normal flex-shrink-0"
+      aria-label={`Last accessed ${formatted}`}
+    >
+      <i className="bi bi-clock-history me-1" aria-hidden="true" />
+      {formatted}
+    </span>
   );
 }
 

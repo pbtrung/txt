@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
@@ -14,11 +14,11 @@ vi.mock("../../../src/screens/Library/useLibraryBooks", () => ({
 // show, so every row is rendered unconditionally instead.
 vi.mock("@tanstack/react-virtual", () => ({
   useVirtualizer: (options: { count: number }) => ({
-    getTotalSize: () => options.count * 64,
+    getTotalSize: () => options.count * 72,
     getVirtualItems: () =>
       Array.from({ length: options.count }, (_, index) => ({
         index,
-        start: index * 64,
+        start: index * 72,
         key: index,
       })),
   }),
@@ -64,13 +64,19 @@ const LIBRARY: LibraryBook[] = [
 
 function renderScreen(books: LibraryBook[] | null, lock = vi.fn()) {
   return renderLibrary(
-    books === null ? { status: "loading" } : { status: "ready", books },
+    books === null
+      ? { status: "loading" }
+      : { status: "ready", books, reload: vi.fn() },
     lock,
   );
 }
 
-function renderLibrary(library: LibraryState, lock = vi.fn()) {
-  const session = { db: {}, displayName: "Trung" } as VaultSession;
+function renderLibrary(
+  library: LibraryState,
+  lock = vi.fn(),
+  mutate = vi.fn().mockResolvedValue(undefined),
+) {
+  const session = { database: { mutate }, displayName: "Trung" } as VaultSession;
   vi.mocked(useVault).mockReturnValue({
     status: "unlocked",
     session,
@@ -183,6 +189,7 @@ describe("LibraryScreen", () => {
     expect(screen.getByRole("button", { name: /^Authors/ })).toHaveTextContent("2");
     expect(screen.getByRole("button", { name: /^Subjects/ })).toHaveTextContent("2");
     expect(screen.getByRole("button", { name: /^Publishers/ })).toHaveTextContent("1");
+    expect(screen.getByText("Browse")).toBeInTheDocument();
   });
 
   it("shows recent access and bookmarked books in the Recent view", async () => {
@@ -205,6 +212,43 @@ describe("LibraryScreen", () => {
     expect(screen.getByRole("region", { name: "Bookmarks" })).toHaveTextContent(
       "Recently marked",
     );
+  });
+
+  it("removes access or all bookmarks from their Recent sections", async () => {
+    const mutate = vi.fn().mockResolvedValue(undefined);
+    const reload = vi.fn();
+    renderLibrary(
+      {
+        status: "ready",
+        books: [
+          book({
+            title: "Active book",
+            lastAccessed: 100,
+            bookmarkCount: 2,
+            lastBookmarked: 200,
+          }),
+        ],
+        reload,
+      },
+      vi.fn(),
+      mutate,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /^Recent/ }));
+
+    await userEvent.click(
+      screen.getByRole("button", {
+        name: "Remove Active book from Recent access",
+      }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Remove Active book from Bookmarks" }),
+    );
+
+    expect(mutate.mock.calls.map(([mutation]) => mutation.description)).toEqual([
+      "clear last access",
+      "clear bookmarks",
+    ]);
+    await waitFor(() => expect(reload).toHaveBeenCalledTimes(2));
   });
 
   it("drills from a dimension into its entries, then into that entry's books", async () => {

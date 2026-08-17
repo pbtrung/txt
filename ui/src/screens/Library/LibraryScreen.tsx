@@ -4,6 +4,7 @@ import { useState } from "react";
 import { OffcanvasPanel } from "../../components/OffcanvasPanel";
 import { LoadingMessage, ScreenMessage } from "../../components/ScreenMessage";
 import { useVault } from "../../state/VaultContext";
+import { clearBookmarksMutation, clearLastAccessMutation } from "../../data/libraryDb";
 import { LibraryContent } from "./LibraryContent";
 import { LibraryHeader } from "./LibraryHeader";
 import { LibrarySidebar } from "./LibrarySidebar";
@@ -36,6 +37,20 @@ export function LibraryScreen() {
     setQuery(next);
     if (parseSearch(next).activity) setView(INITIAL_VIEW);
   };
+  const clearActivity = async (kind: "access" | "bookmarks", txtId: number) => {
+    if (!session) return;
+    const mutation =
+      kind === "access"
+        ? clearLastAccessMutation(txtId)
+        : clearBookmarksMutation(txtId);
+    try {
+      await session.database.mutate(mutation);
+    } catch {
+      // LibraryDatabaseStore retains the failed mutation and error for retry.
+    } finally {
+      library.reload();
+    }
+  };
   return (
     <div className="d-flex flex-column vh-100 mx-auto max-w-md-80 px-2 px-md-0">
       <LibraryHeader
@@ -65,6 +80,8 @@ export function LibraryScreen() {
           view={view}
           query={query}
           onNavigate={navigate}
+          onClearAccess={(txtId) => void clearActivity("access", txtId)}
+          onClearBookmarks={(txtId) => void clearActivity("bookmarks", txtId)}
         />
       </div>
     </div>
