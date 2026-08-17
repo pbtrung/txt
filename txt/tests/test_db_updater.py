@@ -319,7 +319,7 @@ def test_second_run_is_a_noop(tmp_path, creds_path, engine):
     assert len(FakeR2Client.put_calls) == upload_count
 
 
-def test_page_number_migration_resets_legacy_access_once(tmp_path, creds_path, engine):
+def test_named_migration_resets_legacy_access_once(tmp_path, creds_path, engine):
     db_master_key = secrets.token_bytes(256)
     db_path = "d" * 52
     _register_account(engine, ADMIN_UID, db_master_key, db_path)
@@ -338,6 +338,9 @@ def test_page_number_migration_resets_legacy_access_once(tmp_path, creds_path, e
         row[1] for row in migrated.query("PRAGMA table_info(txt_bookmarks)")
     }
     assert "page_number" in bookmark_columns
+    assert migrated.query("SELECT name FROM txt_schema_migrations") == [
+        ("reset_initial_last_accessed",)
+    ]
     migrated.close()
 
     uploads = len(FakeR2Client.put_calls)

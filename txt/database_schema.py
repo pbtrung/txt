@@ -6,6 +6,7 @@ from .sqlite_engine import SqliteEngine
 PAGE_SIZE = 16384
 SET_PAGE_SIZE_SQL = f"PRAGMA page_size = {PAGE_SIZE}"
 ENABLE_FOREIGN_KEYS_SQL = "PRAGMA foreign_keys = ON"
+ACCESS_RESET_MIGRATION = "reset_initial_last_accessed"
 
 CREATE_TXT_SQL = """
 CREATE TABLE IF NOT EXISTS txt (
@@ -49,6 +50,12 @@ BEGIN
       LIMIT 20
     );
 END
+"""
+
+CREATE_SCHEMA_MIGRATIONS_SQL = """
+CREATE TABLE IF NOT EXISTS txt_schema_migrations (
+  name TEXT PRIMARY KEY
+)
 """
 
 REQUIRED_TXT_COLUMNS = {
@@ -128,8 +135,31 @@ def compact_sql(sql: str) -> str:
 
 def ensure_database_schema(engine: SqliteEngine) -> bool:
     configure_database(engine)
+    fresh = not table_exists(engine, "txt")
     engine.exec_sql(CREATE_TXT_SQL)
-    return ensure_reading_schema(engine)
+    changed = ensure_reading_schema(engine) or fresh
+    changed = ensure_migration_table(engine) or changed
+    if fresh:
+        record_migration(engine, ACCESS_RESET_MIGRATION)
+    return changed
+
+
+def ensure_migration_table(engine: SqliteEngine) -> bool:
+    missing = not table_exists(engine, "txt_schema_migrations")
+    engine.exec_sql(CREATE_SCHEMA_MIGRATIONS_SQL)
+    return missing
+
+
+def migration_applied(engine: SqliteEngine, name: str) -> bool:
+    return bool(
+        engine.query("SELECT 1 FROM txt_schema_migrations WHERE name = ?", [name])
+    )
+
+
+def record_migration(engine: SqliteEngine, name: str) -> None:
+    engine.execute(
+        "INSERT OR IGNORE INTO txt_schema_migrations (name) VALUES (?)", [name]
+    )
 
 
 def ensure_reading_schema(
@@ -220,10 +250,18 @@ def validate_schema(engine: SqliteEngine) -> SchemaStats:
     _validate_pragmas(engine, errors)
     _validate_txt(engine, errors)
     _validate_bookmarks(engine, errors)
+    _validate_migrations(engine, errors)
     _validate_integrity(engine, errors)
     if errors:
         raise ValueError("schema validation failed: " + "; ".join(errors))
     return SchemaStats(_row_count(engine, "txt"), _row_count(engine, "txt_bookmarks"))
+
+
+def _validate_migrations(engine: SqliteEngine, errors: list[str]) -> None:
+    if not table_exists(engine, "txt_schema_migrations"):
+        errors.append("txt_schema_migrations is missing")
+    elif not migration_applied(engine, ACCESS_RESET_MIGRATION):
+        errors.append(f"migration {ACCESS_RESET_MIGRATION} is not recorded")
 
 
 def _validate_pragmas(engine: SqliteEngine, errors: list[str]) -> None:

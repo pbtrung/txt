@@ -20,6 +20,9 @@ describe("ensureSchema (real sqlcipher.wasm)", () => {
     expect(bookmarkColumns).toContain("cfi");
     expect(bookmarkColumns).toContain("page_number");
     expect(bookmarkColumns).not.toContain("line");
+    expect(db.query("SELECT name FROM txt_schema_migrations")).toEqual([
+      ["reset_initial_last_accessed"],
+    ]);
     expect(db.query("PRAGMA user_version")).toEqual([[0]]);
     db.close();
   });
@@ -126,6 +129,7 @@ describe("ensureSchema (real sqlcipher.wasm)", () => {
     expect(db.query("PRAGMA table_info(txt_bookmarks)").map((row) => row[1])).toContain(
       "cfi",
     );
+    expect(db.query("SELECT name FROM txt_schema_migrations")).toEqual([]);
     db.close();
   });
 

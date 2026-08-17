@@ -9,6 +9,7 @@ export const PAGE_SIZE = 16384; // 16 KiB
 // reissues this pragma silently falls back to the compiled-in default.
 const SET_PAGE_SIZE_SQL = `PRAGMA page_size = ${PAGE_SIZE}`;
 const ENABLE_FOREIGN_KEYS_SQL = "PRAGMA foreign_keys = ON";
+const ACCESS_RESET_MIGRATION = "reset_initial_last_accessed";
 
 const CREATE_TXT_SQL = `
 CREATE TABLE IF NOT EXISTS txt (
@@ -53,6 +54,12 @@ BEGIN
 END
 `;
 
+const CREATE_SCHEMA_MIGRATIONS_SQL = `
+CREATE TABLE IF NOT EXISTS txt_schema_migrations (
+  name TEXT PRIMARY KEY
+)
+`;
+
 interface Executable {
   execSql(sql: string): void;
   query(sql: string): unknown[][];
@@ -60,10 +67,22 @@ interface Executable {
 }
 
 export function ensureSchema(db: Executable): void {
-  for (const stmt of [SET_PAGE_SIZE_SQL, ENABLE_FOREIGN_KEYS_SQL, CREATE_TXT_SQL]) {
+  db.execSql(SET_PAGE_SIZE_SQL);
+  db.execSql(ENABLE_FOREIGN_KEYS_SQL);
+  const fresh = !db.query(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'txt'",
+  ).length;
+  for (const stmt of [CREATE_TXT_SQL, CREATE_SCHEMA_MIGRATIONS_SQL]) {
     db.execSql(stmt);
   }
-  db.transaction(() => ensureReadingSchema(db));
+  db.transaction(() => {
+    ensureReadingSchema(db);
+    if (fresh) {
+      db.execSql(
+        `INSERT OR IGNORE INTO txt_schema_migrations (name) VALUES ('${ACCESS_RESET_MIGRATION}')`,
+      );
+    }
+  });
 }
 
 function ensureReadingSchema(db: Executable): void {

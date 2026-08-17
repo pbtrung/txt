@@ -17,9 +17,13 @@ from .account_data import StorageAccount
 from .control_session import ControlFactories, ControlSession
 from .creds import Creds
 from .database_schema import (
+    ACCESS_RESET_MIGRATION,
     PAGE_SIZE,
+    ensure_migration_table,
     ensure_reading_schema,
+    migration_applied,
     open_database,
+    record_migration,
     table_columns,
     table_exists,
     validate_schema,
@@ -133,12 +137,12 @@ class DbUpdater:
             return changed
         self.logger.verbose(f"[{uid}] resetting legacy last_accessed values...")
         engine.exec_sql("UPDATE txt SET last_accessed = 0")
+        record_migration(engine, ACCESS_RESET_MIGRATION)
         return True
 
     def _needs_access_reset(self, engine) -> bool:
-        if not table_exists(engine, "txt_bookmarks"):
-            return True
-        return "page_number" not in table_columns(engine, "txt_bookmarks")
+        ensure_migration_table(engine)
+        return not migration_applied(engine, ACCESS_RESET_MIGRATION)
 
     def _migrate_catalog(self, engine, uid: str, columns: set) -> bool:
         if "metadata" not in columns:

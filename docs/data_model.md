@@ -64,6 +64,10 @@ CREATE TABLE txt_bookmarks (
 );
 CREATE INDEX idx_txt_bookmarks_txt_id ON txt_bookmarks(txt_id, id);
 
+CREATE TABLE txt_schema_migrations (
+    name TEXT PRIMARY KEY
+);
+
 -- Per-document cap of 20, enforced in the database rather than in every caller.
 -- Ordered by id: monotonic, and immune to client clock skew.
 CREATE TRIGGER trg_txt_bookmarks_cap
@@ -121,8 +125,9 @@ Migration is driven by inspecting the tables, columns, indexes, and triggers tha
 1. If `txt.metadata` is present, add and populate `catalog`, then drop `metadata` as in the existing catalog migration.
 2. Add nullable `txt.last_cfi` when absent.
 3. If the legacy `txt_bookmarks(line, ...)` table exists, require it to be empty because a line number cannot be converted reliably to a CFI, then replace it with the CFI table, index, and trigger above. A nonempty legacy table aborts that account rather than losing data.
-4. Add nullable `txt_bookmarks.page_number` when absent. This column is also the one-time migration marker for correcting the original ingestion bug: in the same transaction, `--update-db` resets every existing `txt.last_accessed` to `0`. Subsequent runs see the column and never repeat the reset. New ingestion always initializes `last_accessed` to `0` rather than `created_at`.
-5. `VACUUM`, write the local checkpoint, and conditionally upload the database only after every step succeeds.
+4. Add nullable `txt_bookmarks.page_number` when absent.
+5. Ensure `txt_schema_migrations` exists. If it lacks `reset_initial_last_accessed`, correct the original ingestion bug by resetting every existing `txt.last_accessed` to `0`, then record that named migration in the same transaction. Subsequent runs see the marker row and never repeat the reset. A browser opening an old database may create the marker table but does not insert this row, so browser-before-CLI deployment order cannot accidentally skip the reset. Fresh databases record the marker immediately because new ingestion initializes `last_accessed` to `0` rather than `created_at`.
+6. `VACUUM`, write the local checkpoint, and conditionally upload the database only after every step succeeds.
 
 The command reaches every account through the administrator-owned backup `cred_store` row guaranteed by docs/auth.md. It verifies that every `users` row has a decryptable backup before making changes. R2 is always its input source; `--local-db-dir` contains checkpoints for inspection only, never a later upload base. A changed database is uploaded with `If-Match` against the downloaded ETag, so a concurrent browser commit aborts without data loss and the operator reruns from the new remote object. An already-migrated database is not uploaded. Provisioning also computes each `users.db_binding_hash` from the decrypted path pair and installs the required versioned signing-key material before the new token endpoint is enabled; there is no unsigned legacy mode.
 

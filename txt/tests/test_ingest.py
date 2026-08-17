@@ -155,6 +155,9 @@ def test_fresh_database_gets_16kib_page_size(tmp_path):
         )
         assert last_accessed == 0
         assert created_at > 0
+        assert engine.query("SELECT name FROM txt_schema_migrations") == [
+            ("reset_initial_last_accessed",)
+        ]
     finally:
         engine.close()
 
