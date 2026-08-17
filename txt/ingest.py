@@ -17,6 +17,7 @@ from .sqlite_engine import SqliteEngine
 # docs/data_model.md §3: fixed at creation, a no-op on an already-populated database.
 PAGE_SIZE = 16384  # 16 KiB
 SET_PAGE_SIZE_SQL = f"PRAGMA page_size = {PAGE_SIZE}"
+ENABLE_FOREIGN_KEYS_SQL = "PRAGMA foreign_keys = ON"
 
 # docs/data_model.md §3.
 CREATE_TXT_SQL = """
@@ -27,18 +28,19 @@ CREATE TABLE IF NOT EXISTS txt (
   path BLOB NOT NULL,
   catalog BLOB NOT NULL,
   last_accessed INTEGER NOT NULL,
+  last_cfi TEXT,
   created_at INTEGER NOT NULL
 )
 """
 
 CREATE_TXT_BOOKMARKS_SQL = """
 CREATE TABLE IF NOT EXISTS txt_bookmarks (
-  id INTEGER PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   txt_id INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
-  line INTEGER NOT NULL,
-  preview TEXT NOT NULL CHECK (length(CAST(preview AS BLOB)) <= 180),
+  cfi TEXT NOT NULL,
+  preview TEXT NOT NULL CHECK (length(CAST(preview AS BLOB)) <= 100),
   created_at INTEGER NOT NULL,
-  UNIQUE (txt_id, line)
+  UNIQUE (txt_id, cfi)
 )
 """
 
@@ -60,6 +62,68 @@ BEGIN
     );
 END
 """
+
+
+def ensure_reading_schema(
+    engine: SqliteEngine, *, manage_transaction: bool = True
+) -> bool:
+    """Add last_cfi and the CFI bookmark schema by inspecting actual objects.
+
+    Legacy line bookmarks cannot be translated to EPUB CFIs. An empty legacy
+    table is rebuilt; a nonempty one aborts without changing the database.
+    """
+    changed = False
+    if manage_transaction:
+        engine.exec_sql("BEGIN IMMEDIATE")
+    try:
+        txt_columns = {row[1] for row in engine.query("PRAGMA table_info(txt)")}
+        if "last_cfi" not in txt_columns:
+            engine.exec_sql("ALTER TABLE txt ADD COLUMN last_cfi TEXT")
+            changed = True
+
+        bookmark_rows = engine.query(
+            "SELECT 1 FROM sqlite_master "
+            "WHERE type = 'table' AND name = 'txt_bookmarks'"
+        )
+        if bookmark_rows:
+            bookmark_columns = {
+                row[1] for row in engine.query("PRAGMA table_info(txt_bookmarks)")
+            }
+            if "line" in bookmark_columns:
+                [(count,)] = engine.query("SELECT count(*) FROM txt_bookmarks")
+                if count:
+                    raise ValueError(
+                        "legacy txt_bookmarks contains line bookmarks; "
+                        "cannot migrate them safely to EPUB CFIs"
+                    )
+                engine.exec_sql("DROP TRIGGER IF EXISTS trg_txt_bookmarks_cap")
+                engine.exec_sql("DROP INDEX IF EXISTS idx_txt_bookmarks_txt_id")
+                engine.exec_sql("DROP TABLE txt_bookmarks")
+                changed = True
+            elif "cfi" not in bookmark_columns:
+                raise ValueError("txt_bookmarks has an unsupported schema")
+        else:
+            changed = True
+
+        index_exists = engine.query(
+            "SELECT 1 FROM sqlite_master "
+            "WHERE type = 'index' AND name = 'idx_txt_bookmarks_txt_id'"
+        )
+        trigger_exists = engine.query(
+            "SELECT 1 FROM sqlite_master "
+            "WHERE type = 'trigger' AND name = 'trg_txt_bookmarks_cap'"
+        )
+        engine.exec_sql(CREATE_TXT_BOOKMARKS_SQL)
+        engine.exec_sql(CREATE_TXT_BOOKMARKS_INDEX_SQL)
+        engine.exec_sql(CREATE_TXT_BOOKMARKS_CAP_TRIGGER_SQL)
+        changed = changed or not index_exists or not trigger_exists
+        if manage_transaction:
+            engine.exec_sql("COMMIT")
+        return changed
+    except Exception:
+        if manage_transaction:
+            engine.exec_sql("ROLLBACK")
+        raise
 
 
 class TxtIngester:
@@ -108,14 +172,9 @@ class TxtIngester:
         return remote
 
     def _ensure_schema(self) -> None:
-        for stmt in (
-            SET_PAGE_SIZE_SQL,
-            CREATE_TXT_SQL,
-            CREATE_TXT_BOOKMARKS_SQL,
-            CREATE_TXT_BOOKMARKS_INDEX_SQL,
-            CREATE_TXT_BOOKMARKS_CAP_TRIGGER_SQL,
-        ):
+        for stmt in (SET_PAGE_SIZE_SQL, ENABLE_FOREIGN_KEYS_SQL, CREATE_TXT_SQL):
             self.engine.exec_sql(stmt)
+        ensure_reading_schema(self.engine)
 
     def _existing_names(self) -> set:
         return {

@@ -109,6 +109,18 @@ def test_fresh_database_gets_16kib_page_size(tmp_path):
     engine = _reopen(local / ACCOUNT.db_path)
     try:
         assert int(engine.query("PRAGMA page_size")[0][0]) == 16384
+        assert "last_cfi" in {row[1] for row in engine.query("PRAGMA table_info(txt)")}
+        bookmark_columns = {
+            row[1] for row in engine.query("PRAGMA table_info(txt_bookmarks)")
+        }
+        assert "cfi" in bookmark_columns
+        assert "line" not in bookmark_columns
+        [(bookmark_sql,)] = engine.query(
+            "SELECT sql FROM sqlite_master "
+            "WHERE type = 'table' AND name = 'txt_bookmarks'"
+        )
+        assert "AUTOINCREMENT" in bookmark_sql
+        assert "<= 100" in bookmark_sql
     finally:
         engine.close()
 

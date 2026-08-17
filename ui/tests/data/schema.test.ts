@@ -11,6 +11,15 @@ describe("ensureSchema (real sqlcipher.wasm)", () => {
     expect(db.query("PRAGMA foreign_keys")).toEqual([[1]]);
     expect(db.query("SELECT count(*) FROM txt")).toEqual([[0]]);
     expect(db.query("SELECT count(*) FROM txt_bookmarks")).toEqual([[0]]);
+    expect(db.query("PRAGMA table_info(txt)").map((row) => row[1])).toContain(
+      "last_cfi",
+    );
+    const bookmarkColumns = db
+      .query("PRAGMA table_info(txt_bookmarks)")
+      .map((row) => row[1]);
+    expect(bookmarkColumns).toContain("cfi");
+    expect(bookmarkColumns).not.toContain("line");
+    expect(db.query("PRAGMA user_version")).toEqual([[0]]);
     db.close();
   });
 
@@ -34,9 +43,11 @@ describe("ensureSchema (real sqlcipher.wasm)", () => {
       "INSERT INTO txt (txt_key, txt_prefix, path, catalog, last_accessed, created_at) " +
         "VALUES (x'00', x'00', x'00', x'00', 0, 0)",
     );
-    for (let line = 0; line < 25; line++) {
-      db.execSql(
-        `INSERT INTO txt_bookmarks (txt_id, line, preview, created_at) VALUES (1, ${line}, 'p', 0)`,
+    for (let location = 0; location < 25; location++) {
+      db.execute(
+        "INSERT INTO txt_bookmarks (txt_id, cfi, preview, created_at) " +
+          "VALUES (1, ?, 'p', 0)",
+        [`epubcfi(/6/${location})`],
       );
     }
 
@@ -52,13 +63,101 @@ describe("ensureSchema (real sqlcipher.wasm)", () => {
         "VALUES (x'00', x'00', x'00', x'00', 0, 0)",
     );
     db.execSql(
-      "INSERT INTO txt_bookmarks (txt_id, line, preview, created_at) " +
-        "VALUES (1, 1, 'preview', 0)",
+      "INSERT INTO txt_bookmarks (txt_id, cfi, preview, created_at) " +
+        "VALUES (1, 'epubcfi(/6/2)', 'preview', 0)",
     );
 
     db.execSql("DELETE FROM txt WHERE id = 1");
 
     expect(db.query("SELECT count(*) FROM txt_bookmarks")).toEqual([[0]]);
+    db.close();
+  });
+
+  it("enforces the preview cap in UTF-8 bytes", async () => {
+    const db = await SqliteDatabase.openUnkeyed();
+    ensureSchema(db);
+    db.execSql(
+      "INSERT INTO txt (txt_key, txt_prefix, path, catalog, last_accessed, created_at) " +
+        "VALUES (x'00', x'00', x'00', x'00', 0, 0)",
+    );
+
+    db.execute(
+      "INSERT INTO txt_bookmarks (txt_id, cfi, preview, created_at) VALUES (1, ?, ?, 0)",
+      ["epubcfi(/6/2)", "é".repeat(50)],
+    );
+    expect(() =>
+      db.execute(
+        "INSERT INTO txt_bookmarks (txt_id, cfi, preview, created_at) " +
+          "VALUES (1, ?, ?, 0)",
+        ["epubcfi(/6/4)", `${"é".repeat(50)}a`],
+      ),
+    ).toThrow(/CHECK/);
+    db.close();
+  });
+
+  it("rebuilds an empty legacy line-bookmark table", async () => {
+    const db = await SqliteDatabase.openUnkeyed();
+    db.execSql(`
+      CREATE TABLE txt (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        txt_key BLOB NOT NULL,
+        txt_prefix BLOB NOT NULL,
+        path BLOB NOT NULL,
+        catalog BLOB NOT NULL,
+        last_accessed INTEGER NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE TABLE txt_bookmarks (
+        id INTEGER PRIMARY KEY,
+        txt_id INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
+        line INTEGER NOT NULL,
+        preview TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        UNIQUE (txt_id, line)
+      );
+    `);
+
+    ensureSchema(db);
+
+    expect(db.query("PRAGMA table_info(txt)").map((row) => row[1])).toContain(
+      "last_cfi",
+    );
+    expect(db.query("PRAGMA table_info(txt_bookmarks)").map((row) => row[1])).toContain(
+      "cfi",
+    );
+    db.close();
+  });
+
+  it("rolls back when legacy line bookmarks contain data", async () => {
+    const db = await SqliteDatabase.openUnkeyed();
+    db.execSql(`
+      CREATE TABLE txt (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        txt_key BLOB NOT NULL,
+        txt_prefix BLOB NOT NULL,
+        path BLOB NOT NULL,
+        catalog BLOB NOT NULL,
+        last_accessed INTEGER NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE TABLE txt_bookmarks (
+        id INTEGER PRIMARY KEY,
+        txt_id INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
+        line INTEGER NOT NULL,
+        preview TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      INSERT INTO txt VALUES (1, x'00', x'00', x'00', x'00', 0, 0);
+      INSERT INTO txt_bookmarks VALUES (1, 1, 42, 'legacy', 0);
+    `);
+
+    expect(() => ensureSchema(db)).toThrow(/cannot migrate.*CFI/);
+    expect(db.query("PRAGMA table_info(txt)").map((row) => row[1])).not.toContain(
+      "last_cfi",
+    );
+    expect(db.query("PRAGMA table_info(txt_bookmarks)").map((row) => row[1])).toContain(
+      "line",
+    );
     db.close();
   });
 });

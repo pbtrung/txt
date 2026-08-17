@@ -1,6 +1,6 @@
-"""--update-db: migrates txt.metadata to txt.catalog (docs/data_model.md
-§3.1) for every account this admin can reach -- their own db, plus every
-user backup row account_init.py's admin-backup mechanism has written
+"""--update-db: migrates catalog and CFI reading-state schemas
+(docs/data_model.md §3) for every account this admin can reach -- their own
+db, plus every user backup row account_init.py's admin-backup mechanism has written
 (docs/auth.md §2). Idempotent and resumable at both the per-account and
 per-row level: an account with no database yet is skipped outright with
 neither a local write nor an upload; a partially-migrated one only
@@ -20,6 +20,7 @@ import brotli
 from .creds import Creds
 from .crypto_blob import CryptoBlob
 from .firebase_auth import FirebaseAuth
+from .ingest import ensure_reading_schema
 from .leancrypto_wasm import LeancryptoEngine
 from .libsql_client import LibsqlClient
 from .logger import Logger
@@ -90,6 +91,7 @@ class DbUpdater:
         engine = SqliteEngine()
         engine.open(db_master_key, initial_bytes=self._download(db_path, local_path))
         engine.exec_sql("PRAGMA page_size = 16384")
+        engine.exec_sql("PRAGMA foreign_keys = ON")
         try:
             self._migrate_db(engine, uid, db_path, local_path)
         finally:
@@ -108,10 +110,21 @@ class DbUpdater:
         if not self._table_exists(engine):
             self.logger.info(f"[{uid}] no database yet, skipping.")
             return
-        if self._needs_migration(engine):
-            self._add_catalog_column(engine)
-            self._populate_catalog(engine, uid)
-            engine.exec_sql("ALTER TABLE txt DROP COLUMN metadata")
+        changed = False
+        engine.exec_sql("BEGIN IMMEDIATE")
+        try:
+            if "metadata" in self._columns(engine):
+                self._add_catalog_column(engine)
+                self._populate_catalog(engine, uid)
+                engine.exec_sql("ALTER TABLE txt DROP COLUMN metadata")
+                changed = True
+            changed = ensure_reading_schema(engine, manage_transaction=False) or changed
+            engine.exec_sql("COMMIT")
+        except Exception:
+            engine.exec_sql("ROLLBACK")
+            raise
+
+        if changed:
             self.logger.verbose(f"[{uid}] vacuuming...")
             engine.vacuum()
         else:
@@ -129,9 +142,6 @@ class DbUpdater:
 
     def _columns(self, engine: SqliteEngine) -> set:
         return {row[1] for row in engine.query("PRAGMA table_info(txt)")}
-
-    def _needs_migration(self, engine: SqliteEngine) -> bool:
-        return "metadata" in self._columns(engine)
 
     def _add_catalog_column(self, engine: SqliteEngine) -> None:
         if "catalog" not in self._columns(engine):

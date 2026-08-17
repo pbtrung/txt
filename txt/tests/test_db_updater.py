@@ -187,6 +187,12 @@ def test_migrates_admin_own_database(tmp_path, creds_path, engine):
     columns = {row[1] for row in verify.query("PRAGMA table_info(txt)")}
     assert "metadata" not in columns
     assert "catalog" in columns
+    assert "last_cfi" in columns
+    bookmark_columns = {
+        row[1] for row in verify.query("PRAGMA table_info(txt_bookmarks)")
+    }
+    assert "cfi" in bookmark_columns
+    assert "line" not in bookmark_columns
     [(catalog_blob,)] = verify.query("SELECT catalog FROM txt")
     catalog = json.loads(brotli.decompress(catalog_blob))
     verify.close()
@@ -361,3 +367,74 @@ def test_skips_account_with_no_database_yet(tmp_path, creds_path, engine):
     DbUpdater(load_creds(creds_path), tmp_path / "local", NullLogger()).run()
 
     assert db_path not in FakeR2Client.objects
+
+
+def _build_db_with_legacy_bookmarks(
+    db_master_key: bytes, *, bookmark_count: int
+) -> bytes:
+    legacy = SqliteEngine()
+    legacy.open(db_master_key)
+    legacy.exec_sql("PRAGMA page_size = 16384")
+    legacy.exec_sql("""
+        CREATE TABLE txt (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          txt_key BLOB NOT NULL,
+          txt_prefix BLOB NOT NULL,
+          path BLOB NOT NULL,
+          catalog BLOB NOT NULL,
+          last_accessed INTEGER NOT NULL,
+          created_at INTEGER NOT NULL
+        );
+        CREATE TABLE txt_bookmarks (
+          id INTEGER PRIMARY KEY,
+          txt_id INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
+          line INTEGER NOT NULL,
+          preview TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          UNIQUE (txt_id, line)
+        );
+        INSERT INTO txt VALUES (1, x'00', x'00', x'00', x'00', 0, 0);
+        """)
+    for line in range(bookmark_count):
+        legacy.execute(
+            "INSERT INTO txt_bookmarks (txt_id, line, preview, created_at) "
+            "VALUES (1, ?, 'legacy', 0)",
+            [line],
+        )
+    data = legacy.to_bytes()
+    legacy.close()
+    return data
+
+
+def test_rebuilds_empty_legacy_bookmarks(tmp_path, creds_path, engine):
+    db_master_key = secrets.token_bytes(256)
+    db_path = "d" * 52
+    _register_account(engine, ADMIN_UID, db_master_key, db_path)
+    FakeR2Client.objects[db_path] = _build_db_with_legacy_bookmarks(
+        db_master_key, bookmark_count=0
+    )
+
+    DbUpdater(load_creds(creds_path), tmp_path / "local", NullLogger()).run()
+
+    verify = _reopen(db_master_key, FakeR2Client.objects[db_path])
+    assert "last_cfi" in {row[1] for row in verify.query("PRAGMA table_info(txt)")}
+    bookmark_columns = {
+        row[1] for row in verify.query("PRAGMA table_info(txt_bookmarks)")
+    }
+    verify.close()
+    assert "cfi" in bookmark_columns
+    assert "line" not in bookmark_columns
+
+
+def test_aborts_nonempty_legacy_bookmarks_without_upload(tmp_path, creds_path, engine):
+    db_master_key = secrets.token_bytes(256)
+    db_path = "d" * 52
+    _register_account(engine, ADMIN_UID, db_master_key, db_path)
+    original = _build_db_with_legacy_bookmarks(db_master_key, bookmark_count=1)
+    FakeR2Client.objects[db_path] = original
+
+    with pytest.raises(ValueError, match="cannot migrate.*CFI"):
+        DbUpdater(load_creds(creds_path), tmp_path / "local", NullLogger()).run()
+
+    assert FakeR2Client.objects[db_path] == original
+    assert not (tmp_path / "local" / db_path).exists()
