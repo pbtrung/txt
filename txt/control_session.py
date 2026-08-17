@@ -73,13 +73,17 @@ def unwrap_umk(ctl: LibsqlClient, uid: str, root_key: str, blob: CryptoBlob) -> 
 
 
 def decrypt_umk(wrapped: bytes, root_key: str, blob: CryptoBlob, uid: str) -> bytes:
+    return blob.decrypt(wrapped, decode_user_root_key(root_key, uid))
+
+
+def decode_user_root_key(root_key: str, uid: str) -> bytes:
     try:
         key = base64.b64decode(root_key, validate=True)
     except ValueError, binascii.Error:
         raise ValueError(f"uid={uid} has an invalid user_root_key") from None
     if len(key) != 256:
         raise ValueError(f"uid={uid} has an invalid user_root_key")
-    return blob.decrypt(wrapped, key)
+    return key
 
 
 def load_reachable_accounts(

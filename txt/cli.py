@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from pathlib import Path
 
 import click
@@ -94,58 +95,79 @@ from .replace_images import ImageReplacer
 )
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose progress logging")
 @click.pass_context
-def cli(
-    ctx: click.Context,
-    admin_creds_path: str | None,
-    init_user: bool,
-    admin_creds_path_for_user: str | None,
-    user_creds_path: str | None,
-    replace_images_dirs: tuple[str, str],
-    ingest_src_dir: str | None,
-    local_db_dir: str | None,
-    ingest_creds_path: str | None,
-    update_db_creds_path: str | None,
-    clean_bucket_creds_path: str | None,
-    dry_run: bool,
-    log_file_path: str,
-    verbose: bool,
-) -> None:
-    cleanup_log = Path(log_file_path) if clean_bucket_creds_path else None
-    logger = Logger(verbose, cleanup_log)
+def cli(ctx: click.Context, **opts) -> None:
+    cleanup_log = _cleanup_log(opts)
+    logger = Logger(opts["verbose"], cleanup_log)
     try:
         if cleanup_log is not None:
             logger.info(f"Logging bucket cleanup to {cleanup_log}")
-        if not _dispatch(ctx.params, logger):
+        if not _dispatch(opts, logger):
             click.echo(ctx.get_help())
     finally:
         logger.close()
 
 
 def _dispatch(opts: dict, logger: Logger) -> bool:
+    _validate_options(opts)
+    commands = _selected_commands(opts)
+    if not commands:
+        return False
+    commands[0](opts, logger)
+    return True
+
+
+def _cleanup_log(opts: dict) -> Path | None:
+    return Path(opts["log_file_path"]) if opts["clean_bucket_creds_path"] else None
+
+
+def _validate_options(opts: dict) -> None:
     if opts["dry_run"] and not opts["clean_bucket_creds_path"]:
         raise click.UsageError("--dry-run requires --clean-bucket CREDS_JSON")
-    if opts["admin_creds_path"]:
-        _run_init_admin(opts["admin_creds_path"], logger)
-    elif opts["init_user"]:
-        _run_init_user(
-            opts["admin_creds_path_for_user"], opts["user_creds_path"], logger
-        )
-    elif opts["replace_images_dirs"]:
-        _run_replace_images(opts["replace_images_dirs"], logger)
-    elif opts["ingest_src_dir"]:
-        _run_ingest(
-            opts["ingest_src_dir"],
-            opts["local_db_dir"],
-            opts["ingest_creds_path"],
-            logger,
-        )
-    elif opts["update_db_creds_path"]:
-        _run_update_db(opts["update_db_creds_path"], opts["local_db_dir"], logger)
-    elif opts["clean_bucket_creds_path"]:
-        _run_clean_bucket(opts["clean_bucket_creds_path"], opts["dry_run"], logger)
-    else:
-        return False
-    return True
+    if len(_selected_commands(opts)) > 1:
+        raise click.UsageError("choose only one primary command")
+
+
+def _selected_commands(opts: dict) -> list[Callable]:
+    return [handler for option, handler in COMMAND_HANDLERS if opts[option]]
+
+
+def _dispatch_init_admin(opts: dict, logger: Logger) -> None:
+    _run_init_admin(opts["admin_creds_path"], logger)
+
+
+def _dispatch_init_user(opts: dict, logger: Logger) -> None:
+    _run_init_user(opts["admin_creds_path_for_user"], opts["user_creds_path"], logger)
+
+
+def _dispatch_replace_images(opts: dict, logger: Logger) -> None:
+    _run_replace_images(opts["replace_images_dirs"], logger)
+
+
+def _dispatch_ingest(opts: dict, logger: Logger) -> None:
+    _run_ingest(
+        opts["ingest_src_dir"],
+        opts["local_db_dir"],
+        opts["ingest_creds_path"],
+        logger,
+    )
+
+
+def _dispatch_update_db(opts: dict, logger: Logger) -> None:
+    _run_update_db(opts["update_db_creds_path"], opts["local_db_dir"], logger)
+
+
+def _dispatch_clean_bucket(opts: dict, logger: Logger) -> None:
+    _run_clean_bucket(opts["clean_bucket_creds_path"], opts["dry_run"], logger)
+
+
+COMMAND_HANDLERS = (
+    ("admin_creds_path", _dispatch_init_admin),
+    ("init_user", _dispatch_init_user),
+    ("replace_images_dirs", _dispatch_replace_images),
+    ("ingest_src_dir", _dispatch_ingest),
+    ("update_db_creds_path", _dispatch_update_db),
+    ("clean_bucket_creds_path", _dispatch_clean_bucket),
+)
 
 
 def _run_init_admin(creds_path: str, logger: Logger) -> None:

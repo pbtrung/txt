@@ -90,3 +90,15 @@ def test_dry_run_without_clean_bucket_is_a_usage_error():
 
     assert result.exit_code != 0
     assert "--dry-run requires --clean-bucket" in result.output
+
+
+def test_rejects_multiple_primary_commands(tmp_path):
+    src, dst = tmp_path / "src", tmp_path / "dst"
+    src.mkdir()
+    result = CliRunner().invoke(
+        cli,
+        ["--replace-images", str(src), str(dst), "--init-user"],
+    )
+
+    assert result.exit_code != 0
+    assert "choose only one primary command" in result.output

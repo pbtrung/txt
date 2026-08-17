@@ -2,11 +2,14 @@ import base64
 import secrets
 import time
 
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import ec
-
 from .account_data import parse_storage_account, storage_binding
-from .control_session import ControlFactories, ControlSession, unwrap_umk
+from .account_keys import AccountKeyStore
+from .control_session import (
+    ControlFactories,
+    ControlSession,
+    decode_user_root_key,
+    unwrap_umk,
+)
 from .creds import Creds, UserCreds, ensure_user_root_key
 from .firebase_auth import FirebaseAuth
 from .leancrypto_wasm import LeancryptoEngine
@@ -47,8 +50,6 @@ CREATE TABLE IF NOT EXISTS cred_store (
 )
 """
 
-SIGN_VERSION = 1
-SIGN_ALGORITHM = "ECDSA-P521-SHA512"
 _EMPTY_BINDING = bytes(64)
 
 _SCHEMA_COLUMNS = {
@@ -84,19 +85,28 @@ class AccountInitializer:
         logger: Logger,
         account_type: str,
     ):
+        self._set_options(
+            admin_creds, target_creds, target_creds_path, logger, account_type
+        )
+        self.engine = LeancryptoEngine()
+        self.control = self._new_control(admin_creds, logger)
+        self.blob = self.control.blob
+        self.key_store = AccountKeyStore(self.engine, self.blob, logger, account_type)
+
+    def _set_options(self, admin_creds, target_creds, path, logger, account_type):
         self.admin_creds = admin_creds
         self.target_creds = target_creds
-        self.target_creds_path = target_creds_path
+        self.target_creds_path = path
         self.logger = logger
         self.account_type = account_type
-        self.engine = LeancryptoEngine()
-        self.control = ControlSession(
+
+    def _new_control(self, admin_creds: Creds, logger: Logger) -> ControlSession:
+        return ControlSession(
             admin_creds,
             logger,
             factories=ControlFactories(FirebaseAuth, TursoClient, LibsqlClient),
             engine=self.engine,
         )
-        self.blob = self.control.blob
 
     def run(self) -> None:
         self.logger.verbose(f"Starting {self.account_type} bootstrap...")
@@ -106,7 +116,7 @@ class AccountInitializer:
         self.target_creds = ensure_user_root_key(
             self.target_creds_path, self.target_creds
         )
-        ikm = base64.b64decode(self.target_creds.user_root_key)
+        ikm = decode_user_root_key(self.target_creds.user_root_key, uid)
         umk = self._ensure_key_store(ctl, uid, ikm)
         payload = self._ensure_cred_store(ctl, uid, umk)
         self._ensure_path_binding(ctl, uid, payload)
@@ -151,133 +161,7 @@ class AccountInitializer:
         self.logger.verbose(f"Inserted users row for {uid} (type={self.account_type}).")
 
     def _ensure_key_store(self, ctl: LibsqlClient, uid: str, ikm: bytes) -> bytes:
-        rows = ctl.query(
-            "SELECT umk, sign_version, sign_algorithm, sign_pubkey, sign_privkey "
-            "FROM key_store WHERE user_id = ?",
-            [uid],
-        )
-        if rows:
-            self.logger.verbose("key_store row already exists, unwrapping umk...")
-            umk = self.blob.decrypt(rows[0][0], ikm)
-            self._ensure_signing_key(ctl, uid, umk, rows[0][1:])
-            return umk
-        return self._insert_key_store(ctl, uid, ikm)
-
-    def _insert_key_store(self, ctl: LibsqlClient, uid: str, ikm: bytes) -> bytes:
-        self.logger.verbose("Generating umk...")
-        umk = secrets.token_bytes(128)
-        wrapped_umk = self.blob.encrypt(umk, ikm)
-        sign_pubkey, wrapped_sign_privkey = self._new_signing_key(umk)
-        if self.account_type == "admin":
-            self._insert_admin_key_store(
-                ctl,
-                uid,
-                umk,
-                wrapped_umk,
-                sign_pubkey,
-                wrapped_sign_privkey,
-            )
-        else:
-            ctl.execute(
-                "INSERT INTO key_store "
-                "(user_id, umk, sign_version, sign_algorithm, "
-                "sign_pubkey, sign_privkey) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                [
-                    uid,
-                    wrapped_umk,
-                    SIGN_VERSION,
-                    SIGN_ALGORITHM,
-                    sign_pubkey,
-                    wrapped_sign_privkey,
-                ],
-            )
-        self.logger.verbose("key_store row inserted.")
-        return umk
-
-    def _insert_admin_key_store(
-        self,
-        ctl: LibsqlClient,
-        uid: str,
-        umk: bytes,
-        wrapped_umk: bytes,
-        sign_pubkey: bytes,
-        wrapped_sign_privkey: bytes,
-    ) -> None:
-        self.logger.verbose("Generating composite KEM keypair...")
-        pk, sk = self.engine.kem_keypair()
-        wrapped_privkey = self.blob.encrypt(sk, umk)
-        ctl.execute(
-            "INSERT INTO key_store "
-            "(user_id, umk, pubkey, privkey, sign_version, sign_algorithm, "
-            "sign_pubkey, sign_privkey) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            [
-                uid,
-                wrapped_umk,
-                pk,
-                wrapped_privkey,
-                SIGN_VERSION,
-                SIGN_ALGORITHM,
-                sign_pubkey,
-                wrapped_sign_privkey,
-            ],
-        )
-
-    def _new_signing_key(self, umk: bytes) -> tuple[bytes, bytes]:
-        self.logger.verbose("Generating P-521 request-signing keypair...")
-        private_key = ec.generate_private_key(ec.SECP521R1())
-        public_der = private_key.public_key().public_bytes(
-            serialization.Encoding.DER,
-            serialization.PublicFormat.SubjectPublicKeyInfo,
-        )
-        private_der = private_key.private_bytes(
-            serialization.Encoding.DER,
-            serialization.PrivateFormat.PKCS8,
-            serialization.NoEncryption(),
-        )
-        return public_der, self.blob.encrypt(private_der, umk)
-
-    def _ensure_signing_key(
-        self, ctl: LibsqlClient, uid: str, umk: bytes, fields: list
-    ) -> None:
-        if all(value is None for value in fields):
-            public_der, wrapped_private_der = self._new_signing_key(umk)
-            ctl.execute(
-                "UPDATE key_store SET sign_version = ?, sign_algorithm = ?, "
-                "sign_pubkey = ?, sign_privkey = ? WHERE user_id = ?",
-                [
-                    SIGN_VERSION,
-                    SIGN_ALGORITHM,
-                    public_der,
-                    wrapped_private_der,
-                    uid,
-                ],
-            )
-            self.logger.verbose("Added request-signing keypair to key_store.")
-            return
-        if any(value is None for value in fields):
-            raise ValueError(f"incomplete request-signing key for uid={uid}")
-
-        version, algorithm, public_der, wrapped_private_der = fields
-        if version != SIGN_VERSION or algorithm != SIGN_ALGORITHM:
-            raise ValueError(f"unsupported request-signing suite for uid={uid}")
-        try:
-            public_key = serialization.load_der_public_key(public_der)
-            private_key = serialization.load_der_private_key(
-                self.blob.decrypt(wrapped_private_der, umk), password=None
-            )
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"invalid request-signing key for uid={uid}") from exc
-        if not isinstance(public_key, ec.EllipticCurvePublicKey) or not isinstance(
-            public_key.curve, ec.SECP521R1
-        ):
-            raise ValueError(f"request-signing public key is not P-521 for uid={uid}")
-        if not isinstance(private_key, ec.EllipticCurvePrivateKey) or not isinstance(
-            private_key.curve, ec.SECP521R1
-        ):
-            raise ValueError(f"request-signing private key is not P-521 for uid={uid}")
-        if public_key.public_numbers() != private_key.public_key().public_numbers():
-            raise ValueError(f"request-signing keypair mismatch for uid={uid}")
+        return self.key_store.ensure(ctl, uid, ikm)
 
     def _ensure_cred_store(self, ctl: LibsqlClient, uid: str, umk: bytes) -> dict:
         rows = ctl.query(
@@ -320,27 +204,36 @@ class AccountInitializer:
     def _ensure_admin_backup(
         self, ctl: LibsqlClient, user_uid: str, user_umk: bytes
     ) -> None:
-        """docs/auth.md §2: a second cred_store row, owner_id = the admin's
-        uid, wrapped under the admin's own umk -- so the admin alone can
-        later recover this user's db_master_key/db_path/db_prefix (used by
-        --update-db). Only ever called for account_type == "user"; the
-        admin's own self-row from _ensure_cred_store already covers them.
-        """
         admin_uid = self._sign_in(self.admin_creds)
-        if ctl.query(
-            "SELECT 1 FROM cred_store WHERE owner_id = ? AND for_user_id = ?",
-            [admin_uid, user_uid],
-        ):
+        if self._admin_backup_exists(ctl, admin_uid, user_uid):
             self.logger.verbose(f"admin backup row for {user_uid} already exists.")
             return
         admin_umk = unwrap_umk(
             ctl, admin_uid, self.admin_creds.user_root_key, self.blob
         )
-        user_content = ctl.query(
+        payload = self._self_payload(ctl, user_uid, user_umk)
+        self._insert_admin_backup(ctl, admin_uid, user_uid, admin_umk, payload)
+
+    def _admin_backup_exists(
+        self, ctl: LibsqlClient, admin_uid: str, user_uid: str
+    ) -> bool:
+        return bool(
+            ctl.query(
+                "SELECT 1 FROM cred_store WHERE owner_id = ? AND for_user_id = ?",
+                [admin_uid, user_uid],
+            )
+        )
+
+    def _self_payload(self, ctl: LibsqlClient, uid: str, umk: bytes) -> dict:
+        rows = ctl.query(
             "SELECT content FROM cred_store WHERE owner_id = ? AND for_user_id = ?",
-            [user_uid, user_uid],
-        )[0][0]
-        payload = self.blob.decrypt_json(user_content, user_umk)
+            [uid, uid],
+        )
+        if not rows:
+            raise ValueError(f"uid={uid} has no self cred_store row")
+        return self.blob.decrypt_json(rows[0][0], umk)
+
+    def _insert_admin_backup(self, ctl, admin_uid, user_uid, admin_umk, payload):
         wrapped_for_admin = self.blob.encrypt_json(payload, admin_umk)
         ctl.execute(
             "INSERT INTO cred_store (owner_id, for_user_id, content) VALUES (?, ?, ?)",
