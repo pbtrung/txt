@@ -57,7 +57,7 @@ CREATE TABLE txt_bookmarks (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     txt_id     INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
     cfi        TEXT    NOT NULL,
-    preview    TEXT    NOT NULL CHECK (length(CAST(preview AS BLOB)) <= 180),
+    preview    TEXT    NOT NULL CHECK (length(CAST(preview AS BLOB)) <= 100),
     created_at INTEGER NOT NULL,   -- unix ms, display only
     UNIQUE (txt_id, cfi)
 );
@@ -107,7 +107,7 @@ An EPUB Canonical Fragment Identifier (CFI) identifies a content position indepe
 
 A manual bookmark stores the current page-start CFI and a short nearby plain-text preview. A future text-selection bookmark may store the CFI range emitted by the renderer without changing the schema. Re-bookmarking the same `(txt_id, cfi)` updates its preview and display timestamp rather than adding a duplicate. Bookmark creation and deletion are uploaded immediately; deletion is replayed by `(txt_id, cfi)` during conflict recovery rather than by local numeric `id`.
 
-`preview` remains capped at 180 UTF-8 bytes rather than 180 characters (`CAST(... AS BLOB)`), since one character can occupy up to four bytes. `trg_txt_bookmarks_cap` keeps at most 20 bookmarks per document, deleting the oldest by `id`. `AUTOINCREMENT` makes that ordering monotonic even after manual deletions and avoids relying on client clocks. `idx_txt_bookmarks_txt_id` supports listing one document's bookmarks and the cap trigger without a table scan.
+`preview` is capped at 100 UTF-8 bytes rather than 100 characters (`CAST(... AS BLOB)`), since one character can occupy up to four bytes. `trg_txt_bookmarks_cap` keeps at most 20 bookmarks per document, deleting the oldest by `id`. `AUTOINCREMENT` makes that ordering monotonic even after manual deletions and avoids relying on client clocks. `idx_txt_bookmarks_txt_id` supports listing one document's bookmarks and the cap trigger without a table scan.
 
 The EPUB content object referenced by a `txt` row is immutable. That makes a structural CFI sufficient even when the renderer does not emit optional text-location assertions. Replacing a book creates a new content object/row rather than silently changing the document underneath saved CFIs.
 
