@@ -7,6 +7,7 @@
 | AEAD      | Ascon-Keccak (`lc_ak_alloc_taglen`)                                               | 64-byte key, 64-byte IV, 64-byte tag                      |
 | KDF       | HKDF-SHA3-512 (`lc_hkdf_*`)                                                       | produces 128 bytes of OKM (64-byte AEAD key + 64-byte IV) |
 | KEM       | ML-KEM-1024 + X448 (Curve448) hybrid (`lc_kyber_1024_x448_keypair`/`_enc`/`_dec`) | see Composite KEM Key Sizes below                         |
+| Signature | Web Crypto ECDSA P-521 with SHA-512                                               | request-proof version 1; approximately 256-bit classical security |
 
 ### Composite KEM Key Sizes
 
@@ -19,6 +20,43 @@ Each `keyStore` keypair is leancrypto's `lc_kyber_1024_x448` hybrid keypair — 
 | **Composite** | **1624 bytes** | **3224 bytes** |
 
 `keyStore.pubKey` stores the raw 1624-byte composite public key. `keyStore.privKey` wraps the raw 3224-byte composite private key using the standard Encrypt procedure below (IKM = that row's unwrapped `keyStoreKey`), so the stored blob is 3224 + 132 = 3356 bytes. The owner's `umk` wraps `keyStoreKey`, not `privKey` directly.
+
+### Versioned request signatures
+
+Every account has a separate signing key for proving possession when calling `/v1/r2-token` (docs/auth.md). This key is unrelated to the administrator-only composite KEM keypair above. The active suite is stored with the key, and the Worker accepts only that exact version; the request cannot select an older supported algorithm.
+
+| version | algorithm | public-key encoding | private-key encoding | signature encoding |
+|---:|---|---|---|---|
+| 1 | ECDSA P-521 with SHA-512 | SubjectPublicKeyInfo DER | PKCS#8 DER, wrapped by `umk` | Web Crypto raw `r || s`, exactly 132 bytes |
+| 2 (reserved) | P-521 plus ML-DSA-87 hybrid | versioned composite envelope | versioned composite envelope, wrapped by `umk` | versioned envelope containing both signatures |
+
+Version 2 is reserved as the migration direction, not accepted today. When enabled, the Worker must verify both the P-521 and ML-DSA-87 components over the identical canonical message; accepting either component alone would permit downgrade. Version-specific public/private blobs are opaque to the generic endpoint layer, so adding the hybrid does not change the JSON envelope. P-521 offers approximately 256-bit classical security but is not post-quantum secure.
+
+For version 1, the client and Worker construct these bytes exactly:
+
+```
+UTF8("txt:r2-token-proof") || 0x00 ||
+U32BE(sign_version) ||
+U32BE(length(UTF8(uid))) || UTF8(uid) ||
+SHA-256(UTF8(firebase_id_token)) ||
+U64BE(expires_at_unix_seconds) ||
+request_id_32_bytes ||
+SHA-512(UTF8(db_path) || UTF8(db_prefix))
+```
+
+`db_path` and `db_prefix` are each validated as exactly 52 lowercase base32-Crockford ASCII characters before this encoding is built, making their concatenation unambiguous. The fixed domain label prevents the signature from being valid in another protocol. Integer encodings are unsigned, network byte order. The request id is generated with `crypto.getRandomValues`; the expiry is at most 60 seconds after Worker time. The Worker supplies `uid` from the verified Firebase `sub` claim and hashes the exact bearer token it received rather than accepting either value from JSON.
+
+The browser signs the canonical bytes with:
+
+```js
+crypto.subtle.sign(
+  { name: "ECDSA", hash: "SHA-512" },
+  privateKey,
+  canonicalProof,
+)
+```
+
+The Worker imports `key_store.sign_pubkey` as P-521 SPKI, requires a 132-byte signature, rebuilds the canonical proof independently, and verifies it with the same Web Crypto parameters. A valid signature proves access to the unwrapped per-user private key; it does not authorize the paths. Authorization is the separate equality check between the final 64-byte SHA-512 value above and `users.db_binding_hash`.
 
 ## Blob Format
 
