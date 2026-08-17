@@ -129,21 +129,27 @@ class TxtIngester:
 
     def _finish(self) -> None:
         try:
-            if self.dirty:
-                self.logger.verbose("Vacuuming local db...")
-                self.engine.vacuum()
-            data = self.engine.to_bytes()
+            data = self._final_database_bytes()
             self.local_path.write_bytes(data)
-            if self.dirty:
-                self.logger.verbose(f"Uploading local db to {self.account.db_path}...")
-                self.r2.put_object(
-                    self.account.db_path,
-                    data,
-                    if_match=self.db_etag if self.db_exists else None,
-                    if_none_match=not self.db_exists,
-                )
-            else:
-                self.logger.verbose("Database unchanged; no upload needed.")
+            self._upload_database(data)
         finally:
             self.engine.close()
         self.logger.info(f"Ingest complete: db_path={self.account.db_path}")
+
+    def _final_database_bytes(self) -> bytes:
+        if self.dirty:
+            self.logger.verbose("Vacuuming local db...")
+            self.engine.vacuum()
+        return self.engine.to_bytes()
+
+    def _upload_database(self, data: bytes) -> None:
+        if not self.dirty:
+            self.logger.verbose("Database unchanged; no upload needed.")
+            return
+        self.logger.verbose(f"Uploading local db to {self.account.db_path}...")
+        self.r2.put_object(
+            self.account.db_path,
+            data,
+            if_match=self.db_etag if self.db_exists else None,
+            if_none_match=not self.db_exists,
+        )

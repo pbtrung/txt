@@ -76,7 +76,7 @@ class FakeSqliteEngine:
         assert sql == "PRAGMA page_size = 16384"
         self.page_size_configured = True
 
-    def query(self, sql):
+    def query(self, sql, args=None):
         assert self.page_size_configured
         if self.database in self.failing_databases:
             raise ValueError("malformed database")

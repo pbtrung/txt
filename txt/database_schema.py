@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 from .sqlite_engine import SqliteEngine
@@ -69,8 +70,29 @@ class SchemaStats:
 
 
 def configure_database(engine: SqliteEngine) -> None:
-    engine.exec_sql(SET_PAGE_SIZE_SQL)
+    configure_page_size(engine)
     engine.exec_sql(ENABLE_FOREIGN_KEYS_SQL)
+
+
+def configure_page_size(engine: SqliteEngine) -> None:
+    engine.exec_sql(SET_PAGE_SIZE_SQL)
+
+
+@contextmanager
+def open_database(
+    key: bytes,
+    data: bytes | None,
+    *,
+    engine_factory=SqliteEngine,
+    configure=configure_database,
+):
+    engine = engine_factory()
+    try:
+        engine.open(key, initial_bytes=data)
+        configure(engine)
+        yield engine
+    finally:
+        engine.close()
 
 
 def table_exists(engine: SqliteEngine, name: str) -> bool:
