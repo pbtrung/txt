@@ -11,22 +11,31 @@ export interface LibraryBook {
   authors: string[];
   subjects: string[];
   publisher: string | null;
+  lastAccessed: number;
+  bookmarkCount: number;
+  lastBookmarked: number | null;
 }
 
-async function toBook(txtId: number, catalogBlob: Uint8Array): Promise<LibraryBook> {
-  const catalog = await decodeCatalog(catalogBlob);
+async function toBook(row: unknown[]): Promise<LibraryBook> {
+  const [txtId, catalogBlob, lastAccessed, bookmarkCount, lastBookmarked] = row;
+  const catalog = await decodeCatalog(catalogBlob as Uint8Array);
   return {
-    txtId,
+    txtId: txtId as number,
     title: catalog.title,
     authors: catalog.authors,
     subjects: catalog.subjects,
     publisher: catalog.publisher,
+    lastAccessed: lastAccessed as number,
+    bookmarkCount: bookmarkCount as number,
+    lastBookmarked: lastBookmarked as number | null,
   };
 }
 
 export async function loadLibraryBooks(db: SqliteDatabase): Promise<LibraryBook[]> {
-  const rows = db.query("SELECT id, catalog FROM txt ORDER BY id");
-  return Promise.all(
-    rows.map(([id, catalog]) => toBook(id as number, catalog as Uint8Array)),
+  const rows = db.query(
+    "SELECT t.id, t.catalog, t.last_accessed, COUNT(b.id), MAX(b.created_at) " +
+      "FROM txt t LEFT JOIN txt_bookmarks b ON b.txt_id = t.id " +
+      "GROUP BY t.id ORDER BY t.id",
   );
+  return Promise.all(rows.map(toBook));
 }

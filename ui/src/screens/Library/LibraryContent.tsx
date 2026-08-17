@@ -1,8 +1,13 @@
 import { IconButton } from "../../components/IconButton";
 import { useMemo } from "react";
 import type { LibraryBook } from "../../data/libraryDb";
-import { BookList, EmptyState } from "./BookList";
-import { browseEntries, type BrowseDimension } from "./libraryModel";
+import { BookList, BookRow, EmptyState } from "./BookList";
+import {
+  browseEntries,
+  recentlyAccessed,
+  recentlyBookmarked,
+  type BrowseDimension,
+} from "./libraryModel";
 import {
   DIMENSION_LABEL,
   matchesEntry,
@@ -29,7 +34,9 @@ export function LibraryContent({
   return (
     <div className="d-flex flex-column flex-grow-1 overflow-hidden">
       <ContentHeader view={view} onNavigate={onNavigate} />
-      {view.kind === "entries" ? (
+      {view.kind === "recent" ? (
+        <RecentBooks books={books} />
+      ) : view.kind === "entries" ? (
         <EntriesList {...{ books, query, onNavigate }} dimension={view.dimension} />
       ) : (
         <BookList books={filteredBooks} totalCount={books.length} />
@@ -56,6 +63,40 @@ function ContentHeader({
         />
       )}
       <h2 className="h5 mb-0 text-truncate flex-grow-1">{viewTitle(view)}</h2>
+    </div>
+  );
+}
+
+function RecentBooks({ books }: { books: LibraryBook[] }) {
+  const accessed = useMemo(() => recentlyAccessed(books), [books]);
+  const bookmarked = useMemo(() => recentlyBookmarked(books), [books]);
+  if (!accessed.length && !bookmarked.length) {
+    return <EmptyStateContainer message="No recent activity yet." />;
+  }
+  return (
+    <div className="flex-grow-1 overflow-y-auto px-2 px-md-3">
+      <RecentSection title="Recent access" books={accessed} />
+      <RecentSection title="Bookmarks" books={bookmarked} />
+    </div>
+  );
+}
+
+function RecentSection({ title, books }: { title: string; books: LibraryBook[] }) {
+  if (!books.length) return null;
+  return (
+    <section className="mb-3" aria-label={title}>
+      <h3 className="h6 text-muted px-2 py-2 mb-0">{title}</h3>
+      {books.map((book) => (
+        <BookRow key={book.txtId} book={book} />
+      ))}
+    </section>
+  );
+}
+
+function EmptyStateContainer({ message }: { message: string }) {
+  return (
+    <div className="flex-grow-1 overflow-y-auto px-3">
+      <EmptyState message={message} />
     </div>
   );
 }

@@ -6,6 +6,24 @@ export function allBooksSorted(books: LibraryBook[]): LibraryBook[] {
   return [...books].sort((a, b) => a.title.localeCompare(b.title));
 }
 
+export function recentlyAccessed(books: LibraryBook[]): LibraryBook[] {
+  return [...books]
+    .filter((book) => book.lastAccessed > 0)
+    .sort((a, b) => b.lastAccessed - a.lastAccessed)
+    .slice(0, 7);
+}
+
+export function recentlyBookmarked(books: LibraryBook[]): LibraryBook[] {
+  return [...books]
+    .filter((book) => book.bookmarkCount > 0)
+    .sort((a, b) => (b.lastBookmarked ?? 0) - (a.lastBookmarked ?? 0))
+    .slice(0, 7);
+}
+
+export function recentBookCount(books: LibraryBook[]): number {
+  return books.filter((book) => book.lastAccessed > 0 || book.bookmarkCount > 0).length;
+}
+
 export function matchesSearch(book: LibraryBook, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;

@@ -42,6 +42,29 @@ describe("loadLibraryBooks (real sqlcipher.wasm)", () => {
       authors: ["Frank Herbert"],
       subjects: ["Science Fiction"],
       publisher: "Ace",
+      lastAccessed: 0,
+      bookmarkCount: 0,
+      lastBookmarked: null,
+    });
+  });
+
+  it("includes access and aggregate bookmark metadata", async () => {
+    const db = await SqliteDatabase.openUnkeyed();
+    ensureSchema(db);
+    await insertTxt(db, 1, { name: "dune.epub", title: "Dune" });
+    db.execute("UPDATE txt SET last_accessed = 1234 WHERE id = 1");
+    db.execute(
+      "INSERT INTO txt_bookmarks (txt_id, cfi, preview, created_at) VALUES " +
+        "(1, 'one', 'First', 2000), (1, 'two', 'Second', 3000)",
+    );
+
+    const [book] = await loadLibraryBooks(db);
+    db.close();
+
+    expect(book).toMatchObject({
+      lastAccessed: 1234,
+      bookmarkCount: 2,
+      lastBookmarked: 3000,
     });
   });
 

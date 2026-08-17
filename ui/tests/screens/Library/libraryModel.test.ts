@@ -5,6 +5,9 @@ import {
   booksForDimensionValue,
   browseEntries,
   matchesSearch,
+  recentBookCount,
+  recentlyAccessed,
+  recentlyBookmarked,
 } from "../../../src/screens/Library/libraryModel";
 
 function book(overrides: Partial<LibraryBook>): LibraryBook {
@@ -14,6 +17,9 @@ function book(overrides: Partial<LibraryBook>): LibraryBook {
     authors: [],
     subjects: [],
     publisher: null,
+    lastAccessed: 0,
+    bookmarkCount: 0,
+    lastBookmarked: null,
     ...overrides,
   };
 }
@@ -50,6 +56,36 @@ describe("allBooksSorted", () => {
       "Dune",
       "The Left Hand of Darkness",
     ]);
+  });
+});
+
+describe("recent books", () => {
+  it("limits access and bookmark lists to the seven newest books", () => {
+    const books = Array.from({ length: 9 }, (_, index) =>
+      book({
+        txtId: index + 1,
+        title: `Book ${index + 1}`,
+        lastAccessed: index + 1,
+        bookmarkCount: 1,
+        lastBookmarked: 100 + index,
+      }),
+    );
+
+    expect(recentlyAccessed(books).map((item) => item.txtId)).toEqual([
+      9, 8, 7, 6, 5, 4, 3,
+    ]);
+    expect(recentlyBookmarked(books).map((item) => item.txtId)).toEqual([
+      9, 8, 7, 6, 5, 4, 3,
+    ]);
+  });
+
+  it("counts each active book only once", () => {
+    const books = [
+      book({ txtId: 1, lastAccessed: 10, bookmarkCount: 2 }),
+      book({ txtId: 2, bookmarkCount: 1 }),
+      book({ txtId: 3 }),
+    ];
+    expect(recentBookCount(books)).toBe(2);
   });
 });
 

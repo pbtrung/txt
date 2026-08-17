@@ -39,6 +39,9 @@ function book(overrides: Partial<LibraryBook>): LibraryBook {
     authors: [],
     subjects: [],
     publisher: null,
+    lastAccessed: 0,
+    bookmarkCount: 0,
+    lastBookmarked: null,
     ...overrides,
   };
 }
@@ -137,10 +140,33 @@ describe("LibraryScreen", () => {
 
   it("shows nav rows with counts for All Books/Authors/Subjects/Publishers", () => {
     renderScreen(LIBRARY);
+    expect(screen.getByRole("button", { name: /^Recent/ })).toHaveTextContent("0");
     expect(screen.getByRole("button", { name: /^All Books/ })).toHaveTextContent("2");
     expect(screen.getByRole("button", { name: /^Authors/ })).toHaveTextContent("2");
     expect(screen.getByRole("button", { name: /^Subjects/ })).toHaveTextContent("2");
     expect(screen.getByRole("button", { name: /^Publishers/ })).toHaveTextContent("1");
+  });
+
+  it("shows recent access and bookmarked books in the Recent view", async () => {
+    renderScreen([
+      book({ txtId: 1, title: "Recently read", lastAccessed: 2000 }),
+      book({
+        txtId: 2,
+        title: "Recently marked",
+        bookmarkCount: 2,
+        lastBookmarked: 3000,
+      }),
+    ]);
+
+    await userEvent.click(screen.getByRole("button", { name: /^Recent/ }));
+
+    expect(screen.getByRole("heading", { name: "Recent" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Recent access" })).toHaveTextContent(
+      "Recently read",
+    );
+    expect(screen.getByRole("region", { name: "Bookmarks" })).toHaveTextContent(
+      "Recently marked",
+    );
   });
 
   it("drills from a dimension into its entries, then into that entry's books", async () => {

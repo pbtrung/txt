@@ -65,7 +65,7 @@ function VirtualBookRow({
   );
 }
 
-function BookRow({ book }: { book: LibraryBook }) {
+export function BookRow({ book }: { book: LibraryBook }) {
   return (
     <Link
       to={`/read/${book.txtId}`}

@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { IconButton } from "../../components/IconButton";
 import type { LibraryBook } from "../../data/libraryDb";
 import { classNames } from "../../util/classNames";
-import { browseEntries, type BrowseDimension } from "./libraryModel";
+import { browseEntries, recentBookCount, type BrowseDimension } from "./libraryModel";
 import { DIMENSIONS, DIMENSION_LABEL, type LibraryView } from "./libraryView";
 
 export function LibrarySidebar({
@@ -48,6 +48,12 @@ function LibraryNav({
   return (
     <nav className="flex-grow-1 overflow-y-auto pt-2" aria-label="Library">
       <div className="list-group list-group-flush">
+        <NavRow
+          label="Recent"
+          count={recentBookCount(books)}
+          active={view.kind === "recent"}
+          onClick={() => onNavigate({ kind: "recent" })}
+        />
         <NavRow
           label="All Books"
           count={books.length}
