@@ -154,9 +154,15 @@
 }
 
 .reader-width {
-  width: min(80vw, 150ch);
+  width: 100%;
   font-family: "Literata", serif;
   font-size: 24px;
+}
+
+@media (min-width: 768px) {
+  .reader-width {
+    width: min(80vw, 150ch);
+  }
 }
 
 .reader-column {
