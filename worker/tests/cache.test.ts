@@ -52,23 +52,28 @@ describe("account cache", () => {
 });
 
 describe("checkRateLimit", () => {
-  it("allows up to 20 requests per uid per hour", async () => {
+  it("allows up to 60 key requests per uid per hour", async () => {
     const kv = fakeKv();
-    for (let i = 0; i < 20; i++) {
-      expect(await checkRateLimit(kv, "uid-123")).toBe(true);
+    for (let i = 0; i < 60; i++) {
+      expect(await checkRateLimit(kv, "uid-123", "keys")).toBe(true);
     }
   });
 
-  it("rejects the 21st request within the same window", async () => {
+  it("rejects the 31st R2 token request within the same window", async () => {
     const kv = fakeKv();
-    for (let i = 0; i < 20; i++) await checkRateLimit(kv, "uid-123");
-    expect(await checkRateLimit(kv, "uid-123")).toBe(false);
+    for (let i = 0; i < 30; i++) {
+      await checkRateLimit(kv, "uid-123", "r2-token");
+    }
+    expect(await checkRateLimit(kv, "uid-123", "r2-token")).toBe(false);
   });
 
-  it("tracks separate uids independently", async () => {
+  it("tracks separate uids and endpoints independently", async () => {
     const kv = fakeKv();
-    for (let i = 0; i < 20; i++) await checkRateLimit(kv, "uid-a");
-    expect(await checkRateLimit(kv, "uid-a")).toBe(false);
-    expect(await checkRateLimit(kv, "uid-b")).toBe(true);
+    for (let i = 0; i < 30; i++) {
+      await checkRateLimit(kv, "uid-a", "r2-token");
+    }
+    expect(await checkRateLimit(kv, "uid-a", "r2-token")).toBe(false);
+    expect(await checkRateLimit(kv, "uid-a", "keys")).toBe(true);
+    expect(await checkRateLimit(kv, "uid-b", "r2-token")).toBe(true);
   });
 });

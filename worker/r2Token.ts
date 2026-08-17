@@ -50,7 +50,7 @@ export async function handleR2Token(request: Request, env: Env): Promise<Respons
     return new Response("missing or invalid bearer token", { status: 401 });
   }
 
-  const result = await getAccount(env, identity.uid);
+  const result = await getAccount(env, identity.uid, "r2-token");
   if (result.status !== "ok") return statusResponse(result);
 
   const proof = await readProofRequest(request);

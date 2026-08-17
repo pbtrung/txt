@@ -1,6 +1,7 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useRef } from "react";
 import { Link } from "react-router-dom";
+import { IconButton } from "../../components/IconButton";
 import type { LibraryBook } from "../../data/libraryDb";
 import { classNames } from "../../util/classNames";
 
@@ -77,7 +78,10 @@ export function BookRow({
 }) {
   const active = book.lastAccessed > 0 || book.bookmarkCount > 0;
   return (
-    <div className="position-relative" style={{ height: ROW_HEIGHT_PX }}>
+    <div
+      className="position-relative book-row-container"
+      style={{ height: ROW_HEIGHT_PX }}
+    >
       <Link
         to={`/read/${book.txtId}`}
         className={classNames(
@@ -101,15 +105,13 @@ export function BookRow({
         </span>
       </Link>
       {onRemove && (
-        <button
-          type="button"
-          className="btn btn-sm border-0 position-absolute top-50 end-0 translate-middle-y me-1"
-          aria-label={removeLabel}
+        <IconButton
+          label={removeLabel ?? "Remove book"}
+          icon="x-lg"
+          className="border-0 position-absolute top-50 end-0 translate-middle-y me-1 compact-delete-button book-row-remove"
           title={removeLabel}
           onClick={onRemove}
-        >
-          <i className="bi bi-x-lg" aria-hidden="true" />
-        </button>
+        />
       )}
     </div>
   );

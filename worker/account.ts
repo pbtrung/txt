@@ -1,9 +1,14 @@
 // Shared by keys.ts and r2Token.ts: resolve a uid to its ctl account,
-// through the cache and rate limit docs/auth.md §6 describes, in the one
-// order that matters -- a cache hit skips the rate limiter entirely, since
-// it never touches the ctl round trip the limiter protects.
+// through the cache and endpoint-specific rate limit docs/auth.md §6
+// describes. Limiting before the cache lookup protects both cached key reads
+// and credential signing without letting one endpoint exhaust the other.
 
-import { cacheAccount, checkRateLimit, getCachedAccount } from "./cache";
+import {
+  cacheAccount,
+  checkRateLimit,
+  getCachedAccount,
+  type RateLimitScope,
+} from "./cache";
 import type { Account } from "./ctl";
 import { lookupAccount } from "./ctl";
 
@@ -13,8 +18,14 @@ export type AccountLookup =
   | { status: "not_provisioned" }
   | { status: "unavailable" };
 
-export async function getAccount(env: Env, uid: string): Promise<AccountLookup> {
-  if (!(await checkRateLimit(env.KEYS_CACHE, uid))) return { status: "rate_limited" };
+export async function getAccount(
+  env: Env,
+  uid: string,
+  scope: RateLimitScope,
+): Promise<AccountLookup> {
+  if (!(await checkRateLimit(env.KEYS_CACHE, uid, scope))) {
+    return { status: "rate_limited" };
+  }
   const cached = await getCachedAccount(env.KEYS_CACHE, uid);
   if (cached) return { status: "ok", account: cached };
   return fetchAndCache(env, uid);

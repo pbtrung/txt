@@ -244,8 +244,8 @@ export class EpubRenderer {
       if (width <= 0 || height <= 0) return;
       this.hostWidth = width;
       const current = this.rendition.currentLocation()?.start;
-      if (!current) this.applyPreferredColumns();
-      else this.updateColumnGap();
+      if (current) this.applyLayoutFor(current);
+      else this.applyPreferredColumns();
       this.rendition.resize(width, height, current?.cfi);
     });
     this.hostResizeObserver.observe(host);

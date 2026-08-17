@@ -34,17 +34,17 @@ describe("getAccount", () => {
   it("returns a cached account after checking the rate limit", async () => {
     vi.mocked(getCachedAccount).mockResolvedValue(ACCOUNT);
 
-    const result = await getAccount(ENV, "uid-123");
+    const result = await getAccount(ENV, "uid-123", "keys");
 
     expect(result).toEqual({ status: "ok", account: ACCOUNT });
-    expect(checkRateLimit).toHaveBeenCalledWith(ENV.KEYS_CACHE, "uid-123");
+    expect(checkRateLimit).toHaveBeenCalledWith(ENV.KEYS_CACHE, "uid-123", "keys");
     expect(lookupAccount).not.toHaveBeenCalled();
   });
 
   it("returns rate_limited before reading the cache or ctl", async () => {
     vi.mocked(checkRateLimit).mockResolvedValue(false);
 
-    const result = await getAccount(ENV, "uid-123");
+    const result = await getAccount(ENV, "uid-123", "r2-token");
 
     expect(result).toEqual({ status: "rate_limited" });
     expect(getCachedAccount).not.toHaveBeenCalled();
@@ -54,7 +54,7 @@ describe("getAccount", () => {
   it("returns not_provisioned when ctl has no row", async () => {
     vi.mocked(lookupAccount).mockResolvedValue(null);
 
-    const result = await getAccount(ENV, "uid-123");
+    const result = await getAccount(ENV, "uid-123", "keys");
 
     expect(result).toEqual({ status: "not_provisioned" });
     expect(cacheAccount).not.toHaveBeenCalled();
@@ -63,7 +63,7 @@ describe("getAccount", () => {
   it("returns unavailable when ctl throws", async () => {
     vi.mocked(lookupAccount).mockRejectedValue(new Error("network error"));
 
-    const result = await getAccount(ENV, "uid-123");
+    const result = await getAccount(ENV, "uid-123", "keys");
 
     expect(result).toEqual({ status: "unavailable" });
   });
@@ -71,7 +71,7 @@ describe("getAccount", () => {
   it("fetches from ctl, caches, and returns ok on success", async () => {
     vi.mocked(lookupAccount).mockResolvedValue(ACCOUNT);
 
-    const result = await getAccount(ENV, "uid-123");
+    const result = await getAccount(ENV, "uid-123", "keys");
 
     expect(result).toEqual({ status: "ok", account: ACCOUNT });
     expect(cacheAccount).toHaveBeenCalledWith(ENV.KEYS_CACHE, "uid-123", ACCOUNT);

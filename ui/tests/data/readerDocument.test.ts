@@ -84,9 +84,18 @@ describe("loadReaderDocument (real sqlcipher.wasm + real crypto)", () => {
     const key = `the-db-prefix/${toBase32Crockford(txtPrefix)}/${toBase32Crockford(path)}`;
     const r2 = fakeR2({ [key]: encrypted });
 
-    const doc = await loadReaderDocument(db, r2, "the-db-prefix", 1);
+    const progress: string[] = [];
+    const doc = await loadReaderDocument(db, r2, "the-db-prefix", 1, (step) =>
+      progress.push(`${step.step}/${step.total} ${step.label}`),
+    );
     db.close();
 
+    expect(progress).toEqual([
+      "1/5 Reading book details",
+      "2/5 Downloading text",
+      "3/5 Decrypting text",
+      "4/5 Reading book metadata",
+    ]);
     expect(doc).not.toBeNull();
     expect(doc!.txtId).toBe(1);
     expect(doc!.lastCfi).toBe("epubcfi(/6/4!/4/2)");

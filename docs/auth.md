@@ -239,7 +239,7 @@ Steady state is one KV read for `/v1/keys`. A cache miss is one `ctl` query. The
 
 `keys:v2:{uid}` is cached rather than read every time because the underlying rows change only when an administrator changes them; the 24-hour TTL bounds how long a deprovisioned user keeps being served, and revocation (§7) purges the key explicitly.
 
-Rate-limit per `uid` on both endpoints — generous for a client that refreshes on its own credential's expiry — so a looping client cannot exhaust the Worker's capacity for every other user. Rate-limit 403s per uid too: an unprovisioned client retrying in a loop otherwise hits `ctl` on every request.
+Rate-limit per `uid` with independent endpoint budgets: 60 `/v1/keys` requests and 30 `/v1/r2-token` requests per hour. Keeping the counters separate prevents routine credential renewal or a reconnect retry from locking the user out of unlock, while still stopping a looping client from exhausting Worker capacity. Rate-limit 403s per uid too: an unprovisioned client retrying in a loop otherwise hits `ctl` on every request.
 
 ---
 

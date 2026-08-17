@@ -411,6 +411,40 @@ describe("EpubRenderer", () => {
     expect(disconnect).toHaveBeenCalledOnce();
   });
 
+  it("centers the spread when the first-open host becomes measurable", () => {
+    let resize!: ResizeObserverCallback;
+    class ResizeObserverMock {
+      observe = vi.fn();
+      unobserve = vi.fn();
+      disconnect = vi.fn();
+
+      constructor(callback: ResizeObserverCallback) {
+        resize = callback;
+      }
+    }
+    vi.stubGlobal("ResizeObserver", ResizeObserverMock);
+    const renderer = new EpubRenderer(new Uint8Array([1]));
+    const host = document.createElement("div");
+    let width = 0;
+    Object.defineProperties(host, {
+      clientWidth: { get: () => width },
+      clientHeight: { value: 700 },
+    });
+
+    renderer.renderTo(host);
+    renderer.setColumns(2);
+    renditionMock.spread.mockClear();
+    width = 1100;
+    renditionMock.currentLocation.mockReturnValue({
+      start: { cfi: "epubcfi(/6/8)", index: 4 },
+    });
+    resize([], {} as ResizeObserver);
+
+    expect(renditionMock.settings.gap).toBe(100);
+    expect(renditionMock.spread).toHaveBeenCalledWith("auto", 900);
+    expect(renditionMock.resize).toHaveBeenCalledWith(1100, 700, "epubcfi(/6/8)");
+  });
+
   it("getToc() resolves the book's navigation without needing renderTo() first", async () => {
     const renderer = new EpubRenderer(new Uint8Array([1]));
 

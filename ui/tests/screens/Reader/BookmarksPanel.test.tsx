@@ -42,7 +42,9 @@ describe("BookmarkMenu", () => {
     expect(display).toHaveBeenCalledWith("epubcfi(/6/4)");
 
     await userEvent.click(screen.getByRole("button", { name: "Bookmarks" }));
-    await userEvent.click(screen.getByRole("button", { name: "Delete bookmark" }));
+    const removeButton = screen.getByRole("button", { name: "Delete bookmark" });
+    expect(removeButton).toHaveClass("compact-delete-button");
+    await userEvent.click(removeButton);
     expect(remove).toHaveBeenCalledWith("epubcfi(/6/4)");
   });
 

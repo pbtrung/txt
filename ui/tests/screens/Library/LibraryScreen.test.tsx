@@ -265,6 +265,8 @@ describe("LibraryScreen", () => {
       name: "Delete bookmarks for Marked book",
     });
     expect(remove).toHaveAttribute("title", "Delete bookmarks for Marked book");
+    expect(remove).toHaveClass("compact-delete-button", "book-row-remove");
+    expect(remove.parentElement).toHaveClass("book-row-container");
   });
 
   it("drills from a dimension into its entries, then into that entry's books", async () => {

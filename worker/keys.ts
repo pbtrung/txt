@@ -12,7 +12,7 @@ export async function handleKeys(request: Request, env: Env): Promise<Response> 
   const uid = await verifiedUid(request, env.FIREBASE_PROJECT_ID);
   if (uid === null)
     return new Response("missing or invalid bearer token", { status: 401 });
-  return respond(await getAccount(env, uid), uid);
+  return respond(await getAccount(env, uid, "keys"), uid);
 }
 
 function respond(result: AccountLookup, uid: string): Response {

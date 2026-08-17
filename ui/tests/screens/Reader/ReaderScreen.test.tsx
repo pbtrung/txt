@@ -100,9 +100,13 @@ describe("ReaderScreen", () => {
       status: "loading",
       document: null,
       error: null,
+      progress: { label: "Downloading text", step: 2, total: 5 },
     });
     renderScreen();
     expect(screen.getByText(/Opening your book/)).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Downloading text (step 2 of 5)",
+    );
   });
 
   it("shows a not-found message", () => {
@@ -124,7 +128,15 @@ describe("ReaderScreen", () => {
       error: "boom",
     });
     renderScreen();
-    expect(screen.getByRole("alert")).toHaveTextContent("boom");
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("boom");
+    expect(alert).toHaveClass("small", "my-2", "py-2", "px-3");
+    expect(alert.parentElement).toHaveClass(
+      "reader-width",
+      "reader-column",
+      "px-2",
+      "px-md-0",
+    );
   });
 
   it("renders the document's title and mounts EpubRenderer", () => {
@@ -240,6 +252,7 @@ describe("ReaderScreen", () => {
     const viewport = container.querySelector<HTMLElement>(".reader-viewport")!;
 
     expect(viewport).toHaveStyle({ fontSize: "18px" });
+    expect(viewport).toHaveClass("px-2", "px-md-0");
 
     expect(
       fontSize.compareDocumentPosition(

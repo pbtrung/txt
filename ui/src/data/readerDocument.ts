@@ -17,6 +17,14 @@ interface ContentStore {
   getContent(key: string): Promise<Uint8Array | null>;
 }
 
+export interface ReaderLoadProgress {
+  label: string;
+  step: number;
+  total: number;
+}
+
+export const READER_LOAD_TOTAL_STEPS = 5;
+
 export interface ReaderDocument {
   txtId: number;
   lastCfi: string | null;
@@ -37,7 +45,9 @@ export async function loadReaderDocument(
   storage: ContentStore,
   dbPrefix: string,
   txtId: number,
+  onProgress?: (progress: ReaderLoadProgress) => void,
 ): Promise<ReaderDocument | null> {
+  reportProgress(onProgress, "Reading book details", 1);
   const rows = db.query(
     "SELECT txt_key, txt_prefix, path, catalog, last_cfi FROM txt WHERE id = ?",
     [txtId],
@@ -51,10 +61,13 @@ export async function loadReaderDocument(
     string | null,
   ];
 
+  reportProgress(onProgress, "Downloading text", 2);
   const encrypted = await storage.getContent(contentKey(dbPrefix, txtPrefix, path));
   if (!encrypted) return null;
 
+  reportProgress(onProgress, "Decrypting text", 3);
   const epubBytes = await decrypt(encrypted, txtKey);
+  reportProgress(onProgress, "Reading book metadata", 4);
   const catalog = await decodeCatalog(catalogBlob);
   const opf = await parseEpubOpf(epubBytes);
   const publishers = fieldStrings(opf.metadata.publisher);
@@ -68,4 +81,12 @@ export async function loadReaderDocument(
     extraMetadata: extraMetadataFields(opf),
     epubBytes,
   };
+}
+
+function reportProgress(
+  onProgress: ((progress: ReaderLoadProgress) => void) | undefined,
+  label: string,
+  step: number,
+): void {
+  onProgress?.({ label, step, total: READER_LOAD_TOTAL_STEPS });
 }

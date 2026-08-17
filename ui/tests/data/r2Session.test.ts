@@ -110,4 +110,34 @@ describe("R2Session", () => {
     expect(new TextDecoder().decode(content!)).toBe("refreshed");
     expect(worker.fetchR2Token).toHaveBeenCalledTimes(1);
   });
+
+  it("retries credential refresh after connectivity is restored", async () => {
+    vi.useFakeTimers();
+    try {
+      const refreshed = credentials("2099-01-01T00:00:00Z", "refreshed");
+      const { session, worker } = createSession(
+        credentials("2000-01-01T00:00:00Z"),
+        refreshed,
+      );
+      vi.mocked(worker.fetchR2Token)
+        .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+        .mockResolvedValueOnce(refreshed);
+      const clients = fakeClients("refreshed");
+      (
+        session as unknown as {
+          buildClients: (pair: R2CredentialPair) => typeof clients;
+        }
+      ).buildClients = vi.fn(() => clients);
+
+      const contentPromise = session.getContent("p".repeat(52) + "/object");
+      await vi.advanceTimersByTimeAsync(250);
+
+      await expect(contentPromise).resolves.toEqual(
+        new TextEncoder().encode("refreshed"),
+      );
+      expect(worker.fetchR2Token).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

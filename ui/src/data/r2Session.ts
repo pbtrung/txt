@@ -2,6 +2,7 @@ import { R2AuthorizationError, R2Client, type R2Object } from "./r2";
 import type { R2CredentialPair, R2SigningIdentity, WorkerClient } from "./workerClient";
 
 const EXPIRY_SKEW_MS = 60_000;
+const REFRESH_RETRY_DELAY_MS = 250;
 
 export class R2Session {
   private credentials: R2CredentialPair;
@@ -68,13 +69,20 @@ export class R2Session {
   }
 
   private async refresh(): Promise<void> {
-    const credentials = await this.worker.fetchR2Token(
-      this.dbPath,
-      this.dbPrefix,
-      this.signing,
-    );
+    let credentials: R2CredentialPair;
+    try {
+      credentials = await this.fetchCredentials();
+    } catch (error) {
+      if (!isFetchNetworkError(error)) throw error;
+      await delay(REFRESH_RETRY_DELAY_MS);
+      credentials = await this.fetchCredentials();
+    }
     this.credentials = credentials;
     this.clients = this.buildClients(credentials);
+  }
+
+  private fetchCredentials(): Promise<R2CredentialPair> {
+    return this.worker.fetchR2Token(this.dbPath, this.dbPrefix, this.signing);
   }
 
   private buildClients(credentials: R2CredentialPair) {
@@ -83,4 +91,12 @@ export class R2Session {
       dbPrefix: new R2Client(credentials.dbPrefix),
     };
   }
+}
+
+function isFetchNetworkError(error: unknown): boolean {
+  return error instanceof TypeError && /fetch|network|load failed/i.test(error.message);
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
