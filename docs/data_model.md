@@ -8,14 +8,14 @@ A document's own content is not in that file. Each document is a separate encryp
 
 ## 1. Where things live
 
-`db_path`, `db_prefix`, and `db_master_key` (256 random bytes, base64-encoded — the SQLCipher key for the file in §1) all come from `ctl` (docs/auth.md §2 and §5): the client recovers them by decrypting its `cred_store.content` after `/v1/keys`, and uses `db_prefix` to mint an R2 credential via `/v1/r2-token`.
+`db_path`, `db_prefix`, and `db_master_key` (256 random bytes, base64-encoded — the SQLCipher key for the file in §1) all come from `ctl` (docs/auth.md §2 and §5): the client recovers them by decrypting its `cred_store.content` after `/v1/keys`, then submits the two paths to `/v1/r2-token` for ownership verification and scoped R2 credentials.
 
 ```
 s3://{bucket}/{db_path}
 s3://{bucket}/{db_prefix}/{txt.txt_prefix}/{txt.path}
 ```
 
-The first is the user's whole SQLCipher database — one object, downloaded whole and uploaded whole. The second is one document's content — one object per `txt` row, addressed by that row's own `txt_prefix`/`path` columns rather than by `id`, so listing or guessing one document's key reveals nothing about any other. Both `txt_prefix` and `path` are raw random bytes in the database and rendered as base32-Crockford strings when used as key segments, the same recipe as `db_path`/`db_prefix` (docs/auth.md).
+The first is the user's whole SQLCipher database — one object, downloaded and conditionally uploaded as a whole with the exact-`db_path` read-write credential. The second is one immutable document-content object per `txt` row, fetched with the `{db_prefix}/*` read-only credential and addressed by that row's own `txt_prefix`/`path` columns rather than by `id`, so listing or guessing one document's key reveals nothing about any other. Both `txt_prefix` and `path` are raw random bytes in the database and rendered as base32-Crockford strings when used as key segments, the same recipe as `db_path`/`db_prefix` (docs/auth.md).
 
 `{bucket}` is not a secret, but the client carries no R2 connection details of its own — `bucket`, along with the endpoint and region, travels in the `/v1/r2-token` response itself (docs/auth.md §4.2), the client's only source of R2 configuration.
 
@@ -23,18 +23,21 @@ The first is the user's whole SQLCipher database — one object, downloaded whol
 
 ## 2. The read-write round trip
 
-1. The client authenticates and obtains `db_path`, `db_prefix`, `db_master_key`, and an R2 credential (docs/auth.md).
-2. It downloads `s3://{bucket}/{db_path}` and opens it with `db_master_key`. If no object exists yet at that key, the client creates a fresh database from the schema below instead.
-3. It reads and writes the database locally — querying `txt`, adding or trimming `txt_bookmarks`, downloading and decrypting individual documents' content objects on demand.
-4. If anything changed, it uploads the file back to `s3://{bucket}/{db_path}`, overwriting the previous version.
+1. The client authenticates and obtains `db_path`, `db_prefix`, `db_master_key`, an exact-`db_path` read-write credential, and a `{db_prefix}/*` read-only credential (docs/auth.md).
+2. It downloads `s3://{bucket}/{db_path}` without HTTP caching and retains the response `ETag` alongside the bytes. If no object exists yet at that key, it creates a fresh database from the schema below and records that the next upload is a create.
+3. It opens the database with `db_master_key`, reapplies `PRAGMA page_size = 16384` before the first schema access, and runs the idempotent schema check.
+4. It reads document metadata and reading state locally. Document content is downloaded and decrypted separately through the read-only prefix credential.
+5. A reading-state change is represented as a semantic mutation — update last access/location, add or remove a bookmark — and serialized through one write queue in the page. The mutation runs in a SQLite transaction.
+6. The client uploads the whole encrypted database with `If-Match: <downloaded ETag>`. Creating a previously absent database uses `If-None-Match: *`. A successful response supplies the new current `ETag`.
+7. `412 PreconditionFailed` means another tab or device committed first. The client downloads and opens the latest database, reapplies the same semantic mutation, and retries with the new `ETag`, up to a bounded limit. It never merges encrypted bytes or blindly overwrites the winner.
 
-There is exactly one writer at a time by construction: the R2 credential from §1 is the only path to the file, and nothing else in this design opens it concurrently.
+R2 is the durable source of truth; the browser's open database is only a working copy. The in-page queue prevents overlapping writes from one session, while the conditional upload prevents lost updates across tabs and devices. If a write still cannot be committed after bounded retries, the UI keeps it visibly unsaved and offers retry rather than claiming success. Credential expiry is handled before retrying data operations: the client refreshes both temporary credentials through `/v1/r2-token` and does not treat an authorization failure as a database conflict.
 
 ---
 
 ## 3. Schema
 
-The page size is fixed at 16 KiB, set once when a fresh database is created (§2 step 2) — SQLite only honors `PRAGMA page_size` on an empty database, so reopening an existing one is always a no-op:
+The database's persisted page size is fixed at 16 KiB when a fresh database is created (§2 step 2). Because SQLCipher encrypts page 1, every connection must still issue `PRAGMA page_size = 16384` immediately after applying the key and before its first schema read; on an existing database this configures the connection rather than rewriting the file:
 
 ```sql
 PRAGMA page_size = 16384;
@@ -45,17 +48,18 @@ CREATE TABLE txt (
     txt_prefix    BLOB    NOT NULL,   -- 32 random bytes; first key segment of the content object (§1)
     path          BLOB    NOT NULL,   -- 32 random bytes; second key segment of the content object (§1)
     catalog       BLOB    NOT NULL,   -- brotli(JSON): {name, title, authors, subjects, publisher} (§3.1)
-    last_accessed INTEGER NOT NULL,   -- unix ms
+    last_accessed INTEGER NOT NULL,   -- unix ms; set when the Reader successfully opens the document
+    last_cfi      TEXT,               -- last stable EPUB CFI reported by the rendition, null until first location
     created_at    INTEGER NOT NULL    -- unix ms
 );
 
 CREATE TABLE txt_bookmarks (
-    id         INTEGER PRIMARY KEY,
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
     txt_id     INTEGER NOT NULL REFERENCES txt(id) ON DELETE CASCADE,
-    line       INTEGER NOT NULL,
+    cfi        TEXT    NOT NULL,
     preview    TEXT    NOT NULL CHECK (length(CAST(preview AS BLOB)) <= 180),
     created_at INTEGER NOT NULL,   -- unix ms, display only
-    UNIQUE (txt_id, line)
+    UNIQUE (txt_id, cfi)
 );
 CREATE INDEX idx_txt_bookmarks_txt_id ON txt_bookmarks(txt_id, id);
 
@@ -73,6 +77,8 @@ BEGIN
       LIMIT 20
     );
 END;
+
+PRAGMA user_version = 1;
 ```
 
 ### 3.1 `catalog`
@@ -93,19 +99,41 @@ A fixed, flat shape — just what the Library screen needs to search and browse 
 
 The whole file is already encrypted by SQLCipher under `db_master_key`, so `catalog` is only brotli-compressed, not separately encrypted — there is no second key for it to be wrapped under.
 
-`txt --update-db admin_creds.json --local-db-dir DIR --verbose` migrates a database still on the older `metadata` column to this shape: adds `catalog`, populates each row from its existing `metadata`, drops `metadata`, and `VACUUM`s. It reaches every account the given administrator's creds.json can reach (docs/auth.md §2's backup `cred_store` row), is idempotent (an already-migrated account is skipped), and resumable per row (a partial run only re-populates rows still missing a `catalog`).
+### 3.2 Reading state and bookmarks
+
+`last_accessed` is updated once the Reader has successfully loaded the document, not merely when a library row is rendered. It supports a recent-books view and sorting. `last_cfi` is separate: it is the position used to resume the document and is updated from the rendition's relocated event after a short debounce. The client also attempts a final flush when the page becomes hidden, but correctness does not depend solely on an unload-time request.
+
+An EPUB Canonical Fragment Identifier (CFI) identifies a content position independently of viewport width, font size, column count, and generated page numbering. Page and line numbers are therefore presentation only and are never persisted. On open, a non-null `last_cfi` is passed to the renderer's `display(cfi)`; an invalid CFI falls back to the beginning without discarding the rest of the database.
+
+A manual bookmark stores the current page-start CFI and a short nearby plain-text preview. A future text-selection bookmark may store the CFI range emitted by the renderer without changing the schema. Re-bookmarking the same `(txt_id, cfi)` updates its preview and display timestamp rather than adding a duplicate. Bookmark creation and deletion are uploaded immediately; deletion is replayed by `(txt_id, cfi)` during conflict recovery rather than by local numeric `id`.
+
+`preview` remains capped at 180 UTF-8 bytes rather than 180 characters (`CAST(... AS BLOB)`), since one character can occupy up to four bytes. `trg_txt_bookmarks_cap` keeps at most 20 bookmarks per document, deleting the oldest by `id`. `AUTOINCREMENT` makes that ordering monotonic even after manual deletions and avoids relying on client clocks. `idx_txt_bookmarks_txt_id` supports listing one document's bookmarks and the cap trigger without a table scan.
+
+The EPUB content object referenced by a `txt` row is immutable. That makes a structural CFI sufficient even when the renderer does not emit optional text-location assertions. Replacing a book creates a new content object/row rather than silently changing the document underneath saved CFIs.
+
+### 3.3 Migration
+
+`PRAGMA user_version` is the schema-version authority. Existing databases are unversioned (`0`); the reading-state schema above is version `1`, and fresh databases are created directly at that version.
+
+`txt --update-db admin_creds.json --local-db-dir DIR --verbose` migrates every reachable database transactionally and idempotently before the writing UI is deployed:
+
+1. If `txt.metadata` is present, add and populate `catalog`, then drop `metadata` as in the existing catalog migration.
+2. Add nullable `txt.last_cfi` when absent; existing `last_accessed` values remain valid.
+3. If the legacy `txt_bookmarks(line, ...)` table exists, require it to be empty because a line number cannot be converted reliably to a CFI, then replace it with the CFI table, index, and trigger above. A nonempty legacy table aborts that account rather than losing data.
+4. Set `PRAGMA user_version = 1`, `VACUUM`, write the local checkpoint, and upload the database only after every step succeeds.
+
+The command reaches every account the administrator's creds can decrypt through the backup `cred_store` rows described in docs/auth.md. It refuses an incomplete account set, resumes safely after interruption, and re-uploads an already-migrated local file when the preceding remote upload may not have completed. Deployment also backfills the `users.db_path_hash`/`db_prefix_hash` authorization bindings from the same decrypted payloads before the new token endpoint is enabled.
 
 `txt_key` is unrelated to `db_master_key`: it is the AEAD key for one document's content object, generated fresh per document, so leaking one document's key exposes nothing about any other document or about the database file itself.
-
-`txt_bookmarks.line` is the line number a bookmark points to inside the document; `preview` is a short excerpt shown alongside it, capped at 180 bytes rather than 180 characters (`CAST(... AS BLOB)`) since a UTF-8 character can be up to 4 bytes. `UNIQUE (txt_id, line)` means re-bookmarking the same line replaces the existing bookmark rather than duplicating it.
-
-`trg_txt_bookmarks_cap` keeps at most 20 bookmarks per document, deleting the oldest by `id` — `id` is monotonic and assigned locally, so the cap is immune to client clock skew in a way a `created_at`-ordered cap would not be. `idx_txt_bookmarks_txt_id` supports listing one document's bookmarks, and the cap's own subquery, without a table scan.
 
 ---
 
 ## 4. Build order
 
-1. The SQLCipher round trip: download, open with `db_master_key`, read, close, re-upload only on change.
-2. `txt` and search/sort/browse over `catalog`.
-3. Per-document content: `txt_key`/`txt_prefix`/`path`, fetching and decrypting one document's object from R2.
-4. `txt_bookmarks`, its cap trigger, and the supporting index.
+1. Provision and backfill the `ctl` path hashes in docs/auth.md before any browser receives database write access.
+2. Version and migrate the SQLCipher schema through `--update-db`; deploy this safely before the writing UI because the existing read-only UI ignores the added column and CFI bookmark table.
+3. Return and parse the separate `db_path` read-write and `db_prefix` read-only credentials, including refresh and R2 CORS support for `PUT`, `If-Match`, `If-None-Match`, and exposed `ETag`.
+4. Introduce the browser database store: no-cache GET plus `ETag`, one mutation queue, conditional PUT, conflict reload/replay, bounded retries, and explicit unsaved state.
+5. Update `last_accessed` on a successful open and persist/resume `last_cfi` from renderer relocation events.
+6. Add CFI bookmark creation, listing, navigation, deletion, preview generation, and saved/error UI.
+7. Test migration states, credential scope, path mismatch rejection, credential refresh, two-client conflicts, CFI reflow stability, and bookmark-cap behavior before deployment.
