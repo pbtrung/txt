@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { EpubRenderer, type PagePosition } from "../../data/epubRenderer";
+import {
+  EpubRenderer,
+  type PagePosition,
+  type ReaderLocation,
+} from "../../data/epubRenderer";
 import type { ReaderDocument } from "../../data/readerDocument";
 import { errorMessage } from "../../util/errorMessage";
 
@@ -16,6 +20,11 @@ interface LocatedPage {
   page: PagePosition;
 }
 
+interface LocatedCfi {
+  document: ReaderDocument;
+  location: ReaderLocation;
+}
+
 interface RenderFailure {
   document: ReaderDocument;
   error: string;
@@ -25,18 +34,38 @@ export function useEpubRenderer(document: ReaderDocument) {
   const [host, setHost] = useState<HTMLDivElement | null>(null);
   const [fontPx, setFontPx] = useState(defaultFontPx);
   const [mounted, setMounted] = useState<MountedRenderer | null>(null);
+  const [ready, setReady] = useState<MountedRenderer | null>(null);
   const [located, setLocated] = useState<LocatedPage | null>(null);
+  const [location, setLocation] = useState<LocatedCfi | null>(null);
   const [failure, setFailure] = useState<RenderFailure | null>(null);
   useEffect(() => {
     if (!host) return;
-    return mountRenderer(document, host, setMounted, setLocated, setFailure);
+    return mountRenderer(
+      document,
+      host,
+      setMounted,
+      setReady,
+      setLocated,
+      setLocation,
+      setFailure,
+    );
   }, [document, host]);
   const renderer = mounted?.document === document ? mounted.renderer : null;
   const page = located?.document === document ? located.page : INITIAL_PAGE;
+  const currentLocation = location?.document === document ? location.location : null;
   const error = failure?.document === document ? failure.error : null;
   useEffect(() => renderer?.setFontSize(`${fontPx}px`), [fontPx, renderer]);
   const changeFontSize = useCallback((size: number) => setFontPx(size), []);
-  return { setHost, renderer, page, fontPx, changeFontSize, error };
+  return {
+    setHost,
+    renderer,
+    ready: ready?.document === document && ready.renderer === renderer,
+    page,
+    location: currentLocation,
+    fontPx,
+    changeFontSize,
+    error,
+  };
 }
 
 function defaultFontPx(): number {
@@ -47,7 +76,9 @@ function mountRenderer(
   document: ReaderDocument,
   host: HTMLElement,
   setMounted: (value: MountedRenderer) => void,
+  setReady: (value: MountedRenderer) => void,
   setLocated: (value: LocatedPage) => void,
+  setLocation: (value: LocatedCfi) => void,
   setFailure: (value: RenderFailure) => void,
 ) {
   const renderer = new EpubRenderer(
@@ -56,11 +87,15 @@ function mountRenderer(
     document.authors,
   );
   let active = true;
-  void Promise.resolve(renderer.renderTo(host)).catch(
+  renderer.onLocationChange(
+    (location) => active && setLocation({ document, location }),
+  );
+  void Promise.resolve(renderer.renderTo(host, document.lastCfi)).then(
+    () => active && setReady({ document, renderer }),
     (error: unknown) => active && setFailure({ document, error: errorMessage(error) }),
   );
   renderer.setColumns(2);
-  renderer.onPageChange((page) => setLocated({ document, page }));
+  renderer.onPageChange((page) => active && setLocated({ document, page }));
   const removeKeys = registerPageKeys(renderer);
   setMounted({ document, renderer });
   return () => {

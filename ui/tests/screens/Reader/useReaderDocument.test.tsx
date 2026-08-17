@@ -22,6 +22,8 @@ describe("useReaderDocument", () => {
 
   it("resolves to ready with the loaded document", async () => {
     const document = {
+      txtId: 1,
+      lastCfi: null,
       title: "Dune",
       authors: ["Frank Herbert"],
       subjects: ["Science Fiction"],

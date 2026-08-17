@@ -15,6 +15,8 @@ const renditionMock = {
   settings: {} as { gap?: number },
   manager: { settings: {} as { gap?: number } },
   currentLocation: vi.fn().mockReturnValue(undefined),
+  getRange: vi.fn().mockReturnValue(null),
+  getContents: vi.fn().mockReturnValue([]),
   themes: { fontSize: vi.fn(), registerCss: vi.fn(), font: vi.fn() },
 };
 const bookMock = {
@@ -43,6 +45,8 @@ afterEach(() => {
   renditionMock.settings = {};
   renditionMock.manager.settings = {};
   renditionMock.currentLocation.mockReturnValue(undefined);
+  renditionMock.getRange.mockReturnValue(null);
+  renditionMock.getContents.mockReturnValue([]);
   bookMock.loaded.cover = Promise.resolve("");
   bookMock.opened = Promise.resolve({});
   bookMock.locations.locationFromCfi.mockReturnValue(0);
@@ -92,6 +96,21 @@ describe("EpubRenderer", () => {
     await expect(renderer.renderTo(document.createElement("div"))).rejects.toThrow(
       /already mounted/,
     );
+  });
+
+  it("resumes at the saved CFI and falls back to the beginning if it is stale", async () => {
+    const renderer = new EpubRenderer(new Uint8Array([1]));
+
+    await renderer.renderTo(document.createElement("div"), "epubcfi(/6/4!/4/2)");
+
+    expect(renditionMock.display).toHaveBeenCalledWith("epubcfi(/6/4!/4/2)");
+
+    renditionMock.display.mockClear();
+    renditionMock.display.mockRejectedValueOnce(new Error("invalid CFI"));
+    const fallback = new EpubRenderer(new Uint8Array([1]));
+    await fallback.renderTo(document.createElement("div"), "epubcfi(stale)");
+
+    expect(renditionMock.display.mock.calls).toEqual([["epubcfi(stale)"], []]);
   });
 
   function coverHook() {
@@ -199,6 +218,47 @@ describe("EpubRenderer", () => {
     renderer.onKeyup(cb);
 
     expect(renditionMock.on).toHaveBeenCalledWith("keyup", cb);
+  });
+
+  it("marks explicit navigation relocations as user initiated", async () => {
+    const renderer = new EpubRenderer(new Uint8Array([1]));
+    await renderer.renderTo(document.createElement("div"));
+    const relocated = renditionMock.on.mock.calls.find(
+      ([event]) => event === "relocated",
+    )![1];
+    const callback = vi.fn();
+    renderer.onLocationChange(callback);
+
+    relocated({ start: { cfi: "epubcfi(/6/2)" } });
+    await renderer.next();
+    relocated({ start: { cfi: "epubcfi(/6/4)" } });
+
+    expect(callback.mock.calls).toEqual([
+      [{ cfi: "epubcfi(/6/2)", userInitiated: false }],
+      [{ cfi: "epubcfi(/6/4)", userInitiated: true }],
+    ]);
+  });
+
+  it("captures normalized text following the current CFI for a bookmark", async () => {
+    const chapter = document.implementation.createHTMLDocument();
+    chapter.body.innerHTML =
+      "<p>Fear is the   mind-killer. Fear is the little-death.</p>";
+    const text = chapter.querySelector("p")!.firstChild!;
+    const range = chapter.createRange();
+    range.setStart(text, 12);
+    range.collapse(true);
+    renditionMock.getRange.mockReturnValue(range);
+    const renderer = new EpubRenderer(new Uint8Array([1]));
+    await renderer.renderTo(document.createElement("div"));
+    const relocated = renditionMock.on.mock.calls.find(
+      ([event]) => event === "relocated",
+    )![1];
+    relocated({ start: { cfi: "epubcfi(/6/4)" } });
+
+    expect(renderer.currentBookmark()).toEqual({
+      cfi: "epubcfi(/6/4)",
+      preview: "mind-killer. Fear is the little-death.",
+    });
   });
 
   it("reports a stable book-wide page and total when the rendition relocates", async () => {

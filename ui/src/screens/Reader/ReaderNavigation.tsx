@@ -10,11 +10,19 @@ export function ReaderNavigation({
   page,
   fontPx,
   onFontSize,
+  bookmarkSaved,
+  bookmarkBusy,
+  onBookmark,
+  onBookmarks,
 }: {
   renderer: EpubRenderer | null;
   page: PagePosition;
   fontPx: number;
   onFontSize: (size: number) => void;
+  bookmarkSaved: boolean;
+  bookmarkBusy: boolean;
+  onBookmark: () => void;
+  onBookmarks: () => void;
 }) {
   return (
     <div className="d-flex align-items-center justify-content-start border-top py-1 gap-2">
@@ -36,7 +44,14 @@ export function ReaderNavigation({
         disabled={!renderer}
         onClick={() => void renderer?.next()}
       />
-      <IconButton className="ms-auto" label="Bookmark" icon="bookmark" />
+      <IconButton
+        className="ms-auto"
+        label={bookmarkSaved ? "Remove bookmark" : "Add bookmark"}
+        icon={bookmarkSaved ? "bookmark-fill" : "bookmark"}
+        disabled={!renderer || bookmarkBusy}
+        onClick={onBookmark}
+      />
+      <IconButton label="View bookmarks" icon="bookmarks" onClick={onBookmarks} />
     </div>
   );
 }

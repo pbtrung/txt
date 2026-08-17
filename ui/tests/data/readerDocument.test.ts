@@ -75,9 +75,10 @@ describe("loadReaderDocument (real sqlcipher.wasm + real crypto)", () => {
     const catalog = await catalogBlob({ name: "dune.epub", title: "Dune" });
 
     db.query(
-      "INSERT INTO txt (txt_key, txt_prefix, path, catalog, last_accessed, created_at) " +
-        "VALUES (?, ?, ?, ?, 0, 0)",
-      [txtKey, txtPrefix, path, catalog],
+      "INSERT INTO txt " +
+        "(txt_key, txt_prefix, path, catalog, last_accessed, last_cfi, created_at) " +
+        "VALUES (?, ?, ?, ?, 0, ?, 0)",
+      [txtKey, txtPrefix, path, catalog, "epubcfi(/6/4!/4/2)"],
     );
 
     const key = `the-db-prefix/${toBase32Crockford(txtPrefix)}/${toBase32Crockford(path)}`;
@@ -87,6 +88,8 @@ describe("loadReaderDocument (real sqlcipher.wasm + real crypto)", () => {
     db.close();
 
     expect(doc).not.toBeNull();
+    expect(doc!.txtId).toBe(1);
+    expect(doc!.lastCfi).toBe("epubcfi(/6/4!/4/2)");
     expect(doc!.title).toBe("Dune");
     expect(doc!.authors).toEqual(["Frank Herbert"]);
     expect(doc!.subjects).toEqual(["Science Fiction", "Adventure"]);

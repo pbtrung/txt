@@ -18,6 +18,8 @@ interface ContentStore {
 }
 
 export interface ReaderDocument {
+  txtId: number;
+  lastCfi: string | null;
   title: string;
   authors: string[];
   subjects: string[];
@@ -37,15 +39,16 @@ export async function loadReaderDocument(
   txtId: number,
 ): Promise<ReaderDocument | null> {
   const rows = db.query(
-    "SELECT txt_key, txt_prefix, path, catalog FROM txt WHERE id = ?",
+    "SELECT txt_key, txt_prefix, path, catalog, last_cfi FROM txt WHERE id = ?",
     [txtId],
   );
   if (rows.length === 0) return null;
-  const [txtKey, txtPrefix, path, catalogBlob] = rows[0] as [
+  const [txtKey, txtPrefix, path, catalogBlob, lastCfi] = rows[0] as [
     Uint8Array,
     Uint8Array,
     Uint8Array,
     Uint8Array,
+    string | null,
   ];
 
   const encrypted = await storage.getContent(contentKey(dbPrefix, txtPrefix, path));
@@ -56,6 +59,8 @@ export async function loadReaderDocument(
   const opf = await parseEpubOpf(epubBytes);
   const publishers = fieldStrings(opf.metadata.publisher);
   return {
+    txtId,
+    lastCfi,
     title: catalog.title,
     authors: fieldStrings(opf.metadata.creator),
     subjects: fieldStrings(opf.metadata.subject),

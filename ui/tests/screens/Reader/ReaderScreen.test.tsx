@@ -8,16 +8,33 @@ vi.mock("../../../src/state/VaultContext", () => ({ useVault: vi.fn() }));
 vi.mock("../../../src/screens/Reader/useReaderDocument", () => ({
   useReaderDocument: vi.fn(),
 }));
+vi.mock("../../../src/screens/Reader/useReadingState", () => ({
+  useReadingState: vi.fn(() => ({
+    bookmarks: [],
+    bookmarkBusy: false,
+    currentSaved: false,
+    toggleCurrent: vi.fn(),
+    remove: vi.fn(),
+    retry: vi.fn(),
+    databaseStatus: { pending: false, unsaved: false, error: null },
+    error: null,
+  })),
+}));
 vi.mock("../../../src/data/epubRenderer", () => ({
   EpubRenderer: vi.fn().mockImplementation(function () {
     return {
-      renderTo: vi.fn(),
+      renderTo: vi.fn().mockResolvedValue(undefined),
       destroy: vi.fn(),
       prev: vi.fn().mockResolvedValue(undefined),
       next: vi.fn().mockResolvedValue(undefined),
       displayPage: vi.fn().mockResolvedValue(undefined),
       onKeyup: vi.fn(),
       onPageChange: vi.fn(),
+      onLocationChange: vi.fn(),
+      currentBookmark: vi.fn().mockReturnValue({
+        cfi: "epubcfi(/6/2)",
+        preview: "Fear is the mind-killer.",
+      }),
       setFontSize: vi.fn(),
       setColumns: vi.fn(),
       getToc: vi.fn().mockResolvedValue([]),
@@ -51,6 +68,8 @@ function mockReadyDocument(overrides: Record<string, unknown> = {}) {
   vi.mocked(useReaderDocument).mockReturnValue({
     status: "ready",
     document: {
+      txtId: 1,
+      lastCfi: null,
       title: "Dune",
       authors: ["Frank Herbert"],
       subjects: ["Science Fiction"],
@@ -122,6 +141,24 @@ describe("ReaderScreen", () => {
       new Uint8Array([1, 2, 3]),
       "Dune",
       ["Frank Herbert"],
+    );
+    const instance = vi.mocked(EpubRenderer).mock.results[0].value as {
+      renderTo: (host: HTMLElement, cfi: string | null) => Promise<void>;
+    };
+    expect(instance.renderTo).toHaveBeenCalledWith(expect.any(HTMLElement), null);
+  });
+
+  it("passes the saved CFI to the renderer when reopening a book", () => {
+    mockVault();
+    mockReadyDocument({ lastCfi: "epubcfi(/6/4!/4/2)" });
+    renderScreen();
+    const instance = vi.mocked(EpubRenderer).mock.results[0].value as {
+      renderTo: (host: HTMLElement, cfi: string | null) => Promise<void>;
+    };
+
+    expect(instance.renderTo).toHaveBeenCalledWith(
+      expect.any(HTMLElement),
+      "epubcfi(/6/4!/4/2)",
     );
   });
 
@@ -289,15 +326,18 @@ describe("ReaderScreen", () => {
     expect(input.getAttribute("style")).toContain("calc(3ch + 1.5rem)");
   });
 
-  it("puts an inert bookmark control at the right of the bottom bar", async () => {
+  it("offers bookmark creation and a bookmark list at the right of the bottom bar", async () => {
     mockVault();
     mockReadyDocument();
     renderScreen();
-    const bookmark = screen.getByRole("button", { name: "Bookmark" });
+    const bookmark = screen.getByRole("button", { name: "Add bookmark" });
 
     await userEvent.click(bookmark);
+    await userEvent.click(screen.getByRole("button", { name: "View bookmarks" }));
 
     expect(bookmark).toHaveClass("ms-auto");
+    expect(screen.getByRole("dialog", { name: "Bookmarks" })).toHaveClass("show");
+    expect(screen.getByText("No bookmarks yet.")).toBeInTheDocument();
   });
 
   it("has a back-to-library link", () => {

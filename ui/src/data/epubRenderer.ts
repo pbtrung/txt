@@ -89,6 +89,16 @@ export interface PagePosition {
   total: number;
 }
 
+export interface ReaderLocation {
+  cfi: string;
+  userInitiated: boolean;
+}
+
+export interface CurrentBookmark {
+  cfi: string;
+  preview: string;
+}
+
 export class EpubRenderer {
   private readonly book: Book;
   private rendition: Rendition | null = null;
@@ -99,6 +109,8 @@ export class EpubRenderer {
   private pageMapReady = false;
   private pageTotal = 0;
   private pageCallback: ((page: PagePosition) => void) | null = null;
+  private locationCallback: ((location: ReaderLocation) => void) | null = null;
+  private navigationPending = false;
   private destroyed = false;
 
   constructor(
@@ -140,7 +152,7 @@ export class EpubRenderer {
     );
   }
 
-  async renderTo(element: HTMLElement): Promise<void> {
+  async renderTo(element: HTMLElement, initialCfi?: string | null): Promise<void> {
     if (this.destroyed) throw new Error("EpubRenderer has been destroyed");
     if (this.rendition) throw new Error("EpubRenderer is already mounted");
     // EPUB content is untrusted. Keep scripts disabled so the iframe remains
@@ -159,10 +171,21 @@ export class EpubRenderer {
     this.rendition.on("rendered", (section) => this.applyLayoutFor(section));
     this.rendition.on("relocated", (location: Location) => {
       this.currentCfi = location.start.cfi;
+      const userInitiated = this.navigationPending;
+      this.navigationPending = false;
+      this.locationCallback?.({ cfi: this.currentCfi, userInitiated });
       this.emitPagePosition();
     });
     this.observeHostSize(element);
     void this.loadCoverHref();
+    if (initialCfi) {
+      try {
+        await this.rendition.display(initialCfi);
+        return;
+      } catch {
+        // A stale or malformed CFI must not prevent the book from opening.
+      }
+    }
     await this.rendition.display();
   }
 
@@ -228,22 +251,40 @@ export class EpubRenderer {
   /** Jumps to an arbitrary TOC href or CFI -- unlike next()/prev(), which
    * just step relative to wherever the rendition already is. */
   async display(target: string): Promise<void> {
-    await this.requireRendition().display(target);
+    this.navigationPending = true;
+    try {
+      await this.requireRendition().display(target);
+    } catch (error) {
+      this.navigationPending = false;
+      throw error;
+    }
   }
 
   async next(): Promise<void> {
-    return this.requireRendition().next();
+    this.navigationPending = true;
+    try {
+      return await this.requireRendition().next();
+    } catch (error) {
+      this.navigationPending = false;
+      throw error;
+    }
   }
 
   async prev(): Promise<void> {
-    return this.requireRendition().prev();
+    this.navigationPending = true;
+    try {
+      return await this.requireRendition().prev();
+    } catch (error) {
+      this.navigationPending = false;
+      throw error;
+    }
   }
 
   async displayPage(page: number): Promise<void> {
     if (!this.pageMapReady || this.pageTotal === 0 || !Number.isFinite(page)) return;
     const index = Math.min(this.pageTotal - 1, Math.max(0, Math.trunc(page) - 1));
     const target = this.book.locations.cfiFromLocation(index);
-    if (typeof target === "string") await this.requireRendition().display(target);
+    if (typeof target === "string") await this.display(target);
   }
 
   /** epub.js relays DOM events (keydown/keyup/click/...) up from inside the
@@ -257,6 +298,27 @@ export class EpubRenderer {
   onPageChange(cb: (page: PagePosition) => void): void {
     this.pageCallback = cb;
     void this.generatePageMap();
+  }
+
+  onLocationChange(cb: (location: ReaderLocation) => void): void {
+    this.locationCallback = cb;
+    if (this.currentCfi) cb({ cfi: this.currentCfi, userInitiated: false });
+  }
+
+  currentBookmark(): CurrentBookmark | null {
+    if (!this.currentCfi) return null;
+    const rendition = this.requireRendition();
+    let text = "";
+    try {
+      const range = rendition.getRange(this.currentCfi);
+      if (range) text = textFollowingRange(range);
+    } catch {
+      // Fall back to the rendered section's text below.
+    }
+    if (!text) {
+      text = rendition.getContents()[0]?.document.body?.textContent ?? "";
+    }
+    return { cfi: this.currentCfi, preview: normalizePreview(text) };
   }
 
   private async generatePageMap(): Promise<void> {
@@ -309,6 +371,36 @@ export class EpubRenderer {
     this.rendition?.destroy();
     this.rendition = null;
     this.pageCallback = null;
+    this.locationCallback = null;
     this.book.destroy();
   }
+}
+
+function textFollowingRange(range: Range): string {
+  const root = range.startContainer.ownerDocument?.body;
+  if (!root) return "";
+  const walker = root.ownerDocument.createTreeWalker(root, 4);
+  const parts: string[] = [];
+  let foundStart = false;
+  let node: Node | null;
+  while ((node = walker.nextNode())) {
+    if (!foundStart) {
+      if (node !== range.startContainer && !range.startContainer.contains(node)) {
+        continue;
+      }
+      foundStart = true;
+      const value = node.textContent ?? "";
+      parts.push(
+        node === range.startContainer ? value.slice(range.startOffset) : value,
+      );
+    } else {
+      parts.push(node.textContent ?? "");
+    }
+    if (parts.join(" ").length >= 240) break;
+  }
+  return parts.join(" ");
+}
+
+function normalizePreview(value: string): string {
+  return value.replace(/\s+/g, " ").trim().slice(0, 240);
 }
