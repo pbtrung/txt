@@ -14,6 +14,7 @@ import { READER_FONT_FAMILY, READER_THEME_CSS } from "./readerTheme";
 
 const TWO_COLUMN_MIN_WIDTH_PX = 900;
 const COLUMN_GAP_PX = 100;
+const MOBILE_MAX_WIDTH_PX = 767.98;
 const FRONT_MATTER_SPINE_INDEX_LIMIT = 3;
 const BOOK_PAGE_CHARS = 1000;
 const COVER_MEDIA_SELECTOR = "img, image, object";
@@ -103,6 +104,7 @@ export class EpubRenderer {
   private readonly book: Book;
   private rendition: Rendition | null = null;
   private hostResizeObserver: ResizeObserver | null = null;
+  private hostWidth = 0;
   private preferredColumns: 1 | 2 = 1;
   private coverHref: string | null = null;
   private currentCfi: string | null = null;
@@ -157,6 +159,7 @@ export class EpubRenderer {
     if (this.rendition) throw new Error("EpubRenderer is already mounted");
     // EPUB content is untrusted. Keep scripts disabled so the iframe remains
     // sandboxed as allow-same-origin without the dangerous allow-scripts pair.
+    this.hostWidth = element.clientWidth;
     this.rendition = this.book.renderTo(element, {
       width: "100%",
       height: "100%",
@@ -216,15 +219,20 @@ export class EpubRenderer {
 
   private applyLayoutFor(section: SectionLike): void {
     if (this.isFrontMatter(section)) {
-      this.updateColumnGap();
+      this.setColumnGap(0);
       this.requireRendition().spread("none");
     } else this.applyPreferredColumns();
   }
 
   private updateColumnGap(): void {
+    const gap = this.hostWidth <= MOBILE_MAX_WIDTH_PX ? 0 : COLUMN_GAP_PX;
+    this.setColumnGap(gap);
+  }
+
+  private setColumnGap(gap: number): void {
     const rendition = this.requireRendition();
-    rendition.settings.gap = COLUMN_GAP_PX;
-    if (rendition.manager?.settings) rendition.manager.settings.gap = COLUMN_GAP_PX;
+    rendition.settings.gap = gap;
+    if (rendition.manager?.settings) rendition.manager.settings.gap = gap;
   }
 
   private observeHostSize(host: HTMLElement): void {
@@ -234,6 +242,7 @@ export class EpubRenderer {
       const width = host.clientWidth;
       const height = host.clientHeight;
       if (width <= 0 || height <= 0) return;
+      this.hostWidth = width;
       const current = this.rendition.currentLocation()?.start;
       if (!current) this.applyPreferredColumns();
       else this.updateColumnGap();

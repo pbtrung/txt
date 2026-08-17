@@ -364,6 +364,19 @@ describe("EpubRenderer", () => {
     expect(renditionMock.spread).toHaveBeenCalledWith("auto", expect.any(Number));
   });
 
+  it("uses the full container for a narrow single-column rendition", () => {
+    const renderer = new EpubRenderer(new Uint8Array([1]));
+    const host = document.createElement("div");
+    Object.defineProperty(host, "clientWidth", { value: 360 });
+    renderer.renderTo(host);
+
+    renderer.setColumns(2);
+
+    expect(renditionMock.settings.gap).toBe(0);
+    expect(renditionMock.manager.settings.gap).toBe(0);
+    expect(renditionMock.spread).toHaveBeenLastCalledWith("auto", 900);
+  });
+
   it("reapplies the spread after the host width changes", () => {
     let resize!: ResizeObserverCallback;
     const observe = vi.fn();
