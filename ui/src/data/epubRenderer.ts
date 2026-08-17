@@ -15,6 +15,7 @@ import { READER_FONT_FAMILY, READER_THEME_CSS } from "./readerTheme";
 const TWO_COLUMN_MIN_WIDTH_PX = 900;
 const COLUMN_GAP_PX = 100;
 const MOBILE_MAX_WIDTH_PX = 767.98;
+const INITIAL_FONT_WAIT_MS = 1_000;
 const FRONT_MATTER_SPINE_INDEX_LIMIT = 3;
 const BOOK_PAGE_CHARS = 1000;
 const COVER_MEDIA_SELECTOR = "img, image, object";
@@ -202,8 +203,8 @@ export class EpubRenderer {
 
   private reflowAfterFontsLoad(section: SectionLike, document: Document): void {
     const fonts = document.fonts;
-    if (!fonts) return;
-    const pending = Promise.resolve(fonts.ready)
+    if (!fonts || typeof fonts.load !== "function") return;
+    const pending = Promise.resolve(fonts.load(`1em ${READER_FONT_FAMILY}`))
       .then(() => {
         if (!this.rendition || !this.host || this.destroyed) return;
         const current = this.rendition.currentLocation()?.start;
@@ -230,7 +231,11 @@ export class EpubRenderer {
   }
 
   private async waitForFontLayouts(): Promise<void> {
-    await Promise.all([...this.pendingFontLayouts]);
+    await Promise.all(
+      [...this.pendingFontLayouts].map((pending) =>
+        settleWithin(pending, INITIAL_FONT_WAIT_MS),
+      ),
+    );
   }
 
   private async loadCoverHref(): Promise<void> {
@@ -426,6 +431,16 @@ export class EpubRenderer {
     this.locationCallback = null;
     this.book.destroy();
   }
+}
+
+function settleWithin(promise: Promise<void>, timeoutMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timeout = window.setTimeout(resolve, timeoutMs);
+    void promise.then(() => {
+      window.clearTimeout(timeout);
+      resolve();
+    });
+  });
 }
 
 function textFollowingRange(range: Range): string {

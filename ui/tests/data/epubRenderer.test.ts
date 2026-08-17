@@ -447,13 +447,15 @@ describe("EpubRenderer", () => {
 
   it("waits for first-load fonts and reflows the current spread", async () => {
     let resolveFonts!: () => void;
-    const fontDocument = document.implementation.createHTMLDocument();
-    Object.defineProperty(fontDocument, "fonts", {
-      value: {
-        ready: new Promise<void>((resolve) => {
+    const load = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
           resolveFonts = resolve;
         }),
-      },
+    );
+    const fontDocument = document.implementation.createHTMLDocument();
+    Object.defineProperty(fontDocument, "fonts", {
+      value: { load },
     });
     const host = document.createElement("div");
     Object.defineProperties(host, {
@@ -482,8 +484,46 @@ describe("EpubRenderer", () => {
     resolveFonts();
     await rendering;
 
+    expect(load).toHaveBeenCalledWith("1em 'Literata', serif");
     expect(renditionMock.spread).toHaveBeenLastCalledWith("auto", 900);
     expect(renditionMock.resize).toHaveBeenCalledWith(1100, 700, "epubcfi(/6/8)");
+  });
+
+  it("finishes the first render when the reader font stalls", async () => {
+    vi.useFakeTimers();
+    try {
+      const fontDocument = document.implementation.createHTMLDocument();
+      Object.defineProperty(fontDocument, "fonts", {
+        value: { load: vi.fn(() => new Promise<void>(() => undefined)) },
+      });
+      const host = document.createElement("div");
+      Object.defineProperties(host, {
+        clientWidth: { value: 1100 },
+        clientHeight: { value: 700 },
+      });
+      renditionMock.display.mockImplementationOnce(async () => {
+        const rendered = renditionMock.on.mock.calls.find(
+          ([event]) => event === "rendered",
+        )![1];
+        rendered({ index: 4 }, { document: fontDocument });
+      });
+      const renderer = new EpubRenderer(new Uint8Array([1]));
+
+      let complete = false;
+      const rendering = renderer.renderTo(host).then(() => {
+        complete = true;
+      });
+      await Promise.resolve();
+      expect(complete).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      await rendering;
+
+      expect(complete).toBe(true);
+      renderer.destroy();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("getToc() resolves the book's navigation without needing renderTo() first", async () => {
