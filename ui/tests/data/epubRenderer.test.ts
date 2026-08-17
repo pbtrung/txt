@@ -445,6 +445,47 @@ describe("EpubRenderer", () => {
     expect(renditionMock.resize).toHaveBeenCalledWith(1100, 700, "epubcfi(/6/8)");
   });
 
+  it("waits for first-load fonts and reflows the current spread", async () => {
+    let resolveFonts!: () => void;
+    const fontDocument = document.implementation.createHTMLDocument();
+    Object.defineProperty(fontDocument, "fonts", {
+      value: {
+        ready: new Promise<void>((resolve) => {
+          resolveFonts = resolve;
+        }),
+      },
+    });
+    const host = document.createElement("div");
+    Object.defineProperties(host, {
+      clientWidth: { value: 1100 },
+      clientHeight: { value: 700 },
+    });
+    renditionMock.currentLocation.mockReturnValue({
+      start: { cfi: "epubcfi(/6/8)", index: 4 },
+    });
+    renditionMock.display.mockImplementationOnce(async () => {
+      const rendered = renditionMock.on.mock.calls.find(
+        ([event]) => event === "rendered",
+      )![1];
+      rendered({ index: 4 }, { document: fontDocument });
+    });
+    const renderer = new EpubRenderer(new Uint8Array([1]));
+
+    let complete = false;
+    const rendering = renderer.renderTo(host).then(() => {
+      complete = true;
+    });
+    renderer.setColumns(2);
+    await Promise.resolve();
+    expect(complete).toBe(false);
+
+    resolveFonts();
+    await rendering;
+
+    expect(renditionMock.spread).toHaveBeenLastCalledWith("auto", 900);
+    expect(renditionMock.resize).toHaveBeenCalledWith(1100, 700, "epubcfi(/6/8)");
+  });
+
   it("getToc() resolves the book's navigation without needing renderTo() first", async () => {
     const renderer = new EpubRenderer(new Uint8Array([1]));
 

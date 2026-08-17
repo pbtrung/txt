@@ -103,7 +103,9 @@ export interface CurrentBookmark {
 export class EpubRenderer {
   private readonly book: Book;
   private rendition: Rendition | null = null;
+  private host: HTMLElement | null = null;
   private hostResizeObserver: ResizeObserver | null = null;
+  private pendingFontLayouts = new Set<Promise<void>>();
   private hostWidth = 0;
   private preferredColumns: 1 | 2 = 1;
   private coverHref: string | null = null;
@@ -159,6 +161,7 @@ export class EpubRenderer {
     if (this.rendition) throw new Error("EpubRenderer is already mounted");
     // EPUB content is untrusted. Keep scripts disabled so the iframe remains
     // sandboxed as allow-same-origin without the dangerous allow-scripts pair.
+    this.host = element;
     this.hostWidth = element.clientWidth;
     this.rendition = this.book.renderTo(element, {
       width: "100%",
@@ -171,7 +174,10 @@ export class EpubRenderer {
     // which is what it takes to beat a book's own stylesheet -- nearly
     // every real EPUB sets its own font-family on body/paragraphs.
     this.rendition.themes.font(READER_FONT_FAMILY);
-    this.rendition.on("rendered", (section) => this.applyLayoutFor(section));
+    this.rendition.on("rendered", (section, view) => {
+      this.applyLayoutFor(section);
+      this.reflowAfterFontsLoad(section, view.document);
+    });
     this.rendition.on("relocated", (location: Location) => {
       this.currentCfi = location.start.cfi;
       const userInitiated = this.navigationPending;
@@ -184,12 +190,47 @@ export class EpubRenderer {
     if (initialCfi) {
       try {
         await this.rendition.display(initialCfi);
+        await this.waitForFontLayouts();
         return;
       } catch {
         // A stale or malformed CFI must not prevent the book from opening.
       }
     }
     await this.rendition.display();
+    await this.waitForFontLayouts();
+  }
+
+  private reflowAfterFontsLoad(section: SectionLike, document: Document): void {
+    const fonts = document.fonts;
+    if (!fonts) return;
+    const pending = Promise.resolve(fonts.ready)
+      .then(() => {
+        if (!this.rendition || !this.host || this.destroyed) return;
+        const current = this.rendition.currentLocation()?.start;
+        if (
+          current?.index !== undefined &&
+          section.index !== undefined &&
+          current.index !== section.index
+        ) {
+          return;
+        }
+        const width = this.host.clientWidth;
+        const height = this.host.clientHeight;
+        if (width <= 0 || height <= 0) return;
+        this.hostWidth = width;
+        this.applyLayoutFor(current ?? section);
+        this.rendition.resize(width, height, current?.cfi);
+      })
+      .catch(() => {
+        // A failed downloadable font falls back normally; keep the rendered
+        // section rather than turning a font failure into a reader failure.
+      });
+    this.pendingFontLayouts.add(pending);
+    void pending.finally(() => this.pendingFontLayouts.delete(pending));
+  }
+
+  private async waitForFontLayouts(): Promise<void> {
+    await Promise.all([...this.pendingFontLayouts]);
   }
 
   private async loadCoverHref(): Promise<void> {
@@ -377,6 +418,8 @@ export class EpubRenderer {
     this.destroyed = true;
     this.hostResizeObserver?.disconnect();
     this.hostResizeObserver = null;
+    this.host = null;
+    this.pendingFontLayouts.clear();
     this.rendition?.destroy();
     this.rendition = null;
     this.pageCallback = null;
