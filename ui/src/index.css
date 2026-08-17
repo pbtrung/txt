@@ -192,14 +192,11 @@
   width: min(22rem, calc(100vw - 1rem));
   max-height: calc(100dvh - 4rem);
   overflow-y: auto;
-}
-
-.reader-bookmark-control > .btn {
   font-size: 16px;
 }
 
 @media (min-width: 768px) {
-  .reader-bookmark-control > .btn {
+  .reader-bookmark-menu {
     font-size: 18px;
   }
 }
