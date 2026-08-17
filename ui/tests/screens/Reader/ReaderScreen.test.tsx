@@ -199,6 +199,9 @@ describe("ReaderScreen", () => {
       setFontSize: (size: string) => void;
     };
     const fontSize = screen.getByRole("button", { name: "Font size" });
+    const viewport = container.querySelector<HTMLElement>(".reader-viewport")!;
+
+    expect(viewport).toHaveStyle({ fontSize: "18px" });
 
     expect(
       fontSize.compareDocumentPosition(
@@ -219,6 +222,7 @@ describe("ReaderScreen", () => {
     expect(instance.setFontSize).toHaveBeenLastCalledWith("20px");
     expect(instance.setFontSize).toHaveBeenCalledTimes(2);
     expect(fontSize).toHaveTextContent("20px");
+    expect(viewport).toHaveStyle({ fontSize: "20px" });
     expect(menu).not.toHaveClass("show");
   });
 

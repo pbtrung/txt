@@ -9,6 +9,7 @@ const renditionMock = {
   destroy: vi.fn(),
   next: vi.fn().mockResolvedValue(undefined),
   prev: vi.fn().mockResolvedValue(undefined),
+  resize: vi.fn(),
   on: vi.fn(),
   spread: vi.fn(),
   settings: {} as { gap?: number },
@@ -38,6 +39,7 @@ vi.mock("@likecoin/epub-ts", () => ({
 
 afterEach(() => {
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
   renditionMock.settings = {};
   renditionMock.manager.settings = {};
   renditionMock.currentLocation.mockReturnValue(undefined);
@@ -297,9 +299,43 @@ describe("EpubRenderer", () => {
     renderer.setFontSize("16px");
 
     expect(renditionMock.themes.fontSize).toHaveBeenCalledWith("16px");
-    expect(renditionMock.settings.gap).toBeCloseTo(226.67);
-    expect(renditionMock.manager.settings.gap).toBeCloseTo(226.67);
+    expect(renditionMock.settings.gap).toBe(100);
+    expect(renditionMock.manager.settings.gap).toBe(100);
     expect(renditionMock.spread).toHaveBeenCalledWith("auto", expect.any(Number));
+  });
+
+  it("reapplies the spread after the host width changes", () => {
+    let resize!: ResizeObserverCallback;
+    const observe = vi.fn();
+    const disconnect = vi.fn();
+    class ResizeObserverMock {
+      observe = observe;
+      unobserve = vi.fn();
+      disconnect = disconnect;
+
+      constructor(callback: ResizeObserverCallback) {
+        resize = callback;
+      }
+    }
+    vi.stubGlobal("ResizeObserver", ResizeObserverMock);
+    const renderer = new EpubRenderer(new Uint8Array([1]));
+    const host = document.createElement("div");
+    Object.defineProperties(host, {
+      clientWidth: { value: 1100 },
+      clientHeight: { value: 700 },
+    });
+
+    renderer.renderTo(host);
+    renderer.setColumns(2);
+    renditionMock.spread.mockClear();
+    resize([], {} as ResizeObserver);
+
+    expect(observe).toHaveBeenCalledWith(host);
+    expect(renditionMock.spread).toHaveBeenCalledWith("auto", expect.any(Number));
+    expect(renditionMock.resize).toHaveBeenCalledWith(1100, 700, undefined);
+
+    renderer.destroy();
+    expect(disconnect).toHaveBeenCalledOnce();
   });
 
   it("getToc() resolves the book's navigation without needing renderTo() first", async () => {

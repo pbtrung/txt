@@ -43,7 +43,11 @@ function ReadyReader({ document }: { document: ReaderDocument }) {
           onMenu={() => setTocOpen(true)}
           onInfo={() => setInfoOpen(true)}
         />
-        <div ref={setHost} className="flex-grow-1" />
+        <div
+          ref={setHost}
+          className="reader-viewport flex-grow-1 align-self-center"
+          style={{ fontSize: `${fontPx}px` }}
+        />
         <ReaderNavigation
           renderer={renderer}
           page={page}

@@ -149,6 +149,12 @@
   font-size: var(--bs-body-font-size);
 }
 
+.reader-viewport {
+  width: 100%;
+  max-width: calc(140ch + 120px);
+  font-family: "Literata", serif;
+}
+
 .reader-side-panel {
   width: 100%;
   max-width: 350px;
