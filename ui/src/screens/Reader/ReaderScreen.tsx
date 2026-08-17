@@ -5,7 +5,6 @@ import { useParams } from "react-router-dom";
 import { LoadingMessage, ScreenMessage } from "../../components/ScreenMessage";
 import type { ReaderDocument } from "../../data/readerDocument";
 import { useVault, type VaultSession } from "../../state/VaultContext";
-import { BookmarksPanel } from "./BookmarksPanel";
 import { ReaderInfoPanel } from "./ReaderInfoPanel";
 import { ReaderNavigation } from "./ReaderNavigation";
 import { ReaderToolbar } from "./ReaderToolbar";
@@ -40,7 +39,6 @@ function ReadyReader({
 }) {
   const [infoOpen, setInfoOpen] = useState(false);
   const [tocOpen, setTocOpen] = useState(false);
-  const [bookmarksOpen, setBookmarksOpen] = useState(false);
   const { setHost, renderer, ready, page, location, fontPx, changeFontSize, error } =
     useEpubRenderer(document);
   const reading = useReadingState(session, document, renderer, ready, location);
@@ -66,8 +64,12 @@ function ReadyReader({
           onFontSize={changeFontSize}
           bookmarkSaved={reading.currentSaved}
           bookmarkBusy={reading.bookmarkBusy}
+          bookmarks={reading.bookmarks}
+          status={reading.databaseStatus}
+          error={reading.error}
           onBookmark={() => void reading.toggleCurrent()}
-          onBookmarks={() => setBookmarksOpen(true)}
+          onRemove={(cfi) => void reading.remove(cfi)}
+          onRetry={() => void reading.retry()}
         />
         <ReaderInfoPanel
           open={infoOpen}
@@ -78,17 +80,6 @@ function ReadyReader({
           open={tocOpen}
           onClose={() => setTocOpen(false)}
           renderer={renderer}
-        />
-        <BookmarksPanel
-          open={bookmarksOpen}
-          onClose={() => setBookmarksOpen(false)}
-          renderer={renderer}
-          bookmarks={reading.bookmarks}
-          busy={reading.bookmarkBusy}
-          status={reading.databaseStatus}
-          error={reading.error}
-          onRemove={(cfi) => void reading.remove(cfi)}
-          onRetry={() => void reading.retry()}
         />
       </div>
     </div>

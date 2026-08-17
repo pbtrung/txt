@@ -3,19 +3,16 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { EpubRenderer } from "../../../src/data/epubRenderer";
-import { BookmarksPanel } from "../../../src/screens/Reader/BookmarksPanel";
+import { BookmarkMenu } from "../../../src/screens/Reader/ReaderNavigation";
 
 afterEach(cleanup);
 
-describe("BookmarksPanel", () => {
+describe("BookmarkMenu", () => {
   it("navigates to and deletes saved CFIs", async () => {
     const display = vi.fn().mockResolvedValue(undefined);
-    const close = vi.fn();
     const remove = vi.fn();
     render(
-      <BookmarksPanel
-        open
-        onClose={close}
+      <BookmarkMenu
         renderer={{ display } as unknown as EpubRenderer}
         bookmarks={[
           {
@@ -25,18 +22,24 @@ describe("BookmarksPanel", () => {
             createdAt: 42,
           },
         ]}
-        busy={false}
+        bookmarkSaved={false}
+        bookmarkBusy={false}
         status={{ pending: false, unsaved: false, error: null }}
         error={null}
+        onBookmark={vi.fn()}
         onRemove={remove}
         onRetry={vi.fn()}
       />,
     );
 
+    await userEvent.click(screen.getByRole("button", { name: "Bookmarks" }));
+    const menu = screen.getByRole("menu", { name: "Bookmark options" });
+    expect(menu).toHaveClass("reader-bookmark-menu", "show");
+
     await userEvent.click(screen.getByText("Fear is the mind-killer."));
     expect(display).toHaveBeenCalledWith("epubcfi(/6/4)");
-    expect(close).toHaveBeenCalledOnce();
 
+    await userEvent.click(screen.getByRole("button", { name: "Bookmarks" }));
     await userEvent.click(screen.getByRole("button", { name: "Delete bookmark" }));
     expect(remove).toHaveBeenCalledWith("epubcfi(/6/4)");
   });
@@ -44,22 +47,21 @@ describe("BookmarksPanel", () => {
   it("shows retained write errors and retries them", async () => {
     const retry = vi.fn();
     render(
-      <BookmarksPanel
-        open
-        onClose={vi.fn()}
+      <BookmarkMenu
         renderer={null}
         bookmarks={[]}
-        busy={false}
+        bookmarkSaved={false}
+        bookmarkBusy={false}
         status={{ pending: false, unsaved: true, error: "conflict" }}
         error="conflict"
+        onBookmark={vi.fn()}
         onRemove={vi.fn()}
         onRetry={retry}
       />,
     );
 
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "Bookmarks have unsaved changes: conflict",
-    );
+    await userEvent.click(screen.getByRole("button", { name: "Bookmarks" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Unsaved changes: conflict");
     await userEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(retry).toHaveBeenCalledOnce();
   });

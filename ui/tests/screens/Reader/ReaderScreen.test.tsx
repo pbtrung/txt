@@ -326,18 +326,22 @@ describe("ReaderScreen", () => {
     expect(input.getAttribute("style")).toContain("calc(3ch + 1.5rem)");
   });
 
-  it("offers bookmark creation and a bookmark list at the right of the bottom bar", async () => {
+  it("uses one bookmark button for creation and the saved bookmark list", async () => {
     mockVault();
     mockReadyDocument();
     renderScreen();
-    const bookmark = screen.getByRole("button", { name: "Add bookmark" });
+    const bookmark = screen.getByRole("button", { name: "Bookmarks" });
 
     await userEvent.click(bookmark);
-    await userEvent.click(screen.getByRole("button", { name: "View bookmarks" }));
 
-    expect(bookmark).toHaveClass("ms-auto");
-    expect(screen.getByRole("dialog", { name: "Bookmarks" })).toHaveClass("show");
+    expect(bookmark.parentElement).toHaveClass("ms-auto", "dropup");
+    expect(screen.queryByRole("button", { name: "View bookmarks" })).toBeNull();
+    expect(screen.getByRole("menu", { name: "Bookmark options" })).toHaveClass("show");
     expect(screen.getByText("No bookmarks yet.")).toBeInTheDocument();
+
+    await userEvent.click(
+      screen.getByRole("menuitem", { name: "Add current bookmark" }),
+    );
   });
 
   it("has a back-to-library link", () => {

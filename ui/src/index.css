@@ -166,6 +166,17 @@
   min-width: 4.5rem;
 }
 
+.reader-bookmark-menu {
+  inset: auto 0 100% auto;
+  width: min(22rem, calc(100vw - 1rem));
+  max-height: calc(100dvh - 4rem);
+  overflow-y: auto;
+}
+
+.bookmark-menu-row .dropdown-item {
+  min-width: 0;
+}
+
 .unlock-panel {
   max-width: 24rem;
 }
