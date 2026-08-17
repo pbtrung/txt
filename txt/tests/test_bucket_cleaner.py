@@ -5,6 +5,7 @@ import pytest
 import txt.bucket_cleaner as bucket_cleaner_module
 from txt.bucket_cleaner import BucketCleaner
 from txt.random_token import to_base32_crockford
+from txt.sqlite_engine import SqliteEngine
 
 DB_MASTER_KEY = b"k" * 256
 ENCODED_DB_MASTER_KEY = base64.b64encode(DB_MASTER_KEY).decode()
@@ -50,6 +51,7 @@ class FakeSqliteEngine:
     def __init__(self):
         self.database = None
         self.key = None
+        self.page_size_configured = False
         self.closed = False
         self.__class__.instances.append(self)
 
@@ -57,7 +59,12 @@ class FakeSqliteEngine:
         self.key = key
         self.database = initial_bytes
 
+    def exec_sql(self, sql):
+        assert sql == "PRAGMA page_size = 16384"
+        self.page_size_configured = True
+
     def query(self, sql):
+        assert self.page_size_configured
         if self.database in self.failing_databases:
             raise ValueError("malformed database")
         if "sqlite_master" in sql:
@@ -213,6 +220,27 @@ def test_database_without_txt_table_references_no_content(monkeypatch):
 
     assert cleaner.r2.deleted == ["books/stale"]
     assert FakeSqliteEngine.instances[0].closed
+
+
+def test_reads_real_encrypted_database_with_16k_pages():
+    txt_prefix, path = b"a" * 32, b"b" * 32
+    engine = SqliteEngine()
+    engine.open(DB_MASTER_KEY)
+    engine.exec_sql("PRAGMA page_size = 16384")
+    engine.exec_sql("CREATE TABLE txt (txt_prefix BLOB NOT NULL, path BLOB NOT NULL)")
+    engine.execute(
+        "INSERT INTO txt (txt_prefix, path) VALUES (?, ?)", [txt_prefix, path]
+    )
+    database = engine.to_bytes()
+    engine.close()
+
+    cleaner = object.__new__(BucketCleaner)
+    cleaner.logger = CapturingLogger()
+    cleaner.r2 = FakeR2Client({"db": database})
+
+    assert cleaner._content_keys("admin", "db", "books", DB_MASTER_KEY) == {
+        content_key("books", txt_prefix, path)
+    }
 
 
 def test_database_error_aborts_before_bucket_is_listed_or_deleted(monkeypatch):

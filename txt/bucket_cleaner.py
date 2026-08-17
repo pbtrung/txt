@@ -150,6 +150,10 @@ class BucketCleaner:
         engine = SqliteEngine()
         engine.open(db_master_key, initial_bytes=data)
         try:
+            # SQLCipher encrypts page 1, so SQLite cannot infer the database's
+            # non-default page size from its header. This must be reapplied
+            # before the first schema read, just as ingest and --update-db do.
+            engine.exec_sql("PRAGMA page_size = 16384")
             table_exists = engine.query(
                 "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'txt'"
             )
