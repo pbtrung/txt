@@ -48,7 +48,7 @@ CREATE TABLE txt (
     txt_prefix    BLOB    NOT NULL,   -- 32 random bytes; first key segment of the content object (§1)
     path          BLOB    NOT NULL,   -- 32 random bytes; second key segment of the content object (§1)
     catalog       BLOB    NOT NULL,   -- brotli(JSON): {name, title, authors, subjects, publisher} (§3.1)
-    last_accessed INTEGER NOT NULL,   -- unix ms; set when the Reader successfully opens the document
+    last_accessed INTEGER NOT NULL,   -- unix ms; set after the Reader's six-second grace period
     last_cfi      TEXT,               -- last stable EPUB CFI reported by the rendition, null until first location
     created_at    INTEGER NOT NULL    -- unix ms
 );
@@ -77,8 +77,6 @@ BEGIN
       LIMIT 20
     );
 END;
-
-PRAGMA user_version = 1;
 ```
 
 ### 3.1 `catalog`
@@ -101,7 +99,9 @@ The whole file is already encrypted by SQLCipher under `db_master_key`, so `cata
 
 ### 3.2 Reading state and bookmarks
 
-`last_accessed` is updated once the Reader has successfully loaded the document, not merely when a library row is rendered. It supports a recent-books view and sorting. `last_cfi` is separate: it is the position used to resume the document and is updated from the rendition's relocated event after a short debounce. The client also attempts a final flush when the page becomes hidden, but correctness does not depend solely on an unload-time request.
+An open becomes a qualifying reading session only after the Reader has successfully loaded the document and remained visible for six seconds. The timer pauses while the page is hidden. Until the grace period completes, rendition relocation events update only an in-memory CFI candidate; closing the Reader or switching books discards that candidate without changing `last_accessed` or `last_cfi`. The initial relocation event establishes the candidate position but never marks the database dirty by itself.
+
+When the grace period completes, one semantic mutation sets `last_accessed` for recent-book sorting and stores the latest stable CFI in `last_cfi`. After that, user-driven relocation events update `last_cfi` after a two-second debounce. Reading-state mutations are coalesced and uploaded at most once every 15 seconds to avoid replacing the whole database on every page turn. The client attempts a final flush when the page becomes hidden or the Reader switches books, but only for a session that passed the grace period; correctness does not depend solely on an unload-time request.
 
 An EPUB Canonical Fragment Identifier (CFI) identifies a content position independently of viewport width, font size, column count, and generated page numbering. Page and line numbers are therefore presentation only and are never persisted. On open, a non-null `last_cfi` is passed to the renderer's `display(cfi)`; an invalid CFI falls back to the beginning without discarding the rest of the database.
 
@@ -113,14 +113,14 @@ The EPUB content object referenced by a `txt` row is immutable. That makes a str
 
 ### 3.3 Migration
 
-`PRAGMA user_version` is the schema-version authority. Existing databases are unversioned (`0`); the reading-state schema above is version `1`, and fresh databases are created directly at that version.
+Migration is driven by inspecting the tables, columns, indexes, and triggers that are actually present. Fresh databases are created directly from the complete schema above; existing databases receive only the missing changes.
 
 `txt --update-db admin_creds.json --local-db-dir DIR --verbose` migrates every reachable database transactionally and idempotently before the writing UI is deployed:
 
 1. If `txt.metadata` is present, add and populate `catalog`, then drop `metadata` as in the existing catalog migration.
 2. Add nullable `txt.last_cfi` when absent; existing `last_accessed` values remain valid.
 3. If the legacy `txt_bookmarks(line, ...)` table exists, require it to be empty because a line number cannot be converted reliably to a CFI, then replace it with the CFI table, index, and trigger above. A nonempty legacy table aborts that account rather than losing data.
-4. Set `PRAGMA user_version = 1`, `VACUUM`, write the local checkpoint, and upload the database only after every step succeeds.
+4. `VACUUM`, write the local checkpoint, and upload the database only after every step succeeds.
 
 The command reaches every account the administrator's creds can decrypt through the backup `cred_store` rows described in docs/auth.md. It refuses an incomplete account set, resumes safely after interruption, and re-uploads an already-migrated local file when the preceding remote upload may not have completed. Deployment also backfills the `users.db_path_hash`/`db_prefix_hash` authorization bindings from the same decrypted payloads before the new token endpoint is enabled.
 
@@ -131,9 +131,9 @@ The command reaches every account the administrator's creds can decrypt through 
 ## 4. Build order
 
 1. Provision and backfill the `ctl` path hashes in docs/auth.md before any browser receives database write access.
-2. Version and migrate the SQLCipher schema through `--update-db`; deploy this safely before the writing UI because the existing read-only UI ignores the added column and CFI bookmark table.
+2. Migrate the SQLCipher schema through `--update-db`; deploy this safely before the writing UI because the existing read-only UI ignores the added column and CFI bookmark table.
 3. Return and parse the separate `db_path` read-write and `db_prefix` read-only credentials, including refresh and R2 CORS support for `PUT`, `If-Match`, `If-None-Match`, and exposed `ETag`.
 4. Introduce the browser database store: no-cache GET plus `ETag`, one mutation queue, conditional PUT, conflict reload/replay, bounded retries, and explicit unsaved state.
-5. Update `last_accessed` on a successful open and persist/resume `last_cfi` from renderer relocation events.
+5. Apply the six-second visible-reading grace period, then update `last_accessed` and persist/resume debounced `last_cfi` values from renderer relocation events.
 6. Add CFI bookmark creation, listing, navigation, deletion, preview generation, and saved/error UI.
 7. Test migration states, credential scope, path mismatch rejection, credential refresh, two-client conflicts, CFI reflow stability, and bookmark-cap behavior before deployment.
