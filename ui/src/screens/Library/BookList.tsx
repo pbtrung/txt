@@ -105,6 +105,7 @@ export function BookRow({
           type="button"
           className="btn btn-sm border-0 position-absolute top-50 end-0 translate-middle-y me-1"
           aria-label={removeLabel}
+          title={removeLabel}
           onClick={onRemove}
         >
           <i className="bi bi-x-lg" aria-hidden="true" />

@@ -237,11 +237,11 @@ describe("LibraryScreen", () => {
 
     await userEvent.click(
       screen.getByRole("button", {
-        name: "Remove Active book from Recent access",
+        name: "Clear recent access for Active book",
       }),
     );
     await userEvent.click(
-      screen.getByRole("button", { name: "Remove Active book from Bookmarks" }),
+      screen.getByRole("button", { name: "Delete bookmarks for Active book" }),
     );
 
     expect(mutate.mock.calls.map(([mutation]) => mutation.description)).toEqual([
@@ -249,6 +249,18 @@ describe("LibraryScreen", () => {
       "clear bookmarks",
     ]);
     await waitFor(() => expect(reload).toHaveBeenCalledTimes(2));
+  });
+
+  it("shows the bookmark deletion action on hover", async () => {
+    renderScreen([
+      book({ title: "Marked book", bookmarkCount: 1, lastBookmarked: 200 }),
+    ]);
+    await userEvent.click(screen.getByRole("button", { name: /^Recent/ }));
+
+    const remove = screen.getByRole("button", {
+      name: "Delete bookmarks for Marked book",
+    });
+    expect(remove).toHaveAttribute("title", "Delete bookmarks for Marked book");
   });
 
   it("drills from a dimension into its entries, then into that entry's books", async () => {

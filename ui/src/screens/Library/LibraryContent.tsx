@@ -87,8 +87,18 @@ function RecentBooks({
   }
   return (
     <div className="flex-grow-1 overflow-y-auto px-2 px-md-3">
-      <RecentSection title="Recent access" books={accessed} onRemove={onClearAccess} />
-      <RecentSection title="Bookmarks" books={bookmarked} onRemove={onClearBookmarks} />
+      <RecentSection
+        title="Recent access"
+        books={accessed}
+        removeLabel={(book) => `Clear recent access for ${book.title}`}
+        onRemove={onClearAccess}
+      />
+      <RecentSection
+        title="Bookmarks"
+        books={bookmarked}
+        removeLabel={(book) => `Delete bookmarks for ${book.title}`}
+        onRemove={onClearBookmarks}
+      />
     </div>
   );
 }
@@ -96,10 +106,12 @@ function RecentBooks({
 function RecentSection({
   title,
   books,
+  removeLabel,
   onRemove,
 }: {
   title: string;
   books: LibraryBook[];
+  removeLabel: (book: LibraryBook) => string;
   onRemove: (txtId: number) => void;
 }) {
   if (!books.length) return null;
@@ -110,7 +122,7 @@ function RecentSection({
         <BookRow
           key={book.txtId}
           book={book}
-          removeLabel={`Remove ${book.title} from ${title}`}
+          removeLabel={removeLabel(book)}
           onRemove={() => onRemove(book.txtId)}
         />
       ))}
