@@ -219,6 +219,36 @@ export class SqliteDatabase {
     return readRows(this.mod, this.db, prepare(this.mod, this.db, sql, params));
   }
 
+  /** Executes one parameterized statement that does not return rows. */
+  execute(sql: string, params: SqlValue[] = []): void {
+    this.assertOpen();
+    const stmt = prepare(this.mod, this.db, sql, params);
+    try {
+      const result = this.mod._sqlite3_step(stmt);
+      if (result !== SQLITE_DONE) {
+        checkResult(this.mod, this.db, result, `execute "${sql}"`);
+      }
+    } finally {
+      this.mod._sqlite3_finalize(stmt);
+    }
+  }
+
+  transaction<T>(operation: () => T): T {
+    this.execSql("BEGIN IMMEDIATE");
+    try {
+      const result = operation();
+      this.execSql("COMMIT");
+      return result;
+    } catch (error) {
+      try {
+        this.execSql("ROLLBACK");
+      } catch {
+        // Preserve the original mutation error.
+      }
+      throw error;
+    }
+  }
+
   /** Runs (possibly multi-statement, unparameterized) SQL -- schema DDL. */
   execSql(sql: string): void {
     this.assertOpen();

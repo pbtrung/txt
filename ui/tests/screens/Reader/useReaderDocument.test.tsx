@@ -9,8 +9,8 @@ import type { VaultSession } from "../../../src/state/VaultContext";
 import { useReaderDocument } from "../../../src/screens/Reader/useReaderDocument";
 
 const SESSION = {
-  db: {},
-  r2: {},
+  database: { read: async (reader: (db: object) => unknown) => reader({}) },
+  storage: {},
   dbPrefix: "the-db-prefix",
 } as unknown as VaultSession;
 

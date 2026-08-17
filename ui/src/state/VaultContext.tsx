@@ -12,10 +12,9 @@ import {
 } from "react";
 import { signIn } from "../auth/firebaseSignIn";
 import { parseBrowserCreds, type BrowserCreds } from "../data/creds";
-import { R2Client } from "../data/r2";
-import { ensureSchema } from "../data/schema";
+import { LibraryDatabaseStore } from "../data/databaseStore";
+import { R2Session } from "../data/r2Session";
 import { unwrapKeys } from "../data/session";
-import { SqliteDatabase } from "../data/sqlite";
 import { WorkerClient } from "../data/workerClient";
 import type { R2SigningIdentity } from "../data/workerClient";
 import { fromBase64 } from "../util/base64";
@@ -38,15 +37,10 @@ const PHASES = [
 ] as const;
 
 export interface VaultSession {
-  db: SqliteDatabase;
+  database: LibraryDatabaseStore;
+  storage: R2Session;
   displayName: string;
   dbPrefix: string;
-  dbPath: string;
-  dbMasterKey: Uint8Array;
-  r2: R2Client; // immutable content-prefix reads
-  dbR2: R2Client; // exact database-object reads and writes
-  worker: WorkerClient;
-  signing: R2SigningIdentity;
 }
 
 interface VaultContextValue {
@@ -59,20 +53,6 @@ interface VaultContextValue {
 }
 
 const VaultContext = createContext<VaultContextValue | null>(null);
-
-async function openDatabase(r2: R2Client, dbPath: string, dbMasterKey: Uint8Array) {
-  const existing = await r2.getObject(dbPath);
-  const db = existing
-    ? await SqliteDatabase.openKeyed(dbMasterKey, existing)
-    : await SqliteDatabase.openKeyed(dbMasterKey);
-  try {
-    ensureSchema(db);
-    return db;
-  } catch (error) {
-    db.close();
-    throw error;
-  }
-}
 
 class SessionResolver {
   constructor(
@@ -117,20 +97,20 @@ class SessionResolver {
     worker: WorkerClient,
     signing: R2SigningIdentity,
   ): Promise<VaultSession> {
-    const dbR2 = new R2Client(credentials.dbPath);
-    const r2 = new R2Client(credentials.dbPrefix);
     const key = fromBase64(credStore.db_master_key);
-    const db = await openDatabase(dbR2, credStore.db_path, key);
-    return {
-      db,
-      displayName: credStore.display_name,
-      dbPrefix: credStore.db_prefix,
-      dbPath: credStore.db_path,
-      dbMasterKey: key,
-      r2,
-      dbR2,
+    const storage = new R2Session(
       worker,
       signing,
+      credStore.db_path,
+      credStore.db_prefix,
+      credentials,
+    );
+    const database = await LibraryDatabaseStore.open(storage, key);
+    return {
+      database,
+      storage,
+      displayName: credStore.display_name,
+      dbPrefix: credStore.db_prefix,
     };
   }
 }
@@ -140,7 +120,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<VaultSession | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<VaultProgress | null>(null);
-  useEffect(() => () => session?.db.close(), [session]);
+  useEffect(() => () => void session?.database.close(), [session]);
 
   const unlock = useCallback(async (file: File) => {
     setStatus("unlocking");
@@ -160,7 +140,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const lock = useCallback(() => {
-    session?.db.close();
+    void session?.database.close();
     setSession(null);
     setStatus("locked");
     setError(null);

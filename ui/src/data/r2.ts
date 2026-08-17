@@ -1,17 +1,16 @@
-// An R2 (S3-compatible) client for the browser, using a short-lived
-// credential minted by this project's own Worker (worker/r2Token.ts) --
-// scoped read-only to this account's own db_path/db_prefix, or bucket-wide
-// read-write for the admin. SigV4 request signing is delegated to
-// aws4fetch: a small, purpose-built library for signing fetch() calls to
-// S3-compatible services from browsers/Workers, the same class of problem
-// txt/r2_client.py's boto3 client solves server-side.
-//
-// The credential is a snapshot taken at construction time (worker/r2Token.ts's
-// TTL) -- this client doesn't refresh it itself. Path-style addressing
-// ({endpoint}/{bucket}/{key}), not virtual-hosted -- R2 supports both, and
-// path-style needs no bucket-specific DNS/TLS setup.
+// Low-level S3-compatible R2 operations using one short-lived credential.
+// Credential refresh and operation retry live in r2Session.ts.
 import { AwsClient } from "aws4fetch";
+
 import type { R2TempCredential } from "./workerClient";
+
+export interface R2Object {
+  bytes: Uint8Array;
+  etag: string;
+}
+
+export class R2AuthorizationError extends Error {}
+export class R2ConflictError extends Error {}
 
 export class R2Client {
   private readonly aws: AwsClient;
@@ -28,11 +27,47 @@ export class R2Client {
     this.base = `${credential.endpoint.replace(/\/$/, "")}/${credential.bucket}`;
   }
 
-  /** Returns null for a 404 (the object doesn't exist yet). */
   async getObject(key: string): Promise<Uint8Array | null> {
-    const resp = await this.aws.fetch(`${this.base}/${key}`);
-    if (resp.status === 404) return null;
-    if (!resp.ok) throw new Error(`R2 GET ${key} failed: ${resp.status}`);
-    return new Uint8Array(await resp.arrayBuffer());
+    const response = await this.aws.fetch(`${this.base}/${key}`);
+    if (response.status === 404) return null;
+    this.requireSuccess(response, `R2 GET ${key}`);
+    return new Uint8Array(await response.arrayBuffer());
+  }
+
+  async getDatabase(key: string): Promise<R2Object | null> {
+    const response = await this.aws.fetch(`${this.base}/${key}`, {
+      cache: "no-store",
+    });
+    if (response.status === 404) return null;
+    this.requireSuccess(response, `R2 GET ${key}`);
+    const etag = response.headers.get("ETag");
+    if (!etag) throw new Error(`R2 GET ${key} returned no ETag`);
+    return { bytes: new Uint8Array(await response.arrayBuffer()), etag };
+  }
+
+  async putDatabase(
+    key: string,
+    bytes: Uint8Array,
+    expectedEtag: string | null,
+  ): Promise<string> {
+    const response = await this.aws.fetch(`${this.base}/${key}`, {
+      method: "PUT",
+      headers: expectedEtag ? { "If-Match": expectedEtag } : { "If-None-Match": "*" },
+      body: new Uint8Array(bytes),
+    });
+    if (response.status === 412) {
+      throw new R2ConflictError(`R2 PUT ${key} conflicted with a newer database`);
+    }
+    this.requireSuccess(response, `R2 PUT ${key}`);
+    const etag = response.headers.get("ETag");
+    if (!etag) throw new Error(`R2 PUT ${key} returned no ETag`);
+    return etag;
+  }
+
+  private requireSuccess(response: Response, operation: string): void {
+    if (response.status === 401 || response.status === 403) {
+      throw new R2AuthorizationError(`${operation} authorization failed`);
+    }
+    if (!response.ok) throw new Error(`${operation} failed: ${response.status}`);
   }
 }

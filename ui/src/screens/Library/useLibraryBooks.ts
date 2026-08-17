@@ -2,8 +2,8 @@
 // already-unlocked session's open SqliteDatabase (VaultContext) into plain
 // LibraryBook records.
 import { useEffect, useState } from "react";
+import type { LibraryDatabaseStore } from "../../data/databaseStore";
 import { loadLibraryBooks, type LibraryBook } from "../../data/libraryDb";
-import type { SqliteDatabase } from "../../data/sqlite";
 import { errorMessage } from "../../util/errorMessage";
 
 export type LibraryState =
@@ -12,28 +12,29 @@ export type LibraryState =
   | { status: "error"; error: string };
 
 interface LoadedLibrary {
-  db: SqliteDatabase;
+  database: LibraryDatabaseStore;
   state: LibraryState;
 }
 
-export function useLibraryBooks(db: SqliteDatabase | null): LibraryState {
+export function useLibraryBooks(database: LibraryDatabaseStore | null): LibraryState {
   const [loaded, setLoaded] = useState<LoadedLibrary | null>(null);
   useEffect(() => {
-    if (!db) return;
-    const source = db;
+    if (!database) return;
+    const source = database;
     let cancelled = false;
-    loadLibraryBooks(source)
+    source
+      .read(loadLibraryBooks)
       .then((books) => setLoadedUnlessCancelled({ status: "ready", books }))
       .catch((error: unknown) =>
         setLoadedUnlessCancelled({ status: "error", error: errorMessage(error) }),
       );
     function setLoadedUnlessCancelled(state: LibraryState) {
-      if (!cancelled) setLoaded({ db: source, state });
+      if (!cancelled) setLoaded({ database: source, state });
     }
     return () => {
       cancelled = true;
     };
-  }, [db]);
-  if (!db) return { status: "ready", books: [] };
-  return loaded?.db === db ? loaded.state : { status: "loading" };
+  }, [database]);
+  if (!database) return { status: "ready", books: [] };
+  return loaded?.database === database ? loaded.state : { status: "loading" };
 }

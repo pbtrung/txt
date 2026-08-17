@@ -51,11 +51,8 @@ function validTxtId(txtId: number): boolean {
 
 async function loadState(session: VaultSession, txtId: number): Promise<ReaderState> {
   try {
-    const document = await loadReaderDocument(
-      session.db,
-      session.r2,
-      session.dbPrefix,
-      txtId,
+    const document = await session.database.read((db) =>
+      loadReaderDocument(db, session.storage, session.dbPrefix, txtId),
     );
     return document ? { status: "ready", document, error: null } : NOT_FOUND;
   } catch (error) {

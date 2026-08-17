@@ -14,7 +14,7 @@ const INITIAL_VIEW: LibraryView = { kind: "books", filter: null };
 
 export function LibraryScreen() {
   const { session, lock } = useVault();
-  const library = useLibraryBooks(session?.db ?? null);
+  const library = useLibraryBooks(session?.database ?? null);
   const [query, setQuery] = useState("");
   const [view, setView] = useState<LibraryView>(INITIAL_VIEW);
   const [drawerOpen, setDrawerOpen] = useState(false);

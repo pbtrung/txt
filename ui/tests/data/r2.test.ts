@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { R2Client } from "../../src/data/r2";
+import { R2AuthorizationError, R2Client, R2ConflictError } from "../../src/data/r2";
 
 const CREDENTIAL = {
   accessKeyId: "ak",
@@ -63,5 +63,69 @@ describe("R2Client.getObject", () => {
     fetchMock.mockResolvedValue({ status: 500, ok: false });
 
     await expect(client.getObject("key")).rejects.toThrow(/500/);
+  });
+});
+
+describe("R2Client database operations", () => {
+  it("downloads with no-store and preserves the exact ETag", async () => {
+    const client = new R2Client(CREDENTIAL);
+    const fetchMock = (
+      client as unknown as { aws: { fetch: ReturnType<typeof vi.fn> } }
+    ).aws.fetch;
+    fetchMock.mockResolvedValue({
+      status: 200,
+      ok: true,
+      headers: new Headers({ ETag: '"quoted-etag"' }),
+      arrayBuffer: async () => bodyOf(new Uint8Array([4, 5])),
+    });
+
+    await expect(client.getDatabase("db-key")).resolves.toEqual({
+      bytes: new Uint8Array([4, 5]),
+      etag: '"quoted-etag"',
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://acct.r2.cloudflarestorage.com/b/db-key",
+      { cache: "no-store" },
+    );
+  });
+
+  it("conditionally replaces existing and absent databases", async () => {
+    const client = new R2Client(CREDENTIAL);
+    const fetchMock = (
+      client as unknown as { aws: { fetch: ReturnType<typeof vi.fn> } }
+    ).aws.fetch;
+    fetchMock.mockResolvedValue({
+      status: 200,
+      ok: true,
+      headers: new Headers({ ETag: '"next"' }),
+    });
+
+    await expect(
+      client.putDatabase("db-key", new Uint8Array([1]), '"current"'),
+    ).resolves.toBe('"next"');
+    expect(fetchMock.mock.calls[0][1].headers).toEqual({
+      "If-Match": '"current"',
+    });
+
+    await client.putDatabase("db-key", new Uint8Array([2]), null);
+    expect(fetchMock.mock.calls[1][1].headers).toEqual({
+      "If-None-Match": "*",
+    });
+  });
+
+  it("returns typed conflict and authorization failures", async () => {
+    const client = new R2Client(CREDENTIAL);
+    const fetchMock = (
+      client as unknown as { aws: { fetch: ReturnType<typeof vi.fn> } }
+    ).aws.fetch;
+    fetchMock.mockResolvedValueOnce({ status: 412, ok: false });
+    await expect(
+      client.putDatabase("db-key", new Uint8Array(), '"stale"'),
+    ).rejects.toBeInstanceOf(R2ConflictError);
+
+    fetchMock.mockResolvedValueOnce({ status: 403, ok: false });
+    await expect(client.getDatabase("db-key")).rejects.toBeInstanceOf(
+      R2AuthorizationError,
+    );
   });
 });

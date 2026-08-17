@@ -5,14 +5,13 @@ import { brotliCompress } from "../../src/crypto/brotli";
 import { encrypt } from "../../src/crypto/cryptoBlob";
 import { toBase32Crockford } from "../../src/util/base32Crockford";
 import { loadReaderDocument } from "../../src/data/readerDocument";
-import type { R2Client } from "../../src/data/r2";
 import { ensureSchema } from "../../src/data/schema";
 import { SqliteDatabase } from "../../src/data/sqlite";
 
-function fakeR2(objects: Record<string, Uint8Array>): R2Client {
+function fakeR2(objects: Record<string, Uint8Array>) {
   return {
-    getObject: async (key: string) => objects[key] ?? null,
-  } as unknown as R2Client;
+    getContent: async (key: string) => objects[key] ?? null,
+  };
 }
 
 async function catalogBlob(catalog: Record<string, unknown>): Promise<Uint8Array> {

@@ -11,8 +11,11 @@ import { toBase32Crockford } from "../util/base32Crockford";
 import { decodeCatalog } from "./catalog";
 import { extraMetadataFields, parseEpubOpf, type MetadataField } from "./epubOpf";
 import { fieldStrings } from "./opfMetadata";
-import type { R2Client } from "./r2";
 import type { SqliteDatabase } from "./sqlite";
+
+interface ContentStore {
+  getContent(key: string): Promise<Uint8Array | null>;
+}
 
 export interface ReaderDocument {
   title: string;
@@ -29,7 +32,7 @@ function contentKey(dbPrefix: string, txtPrefix: Uint8Array, path: Uint8Array): 
 
 export async function loadReaderDocument(
   db: SqliteDatabase,
-  r2: R2Client,
+  storage: ContentStore,
   dbPrefix: string,
   txtId: number,
 ): Promise<ReaderDocument | null> {
@@ -45,7 +48,7 @@ export async function loadReaderDocument(
     Uint8Array,
   ];
 
-  const encrypted = await r2.getObject(contentKey(dbPrefix, txtPrefix, path));
+  const encrypted = await storage.getContent(contentKey(dbPrefix, txtPrefix, path));
   if (!encrypted) return null;
 
   const epubBytes = await decrypt(encrypted, txtKey);
