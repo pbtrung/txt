@@ -146,6 +146,21 @@ npm run format:check
 npm run lint               # eslint (worker/ + ui/)
 ```
 
+### Optional UI error monitoring
+
+Set `VITE_SENTRY_DSN` while building or deploying to enable Sentry error
+reporting in the browser. Leaving it unset disables monitoring entirely:
+
+```
+VITE_SENTRY_DSN=https://public-key@example.ingest.sentry.io/project \
+  WORKER_NAME=existing-worker npm run deploy
+```
+
+The client sends errors only: performance tracing, session replay, breadcrumbs,
+request data, user data, and extra event context are disabled or removed before
+an event is sent. Do not place a Sentry auth token in `VITE_SENTRY_DSN`; Vite
+variables are public in the browser bundle.
+
 ### R2 CORS and write-access rollout
 
 The browser talks directly to the R2 S3 endpoint, so the bucket must permit its exact production origin to make `GET` and `PUT` requests, accept the AWS signing and conditional headers, and expose `ETag`. Start from `docs/r2-cors.example.json`, replace `https://reader.example.com`, and apply it to the bucket through Cloudflare's R2 CORS settings. Keep development origins in a separate rule; do not replace the origin with `*`.

@@ -7,6 +7,7 @@ import "@fontsource/literata/400.css";
 import "./index.css";
 
 import { App } from "./App";
+import { initMonitoring } from "./monitoring";
 
 function appRoot(): HTMLElement {
   const root = document.getElementById("root");
@@ -14,7 +15,7 @@ function appRoot(): HTMLElement {
   return root;
 }
 
-createRoot(appRoot()).render(
+createRoot(appRoot(), initMonitoring()).render(
   <StrictMode>
     <App />
   </StrictMode>,

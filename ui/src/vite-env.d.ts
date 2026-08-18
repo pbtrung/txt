@@ -1,5 +1,13 @@
 /// <reference types="vite/client" />
 
+interface ImportMetaEnv {
+  readonly VITE_SENTRY_DSN?: string;
+}
+
+interface ImportMeta {
+  readonly env: ImportMetaEnv;
+}
+
 // sqlcipher/sqlcipher.js is untyped vendored JS, not part of ui/'s own
 // sources -- see ui/src/crypto/sqlcipherLoader.ts's Node-side dynamic import.
 declare module "*.js" {
