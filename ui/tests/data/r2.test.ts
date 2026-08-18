@@ -90,6 +90,40 @@ describe("R2Client database operations", () => {
     );
   });
 
+  it("retries when reading a response body fails after fetch resolves", async () => {
+    vi.useFakeTimers();
+    try {
+      const client = new R2Client(CREDENTIAL);
+      const fetchMock = (
+        client as unknown as { aws: { fetch: ReturnType<typeof vi.fn> } }
+      ).aws.fetch;
+      fetchMock
+        .mockResolvedValueOnce({
+          status: 200,
+          ok: true,
+          headers: new Headers({ ETag: '"first"' }),
+          arrayBuffer: vi.fn().mockRejectedValue(new TypeError("Failed to fetch")),
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          ok: true,
+          headers: new Headers({ ETag: '"second"' }),
+          arrayBuffer: async () => bodyOf(new Uint8Array([6, 7])),
+        });
+
+      const download = client.getDatabase("db-key");
+      await vi.advanceTimersByTimeAsync(250);
+
+      await expect(download).resolves.toEqual({
+        bytes: new Uint8Array([6, 7]),
+        etag: '"second"',
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("retries a read three times when the network is unavailable", async () => {
     vi.useFakeTimers();
     try {
@@ -132,6 +166,34 @@ describe("R2Client database operations", () => {
     expect(fetchMock.mock.calls[1][1].headers).toEqual({
       "If-None-Match": "*",
     });
+  });
+
+  it("retries a conditional upload after a transient fetch failure", async () => {
+    vi.useFakeTimers();
+    try {
+      const client = new R2Client(CREDENTIAL);
+      const fetchMock = (
+        client as unknown as { aws: { fetch: ReturnType<typeof vi.fn> } }
+      ).aws.fetch;
+      fetchMock
+        .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+        .mockResolvedValueOnce({
+          status: 200,
+          ok: true,
+          headers: new Headers({ ETag: '"next"' }),
+        });
+
+      const upload = client.putDatabase("db-key", new Uint8Array([1]), '"current"');
+      await vi.advanceTimersByTimeAsync(250);
+
+      await expect(upload).resolves.toBe('"next"');
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock.mock.calls[1][1].headers).toEqual({
+        "If-Match": '"current"',
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("returns typed conflict and authorization failures", async () => {

@@ -41,7 +41,7 @@ function timeoutAfter(controller: AbortController) {
   return { promise, id: id! };
 }
 
-function isNetworkError(error: unknown): boolean {
+export function isNetworkError(error: unknown): boolean {
   if (error instanceof NetworkTimeoutError) return true;
   if (!(error instanceof Error)) return false;
   if (error.name === "AbortError" || error.name === "TimeoutError") return true;

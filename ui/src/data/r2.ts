@@ -1,8 +1,8 @@
 // Low-level S3-compatible R2 operations using one short-lived credential.
-// The session refreshes credentials; bounded read retries live here.
+// The session refreshes credentials; bounded transfer retries live here.
 import { AwsClient } from "aws4fetch";
 
-import { withNetworkRetries, withNetworkTimeout } from "./networkRequest";
+import { withNetworkRetries } from "./networkRequest";
 import type { R2TempCredential } from "./workerClient";
 
 export interface R2Object {
@@ -29,23 +29,26 @@ export class R2Client {
   }
 
   async getObject(key: string): Promise<Uint8Array | null> {
-    const response = await withNetworkRetries((signal) =>
-      this.aws.fetch(`${this.base}/${key}`, { signal }),
-    );
-    if (response.status === 404) return null;
-    this.requireSuccess(response, `R2 GET ${key}`);
-    return new Uint8Array(await response.arrayBuffer());
+    return withNetworkRetries(async (signal) => {
+      const response = await this.aws.fetch(`${this.base}/${key}`, { signal });
+      if (response.status === 404) return null;
+      this.requireSuccess(response, `R2 GET ${key}`);
+      return new Uint8Array(await response.arrayBuffer());
+    });
   }
 
   async getDatabase(key: string): Promise<R2Object | null> {
-    const response = await withNetworkRetries((signal) =>
-      this.aws.fetch(`${this.base}/${key}`, { cache: "no-store", signal }),
-    );
-    if (response.status === 404) return null;
-    this.requireSuccess(response, `R2 GET ${key}`);
-    const etag = response.headers.get("ETag");
-    if (!etag) throw new Error(`R2 GET ${key} returned no ETag`);
-    return { bytes: new Uint8Array(await response.arrayBuffer()), etag };
+    return withNetworkRetries(async (signal) => {
+      const response = await this.aws.fetch(`${this.base}/${key}`, {
+        cache: "no-store",
+        signal,
+      });
+      if (response.status === 404) return null;
+      this.requireSuccess(response, `R2 GET ${key}`);
+      const etag = response.headers.get("ETag");
+      if (!etag) throw new Error(`R2 GET ${key} returned no ETag`);
+      return { bytes: new Uint8Array(await response.arrayBuffer()), etag };
+    });
   }
 
   async putDatabase(
@@ -53,7 +56,7 @@ export class R2Client {
     bytes: Uint8Array,
     expectedEtag: string | null,
   ): Promise<string> {
-    const response = await withNetworkTimeout((signal) =>
+    const response = await withNetworkRetries((signal) =>
       this.aws.fetch(`${this.base}/${key}`, {
         method: "PUT",
         headers: expectedEtag ? { "If-Match": expectedEtag } : { "If-None-Match": "*" },

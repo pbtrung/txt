@@ -111,6 +111,29 @@ describe("R2Session", () => {
     expect(worker.fetchR2Token).toHaveBeenCalledTimes(1);
   });
 
+  it("refreshes credentials when the browser masks R2 rejection as fetch failure", async () => {
+    const { session, worker } = createSession(
+      credentials("2099-01-01T00:00:00Z"),
+      credentials("2099-01-01T00:00:00Z", "refreshed"),
+    );
+    const staleClients = fakeClients("stale");
+    vi.mocked(staleClients.dbPrefix.getObject).mockRejectedValueOnce(
+      new TypeError("Failed to fetch"),
+    );
+    const refreshedClients = fakeClients("refreshed");
+    (session as unknown as { clients: typeof staleClients }).clients = staleClients;
+    (
+      session as unknown as {
+        buildClients: (pair: R2CredentialPair) => typeof refreshedClients;
+      }
+    ).buildClients = vi.fn(() => refreshedClients);
+
+    const content = await session.getContent("p".repeat(52) + "/object");
+
+    expect(new TextDecoder().decode(content!)).toBe("refreshed");
+    expect(worker.fetchR2Token).toHaveBeenCalledTimes(1);
+  });
+
   it("retries credential refresh after connectivity is restored", async () => {
     vi.useFakeTimers();
     try {

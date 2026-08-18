@@ -1,5 +1,5 @@
 import { R2AuthorizationError, R2Client, type R2Object } from "./r2";
-import { withNetworkRetries } from "./networkRequest";
+import { isNetworkError, withNetworkRetries } from "./networkRequest";
 import type { R2CredentialPair, R2SigningIdentity, WorkerClient } from "./workerClient";
 
 const EXPIRY_SKEW_MS = 60_000;
@@ -42,7 +42,11 @@ export class R2Session {
     try {
       return await operation(this.clients[type]);
     } catch (error) {
-      if (!(error instanceof R2AuthorizationError)) throw error;
+      // R2 authentication failures are sometimes exposed to browsers as a
+      // generic fetch/CORS error, so renew once after either failure shape.
+      if (!(error instanceof R2AuthorizationError) && !isNetworkError(error)) {
+        throw error;
+      }
       await this.refreshIfNeeded(true);
       return operation(this.clients[type]);
     }
