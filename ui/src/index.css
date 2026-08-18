@@ -90,6 +90,13 @@
   box-shadow: 0 0 0 0.1rem rgba(var(--bs-primary-rgb), 0.25);
 }
 
+/* Chromium and Safari add their own cancel glyph to search inputs. The
+   React Aria button below already provides the same action consistently
+   and accessibly, so keep only that one visible. */
+.search-box-input::-webkit-search-cancel-button {
+  appearance: none;
+}
+
 .search-box-clear {
   position: absolute;
   right: 0.25rem;
