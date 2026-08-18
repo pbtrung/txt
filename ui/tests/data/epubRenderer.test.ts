@@ -82,9 +82,12 @@ describe("EpubRenderer", () => {
       "default",
       expect.stringContaining("@font-face"),
     );
-    expect(renditionMock.themes.font).toHaveBeenCalledWith(
-      expect.stringContaining("Literata"),
+    const themeCss = renditionMock.themes.registerCss.mock.calls[0][1] as string;
+    expect(themeCss).toContain("font-family: 'Txt Literata'");
+    expect(themeCss).toMatch(
+      /body, body \* \{\s*font-family: 'Txt Literata', serif !important;/,
     );
+    expect(renditionMock.themes.font).toHaveBeenCalledWith("'Txt Literata', serif");
   });
 
   it("reports initial display failures and prevents duplicate mounts", async () => {
@@ -387,7 +390,7 @@ describe("EpubRenderer", () => {
     expect(renditionMock.spread).toHaveBeenCalledWith("auto", expect.any(Number));
   });
 
-  it("uses the full container for a narrow single-column rendition", () => {
+  it("keeps pages separated in a narrow single-column rendition", () => {
     const renderer = new EpubRenderer(new Uint8Array([1]));
     const host = document.createElement("div");
     Object.defineProperty(host, "clientWidth", { value: 360 });
@@ -395,8 +398,8 @@ describe("EpubRenderer", () => {
 
     renderer.setColumns(2);
 
-    expect(renditionMock.settings.gap).toBe(0);
-    expect(renditionMock.manager.settings.gap).toBe(0);
+    expect(renditionMock.settings.gap).toBe(32);
+    expect(renditionMock.manager.settings.gap).toBe(32);
     expect(renditionMock.spread).toHaveBeenLastCalledWith("auto", 900);
   });
 
@@ -480,17 +483,21 @@ describe("EpubRenderer", () => {
     expect(renditionMock.resize).toHaveBeenCalledWith(1100, 700, "epubcfi(/6/8)");
   });
 
-  it("waits for first-load fonts and reflows the current spread", async () => {
-    let resolveFonts!: () => void;
+  it("waits for reader and embedded fonts and reflows the current spread", async () => {
+    let resolveReaderFont!: () => void;
+    let resolveEmbeddedFonts!: () => void;
     const load = vi.fn(
       () =>
         new Promise<void>((resolve) => {
-          resolveFonts = resolve;
+          resolveReaderFont = resolve;
         }),
     );
+    const ready = new Promise<void>((resolve) => {
+      resolveEmbeddedFonts = resolve;
+    });
     const fontDocument = document.implementation.createHTMLDocument();
     Object.defineProperty(fontDocument, "fonts", {
-      value: { load },
+      value: { load, ready },
     });
     const host = document.createElement("div");
     Object.defineProperties(host, {
@@ -516,10 +523,13 @@ describe("EpubRenderer", () => {
     await Promise.resolve();
     expect(complete).toBe(false);
 
-    resolveFonts();
+    resolveReaderFont();
+    await Promise.resolve();
+    expect(complete).toBe(false);
+    resolveEmbeddedFonts();
     await rendering;
 
-    expect(load).toHaveBeenCalledWith("1em 'Literata', serif");
+    expect(load).toHaveBeenCalledWith("1em 'Txt Literata', serif");
     expect(renditionMock.spread).toHaveBeenLastCalledWith("auto", 900);
     expect(renditionMock.resize).toHaveBeenCalledWith(1100, 700, "epubcfi(/6/8)");
   });
@@ -555,6 +565,50 @@ describe("EpubRenderer", () => {
       await rendering;
 
       expect(complete).toBe(true);
+      renderer.destroy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reflows mobile columns when an embedded font settles late", async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveEmbeddedFonts!: () => void;
+      const ready = new Promise<void>((resolve) => {
+        resolveEmbeddedFonts = resolve;
+      });
+      const fontDocument = document.implementation.createHTMLDocument();
+      Object.defineProperty(fontDocument, "fonts", {
+        value: { load: vi.fn().mockResolvedValue([]), ready },
+      });
+      const host = document.createElement("div");
+      Object.defineProperties(host, {
+        clientWidth: { value: 360 },
+        clientHeight: { value: 700 },
+      });
+      renditionMock.currentLocation.mockReturnValue({
+        start: { cfi: "epubcfi(/6/8)", index: 4 },
+      });
+      renditionMock.display.mockImplementationOnce(async () => {
+        const rendered = renditionMock.on.mock.calls.find(
+          ([event]) => event === "rendered",
+        )![1];
+        rendered({ index: 4 }, { document: fontDocument });
+      });
+      const renderer = new EpubRenderer(new Uint8Array([1]));
+
+      const rendering = renderer.renderTo(host);
+      renderer.setColumns(2);
+      await vi.advanceTimersByTimeAsync(1_000);
+      await rendering;
+      renditionMock.resize.mockClear();
+
+      resolveEmbeddedFonts();
+      await Promise.resolve();
+
+      expect(renditionMock.settings.gap).toBe(32);
+      expect(renditionMock.resize).toHaveBeenCalledWith(360, 700, "epubcfi(/6/8)");
       renderer.destroy();
     } finally {
       vi.useRealTimers();

@@ -1,21 +1,17 @@
 // The reader's fixed visual defaults: Literata (self-hosted via
 // @fontsource, not a Google Fonts CDN link -- consistent with this app's
 // Bootstrap Icons being bundled too) for body text. The outer reader frame
-// stays sized for 24px text while the renderer keeps its desktop column gutter.
-// On mobile the gutter drops to zero so a narrow one-column rendition uses the
-// full padded container instead of losing width to an invisible next-page gap.
+// stays sized for 24px text while the renderer keeps a smaller pagination
+// gutter on mobile and its full inter-column gutter on desktop.
 // epub.js renders each section in its own iframe document, so this can't
 // just be a normal CSS import in main.tsx -- @font-face declarations
 // don't cross from the outer page into a child iframe's own document.
 // Injected instead as raw CSS via Rendition.themes.registerCss().
 //
-// READER_FONT_FAMILY is deliberately NOT baked into that CSS as a plain
-// `body { font-family: ... }` rule -- nearly every real EPUB ships its own
-// stylesheet with its own font-family on body/paragraphs, which would win
-// the cascade over an externally injected, unremarkable-specificity rule.
-// EpubRenderer applies it instead via Rendition.themes.font(), epub.js's
-// own override mechanism: an inline `!important` style, guaranteed to beat
-// the book's own CSS.
+// The private family name prevents an EPUB's embedded @font-face from being
+// merged with the reader face. EpubRenderer also uses Rendition.themes.font()
+// for the body override; the descendant rule is needed because a font declared
+// directly on a paragraph/span wins over an inherited body value.
 //
 // One @font-face per subset (each with its own unicode-range) rather than
 // a single all-glyphs file: the browser only fetches the woff2 for a
@@ -75,7 +71,7 @@ const SUBSETS: Subset[] = [
 const fontFaceRules = SUBSETS.map(
   (subset) => `
 @font-face {
-  font-family: 'Literata';
+  font-family: 'Txt Literata';
   font-style: normal;
   font-weight: 400;
   font-display: swap;
@@ -84,10 +80,13 @@ const fontFaceRules = SUBSETS.map(
 }`,
 ).join("\n");
 
-export const READER_FONT_FAMILY = "'Literata', serif";
+export const READER_FONT_FAMILY = "'Txt Literata', serif";
 
 export const READER_THEME_CSS = `
 ${fontFaceRules}
+body, body * {
+  font-family: 'Txt Literata', serif !important;
+}
 img, svg, table {
   max-width: 100%;
   height: auto;

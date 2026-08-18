@@ -14,6 +14,7 @@ import { READER_FONT_FAMILY, READER_THEME_CSS } from "./readerTheme";
 
 const TWO_COLUMN_MIN_WIDTH_PX = 900;
 const COLUMN_GAP_PX = 100;
+const MOBILE_COLUMN_GAP_PX = 32;
 const MOBILE_MAX_WIDTH_PX = 767.98;
 const INITIAL_FONT_WAIT_MS = 1_000;
 const BOOK_PAGE_CHARS = 1000;
@@ -176,10 +177,8 @@ export class EpubRenderer {
     });
     this.rendition = rendition;
     rendition.themes.registerCss("default", READER_THEME_CSS);
-    // themes.font(), not a plain CSS rule: it applies as an inline
-    // `!important` style per section (Rendition's own override mechanism),
-    // which is what it takes to beat a book's own stylesheet -- nearly
-    // every real EPUB sets its own font-family on body/paragraphs.
+    // Keep epub.ts's body-level override as well as the theme's descendant
+    // rule so both inherited and element-level book fonts are replaced.
     rendition.themes.font(READER_FONT_FAMILY);
     rendition.on("rendered", (section, view) => {
       this.applyLayoutFor(section);
@@ -214,30 +213,34 @@ export class EpubRenderer {
   private reflowAfterFontsLoad(section: SectionLike, document: Document): void {
     const fonts = document.fonts;
     if (!fonts || typeof fonts.load !== "function") return;
-    const pending = Promise.resolve(fonts.load(`1em ${READER_FONT_FAMILY}`))
+    this.queueFontLayout(section, fonts.load(`1em ${READER_FONT_FAMILY}`));
+    this.queueFontLayout(section, fonts.ready);
+  }
+
+  private queueFontLayout(section: SectionLike, fontLoad: PromiseLike<unknown>): void {
+    const pending = Promise.resolve(fontLoad)
       .then(() => {
-        if (!this.rendition || !this.host || this.destroyed) return;
-        const current = this.rendition.currentLocation()?.start;
-        if (
-          current?.index !== undefined &&
-          section.index !== undefined &&
-          current.index !== section.index
-        ) {
-          return;
-        }
-        const width = this.host.clientWidth;
-        const height = this.host.clientHeight;
-        if (width <= 0 || height <= 0) return;
-        this.hostWidth = width;
-        this.applyLayoutFor(current ?? section);
-        this.rendition.resize(width, height, current?.cfi);
+        this.reflowSection(section);
       })
       .catch(() => {
-        // A failed downloadable font falls back normally; keep the rendered
-        // section rather than turning a font failure into a reader failure.
+        // Keep the rendered fallback if a reader or EPUB font fails.
       });
     this.pendingFontLayouts.add(pending);
     void pending.finally(() => this.pendingFontLayouts.delete(pending));
+  }
+
+  private reflowSection(section: SectionLike): void {
+    if (!this.rendition || !this.host || this.destroyed) return;
+    const current = this.rendition.currentLocation()?.start;
+    if (current?.index !== undefined && section.index !== undefined) {
+      if (current.index !== section.index) return;
+    }
+    const width = this.host.clientWidth;
+    const height = this.host.clientHeight;
+    if (width <= 0 || height <= 0) return;
+    this.hostWidth = width;
+    this.applyLayoutFor(current ?? section);
+    this.rendition.resize(width, height, current?.cfi);
   }
 
   private async waitForFontLayouts(): Promise<void> {
@@ -287,7 +290,8 @@ export class EpubRenderer {
   }
 
   private updateColumnGap(): void {
-    const gap = this.hostWidth <= MOBILE_MAX_WIDTH_PX ? 0 : COLUMN_GAP_PX;
+    const gap =
+      this.hostWidth <= MOBILE_MAX_WIDTH_PX ? MOBILE_COLUMN_GAP_PX : COLUMN_GAP_PX;
     this.setColumnGap(gap);
   }
 
