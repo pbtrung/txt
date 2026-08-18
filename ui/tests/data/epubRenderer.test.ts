@@ -84,6 +84,8 @@ describe("EpubRenderer", () => {
     );
     const themeCss = renditionMock.themes.registerCss.mock.calls[0][1] as string;
     expect(themeCss).toContain("font-family: 'Txt Literata'");
+    expect(themeCss).toMatch(/html, body \{\s*margin-inline: 0 !important;/);
+    expect(themeCss).toMatch(/html \{\s*padding-inline: 0 !important;/);
     expect(themeCss).toMatch(
       /body, body \* \{\s*font-family: 'Txt Literata', serif !important;/,
     );

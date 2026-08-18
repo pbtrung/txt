@@ -11,7 +11,9 @@
 // The private family name prevents an EPUB's embedded @font-face from being
 // merged with the reader face. EpubRenderer also uses Rendition.themes.font()
 // for the body override; the descendant rule is needed because a font declared
-// directly on a paragraph/span wins over an inherited body value.
+// directly on a paragraph/span wins over an inherited body value. Root inline
+// spacing is reset so publisher CSS cannot offset the paginated body inside its
+// already-balanced reader gutter.
 //
 // One @font-face per subset (each with its own unicode-range) rather than
 // a single all-glyphs file: the browser only fetches the woff2 for a
@@ -84,6 +86,12 @@ export const READER_FONT_FAMILY = "'Txt Literata', serif";
 
 export const READER_THEME_CSS = `
 ${fontFaceRules}
+html, body {
+  margin-inline: 0 !important;
+}
+html {
+  padding-inline: 0 !important;
+}
 body, body * {
   font-family: 'Txt Literata', serif !important;
 }
