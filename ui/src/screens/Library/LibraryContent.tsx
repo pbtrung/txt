@@ -65,7 +65,7 @@ function ContentHeader({
         <IconButton
           label={`Back to ${DIMENSION_LABEL[filter.dimension]}`}
           icon="chevron-left"
-          onClick={() => onNavigate({ kind: "entries", dimension: filter.dimension })}
+          onPress={() => onNavigate({ kind: "entries", dimension: filter.dimension })}
         />
       )}
       <h2 className="h5 mb-0 text-truncate flex-grow-1">{viewTitle(view)}</h2>

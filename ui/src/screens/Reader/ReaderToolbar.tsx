@@ -24,8 +24,8 @@ export function ReaderToolbar({
       <h1 className="h6 mb-0 mx-2 text-truncate flex-grow-1">
         {readerTitle(title, authors)}
       </h1>
-      <IconButton label="Menu" icon="list" onClick={onMenu} />
-      <IconButton label="Book info" icon="info-circle" onClick={onInfo} />
+      <IconButton label="Menu" icon="list" onPress={onMenu} />
+      <IconButton label="Book info" icon="info-circle" onPress={onInfo} />
     </div>
   );
 }

@@ -229,6 +229,20 @@
   z-index: 1;
 }
 
+/* A compact, theme-aware tooltip for icon-only controls. React Aria owns
+   hover/focus timing, positioning, and the accessible description. */
+.aria-tooltip {
+  z-index: var(--bs-tooltip-zindex, 1080);
+  max-width: 16rem;
+  padding: 0.3rem 0.55rem;
+  border-radius: var(--bs-border-radius-sm);
+  background: var(--bs-emphasis-color);
+  color: var(--bs-body-bg);
+  font-size: 0.75rem;
+  line-height: 1.2;
+  box-shadow: var(--bs-box-shadow-sm);
+}
+
 .reader-font-menu {
   min-width: 4.5rem;
 }

@@ -288,7 +288,10 @@ describe("LibraryScreen", () => {
     const remove = screen.getByRole("button", {
       name: "Delete bookmarks for Marked book",
     });
-    expect(remove).toHaveAttribute("title", "Delete bookmarks for Marked book");
+    await userEvent.hover(remove);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Delete bookmarks for Marked book",
+    );
     expect(remove).toHaveClass("compact-delete-button", "book-row-remove");
     expect(remove.parentElement).toHaveClass("book-row-container");
   });

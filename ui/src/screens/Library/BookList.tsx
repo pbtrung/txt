@@ -111,8 +111,7 @@ export function BookRow({
           label={removeLabel ?? "Remove book"}
           icon="x-lg"
           className="border-0 position-absolute top-50 end-0 translate-middle-y me-1 compact-delete-button book-row-remove"
-          title={removeLabel}
-          onClick={onRemove}
+          onPress={onRemove}
         />
       )}
     </div>

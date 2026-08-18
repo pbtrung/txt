@@ -51,8 +51,8 @@ export function ReaderNavigation({
       <IconButton
         label="Previous page"
         icon="chevron-left"
-        disabled={!renderer}
-        onClick={() => void renderer?.prev()}
+        isDisabled={!renderer}
+        onPress={() => void renderer?.prev()}
       />
       <PageInput renderer={renderer} page={page} />
       <span className="small text-muted" aria-label={`Total pages ${page.total}`}>
@@ -61,8 +61,8 @@ export function ReaderNavigation({
       <IconButton
         label="Next page"
         icon="chevron-right"
-        disabled={!renderer}
-        onClick={() => void renderer?.next()}
+        isDisabled={!renderer}
+        onPress={() => void renderer?.next()}
       />
       <BookmarkMenu
         {...{

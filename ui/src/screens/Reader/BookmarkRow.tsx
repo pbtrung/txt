@@ -30,8 +30,8 @@ export function BookmarkRow({
         label="Delete bookmark"
         icon="x-lg"
         className="border-0 flex-shrink-0 compact-delete-button"
-        disabled={bookmarkBusy}
-        onClick={() => onRemove(bookmark.cfi)}
+        isDisabled={bookmarkBusy}
+        onPress={() => onRemove(bookmark.cfi)}
       />
     </div>
   );

@@ -36,7 +36,7 @@ function LibraryBrand({ onOpenMenu }: { onOpenMenu: () => void }) {
         className="d-md-none"
         label="Open menu"
         icon="book"
-        onClick={onOpenMenu}
+        onPress={onOpenMenu}
       />
       <div className="d-none d-md-flex align-items-center gap-2">
         <i className="bi bi-book fs-5" aria-hidden="true" />

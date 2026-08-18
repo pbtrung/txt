@@ -147,7 +147,7 @@ function AccountRow({
         <i className="bi bi-person-circle fs-5" aria-hidden="true" />
         <span className="text-truncate small">{displayName}</span>
       </span>
-      <IconButton label="Lock" icon="lock" onClick={onLock} />
+      <IconButton label="Lock" icon="lock" onPress={onLock} />
     </div>
   );
 }
