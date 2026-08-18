@@ -4,12 +4,11 @@ import {
   allBooksSorted,
   booksForDimensionValue,
   browseEntries,
-  matchesSearch,
+  createBookSearch,
   parseSearch,
   recentBookCount,
   recentlyAccessed,
   recentlyBookmarked,
-  searchBooks,
 } from "../../../src/screens/Library/libraryModel";
 
 function book(overrides: Partial<LibraryBook>): LibraryBook {
@@ -50,6 +49,10 @@ const LIBRARY: LibraryBook[] = [
     publisher: "Parnassus",
   }),
 ];
+
+function matchesSearch(book: LibraryBook, query: string): boolean {
+  return createBookSearch([book]).search(query).length === 1;
+}
 
 describe("allBooksSorted", () => {
   it("sorts by title", () => {
@@ -131,17 +134,23 @@ describe("matchesSearch", () => {
   });
 });
 
-describe("searchBooks", () => {
+describe("createBookSearch", () => {
   it("ranks a title match ahead of the same term in metadata", () => {
-    const results = searchBooks(
-      [
-        book({ txtId: 1, title: "Dune", authors: ["Frank Herbert"] }),
-        book({ txtId: 2, title: "Collected Works", subjects: ["Dune"] }),
-      ],
-      "dune",
-    );
+    const results = createBookSearch([
+      book({ txtId: 1, title: "Dune", authors: ["Frank Herbert"] }),
+      book({ txtId: 2, title: "Collected Works", subjects: ["Dune"] }),
+    ]).search("dune");
 
     expect(results.map((item) => item.txtId)).toEqual([1, 2]);
+  });
+
+  it("reuses one index for successive queries", () => {
+    const search = createBookSearch(LIBRARY);
+
+    expect(search.search("dune").map((item) => item.title)).toEqual(["Dune"]);
+    expect(search.search("wizard").map((item) => item.title)).toEqual([
+      "A Wizard of Earthsea",
+    ]);
   });
 });
 

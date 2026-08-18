@@ -39,21 +39,26 @@ export function recentBookCount(books: LibraryBook[]): number {
   return books.filter((book) => book.lastAccessed > 0 || book.bookmarkCount > 0).length;
 }
 
-export function matchesSearch(book: LibraryBook, query: string): boolean {
-  return searchBooks([book], query).length === 1;
+export interface BookSearchIndex {
+  search(query: string): LibraryBook[];
 }
 
-export function searchBooks(books: LibraryBook[], query: string): LibraryBook[] {
-  const search = parseSearch(query);
-  const candidates = books.filter((book) => {
-    if (search.activity === "access") return book.lastAccessed > 0;
-    if (search.activity === "bookmark") return book.bookmarkCount > 0;
-    return true;
-  });
-  if (!search.text) return candidates;
-  return new Fuse(candidates, SEARCH_OPTIONS)
-    .search(search.text)
-    .map((result) => result.item);
+export function createBookSearch(books: LibraryBook[]): BookSearchIndex {
+  const sorted = allBooksSorted(books);
+  const fuse = new Fuse(sorted, SEARCH_OPTIONS);
+  return {
+    search(query: string) {
+      const parsed = parseSearch(query);
+      const matches = parsed.text
+        ? fuse.search(parsed.text).map((result) => result.item)
+        : sorted;
+      return matches.filter((book) => {
+        if (parsed.activity === "access") return book.lastAccessed > 0;
+        if (parsed.activity === "bookmark") return book.bookmarkCount > 0;
+        return true;
+      });
+    },
+  };
 }
 
 interface ParsedSearch {
@@ -85,6 +90,14 @@ function dimensionValues(book: LibraryBook, dimension: BrowseDimension): string[
   return [...new Set(values.filter((value) => value.trim() !== ""))];
 }
 
+export function bookHasDimensionValue(
+  book: LibraryBook,
+  dimension: BrowseDimension,
+  value: string,
+): boolean {
+  return dimensionValues(book, dimension).includes(value);
+}
+
 export interface BrowseEntry {
   value: string;
   count: number;
@@ -111,6 +124,6 @@ export function booksForDimensionValue(
   value: string,
 ): LibraryBook[] {
   return allBooksSorted(
-    books.filter((book) => dimensionValues(book, dimension).includes(value)),
+    books.filter((book) => bookHasDimensionValue(book, dimension, value)),
   );
 }

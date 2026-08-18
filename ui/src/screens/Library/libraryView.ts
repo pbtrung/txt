@@ -1,8 +1,7 @@
 import type { LibraryBook } from "../../data/libraryDb";
 import {
-  allBooksSorted,
-  booksForDimensionValue,
-  searchBooks,
+  bookHasDimensionValue,
+  type BookSearchIndex,
   type BrowseDimension,
   type BrowseEntry,
 } from "./libraryModel";
@@ -38,14 +37,15 @@ export function viewTitle(view: LibraryView): string {
 }
 
 export function visibleBooks(
-  books: LibraryBook[],
+  search: BookSearchIndex,
   query: string,
   filter: BrowseFilter | null,
 ): LibraryBook[] {
-  const source = filter
-    ? booksForDimensionValue(books, filter.dimension, filter.value)
-    : allBooksSorted(books);
-  return searchBooks(source, query);
+  return search
+    .search(query)
+    .filter((book) =>
+      filter ? bookHasDimensionValue(book, filter.dimension, filter.value) : true,
+    );
 }
 
 export function matchesEntry(entry: BrowseEntry, query: string): boolean {

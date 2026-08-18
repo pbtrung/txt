@@ -25,6 +25,7 @@ vi.mock("@tanstack/react-virtual", () => ({
 }));
 
 import type { LibraryBook } from "../../../src/data/libraryDb";
+import * as libraryModel from "../../../src/screens/Library/libraryModel";
 import { LibraryScreen } from "../../../src/screens/Library/LibraryScreen";
 import {
   useLibraryBooks,
@@ -128,6 +129,15 @@ describe("LibraryScreen", () => {
 
     expect(screen.getByRole("link", { name: /Wizard/ })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /Dune/ })).not.toBeInTheDocument();
+  });
+
+  it("reuses the search index while the query changes", async () => {
+    const createSearch = vi.spyOn(libraryModel, "createBookSearch");
+    renderScreen(LIBRARY);
+
+    await userEvent.type(screen.getByRole("searchbox"), "wizard");
+
+    expect(createSearch).toHaveBeenCalledTimes(1);
   });
 
   it("supports access and bookmark search expressions", async () => {

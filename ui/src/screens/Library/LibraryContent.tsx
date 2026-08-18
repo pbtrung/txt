@@ -4,6 +4,7 @@ import type { LibraryBook } from "../../data/libraryDb";
 import { BookList, BookRow, EmptyState } from "./BookList";
 import {
   browseEntries,
+  createBookSearch,
   recentlyAccessed,
   recentlyBookmarked,
   type BrowseDimension,
@@ -31,9 +32,10 @@ export function LibraryContent({
   onClearAccess: (txtId: number) => void;
   onClearBookmarks: (txtId: number) => void;
 }) {
+  const search = useMemo(() => createBookSearch(books), [books]);
   const filteredBooks = useMemo(
-    () => (view.kind === "books" ? visibleBooks(books, query, view.filter) : []),
-    [books, query, view],
+    () => (view.kind === "books" ? visibleBooks(search, query, view.filter) : []),
+    [query, search, view],
   );
   return (
     <div className="d-flex flex-column flex-grow-1 overflow-hidden">
