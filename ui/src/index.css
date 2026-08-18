@@ -195,6 +195,17 @@
   font-family: "Literata", serif;
 }
 
+/* epub.ts reserves half of its column gap at each page edge. On mobile,
+   widen the host by that full 16px gap and pull it outward by 8px per side:
+   the text then lands exactly on reader-column's sole Bootstrap p-2 inset,
+   while adjacent horizontal pages remain visibly separated. */
+@media (max-width: 767.98px) {
+  .reader-epub-host {
+    width: calc(100% + 16px);
+    margin-inline: -8px;
+  }
+}
+
 .reader-side-panel {
   width: 100%;
   max-width: 350px;

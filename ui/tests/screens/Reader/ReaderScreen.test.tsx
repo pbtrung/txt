@@ -250,9 +250,11 @@ describe("ReaderScreen", () => {
     };
     const fontSize = screen.getByRole("button", { name: "Font size" });
     const viewport = container.querySelector<HTMLElement>(".reader-viewport")!;
+    const epubHost = container.querySelector<HTMLElement>(".reader-epub-host")!;
 
     expect(viewport).toHaveStyle({ fontSize: "18px" });
-    expect(viewport).toHaveClass("px-2", "px-md-0");
+    expect(viewport).not.toHaveClass("px-2", "px-md-0");
+    expect(epubHost).toHaveClass("h-100");
 
     expect(
       fontSize.compareDocumentPosition(

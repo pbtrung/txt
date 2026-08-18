@@ -58,10 +58,10 @@ function ReadyReader({
           onInfo={() => setInfoOpen(true)}
         />
         <div
-          className="reader-viewport flex-grow-1 align-self-center position-relative px-2 px-md-0"
+          className="reader-viewport flex-grow-1 align-self-center position-relative"
           style={{ fontSize: `${fontPx}px` }}
         >
-          <div ref={setHost} className="h-100" />
+          <div ref={setHost} className="reader-epub-host h-100" />
           {!ready && (
             <LoadingMessage
               compact

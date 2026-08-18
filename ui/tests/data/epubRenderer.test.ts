@@ -400,8 +400,8 @@ describe("EpubRenderer", () => {
 
     renderer.setColumns(2);
 
-    expect(renditionMock.settings.gap).toBe(32);
-    expect(renditionMock.manager.settings.gap).toBe(32);
+    expect(renditionMock.settings.gap).toBe(16);
+    expect(renditionMock.manager.settings.gap).toBe(16);
     expect(renditionMock.spread).toHaveBeenLastCalledWith("auto", 900);
   });
 
@@ -609,7 +609,7 @@ describe("EpubRenderer", () => {
       resolveEmbeddedFonts();
       await Promise.resolve();
 
-      expect(renditionMock.settings.gap).toBe(32);
+      expect(renditionMock.settings.gap).toBe(16);
       expect(renditionMock.resize).toHaveBeenCalledWith(360, 700, "epubcfi(/6/8)");
       renderer.destroy();
     } finally {
