@@ -39,6 +39,18 @@ def test_replace_images_processes_a_directory(tmp_path):
     assert dst.is_dir()
 
 
+def test_edit_epub_processes_a_directory(tmp_path):
+    src, dst = tmp_path / "src", tmp_path / "dst"
+    src.mkdir()
+    result = CliRunner().invoke(
+        cli,
+        ["--edit-epub", str(src), str(dst), "--verbose"],
+    )
+    assert result.exit_code == 0
+    assert dst.is_dir()
+    assert "Edited 0 EPUB(s)" in result.output
+
+
 def test_ingest_without_local_db_dir_or_creds_is_a_usage_error(tmp_path):
     src = tmp_path / "src"
     src.mkdir()

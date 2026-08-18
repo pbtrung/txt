@@ -60,6 +60,14 @@ txt --replace-images SRC DST
 
 Replaces every image in each `*.epub` under `SRC` with a small placeholder and constrains its display size, writing the results to `DST`; every sidecar `*.opf` is copied alongside unchanged.
 
+### Split and edit a directory of EPUBs
+
+```
+txt --edit-epub SRC DST --verbose
+```
+
+Splits each EPUB along its spine into compressed parts targeting at most 1.2 MB. A spine document larger than the target remains intact, so the limit is intentionally soft. For an original title `ABC`, parts are named from the source filename and receive titles `ABC 01`, `ABC 02`, and so on; their Calibre and EPUB 3 series metadata is rewritten to series `ABC` with zero-padded positions `01`, `02`, and so on. Each part gets a matching `.opf` sidecar and the same placeholder-image and XHTML sizing transformations as `--replace-images`.
+
 ### Ingest a directory of EPUBs
 
 ```

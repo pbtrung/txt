@@ -28,6 +28,7 @@ This repo holds the txt document-storage system's design docs, the Cloudflare Wo
   - `ingest.py` — `TxtIngester`, the `--ingest` command: uploads each EPUB in a directory as one R2 object, keeps a resumable local SQLCipher working copy, and dedups against already-recorded filenames.
   - `db_updater.py` — `DbUpdater`, the `--update-db` command: migrates every account an administrator's creds.json can reach (their own database, plus every user backup row `account_init.py`'s admin-backup mechanism has written) from `txt.metadata` to `txt.catalog` (docs/data_model.md §3.1), idempotent and resumable at both the per-account and per-row level.
   - `replace_images.py` — `--replace-images`: replaces EPUB images with placeholders and constrains their display size; unrelated to the rest of this package's account/storage logic.
+  - `edit_epub.py` — `--edit-epub`: splits EPUB spine items into soft 1.2 MB parts, rewrites title/series metadata and sidecars, then applies the same image replacement rules as `--replace-images`.
   - `cli.py` — the click entry point.
 - `txt/tests/` — pytest. Crypto and SQLCipher tests run against the real wasm engine (`txt/tests/conftest.py`'s session-scoped `engine` fixture); everything else fakes only the network boundary (Firebase, the Turso Platform API, libsql HTTP, R2) — never the crypto itself.
 - `sqlcipher/` — the prebuilt SQLCipher+leancrypto wasm module `leancrypto_wasm.py`/`sqlite_engine.py` load. Not built from source in this repo.

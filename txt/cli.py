@@ -7,6 +7,7 @@ from .account_init import AccountInitializer
 from .bucket_cleaner import BucketCleaner
 from .creds import load_creds, load_user_creds
 from .db_updater import DbUpdater
+from .edit_epub import EpubEditor
 from .ingest import TxtIngester
 from .logger import Logger
 from .replace_images import ImageReplacer
@@ -44,6 +45,14 @@ from .replace_images import ImageReplacer
     type=click.Path(),
     metavar="SRC DST",
     help="Replace images in every *.epub under SRC into DST, and copy every *.opf",
+)
+@click.option(
+    "--edit-epub",
+    "edit_epub_dirs",
+    nargs=2,
+    type=click.Path(),
+    metavar="SRC DST",
+    help="Split EPUBs near 1.2 MB, rewrite part metadata, and replace images",
 )
 @click.option(
     "--ingest",
@@ -143,6 +152,10 @@ def _dispatch_replace_images(opts: dict, logger: Logger) -> None:
     _run_replace_images(opts["replace_images_dirs"], logger)
 
 
+def _dispatch_edit_epub(opts: dict, logger: Logger) -> None:
+    _run_edit_epub(opts["edit_epub_dirs"], logger)
+
+
 def _dispatch_ingest(opts: dict, logger: Logger) -> None:
     _run_ingest(
         opts["ingest_src_dir"],
@@ -164,6 +177,7 @@ COMMAND_HANDLERS = (
     ("admin_creds_path", _dispatch_init_admin),
     ("init_user", _dispatch_init_user),
     ("replace_images_dirs", _dispatch_replace_images),
+    ("edit_epub_dirs", _dispatch_edit_epub),
     ("ingest_src_dir", _dispatch_ingest),
     ("update_db_creds_path", _dispatch_update_db),
     ("clean_bucket_creds_path", _dispatch_clean_bucket),
@@ -190,6 +204,11 @@ def _run_init_user(
 def _run_replace_images(dirs: tuple[str, str], logger: Logger) -> None:
     src, dst = dirs
     ImageReplacer(Path(src), Path(dst), logger).run()
+
+
+def _run_edit_epub(dirs: tuple[str, str], logger: Logger) -> None:
+    src, dst = dirs
+    EpubEditor(Path(src), Path(dst), logger).run()
 
 
 def _run_ingest(
