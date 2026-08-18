@@ -170,6 +170,28 @@ describe("EpubRenderer", () => {
     expect(renditionMock.spread).toHaveBeenCalledWith("none");
   });
 
+  it("limits the single-column cover layout to the detected cover section", async () => {
+    bookMock.loaded.cover = Promise.resolve("https://reader.test/OEBPS/cover.jpg");
+    const renderer = new EpubRenderer(new Uint8Array([1]), "Dune", ["Frank Herbert"]);
+    const cover = document.implementation.createHTMLDocument();
+    cover.head.innerHTML = '<base href="https://reader.test/OEBPS/titlepage.xhtml">';
+    cover.body.innerHTML = '<img src="cover.jpg" alt="Cover">';
+    await coverHook()(cover, { href: "titlepage.xhtml", index: 0 });
+    await renderer.renderTo(document.createElement("div"));
+    renderer.setColumns(2);
+    renditionMock.spread.mockClear();
+    const rendered = renditionMock.on.mock.calls.find(
+      ([event]) => event === "rendered",
+    )![1];
+
+    rendered({ href: "titlepage.xhtml", index: 0 }, { document: cover });
+    expect(renditionMock.spread).toHaveBeenLastCalledWith("none");
+
+    const next = document.implementation.createHTMLDocument();
+    rendered({ href: "copyright.xhtml", index: 1 }, { document: next });
+    expect(renditionMock.spread).toHaveBeenLastCalledWith("auto", 900);
+  });
+
   it("destroys both the rendition and the book", () => {
     const renderer = new EpubRenderer(new Uint8Array([1]));
     renderer.renderTo(document.createElement("div"));

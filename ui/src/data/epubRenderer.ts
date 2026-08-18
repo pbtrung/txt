@@ -16,7 +16,6 @@ const TWO_COLUMN_MIN_WIDTH_PX = 900;
 const COLUMN_GAP_PX = 100;
 const MOBILE_MAX_WIDTH_PX = 767.98;
 const INITIAL_FONT_WAIT_MS = 1_000;
-const FRONT_MATTER_SPINE_INDEX_LIMIT = 3;
 const BOOK_PAGE_CHARS = 1000;
 const COVER_MEDIA_SELECTOR = "img, image, object";
 const XLINK_NAMESPACE = "http://www.w3.org/1999/xlink";
@@ -112,6 +111,8 @@ export class EpubRenderer {
   private hostWidth = 0;
   private preferredColumns: 1 | 2 = 1;
   private coverHref: string | null = null;
+  private coverSectionIndex: number | null = null;
+  private coverSectionHref: string | null = null;
   private currentCfi: string | null = null;
   private pageMapReady = false;
   private pageTotal = 0;
@@ -134,6 +135,8 @@ export class EpubRenderer {
   private async replaceCover(document: Document, section: Section): Promise<void> {
     const coverHref = await this.book.loaded.cover;
     if (!coverHref || !this.containsCover(document, section, coverHref)) return;
+    this.coverSectionIndex = section.index ?? null;
+    this.coverSectionHref = section.href ? this.book.resolve(section.href) : null;
     const body = document.body;
     if (body) body.replaceChildren(titlePage(document, this.title, this.authors));
   }
@@ -253,13 +256,19 @@ export class EpubRenderer {
     }
   }
 
-  private isFrontMatter(section: SectionLike): boolean {
-    if (section.index !== undefined && section.index < FRONT_MATTER_SPINE_INDEX_LIMIT)
+  private isCoverSection(section: SectionLike): boolean {
+    if (
+      section.index !== undefined &&
+      this.coverSectionIndex !== null &&
+      section.index === this.coverSectionIndex
+    ) {
       return true;
+    }
+    const sectionHref =
+      section.href === undefined ? null : this.book.resolve(section.href);
     return (
-      this.coverHref !== null &&
-      section.href !== undefined &&
-      this.book.resolve(section.href) === this.coverHref
+      sectionHref !== null &&
+      (sectionHref === this.coverSectionHref || sectionHref === this.coverHref)
     );
   }
 
@@ -271,7 +280,7 @@ export class EpubRenderer {
   }
 
   private applyLayoutFor(section: SectionLike): void {
-    if (this.isFrontMatter(section)) {
+    if (this.isCoverSection(section)) {
       this.setColumnGap(0);
       this.requireRendition().spread("none");
     } else this.applyPreferredColumns();
@@ -318,7 +327,7 @@ export class EpubRenderer {
   setColumns(count: 1 | 2): void {
     this.preferredColumns = count;
     const current = this.requireRendition().currentLocation()?.start;
-    if (!current || !this.isFrontMatter(current)) this.applyPreferredColumns();
+    if (!current || !this.isCoverSection(current)) this.applyPreferredColumns();
   }
 
   /** Jumps to an arbitrary TOC href or CFI -- unlike next()/prev(), which
