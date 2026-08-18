@@ -8,6 +8,7 @@ import {
   type ReaderDocument,
 } from "../../data/readerDocument";
 import { useVault, type VaultSession } from "../../state/VaultContext";
+import { classNames } from "../../util/classNames";
 import { ReaderInfoPanel } from "./ReaderInfoPanel";
 import { ReaderNavigation } from "./ReaderNavigation";
 import { ReaderToolbar } from "./ReaderToolbar";
@@ -67,7 +68,10 @@ function ReadyReader({
           className="reader-viewport flex-grow-1 align-self-center position-relative"
           style={{ fontSize: `${fontPx}px` }}
         >
-          <div ref={setHost} className="reader-epub-host h-100" />
+          <div
+            ref={setHost}
+            className={classNames("reader-epub-host h-100", !ready && "invisible")}
+          />
           {!ready && (
             <LoadingMessage
               compact

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -159,6 +159,19 @@ describe("ReaderScreen", () => {
       renderTo: (host: HTMLElement, cfi: string | null) => Promise<void>;
     };
     expect(instance.renderTo).toHaveBeenCalledWith(expect.any(HTMLElement), null);
+  });
+
+  it("keeps EPUB text hidden until font layout is ready", async () => {
+    mockVault();
+    mockReadyDocument();
+    const { container } = renderScreen();
+    const host = container.querySelector(".reader-epub-host");
+
+    expect(host).toHaveClass("invisible");
+    expect(screen.getByText("Preparing your book…")).toBeInTheDocument();
+
+    await waitFor(() => expect(host).not.toHaveClass("invisible"));
+    expect(screen.queryByText("Preparing your book…")).not.toBeInTheDocument();
   });
 
   it("passes the saved CFI to the renderer when reopening a book", () => {
