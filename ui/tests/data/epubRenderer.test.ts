@@ -157,6 +157,8 @@ describe("EpubRenderer", () => {
     expect(cover.body.querySelector("p")?.textContent).toBe("Frank Herbert");
     expect(cover.body.querySelector("h1")?.style.fontSize).toBe("20px");
     expect(cover.body.querySelector("p")?.style.fontSize).toBe("16px");
+    expect(cover.body.querySelector("p")?.style.textAlign).toBe("center");
+    expect(cover.body.querySelector("p")?.style.width).toBe("100%");
   });
 
   it("does not replace a section that does not contain the cover", async () => {

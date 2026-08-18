@@ -81,7 +81,8 @@ function titleHeading(document: Document, title: string): HTMLElement {
 function authorLine(document: Document, authors: string[]): HTMLElement {
   const line = document.createElement("p");
   line.style.cssText =
-    "font-size:16px!important;line-height:1.3!important;margin:1rem 0 0!important";
+    "font-size:16px!important;line-height:1.3!important;margin:1rem 0 0!important;" +
+    "text-align:center!important;width:100%!important";
   line.textContent = authors.join(", ");
   return line;
 }
