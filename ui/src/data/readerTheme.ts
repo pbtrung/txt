@@ -15,71 +15,123 @@
 // spacing is reset so publisher CSS cannot offset the paginated body inside its
 // already-balanced reader gutter.
 //
-// One @font-face per subset (each with its own unicode-range) rather than
-// a single all-glyphs file: the browser only fetches the woff2 for a
-// range actually used by the rendered text, so a book that's plain Latin
-// never downloads the Cyrillic/Greek/Vietnamese files at all. This is the
-// same subset split @fontsource/literata's own combined 400.css ships --
-// covers the common Latin-script languages plus Cyrillic, Greek, and
-// Vietnamese explicitly (Vietnamese's own diacritics aren't covered by
-// latin-ext).
+// Each style/weight is split by unicode range, so the browser fetches only the
+// faces used by the rendered text. Real regular, italic, bold, and bold-italic
+// faces avoid synthetic glyphs and preserve the EPUB's semantic emphasis.
 import literataCyrillicExt from "@fontsource/literata/files/literata-cyrillic-ext-400-normal.woff2";
+import literataCyrillicExtItalic from "@fontsource/literata/files/literata-cyrillic-ext-400-italic.woff2";
+import literataCyrillicExtBold from "@fontsource/literata/files/literata-cyrillic-ext-700-normal.woff2";
+import literataCyrillicExtBoldItalic from "@fontsource/literata/files/literata-cyrillic-ext-700-italic.woff2";
 import literataCyrillic from "@fontsource/literata/files/literata-cyrillic-400-normal.woff2";
+import literataCyrillicItalic from "@fontsource/literata/files/literata-cyrillic-400-italic.woff2";
+import literataCyrillicBold from "@fontsource/literata/files/literata-cyrillic-700-normal.woff2";
+import literataCyrillicBoldItalic from "@fontsource/literata/files/literata-cyrillic-700-italic.woff2";
 import literataGreekExt from "@fontsource/literata/files/literata-greek-ext-400-normal.woff2";
+import literataGreekExtItalic from "@fontsource/literata/files/literata-greek-ext-400-italic.woff2";
+import literataGreekExtBold from "@fontsource/literata/files/literata-greek-ext-700-normal.woff2";
+import literataGreekExtBoldItalic from "@fontsource/literata/files/literata-greek-ext-700-italic.woff2";
 import literataGreek from "@fontsource/literata/files/literata-greek-400-normal.woff2";
+import literataGreekItalic from "@fontsource/literata/files/literata-greek-400-italic.woff2";
+import literataGreekBold from "@fontsource/literata/files/literata-greek-700-normal.woff2";
+import literataGreekBoldItalic from "@fontsource/literata/files/literata-greek-700-italic.woff2";
 import literataVietnamese from "@fontsource/literata/files/literata-vietnamese-400-normal.woff2";
+import literataVietnameseItalic from "@fontsource/literata/files/literata-vietnamese-400-italic.woff2";
+import literataVietnameseBold from "@fontsource/literata/files/literata-vietnamese-700-normal.woff2";
+import literataVietnameseBoldItalic from "@fontsource/literata/files/literata-vietnamese-700-italic.woff2";
 import literataLatinExt from "@fontsource/literata/files/literata-latin-ext-400-normal.woff2";
+import literataLatinExtItalic from "@fontsource/literata/files/literata-latin-ext-400-italic.woff2";
+import literataLatinExtBold from "@fontsource/literata/files/literata-latin-ext-700-normal.woff2";
+import literataLatinExtBoldItalic from "@fontsource/literata/files/literata-latin-ext-700-italic.woff2";
 import literataLatin from "@fontsource/literata/files/literata-latin-400-normal.woff2";
+import literataLatinItalic from "@fontsource/literata/files/literata-latin-400-italic.woff2";
+import literataLatinBold from "@fontsource/literata/files/literata-latin-700-normal.woff2";
+import literataLatinBoldItalic from "@fontsource/literata/files/literata-latin-700-italic.woff2";
 
 interface Subset {
-  url: string;
+  regular: string;
+  italic: string;
+  bold: string;
+  boldItalic: string;
   unicodeRange: string;
 }
 
 const SUBSETS: Subset[] = [
   {
-    url: literataCyrillicExt,
+    regular: literataCyrillicExt,
+    italic: literataCyrillicExtItalic,
+    bold: literataCyrillicExtBold,
+    boldItalic: literataCyrillicExtBoldItalic,
     unicodeRange: "U+0460-052F,U+1C80-1C8A,U+20B4,U+2DE0-2DFF,U+A640-A69F,U+FE2E-FE2F",
   },
   {
-    url: literataCyrillic,
+    regular: literataCyrillic,
+    italic: literataCyrillicItalic,
+    bold: literataCyrillicBold,
+    boldItalic: literataCyrillicBoldItalic,
     unicodeRange: "U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116",
   },
-  { url: literataGreekExt, unicodeRange: "U+1F00-1FFF" },
   {
-    url: literataGreek,
+    regular: literataGreekExt,
+    italic: literataGreekExtItalic,
+    bold: literataGreekExtBold,
+    boldItalic: literataGreekExtBoldItalic,
+    unicodeRange: "U+1F00-1FFF",
+  },
+  {
+    regular: literataGreek,
+    italic: literataGreekItalic,
+    bold: literataGreekBold,
+    boldItalic: literataGreekBoldItalic,
     unicodeRange: "U+0370-0377,U+037A-037F,U+0384-038A,U+038C,U+038E-03A1,U+03A3-03FF",
   },
   {
-    url: literataVietnamese,
+    regular: literataVietnamese,
+    italic: literataVietnameseItalic,
+    bold: literataVietnameseBold,
+    boldItalic: literataVietnameseBoldItalic,
     unicodeRange:
       "U+0102-0103,U+0110-0111,U+0128-0129,U+0168-0169,U+01A0-01A1,U+01AF-01B0,U+0300-0301," +
       "U+0303-0304,U+0308-0309,U+0323,U+0329,U+1EA0-1EF9,U+20AB",
   },
   {
-    url: literataLatinExt,
+    regular: literataLatinExt,
+    italic: literataLatinExtItalic,
+    bold: literataLatinExtBold,
+    boldItalic: literataLatinExtBoldItalic,
     unicodeRange:
       "U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329," +
       "U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF",
   },
   {
-    url: literataLatin,
+    regular: literataLatin,
+    italic: literataLatinItalic,
+    bold: literataLatinBold,
+    boldItalic: literataLatinBoldItalic,
     unicodeRange:
       "U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329," +
       "U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD",
   },
 ];
 
-const fontFaceRules = SUBSETS.map(
-  (subset) => `
+const FACES = [
+  { key: "regular", style: "normal", weight: 400 },
+  { key: "italic", style: "italic", weight: 400 },
+  { key: "bold", style: "normal", weight: 700 },
+  { key: "boldItalic", style: "italic", weight: 700 },
+] as const;
+
+const fontFaceRules = SUBSETS.flatMap((subset) =>
+  FACES.map(
+    (face) => `
 @font-face {
   font-family: 'Txt Literata';
-  font-style: normal;
-  font-weight: 400;
+  font-style: ${face.style};
+  font-weight: ${face.weight};
   font-display: swap;
-  src: url(${subset.url}) format('woff2');
+  src: url(${subset[face.key]}) format('woff2');
   unicode-range: ${subset.unicodeRange};
 }`,
+  ),
 ).join("\n");
 
 export const READER_FONT_FAMILY = "'Txt Literata', serif";
@@ -94,6 +146,32 @@ html {
 }
 body, body * {
   font-family: 'Txt Literata', serif !important;
+}
+body {
+  font-kerning: normal !important;
+  font-synthesis: none !important;
+  font-variant-ligatures: common-ligatures contextual !important;
+  line-height: 1.5 !important;
+  text-rendering: optimizeLegibility;
+}
+p {
+  hyphens: auto !important;
+  line-height: 1.5 !important;
+  orphans: 2;
+  text-align: justify !important;
+  text-justify: inter-word;
+  text-wrap: pretty;
+  widows: 2;
+}
+h1, h2, h3, h4, h5, h6 {
+  break-after: avoid;
+  text-wrap: balance;
+}
+pre, code, kbd, samp {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace !important;
+  font-variant-ligatures: none !important;
+  hyphens: none !important;
+  text-align: start !important;
 }
 img, svg, table {
   max-width: 100%;

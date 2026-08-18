@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { EpubRenderer } from "../../src/data/epubRenderer";
+import { READER_THEME_CSS } from "../../src/data/readerTheme";
 
 const TOC = [{ id: "1", href: "ch1.xhtml", label: "Chapter 1" }];
 
@@ -57,6 +58,17 @@ afterEach(() => {
 });
 
 describe("EpubRenderer", () => {
+  it("uses real Literata emphasis faces and enhanced book typography", () => {
+    expect(READER_THEME_CSS.match(/@font-face/g)).toHaveLength(28);
+    expect(READER_THEME_CSS).toContain("font-style: italic");
+    expect(READER_THEME_CSS).toContain("font-weight: 700");
+    expect(READER_THEME_CSS).toContain("font-synthesis: none !important");
+    expect(READER_THEME_CSS).toContain("text-align: justify !important");
+    expect(READER_THEME_CSS).toContain("text-wrap: pretty");
+    expect(READER_THEME_CSS).toContain("hyphens: auto !important");
+    expect(READER_THEME_CSS).toContain("text-wrap: balance");
+  });
+
   it("opens the book from the given bytes", () => {
     const bytes = new Uint8Array([1, 2, 3]);
     new EpubRenderer(bytes);
