@@ -83,9 +83,9 @@ function mockReadyDocument(overrides: Record<string, unknown> = {}) {
   });
 }
 
-function renderScreen() {
+function renderScreen(initialEntry = "/read/1") {
   return render(
-    <MemoryRouter initialEntries={["/read/1"]}>
+    <MemoryRouter initialEntries={[initialEntry]}>
       <Routes>
         <Route path="/read/:txtId" element={<ReaderScreen />} />
       </Routes>
@@ -172,6 +172,20 @@ describe("ReaderScreen", () => {
     expect(instance.renderTo).toHaveBeenCalledWith(
       expect.any(HTMLElement),
       "epubcfi(/6/4!/4/2)",
+    );
+  });
+
+  it("prefers a bookmark CFI from the library route", () => {
+    mockVault();
+    mockReadyDocument({ lastCfi: "epubcfi(/6/4!/4/2)" });
+    renderScreen("/read/1?cfi=epubcfi%28%2F6%2F8%29");
+    const instance = vi.mocked(EpubRenderer).mock.results[0].value as {
+      renderTo: (host: HTMLElement, cfi: string | null) => Promise<void>;
+    };
+
+    expect(instance.renderTo).toHaveBeenCalledWith(
+      expect.any(HTMLElement),
+      "epubcfi(/6/8)",
     );
   });
 

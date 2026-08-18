@@ -30,7 +30,10 @@ interface RenderFailure {
   error: string;
 }
 
-export function useEpubRenderer(document: ReaderDocument) {
+export function useEpubRenderer(
+  document: ReaderDocument,
+  initialCfi: string | null = null,
+) {
   const [host, setHost] = useState<HTMLDivElement | null>(null);
   const [fontPx, setFontPx] = useState(defaultFontPx);
   const [mounted, setMounted] = useState<MountedRenderer | null>(null);
@@ -42,6 +45,7 @@ export function useEpubRenderer(document: ReaderDocument) {
     if (!host) return;
     return mountRenderer(
       document,
+      initialCfi,
       host,
       setMounted,
       setReady,
@@ -49,7 +53,7 @@ export function useEpubRenderer(document: ReaderDocument) {
       setLocation,
       setFailure,
     );
-  }, [document, host]);
+  }, [document, host, initialCfi]);
   const renderer = mounted?.document === document ? mounted.renderer : null;
   const page = located?.document === document ? located.page : INITIAL_PAGE;
   const currentLocation = location?.document === document ? location.location : null;
@@ -74,6 +78,7 @@ function defaultFontPx(): number {
 
 function mountRenderer(
   document: ReaderDocument,
+  initialCfi: string | null,
   host: HTMLElement,
   setMounted: (value: MountedRenderer) => void,
   setReady: (value: MountedRenderer) => void,
@@ -90,7 +95,7 @@ function mountRenderer(
   renderer.onLocationChange(
     (location) => active && setLocation({ document, location }),
   );
-  void Promise.resolve(renderer.renderTo(host, document.lastCfi)).then(
+  void Promise.resolve(renderer.renderTo(host, initialCfi ?? document.lastCfi)).then(
     () => active && setReady({ document, renderer }),
     (error: unknown) => active && setFailure({ document, error: errorMessage(error) }),
   );

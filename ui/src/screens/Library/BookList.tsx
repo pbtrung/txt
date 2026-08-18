@@ -69,10 +69,12 @@ function VirtualBookRow({
 
 export function BookRow({
   book,
+  initialCfi,
   onRemove,
   removeLabel,
 }: {
   book: LibraryBook;
+  initialCfi?: string | null;
   onRemove?: () => void;
   removeLabel?: string;
 }) {
@@ -83,7 +85,7 @@ export function BookRow({
       style={{ height: ROW_HEIGHT_PX }}
     >
       <Link
-        to={`/read/${book.txtId}`}
+        to={readerPath(book.txtId, initialCfi)}
         className={classNames(
           "d-block py-2 px-2 rounded-3 text-decoration-none text-body book-row h-100",
           onRemove && "pe-5",
@@ -115,6 +117,12 @@ export function BookRow({
       )}
     </div>
   );
+}
+
+function readerPath(txtId: number, initialCfi?: string | null): string {
+  const path = `/read/${txtId}`;
+  if (!initialCfi) return path;
+  return `${path}?${new URLSearchParams({ cfi: initialCfi })}`;
 }
 
 function BookMetadata({ book }: { book: LibraryBook }) {

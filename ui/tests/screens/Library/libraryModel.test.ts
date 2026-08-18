@@ -21,6 +21,7 @@ function book(overrides: Partial<LibraryBook>): LibraryBook {
     lastAccessed: 0,
     bookmarkCount: 0,
     lastBookmarked: null,
+    latestBookmarkCfi: null,
     ...overrides,
   };
 }

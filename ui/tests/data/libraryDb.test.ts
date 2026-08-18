@@ -49,6 +49,7 @@ describe("loadLibraryBooks (real sqlcipher.wasm)", () => {
       lastAccessed: 0,
       bookmarkCount: 0,
       lastBookmarked: null,
+      latestBookmarkCfi: null,
     });
   });
 
@@ -69,6 +70,7 @@ describe("loadLibraryBooks (real sqlcipher.wasm)", () => {
       lastAccessed: 1234,
       bookmarkCount: 2,
       lastBookmarked: 3000,
+      latestBookmarkCfi: "two",
     });
   });
 

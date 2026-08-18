@@ -42,6 +42,7 @@ function book(overrides: Partial<LibraryBook>): LibraryBook {
     lastAccessed: 0,
     bookmarkCount: 0,
     lastBookmarked: null,
+    latestBookmarkCfi: null,
     ...overrides,
   };
 }
@@ -62,6 +63,7 @@ const LIBRARY: LibraryBook[] = [
     subjects: ["Fantasy"],
     bookmarkCount: 1,
     lastBookmarked: 200,
+    latestBookmarkCfi: "epubcfi(/6/8)",
   }),
 ];
 
@@ -164,6 +166,18 @@ describe("LibraryScreen", () => {
     expect(screen.getByRole("link", { name: /Dune/ })).toHaveAttribute(
       "href",
       "/read/1",
+    );
+  });
+
+  it("opens a bookmark row at the book's newest bookmark", () => {
+    renderScreen(LIBRARY);
+    const bookmarks = screen.getByRole("region", { name: "Bookmarks" });
+    const link = bookmarks.querySelector("a");
+
+    expect(link).not.toBeNull();
+    const href = link?.getAttribute("href") ?? "";
+    expect(new URL(href, "https://txt.test").searchParams.get("cfi")).toBe(
+      "epubcfi(/6/8)",
     );
   });
 

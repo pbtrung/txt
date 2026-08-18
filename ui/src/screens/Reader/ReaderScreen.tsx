@@ -1,7 +1,7 @@
 // Reader shell: document loading and panel visibility stay here; rendering,
 // navigation, toolbar, and metadata presentation live in focused modules.
 import { useState, type ReactNode } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import { LoadingMessage, ScreenMessage } from "../../components/ScreenMessage";
 import {
   READER_LOAD_TOTAL_STEPS,
@@ -18,6 +18,8 @@ import { useReaderDocument } from "./useReaderDocument";
 
 export function ReaderScreen() {
   const { txtId } = useParams<{ txtId: string }>();
+  const [searchParams] = useSearchParams();
+  const initialCfi = searchParams.get("cfi");
   const { session } = useVault();
   const state = useReaderDocument(session, Number(txtId));
   if (state.status === "loading") {
@@ -32,20 +34,24 @@ export function ReaderScreen() {
     return <ReaderError>{state.error}</ReaderError>;
   }
   if (!session) return <LoadingMessage>Opening your book…</LoadingMessage>;
-  return <ReadyReader document={state.document} session={session} />;
+  return (
+    <ReadyReader document={state.document} session={session} initialCfi={initialCfi} />
+  );
 }
 
 function ReadyReader({
   document,
   session,
+  initialCfi,
 }: {
   document: ReaderDocument;
   session: VaultSession;
+  initialCfi: string | null;
 }) {
   const [infoOpen, setInfoOpen] = useState(false);
   const [tocOpen, setTocOpen] = useState(false);
   const { setHost, renderer, ready, page, location, fontPx, changeFontSize, error } =
-    useEpubRenderer(document);
+    useEpubRenderer(document, initialCfi);
   const reading = useReadingState(session, document, renderer, ready, location);
   if (error) return <ReaderError>{error}</ReaderError>;
   return (

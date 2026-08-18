@@ -96,6 +96,7 @@ function RecentBooks({
       <RecentSection
         title="Bookmarks"
         books={bookmarked}
+        openAtLatestBookmark
         removeLabel={(book) => `Delete bookmarks for ${book.title}`}
         onRemove={onClearBookmarks}
       />
@@ -106,11 +107,13 @@ function RecentBooks({
 function RecentSection({
   title,
   books,
+  openAtLatestBookmark = false,
   removeLabel,
   onRemove,
 }: {
   title: string;
   books: LibraryBook[];
+  openAtLatestBookmark?: boolean;
   removeLabel: (book: LibraryBook) => string;
   onRemove: (txtId: number) => void;
 }) {
@@ -122,6 +125,7 @@ function RecentSection({
         <BookRow
           key={book.txtId}
           book={book}
+          initialCfi={openAtLatestBookmark ? book.latestBookmarkCfi : null}
           removeLabel={removeLabel(book)}
           onRemove={() => onRemove(book.txtId)}
         />

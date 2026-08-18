@@ -59,6 +59,7 @@ describe("useLibraryBooks", () => {
           lastAccessed: 0,
           bookmarkCount: 0,
           lastBookmarked: null,
+          latestBookmarkCfi: null,
         },
       ],
       reload: expect.any(Function),
