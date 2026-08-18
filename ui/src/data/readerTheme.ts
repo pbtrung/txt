@@ -163,7 +163,7 @@ p {
   widows: 2;
 }
 p:not(:has(img, svg, object, picture, video)) {
-  text-align: justify !important;
+  text-align: justify;
 }
 figcaption,
 figcaption p,
