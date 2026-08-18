@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { Toolbar } from "react-aria-components";
 import { IconButton } from "../../components/IconButton";
 
 export function ReaderToolbar({
@@ -13,7 +14,10 @@ export function ReaderToolbar({
   onInfo: () => void;
 }) {
   return (
-    <div className="reader-toolbar d-flex align-items-center border-bottom py-1 gap-1">
+    <Toolbar
+      aria-label="Reader actions"
+      className="reader-toolbar d-flex align-items-center border-bottom py-1 gap-1"
+    >
       <Link
         to="/library"
         className="btn btn-sm btn-outline-secondary"
@@ -26,7 +30,7 @@ export function ReaderToolbar({
       </h1>
       <IconButton label="Menu" icon="list" onPress={onMenu} />
       <IconButton label="Book info" icon="info-circle" onPress={onInfo} />
-    </div>
+    </Toolbar>
   );
 }
 

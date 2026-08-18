@@ -325,12 +325,25 @@ describe("ReaderScreen", () => {
   it("keeps the header to back, menu, and info controls", () => {
     mockVault();
     mockReadyDocument();
-    const { container } = renderScreen();
-    const toolbar = container.querySelector(".reader-toolbar")!;
+    renderScreen();
+    const toolbar = screen.getByRole("toolbar", { name: "Reader actions" });
 
+    expect(toolbar).toHaveClass("reader-toolbar");
     expect(toolbar.querySelectorAll("a, button")).toHaveLength(3);
     expect(screen.queryByRole("button", { name: "Display settings" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Two-column layout" })).toBeNull();
+  });
+
+  it("moves focus between reader actions with arrow keys", async () => {
+    mockVault();
+    mockReadyDocument();
+    renderScreen();
+    const back = screen.getByRole("link", { name: "Back to library" });
+
+    back.focus();
+    await userEvent.keyboard("{ArrowRight}");
+
+    expect(screen.getByRole("button", { name: "Menu" })).toHaveFocus();
   });
 
   it("updates the current and total page from renderer relocation", async () => {
