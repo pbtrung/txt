@@ -63,6 +63,7 @@ describe("EpubRenderer", () => {
     expect(READER_THEME_CSS).toContain("font-style: italic");
     expect(READER_THEME_CSS).toContain("font-weight: 700");
     expect(READER_THEME_CSS).toContain("font-synthesis: none !important");
+    expect(READER_THEME_CSS).toContain("p:not(:has(img, svg, object, picture, video))");
     expect(READER_THEME_CSS).toContain("text-align: justify !important");
     expect(READER_THEME_CSS).toContain("text-wrap: pretty");
     expect(READER_THEME_CSS).toContain("hyphens: auto !important");

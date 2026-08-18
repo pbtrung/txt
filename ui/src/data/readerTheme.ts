@@ -158,10 +158,12 @@ p {
   hyphens: auto !important;
   line-height: 1.5 !important;
   orphans: 2;
-  text-align: justify !important;
   text-justify: inter-word;
   text-wrap: pretty;
   widows: 2;
+}
+p:not(:has(img, svg, object, picture, video)) {
+  text-align: justify !important;
 }
 h1, h2, h3, h4, h5, h6 {
   break-after: avoid;
