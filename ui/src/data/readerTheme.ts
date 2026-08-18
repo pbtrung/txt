@@ -165,6 +165,12 @@ p {
 p:not(:has(img, svg, object, picture, video)) {
   text-align: justify !important;
 }
+figcaption,
+figcaption p,
+[class*="caption" i],
+p:has(img, svg, object, picture, video) + p {
+  text-align: center !important;
+}
 h1, h2, h3, h4, h5, h6 {
   break-after: avoid;
   text-wrap: balance;
