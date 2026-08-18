@@ -2,7 +2,7 @@ import type { LibraryBook } from "../../data/libraryDb";
 import {
   allBooksSorted,
   booksForDimensionValue,
-  matchesSearch,
+  searchBooks,
   type BrowseDimension,
   type BrowseEntry,
 } from "./libraryModel";
@@ -45,7 +45,7 @@ export function visibleBooks(
   const source = filter
     ? booksForDimensionValue(books, filter.dimension, filter.value)
     : allBooksSorted(books);
-  return source.filter((book) => matchesSearch(book, query));
+  return searchBooks(source, query);
 }
 
 export function matchesEntry(entry: BrowseEntry, query: string): boolean {

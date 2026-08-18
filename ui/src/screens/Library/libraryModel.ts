@@ -1,6 +1,21 @@
 // Pure search/sort/browse logic over an already-loaded LibraryBook[]
 // (ui/src/data/libraryDb.ts).
+import Fuse, { type IFuseOptions } from "fuse.js";
 import type { LibraryBook } from "../../data/libraryDb";
+
+const SEARCH_OPTIONS: IFuseOptions<LibraryBook> = {
+  keys: [
+    { name: "title", weight: 4 },
+    { name: "authors", weight: 2 },
+    { name: "subjects", weight: 1 },
+    { name: "publisher", weight: 1 },
+  ],
+  threshold: 0.35,
+  ignoreDiacritics: true,
+  ignoreLocation: true,
+  useTokenSearch: true,
+  tokenMatch: "all",
+};
 
 export function allBooksSorted(books: LibraryBook[]): LibraryBook[] {
   return [...books].sort((a, b) => a.title.localeCompare(b.title));
@@ -25,15 +40,20 @@ export function recentBookCount(books: LibraryBook[]): number {
 }
 
 export function matchesSearch(book: LibraryBook, query: string): boolean {
+  return searchBooks([book], query).length === 1;
+}
+
+export function searchBooks(books: LibraryBook[], query: string): LibraryBook[] {
   const search = parseSearch(query);
-  if (search.activity === "access" && book.lastAccessed <= 0) return false;
-  if (search.activity === "bookmark" && book.bookmarkCount <= 0) return false;
-  if (!search.text) return true;
-  const haystack = [book.title, ...book.authors, book.publisher, ...book.subjects]
-    .filter((s): s is string => Boolean(s))
-    .join(" ")
-    .toLowerCase();
-  return haystack.includes(search.text);
+  const candidates = books.filter((book) => {
+    if (search.activity === "access") return book.lastAccessed > 0;
+    if (search.activity === "bookmark") return book.bookmarkCount > 0;
+    return true;
+  });
+  if (!search.text) return candidates;
+  return new Fuse(candidates, SEARCH_OPTIONS)
+    .search(search.text)
+    .map((result) => result.item);
 }
 
 interface ParsedSearch {

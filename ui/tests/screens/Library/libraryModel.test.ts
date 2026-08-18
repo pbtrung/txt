@@ -9,6 +9,7 @@ import {
   recentBookCount,
   recentlyAccessed,
   recentlyBookmarked,
+  searchBooks,
 } from "../../../src/screens/Library/libraryModel";
 
 function book(overrides: Partial<LibraryBook>): LibraryBook {
@@ -100,6 +101,18 @@ describe("matchesSearch", () => {
     expect(matchesSearch(LIBRARY[0], "fantasy")).toBe(false);
   });
 
+  it("tolerates typos and ignores diacritics", () => {
+    const accented = book({ title: "Đi tìm thời gian đã mất" });
+
+    expect(matchesSearch(LIBRARY[0], "dne")).toBe(true);
+    expect(matchesSearch(accented, "di tim thoi gian")).toBe(true);
+  });
+
+  it("requires every word in a multi-word query to match", () => {
+    expect(matchesSearch(LIBRARY[0], "dune herbert")).toBe(true);
+    expect(matchesSearch(LIBRARY[0], "dune le guin")).toBe(false);
+  });
+
   it("matches everything for a blank query", () => {
     expect(matchesSearch(LIBRARY[0], "   ")).toBe(true);
   });
@@ -115,6 +128,20 @@ describe("matchesSearch", () => {
     expect(matchesSearch(bookmarked, "b:*")).toBe(true);
     expect(matchesSearch(bookmarked, "b:'earth'")).toBe(true);
     expect(matchesSearch(accessed, "b:'dune'")).toBe(false);
+  });
+});
+
+describe("searchBooks", () => {
+  it("ranks a title match ahead of the same term in metadata", () => {
+    const results = searchBooks(
+      [
+        book({ txtId: 1, title: "Dune", authors: ["Frank Herbert"] }),
+        book({ txtId: 2, title: "Collected Works", subjects: ["Dune"] }),
+      ],
+      "dune",
+    );
+
+    expect(results.map((item) => item.txtId)).toEqual([1, 2]);
   });
 });
 
