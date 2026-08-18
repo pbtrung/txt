@@ -1,3 +1,4 @@
+import { Button, Input, SearchField } from "react-aria-components";
 import { IconButton } from "../../components/IconButton";
 
 export function LibraryHeader({
@@ -13,17 +14,23 @@ export function LibraryHeader({
     <div className="d-flex align-items-center border-bottom flex-shrink-0">
       <LibraryBrand onOpenMenu={onOpenMenu} />
       <div className="flex-grow-1 px-2 px-md-3 py-2">
-        <div className="search-box position-relative">
+        <SearchField
+          className="search-box position-relative"
+          aria-label="Search"
+          value={query}
+          onChange={onQuery}
+        >
           <i className="bi bi-search search-box-icon" aria-hidden="true" />
-          <input
-            type="search"
+          <Input
             className="form-control form-control-sm search-box-input"
             placeholder="Search…"
-            aria-label="Search"
-            value={query}
-            onChange={(event) => onQuery(event.target.value)}
           />
-        </div>
+          {query && (
+            <Button className="search-box-clear" aria-label="Clear search">
+              <i className="bi bi-x-lg" aria-hidden="true" />
+            </Button>
+          )}
+        </SearchField>
       </div>
     </div>
   );

@@ -125,10 +125,16 @@ describe("LibraryScreen", () => {
 
   it("filters by search query", async () => {
     renderScreen(LIBRARY);
-    await userEvent.type(screen.getByRole("searchbox"), "wizard");
+    const searchbox = screen.getByRole("searchbox");
+    await userEvent.type(searchbox, "wizard");
 
     expect(screen.getByRole("link", { name: /Wizard/ })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /Dune/ })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Clear search" }));
+    expect(searchbox).toHaveValue("");
+    expect(screen.getByRole("link", { name: /Dune/ })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Wizard/ })).toBeInTheDocument();
   });
 
   it("reuses the search index while the query changes", async () => {

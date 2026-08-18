@@ -82,11 +82,36 @@
 
 .search-box-input {
   padding-left: 2rem;
+  padding-right: 2rem;
   border: var(--bs-border-width) var(--bs-border-style) var(--bs-border-color);
 }
 
 .search-box-input:focus {
   box-shadow: 0 0 0 0.1rem rgba(var(--bs-primary-rgb), 0.25);
+}
+
+.search-box-clear {
+  position: absolute;
+  right: 0.25rem;
+  top: 50%;
+  display: grid;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  transform: translateY(-50%);
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--bs-secondary-color);
+  font-size: 0.7rem;
+}
+
+.search-box-clear:hover,
+.search-box-clear:focus-visible {
+  background: var(--bs-tertiary-bg);
+  color: var(--bs-emphasis-color);
+  outline: none;
 }
 
 /* The nav sidebar's own width, as a custom property rather than two
