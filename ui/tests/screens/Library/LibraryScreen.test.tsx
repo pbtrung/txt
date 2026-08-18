@@ -327,8 +327,17 @@ describe("LibraryScreen", () => {
   });
 
   it("the menu button opens the drawer", async () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn().mockImplementation((query: string) => ({
+        matches: false,
+        media: query,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      })),
+    );
     renderScreen(LIBRARY);
-    expect(screen.getByRole("dialog", { name: "Menu" })).not.toHaveClass("show");
+    expect(screen.queryByRole("dialog", { name: "Menu" })).toBeNull();
 
     await userEvent.click(screen.getByRole("button", { name: "Open menu" }));
 

@@ -5,15 +5,13 @@ import { describe, expect, it, vi } from "vitest";
 import { OffcanvasPanel } from "../../src/components/OffcanvasPanel";
 
 describe("OffcanvasPanel", () => {
-  it("hides a closed drawer from assistive technology", () => {
-    const { container } = render(
+  it("does not render a closed drawer", () => {
+    render(
       <OffcanvasPanel open={false} onClose={vi.fn()} title="Info">
         content
       </OffcanvasPanel>,
     );
-    const panel = container.querySelector('[role="dialog"]');
-    expect(panel).not.toHaveClass("show");
-    expect(panel).toHaveAttribute("aria-hidden", "true");
+    expect(screen.queryByRole("dialog", { name: "Info" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
   });
 
@@ -25,7 +23,9 @@ describe("OffcanvasPanel", () => {
     );
     expect(screen.getByRole("dialog", { name: "Info" })).toHaveClass("show");
     expect(screen.getByText("content")).toBeInTheDocument();
-    expect(screen.getByRole("dialog", { name: "Info" })).toHaveFocus();
+    expect(screen.getByRole("dialog", { name: "Info" })).toContainElement(
+      document.activeElement as HTMLElement,
+    );
   });
 
   it("calls onClose from the close button", async () => {
@@ -43,13 +43,13 @@ describe("OffcanvasPanel", () => {
 
   it("calls onClose from the backdrop", async () => {
     const onClose = vi.fn();
-    const { container } = render(
+    render(
       <OffcanvasPanel open onClose={onClose} title="Info">
         content
       </OffcanvasPanel>,
     );
 
-    await userEvent.click(container.querySelector(".offcanvas-backdrop")!);
+    await userEvent.click(document.querySelector(".aria-offcanvas-overlay")!);
 
     expect(onClose).toHaveBeenCalled();
   });
@@ -68,22 +68,30 @@ describe("OffcanvasPanel", () => {
   });
 
   it("uses the offcanvas-{breakpoint} class and hides the backdrop past it when responsive", () => {
-    const { container } = render(
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn().mockImplementation((query: string) => ({
+        matches: false,
+        media: query,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      })),
+    );
+    render(
       <OffcanvasPanel open onClose={vi.fn()} title="Browse" responsive="md">
         content
       </OffcanvasPanel>,
     );
 
     const panel = screen.getByRole("dialog", { name: "Browse" });
-    expect(panel).toHaveClass("offcanvas-md");
-    expect(panel).not.toHaveClass("offcanvas offcanvas-end");
-    expect(container.querySelector(".offcanvas-backdrop")).toHaveClass("d-md-none");
+    expect(panel).toHaveClass("offcanvas-md", "offcanvas-end", "show");
+    expect(document.querySelector(".aria-offcanvas-overlay")).toBeInTheDocument();
   });
 
   it("passes through className and style", () => {
-    const { container } = render(
+    render(
       <OffcanvasPanel
-        open={false}
+        open
         onClose={vi.fn()}
         title="Info"
         className="border-end"
@@ -93,7 +101,7 @@ describe("OffcanvasPanel", () => {
       </OffcanvasPanel>,
     );
 
-    const panel = container.querySelector('[role="dialog"]');
+    const panel = screen.getByRole("dialog", { name: "Info" });
     expect(panel).toHaveClass("border-end");
     expect(panel).toHaveStyle({ width: "288px" }); // jsdom resolves 18rem -> 288px (16px root)
   });

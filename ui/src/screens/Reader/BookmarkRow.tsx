@@ -16,7 +16,6 @@ export function BookmarkRow({
     <div className="d-flex align-items-center px-2 bookmark-menu-row">
       <button
         type="button"
-        role="menuitem"
         className="dropdown-item d-flex flex-column align-items-start min-w-0"
         onClick={() => onNavigate(bookmark.cfi)}
       >

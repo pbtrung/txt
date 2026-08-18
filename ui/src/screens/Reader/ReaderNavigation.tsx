@@ -1,4 +1,13 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
+import {
+  Button,
+  Dialog,
+  DialogTrigger,
+  Menu,
+  MenuItem,
+  MenuTrigger,
+  Popover,
+} from "react-aria-components";
 import { IconButton } from "../../components/IconButton";
 import type { DatabaseStoreStatus } from "../../data/databaseStore";
 import type { EpubRenderer, PagePosition } from "../../data/epubRenderer";
@@ -93,45 +102,52 @@ export function BookmarkMenu({
   onRemove: (cfi: string) => void;
   onRetry: () => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-  useDismissibleMenu(open, rootRef, () => setOpen(false));
   return (
-    <div className="dropup ms-auto" ref={rootRef}>
-      <IconButton
-        label="Bookmarks"
-        icon={bookmarkSaved ? "bookmark-fill" : "bookmark"}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => setOpen((current) => !current)}
-      />
-      <BookmarkOptions
-        {...{
-          open,
-          renderer,
-          bookmarks,
-          bookmarkSaved,
-          bookmarkBusy,
-          status,
-          error,
-          onRemove,
-          onRetry,
-        }}
-        onBookmark={() => {
-          onBookmark();
-          setOpen(false);
-        }}
-        onNavigate={(cfi) => {
-          void renderer?.display(cfi);
-          setOpen(false);
-        }}
-      />
-    </div>
+    <DialogTrigger>
+      <Button
+        className="btn btn-sm btn-outline-secondary ms-auto"
+        aria-label="Bookmarks"
+      >
+        <i
+          className={`bi bi-${bookmarkSaved ? "bookmark-fill" : "bookmark"}`}
+          aria-hidden="true"
+        />
+      </Button>
+      <Popover
+        placement="top end"
+        offset={0}
+        className="dropdown-menu show reader-bookmark-menu"
+      >
+        <Dialog aria-label="Bookmark options" className="border-0">
+          {({ close }) => (
+            <BookmarkOptions
+              {...{
+                renderer,
+                bookmarks,
+                bookmarkSaved,
+                bookmarkBusy,
+                status,
+                error,
+                onRemove,
+                onRetry,
+              }}
+              onBookmark={() => {
+                onBookmark();
+                close();
+              }}
+              onNavigate={(cfi) => {
+                void renderer?.display(cfi);
+                close();
+              }}
+            />
+          )}
+        </Dialog>
+      </Popover>
+    </DialogTrigger>
   );
 }
 
 function BookmarkOptions({
-  open,
   renderer,
   bookmarks,
   bookmarkSaved,
@@ -143,7 +159,6 @@ function BookmarkOptions({
   onRemove,
   onRetry,
 }: {
-  open: boolean;
   renderer: EpubRenderer | null;
   bookmarks: BookmarkRecord[];
   bookmarkSaved: boolean;
@@ -156,14 +171,9 @@ function BookmarkOptions({
   onRetry: () => void;
 }) {
   return (
-    <div
-      role="menu"
-      aria-label="Bookmark options"
-      className={classNames("dropdown-menu reader-bookmark-menu", open && "show")}
-    >
+    <div>
       <button
         type="button"
-        role="menuitem"
         className="dropdown-item d-flex align-items-center gap-2"
         disabled={!renderer || bookmarkBusy}
         onClick={onBookmark}
@@ -228,62 +238,53 @@ function FontSizeMenu({
   value: number;
   onChange: (size: number) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-  useDismissibleMenu(open, rootRef, () => setOpen(false));
   return (
-    <div className="dropup" ref={rootRef}>
-      <button
-        type="button"
+    <MenuTrigger>
+      <Button
         className="btn btn-sm btn-outline-secondary dropdown-toggle"
         aria-label="Font size"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => setOpen((current) => !current)}
       >
         {value}px
-      </button>
-      <FontSizeOptions
-        open={open}
-        value={value}
-        onSelect={(size) => {
-          onChange(size);
-          setOpen(false);
-        }}
-      />
-    </div>
+      </Button>
+      <Popover
+        placement="top start"
+        offset={0}
+        className="dropdown-menu show reader-font-menu p-0"
+      >
+        <FontSizeOptions value={value} onSelect={onChange} />
+      </Popover>
+    </MenuTrigger>
   );
 }
 
 function FontSizeOptions({
-  open,
   value,
   onSelect,
 }: {
-  open: boolean;
   value: number;
   onSelect: (size: number) => void;
 }) {
   return (
-    <ul
-      role="menu"
-      className={classNames("dropdown-menu reader-font-menu", open && "show")}
+    <Menu
       aria-label="Font size options"
+      selectionMode="single"
+      selectedKeys={new Set([String(value)])}
+      className="py-1"
+      onAction={(key) => onSelect(Number(key))}
     >
       {FONT_SIZES_PX.map((size) => (
-        <li key={size}>
-          <button
-            type="button"
-            role="menuitemradio"
-            aria-checked={value === size}
-            className={classNames("dropdown-item", value === size && "active")}
-            onClick={() => onSelect(size)}
-          >
-            {size}px
-          </button>
-        </li>
+        <MenuItem
+          key={size}
+          id={String(size)}
+          textValue={`${size}px`}
+          className={({ isSelected }) =>
+            classNames("dropdown-item", isSelected && "active")
+          }
+        >
+          {size}px
+        </MenuItem>
       ))}
-    </ul>
+    </Menu>
   );
 }
 
@@ -323,26 +324,4 @@ function PageInput({
       }}
     />
   );
-}
-
-function useDismissibleMenu(
-  open: boolean,
-  rootRef: React.RefObject<HTMLElement | null>,
-  close: () => void,
-) {
-  useEffect(() => {
-    if (!open) return;
-    const onMouseDown = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) close();
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") close();
-    };
-    document.addEventListener("mousedown", onMouseDown);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", onMouseDown);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [open, rootRef, close]);
 }

@@ -211,14 +211,29 @@
   max-width: 350px;
 }
 
+/* React Aria owns modal focus containment, outside-click dismissal, and
+   focus restoration. This element is its full-screen backdrop; the nested
+   Bootstrap offcanvas keeps the app's existing panel visuals. */
+.aria-offcanvas-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--bs-offcanvas-zindex, 1045);
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.aria-offcanvas-modal {
+  display: contents;
+}
+
+.aria-offcanvas-overlay .offcanvas {
+  z-index: 1;
+}
+
 .reader-font-menu {
-  top: auto;
-  bottom: 100%;
   min-width: 4.5rem;
 }
 
 .reader-bookmark-menu {
-  inset: auto 0 100% auto;
   width: min(22rem, calc(100vw - 1rem));
   max-height: calc(100dvh - 4rem);
   overflow-y: auto;

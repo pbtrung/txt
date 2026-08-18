@@ -34,8 +34,8 @@ describe("BookmarkMenu", () => {
     );
 
     await userEvent.click(screen.getByRole("button", { name: "Bookmarks" }));
-    const menu = screen.getByRole("menu", { name: "Bookmark options" });
-    expect(menu).toHaveClass("reader-bookmark-menu", "show");
+    const dialog = screen.getByRole("dialog", { name: "Bookmark options" });
+    expect(dialog.parentElement).toHaveClass("reader-bookmark-menu", "show");
     expect(screen.getByText("Page 12")).toBeInTheDocument();
 
     await userEvent.click(screen.getByText("Fear is the mind-killer."));

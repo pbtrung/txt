@@ -1,9 +1,8 @@
-// A React-state-driven Bootstrap offcanvas: this app only ever pulled in
-// Bootstrap's CSS/Icons, never its JS, so open/close is just a boolean
-// prop toggling the "show" class plus a backdrop <div> the caller doesn't
-// need to wire up itself (no data-bs-* attributes anywhere).
-import { useEffect, useId, useRef, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useId, useState, type CSSProperties, type ReactNode } from "react";
+import { Dialog, Heading, Modal, ModalOverlay } from "react-aria-components";
 import { classNames } from "../util/classNames";
+
+const MD_MEDIA_QUERY = "(min-width: 768px)";
 
 export function OffcanvasPanel({
   open,
@@ -19,69 +18,94 @@ export function OffcanvasPanel({
   onClose: () => void;
   title: string;
   placement?: "start" | "end";
-  /** Bootstrap's offcanvas-{breakpoint} variant: below the breakpoint this
-   * behaves like a normal drawer; at/above it, it becomes a normal static
-   * block instead (its own header/close button included -- Bootstrap's CSS
-   * hides those automatically past the breakpoint). */
   responsive?: "md";
   className?: string;
   style?: CSSProperties;
   children: ReactNode;
 }) {
-  const base = responsive ? `offcanvas-${responsive}` : "offcanvas";
+  const desktop = useMediaQuery(MD_MEDIA_QUERY);
   const titleId = useId();
-  const panelRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (open) panelRef.current?.focus();
-  }, [open]);
-  useEffect(() => {
-    if (!open) return;
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", closeOnEscape);
-    return () => document.removeEventListener("keydown", closeOnEscape);
-  }, [open, onClose]);
-  return (
-    <>
+  const panelClassName = classNames(
+    responsive ? `offcanvas-${responsive}` : "offcanvas",
+    (!responsive || !desktop) && `offcanvas-${placement}`,
+    (!responsive || !desktop) && "show",
+    className,
+  );
+
+  if (responsive && desktop) {
+    return (
       <div
-        ref={panelRef}
-        className={classNames(
-          base,
-          `offcanvas-${placement}`,
-          open && "show",
-          className,
-        )}
+        className={panelClassName}
         style={style}
-        tabIndex={-1}
-        role="dialog"
-        aria-modal={open || undefined}
-        aria-hidden={!responsive && !open ? true : undefined}
+        role="region"
         aria-labelledby={titleId}
       >
-        <div className="offcanvas-header">
-          <h5 className="offcanvas-title" id={titleId}>
-            {title}
-          </h5>
-          <button
-            type="button"
-            className="btn-close"
-            aria-label="Close"
-            onClick={onClose}
-          />
-        </div>
-        <div className="offcanvas-body">{children}</div>
+        <PanelContents title={title} titleId={titleId} onClose={onClose}>
+          {children}
+        </PanelContents>
       </div>
-      {open && (
-        <div
-          className={classNames(
-            "offcanvas-backdrop show",
-            responsive && `d-${responsive}-none`,
-          )}
-          aria-hidden="true"
+    );
+  }
+
+  return (
+    <ModalOverlay
+      isOpen={open}
+      onOpenChange={(isOpen) => !isOpen && onClose()}
+      isDismissable
+      className="aria-offcanvas-overlay"
+    >
+      <Modal className="aria-offcanvas-modal">
+        <Dialog
+          aria-labelledby={titleId}
+          className={classNames(panelClassName, "d-flex flex-column h-100")}
+          style={style}
+        >
+          <PanelContents title={title} titleId={titleId} onClose={onClose}>
+            {children}
+          </PanelContents>
+        </Dialog>
+      </Modal>
+    </ModalOverlay>
+  );
+}
+
+function PanelContents({
+  title,
+  titleId,
+  onClose,
+  children,
+}: {
+  title: string;
+  titleId: string;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <>
+      <div className="offcanvas-header">
+        <Heading slot="title" level={2} className="h5 offcanvas-title" id={titleId}>
+          {title}
+        </Heading>
+        <button
+          type="button"
+          className="btn-close"
+          aria-label="Close"
           onClick={onClose}
         />
-      )}
+      </div>
+      <div className="offcanvas-body">{children}</div>
     </>
   );
+}
+
+function useMediaQuery(query: string): boolean {
+  const [matches, setMatches] = useState(() => window.matchMedia(query).matches);
+  useEffect(() => {
+    const media = window.matchMedia(query);
+    const update = () => setMatches(media.matches);
+    update();
+    media.addEventListener?.("change", update);
+    return () => media.removeEventListener?.("change", update);
+  }, [query]);
+  return matches;
 }

@@ -19,7 +19,7 @@ if (typeof window !== "undefined" && !window.ResizeObserver) {
 if (typeof window !== "undefined" && !window.matchMedia) {
   window.matchMedia = (query: string) =>
     ({
-      matches: false,
+      matches: query === "(min-width: 768px)",
       media: query,
       onchange: null,
       addListener: () => {},

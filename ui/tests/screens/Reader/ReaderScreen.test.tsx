@@ -291,8 +291,8 @@ describe("ReaderScreen", () => {
     expect(container.querySelector(".vr")).toBeInTheDocument();
 
     await userEvent.click(fontSize);
-    const menu = screen.getByRole("menu", { name: "Font size options" });
-    expect(menu).toHaveClass("show", "reader-font-menu");
+    const menu = screen.getByRole("menu", { name: "Font size" });
+    expect(menu.parentElement).toHaveClass("show", "reader-font-menu");
     expect(
       screen.getAllByRole("menuitemradio").map((option) => option.textContent),
     ).toEqual(["16px", "18px", "20px", "22px"]);
@@ -318,9 +318,7 @@ describe("ReaderScreen", () => {
     expect(fontSize).toHaveAttribute("aria-expanded", "false");
 
     await user.click(fontSize);
-    await user.click(
-      screen.getByRole("heading", { name: "Dune — Frank Herbert", level: 1 }),
-    );
+    await user.click(document.body);
     expect(fontSize).toHaveAttribute("aria-expanded", "false");
   });
 
@@ -377,14 +375,14 @@ describe("ReaderScreen", () => {
 
     await userEvent.click(bookmark);
 
-    expect(bookmark.parentElement).toHaveClass("ms-auto", "dropup");
+    expect(bookmark).toHaveClass("ms-auto");
     expect(screen.queryByRole("button", { name: "View bookmarks" })).toBeNull();
-    expect(screen.getByRole("menu", { name: "Bookmark options" })).toHaveClass("show");
+    expect(
+      screen.getByRole("dialog", { name: "Bookmark options" }).parentElement,
+    ).toHaveClass("show", "reader-bookmark-menu");
     expect(screen.getByText("No bookmarks yet.")).toBeInTheDocument();
 
-    await userEvent.click(
-      screen.getByRole("menuitem", { name: "Add current bookmark" }),
-    );
+    await userEvent.click(screen.getByRole("button", { name: "Add current bookmark" }));
     const reading = vi.mocked(useReadingState).mock.results.at(-1)!.value;
     expect(reading.toggleCurrent).toHaveBeenCalledWith(1);
   });
