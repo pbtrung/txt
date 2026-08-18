@@ -45,20 +45,62 @@ export interface BookSearchIndex {
 
 export function createBookSearch(books: LibraryBook[]): BookSearchIndex {
   const sorted = allBooksSorted(books);
+  const exactRecords = sorted.map(toExactSearchRecord);
   const fuse = new Fuse(sorted, SEARCH_OPTIONS);
   return {
     search(query: string) {
       const parsed = parseSearch(query);
-      const matches = parsed.text
-        ? fuse.search(parsed.text).map((result) => result.item)
-        : sorted;
-      return matches.filter((book) => {
-        if (parsed.activity === "access") return book.lastAccessed > 0;
-        if (parsed.activity === "bookmark") return book.bookmarkCount > 0;
-        return true;
-      });
+      const candidates = exactRecords.filter(({ book }) =>
+        matchesActivity(book, parsed.activity),
+      );
+      if (!parsed.text) return candidates.map(({ book }) => book);
+      const exact = exactMatches(candidates, normalizeSearchText(parsed.text));
+      if (exact.length > 0) return exact;
+      return fuse
+        .search(parsed.text)
+        .map((result) => result.item)
+        .filter((book) => matchesActivity(book, parsed.activity));
     },
   };
+}
+
+interface ExactSearchRecord {
+  book: LibraryBook;
+  fields: string[];
+  all: string;
+}
+
+function toExactSearchRecord(book: LibraryBook): ExactSearchRecord {
+  const fields = [
+    book.title,
+    book.authors.join(" "),
+    book.subjects.join(" "),
+    book.publisher ?? "",
+  ].map(normalizeSearchText);
+  return { book, fields, all: fields.join(" ") };
+}
+
+function exactMatches(records: ExactSearchRecord[], query: string): LibraryBook[] {
+  const ranked: LibraryBook[][] = [[], [], [], [], []];
+  for (const record of records) {
+    if (!record.all.includes(query)) continue;
+    const field = record.fields.findIndex((value) => value.includes(query));
+    ranked[field < 0 ? ranked.length - 1 : field].push(record.book);
+  }
+  return ranked.flat();
+}
+
+function matchesActivity(
+  book: LibraryBook,
+  activity: ParsedSearch["activity"],
+): boolean {
+  if (activity === "access") return book.lastAccessed > 0;
+  if (activity === "bookmark") return book.bookmarkCount > 0;
+  return true;
+}
+
+function normalizeSearchText(value: string): string {
+  return value.toLowerCase().normalize("NFD").replace(/\p{M}/gu, "").replace(/đ/g, "d");
 }
 
 interface ParsedSearch {
