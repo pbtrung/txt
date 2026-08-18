@@ -1,7 +1,8 @@
 // Low-level S3-compatible R2 operations using one short-lived credential.
-// Credential refresh and operation retry live in r2Session.ts.
+// The session refreshes credentials; bounded read retries live here.
 import { AwsClient } from "aws4fetch";
 
+import { withNetworkRetries, withNetworkTimeout } from "./networkRequest";
 import type { R2TempCredential } from "./workerClient";
 
 export interface R2Object {
@@ -28,16 +29,18 @@ export class R2Client {
   }
 
   async getObject(key: string): Promise<Uint8Array | null> {
-    const response = await this.aws.fetch(`${this.base}/${key}`);
+    const response = await withNetworkRetries((signal) =>
+      this.aws.fetch(`${this.base}/${key}`, { signal }),
+    );
     if (response.status === 404) return null;
     this.requireSuccess(response, `R2 GET ${key}`);
     return new Uint8Array(await response.arrayBuffer());
   }
 
   async getDatabase(key: string): Promise<R2Object | null> {
-    const response = await this.aws.fetch(`${this.base}/${key}`, {
-      cache: "no-store",
-    });
+    const response = await withNetworkRetries((signal) =>
+      this.aws.fetch(`${this.base}/${key}`, { cache: "no-store", signal }),
+    );
     if (response.status === 404) return null;
     this.requireSuccess(response, `R2 GET ${key}`);
     const etag = response.headers.get("ETag");
@@ -50,11 +53,14 @@ export class R2Client {
     bytes: Uint8Array,
     expectedEtag: string | null,
   ): Promise<string> {
-    const response = await this.aws.fetch(`${this.base}/${key}`, {
-      method: "PUT",
-      headers: expectedEtag ? { "If-Match": expectedEtag } : { "If-None-Match": "*" },
-      body: new Uint8Array(bytes),
-    });
+    const response = await withNetworkTimeout((signal) =>
+      this.aws.fetch(`${this.base}/${key}`, {
+        method: "PUT",
+        headers: expectedEtag ? { "If-Match": expectedEtag } : { "If-None-Match": "*" },
+        body: new Uint8Array(bytes),
+        signal,
+      }),
+    );
     if (response.status === 412) {
       throw new R2ConflictError(`R2 PUT ${key} conflicted with a newer database`);
     }

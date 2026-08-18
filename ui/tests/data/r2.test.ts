@@ -42,6 +42,7 @@ describe("R2Client.getObject", () => {
     expect([...(result ?? [])]).toEqual([1, 2, 3]);
     expect(fetchMock).toHaveBeenCalledWith(
       "https://acct.r2.cloudflarestorage.com/b/some/key",
+      { signal: expect.any(AbortSignal) },
     );
   });
 
@@ -85,8 +86,28 @@ describe("R2Client database operations", () => {
     });
     expect(fetchMock).toHaveBeenCalledWith(
       "https://acct.r2.cloudflarestorage.com/b/db-key",
-      { cache: "no-store" },
+      { cache: "no-store", signal: expect.any(AbortSignal) },
     );
+  });
+
+  it("retries a read three times when the network is unavailable", async () => {
+    vi.useFakeTimers();
+    try {
+      const client = new R2Client(CREDENTIAL);
+      const fetchMock = (
+        client as unknown as { aws: { fetch: ReturnType<typeof vi.fn> } }
+      ).aws.fetch;
+      fetchMock.mockRejectedValue(new TypeError("Failed to fetch"));
+
+      const download = client.getDatabase("db-key");
+      const rejection = expect(download).rejects.toThrow("Failed to fetch");
+      await vi.runAllTimersAsync();
+
+      await rejection;
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("conditionally replaces existing and absent databases", async () => {

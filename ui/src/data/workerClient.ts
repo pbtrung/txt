@@ -64,10 +64,11 @@ export class WorkerClient {
     dbPath: string,
     dbPrefix: string,
     signing: R2SigningIdentity,
+    signal?: AbortSignal,
   ): Promise<R2CredentialPair> {
-    let response = await this.signedR2Request(dbPath, dbPrefix, signing, false);
+    let response = await this.signedR2Request(dbPath, dbPrefix, signing, false, signal);
     if (response.status === 401) {
-      response = await this.signedR2Request(dbPath, dbPrefix, signing, true);
+      response = await this.signedR2Request(dbPath, dbPrefix, signing, true, signal);
     }
     if (!response.ok) {
       throw new Error(`could not obtain R2 credentials: ${response.status}`);
@@ -80,6 +81,7 @@ export class WorkerClient {
     dbPrefix: string,
     signing: R2SigningIdentity,
     forceRefresh: boolean,
+    signal?: AbortSignal,
   ): Promise<Response> {
     const idToken = await this.tokens.getIdToken(forceRefresh);
     const expiresAt = Math.floor(Date.now() / 1000) + PROOF_LIFETIME_SECONDS;
@@ -105,23 +107,33 @@ export class WorkerClient {
         `Web Crypto returned an invalid P-521 signature size: ${signature.byteLength}`,
       );
     }
-    return this.post("/v1/r2-token", idToken, {
-      db_path: dbPath,
-      db_prefix: dbPrefix,
-      proof: {
-        version: signing.version,
-        expires_at: expiresAt,
-        request_id: toBase64(requestId),
-        signature: toBase64(signature),
+    return this.post(
+      "/v1/r2-token",
+      idToken,
+      {
+        db_path: dbPath,
+        db_prefix: dbPrefix,
+        proof: {
+          version: signing.version,
+          expires_at: expiresAt,
+          request_id: toBase64(requestId),
+          signature: toBase64(signature),
+        },
       },
-    });
+      signal,
+    );
   }
 
   private async authorizedPost(path: string, forceRefresh: boolean): Promise<Response> {
     return this.post(path, await this.tokens.getIdToken(forceRefresh));
   }
 
-  private post(path: string, idToken: string, body?: unknown): Promise<Response> {
+  private post(
+    path: string,
+    idToken: string,
+    body?: unknown,
+    signal?: AbortSignal,
+  ): Promise<Response> {
     return fetch(path, {
       method: "POST",
       headers: {
@@ -129,6 +141,7 @@ export class WorkerClient {
         ...(body ? { "Content-Type": "application/json" } : {}),
       },
       ...(body ? { body: JSON.stringify(body) } : {}),
+      signal,
     });
   }
 }

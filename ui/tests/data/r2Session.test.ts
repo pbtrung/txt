@@ -140,4 +140,40 @@ describe("R2Session", () => {
       vi.useRealTimers();
     }
   });
+
+  it("tries the Worker again on a later request after retries are exhausted", async () => {
+    vi.useFakeTimers();
+    try {
+      const refreshed = credentials("2099-01-01T00:00:00Z", "refreshed");
+      const { session, worker } = createSession(
+        credentials("2000-01-01T00:00:00Z"),
+        refreshed,
+      );
+      vi.mocked(worker.fetchR2Token)
+        .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+        .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+        .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+        .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+        .mockResolvedValueOnce(refreshed);
+      const clients = fakeClients("reconnected");
+      (
+        session as unknown as {
+          buildClients: (pair: R2CredentialPair) => typeof clients;
+        }
+      ).buildClients = vi.fn(() => clients);
+
+      const offlineRequest = session.getContent("p".repeat(52) + "/object");
+      const offlineRejection =
+        expect(offlineRequest).rejects.toThrow("Failed to fetch");
+      await vi.runAllTimersAsync();
+      await offlineRejection;
+
+      await expect(session.getContent("p".repeat(52) + "/object")).resolves.toEqual(
+        new TextEncoder().encode("reconnected"),
+      );
+      expect(worker.fetchR2Token).toHaveBeenCalledTimes(5);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
