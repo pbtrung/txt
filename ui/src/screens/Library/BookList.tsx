@@ -26,7 +26,10 @@ export function BookList({
         items={books}
         className="flex-grow-1 overflow-y-auto px-2 px-md-3 book-list-grid"
       >
-        {(book) => <VirtualBookRow book={book} />}
+        {/* The collection builder reads identity from this direct child's id
+            before VirtualBookRow renders; keeping it here prevents filtered
+            rows from being reused for a different book. */}
+        {(book) => <VirtualBookRow id={book.txtId} book={book} />}
       </GridList>
     </Virtualizer>
   );
@@ -41,10 +44,10 @@ function EmptyBookList({ totalCount }: { totalCount: number }) {
   );
 }
 
-function VirtualBookRow({ book }: { book: LibraryBook }) {
+function VirtualBookRow({ id, book }: { id: number; book: LibraryBook }) {
   return (
     <GridListItem
-      id={book.txtId}
+      id={id}
       textValue={book.title}
       focusMode="child"
       className="book-row-container"
