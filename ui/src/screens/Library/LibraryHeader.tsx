@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Button, Input, SearchField } from "react-aria-components";
 import type { LibraryBook } from "../../data/libraryDb";
+import type { BookShare } from "../../data/shares";
 import { classNames } from "../../util/classNames";
 
 export function LibraryHeader({
@@ -8,19 +9,27 @@ export function LibraryHeader({
   onQuery,
   menu,
   selectedBook,
+  selectedShare,
   showBookActions,
+  showShareActions,
   canShare,
   onRead,
   onShare,
+  onCopyShare,
+  onDeleteShare,
 }: {
   query: string;
   onQuery: (query: string) => void;
   menu: ReactNode;
   selectedBook: LibraryBook | null;
+  selectedShare: BookShare | null;
   showBookActions: boolean;
+  showShareActions: boolean;
   canShare: boolean;
   onRead: () => void;
   onShare: () => void;
+  onCopyShare: () => void;
+  onDeleteShare: () => void;
 }) {
   const showFullBrand = menu === null;
   return (
@@ -76,6 +85,23 @@ export function LibraryHeader({
               )}
             </div>
           )}
+          {showShareActions && (
+            <div className="btn-group library-book-actions" aria-label="Share actions">
+              <BookAction
+                label="Copy"
+                icon="copy"
+                isDisabled={!selectedShare || selectedShare.state !== "active"}
+                onPress={onCopyShare}
+              />
+              <BookAction
+                label="Delete this share"
+                visibleLabel="Delete"
+                icon="trash"
+                isDisabled={!selectedShare}
+                onPress={onDeleteShare}
+              />
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -84,11 +110,13 @@ export function LibraryHeader({
 
 function BookAction({
   label,
+  visibleLabel = label,
   icon,
   isDisabled,
   onPress,
 }: {
   label: string;
+  visibleLabel?: string;
   icon: string;
   isDisabled: boolean;
   onPress: () => void;
@@ -101,7 +129,7 @@ function BookAction({
       onPress={onPress}
     >
       <i className={`bi bi-${icon} me-md-1`} aria-hidden="true" />
-      <span className="d-none d-md-inline">{label}</span>
+      <span className="d-none d-md-inline">{visibleLabel}</span>
     </Button>
   );
 }

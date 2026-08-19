@@ -140,10 +140,14 @@ function ControlledSearchHeader({ onChange }: { onChange: (value: string) => voi
       onQuery={update}
       menu={null}
       selectedBook={null}
+      selectedShare={null}
       showBookActions={false}
+      showShareActions={false}
       canShare={false}
       onRead={() => undefined}
       onShare={() => undefined}
+      onCopyShare={() => undefined}
+      onDeleteShare={() => undefined}
     />
   );
 }
@@ -290,7 +294,9 @@ describe("LibraryScreen", () => {
     expect(read.querySelector("span")).toHaveClass("d-none", "d-md-inline");
     expect(share.querySelector("span")).toHaveClass("d-none", "d-md-inline");
 
-    await userEvent.click(screen.getByRole("row", { name: "Dune" }));
+    const shareRow = screen.getByRole("row", { name: "Dune" });
+    await userEvent.click(shareRow);
+    expect(shareRow).toHaveAttribute("aria-selected", "true");
 
     expect(read).toBeEnabled();
     expect(share).toBeEnabled();
@@ -358,21 +364,31 @@ describe("LibraryScreen", () => {
       expect(screen.getByRole("button", { name: /^Shares/ })).toHaveTextContent("1"),
     );
     await userEvent.click(screen.getByRole("button", { name: /^Shares/ }));
+    const actions = screen.getByLabelText("Share actions");
+    const deleteButton = screen.getByRole("button", {
+      name: "Delete this share",
+    });
+    expect(
+      screen.getByRole("searchbox").closest(".library-search-group"),
+    ).toContainElement(actions);
+    expect(screen.getByRole("button", { name: "Copy" })).toBeDisabled();
+    expect(deleteButton).toBeDisabled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Delete this share" }));
+    await userEvent.click(screen.getByRole("row", { name: "Dune" }));
+    expect(screen.getByRole("button", { name: "Copy" })).toBeEnabled();
+    expect(deleteButton).toBeEnabled();
+
+    fireEvent.click(deleteButton);
     expect(shareToast()).toHaveTextContent("Deleting share");
     expect(shareToast()).toHaveTextContent("Deleting shared copy");
 
     await act(async () => complete());
-    await waitFor(() =>
-      expect(
-        screen.queryByRole("button", { name: "Delete this share" }),
-      ).not.toBeInTheDocument(),
-    );
+    await waitFor(() => expect(deleteButton).toBeDisabled());
+    expect(screen.getByText("No shared books yet.")).toBeInTheDocument();
     expect(shareToast()).toHaveTextContent("Share deleted");
   });
 
-  it("shows source-book metadata and unique deletion actions for shares", async () => {
+  it("shows source-book metadata and selects the requested share", async () => {
     const source = book({
       txtId: 7,
       title: "A title long enough to need truncation",
@@ -381,7 +397,7 @@ describe("LibraryScreen", () => {
       lastAccessed: new Date(2026, 7, 19, 9, 8, 7).getTime(),
     });
     const shares = [share(1, source.txtId), share(2, source.txtId)];
-    const onDeleteShare = vi.fn();
+    const onSelectShare = vi.fn();
     render(
       <MemoryRouter>
         <LibraryContent
@@ -390,21 +406,18 @@ describe("LibraryScreen", () => {
           query=""
           selectedTxtId={null}
           onSelectBook={() => undefined}
+          selectedShareId={null}
+          onSelectShare={onSelectShare}
           onNavigate={() => undefined}
           onClearAccess={() => undefined}
           onClearBookmarks={() => undefined}
           shares={shares}
-          onCopyShare={() => undefined}
-          onDeleteShare={onDeleteShare}
         />
       </MemoryRouter>,
     );
 
     const rows = screen.getAllByRole("row");
-    expect(rows.map((row) => row.getAttribute("data-key"))).toEqual([
-      "share-1",
-      "share-2",
-    ]);
+    expect(rows).toHaveLength(2);
     expect(screen.getAllByLabelText("3 bookmarks")).toHaveLength(2);
     expect(screen.getAllByLabelText(/Last accessed/)).toHaveLength(2);
     expect(screen.getAllByText("A very long author name")).toHaveLength(2);
@@ -413,10 +426,12 @@ describe("LibraryScreen", () => {
       "min-w-0",
     );
 
-    const deletes = screen.getAllByRole("button", { name: "Delete this share" });
-    expect(deletes[0]).toHaveAttribute("aria-label", "Delete this share");
-    await userEvent.click(deletes[0]);
-    expect(onDeleteShare).toHaveBeenCalledWith(shares[0]);
+    expect(screen.queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Delete this share" }),
+    ).not.toBeInTheDocument();
+    await userEvent.click(rows[0]);
+    expect(onSelectShare).toHaveBeenCalledWith(shares[0].id);
   });
 
   it("opens a bookmark row at the book's newest bookmark", () => {

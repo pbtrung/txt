@@ -1,9 +1,9 @@
 import { IconButton } from "../../components/IconButton";
 import { useMemo } from "react";
-import { Button, GridList } from "react-aria-components";
+import { Button, GridList, type Selection } from "react-aria-components";
 import type { LibraryBook } from "../../data/libraryDb";
 import type { BookShare } from "../../data/shares";
-import { BookList, BookRow, EmptyState } from "./BookList";
+import { BookList, BookRow, EmptyState, SelectableBookRow } from "./BookList";
 import {
   browseEntries,
   createBookSearch,
@@ -25,24 +25,24 @@ export function LibraryContent({
   query,
   selectedTxtId,
   onSelectBook,
+  selectedShareId,
+  onSelectShare,
   onNavigate,
   onClearAccess,
   onClearBookmarks,
   shares,
-  onCopyShare,
-  onDeleteShare,
 }: {
   books: LibraryBook[];
   view: LibraryView;
   query: string;
   selectedTxtId: number | null;
   onSelectBook: (txtId: number | null) => void;
+  selectedShareId: number | null;
+  onSelectShare: (shareId: number | null) => void;
   onNavigate: (view: LibraryView) => void;
   onClearAccess: (txtId: number) => void;
   onClearBookmarks: (txtId: number) => void;
   shares: BookShare[];
-  onCopyShare: (share: BookShare) => void;
-  onDeleteShare: (share: BookShare) => void;
 }) {
   const search = useMemo(() => createBookSearch(books), [books]);
   const filteredBooks = useMemo(
@@ -55,7 +55,7 @@ export function LibraryContent({
       {view.kind === "recent" ? (
         <RecentBooks {...{ books, onClearAccess, onClearBookmarks }} />
       ) : view.kind === "shares" ? (
-        <SharesList {...{ books, shares, onCopyShare, onDeleteShare }} />
+        <SharesList {...{ books, shares, query, selectedShareId, onSelectShare }} />
       ) : view.kind === "entries" ? (
         <EntriesList {...{ books, query, onNavigate }} dimension={view.dimension} />
       ) : (
@@ -73,45 +73,57 @@ export function LibraryContent({
 function SharesList({
   books,
   shares,
-  onCopyShare,
-  onDeleteShare,
+  query,
+  selectedShareId,
+  onSelectShare,
 }: {
   books: LibraryBook[];
   shares: BookShare[];
-  onCopyShare: (share: BookShare) => void;
-  onDeleteShare: (share: BookShare) => void;
+  query: string;
+  selectedShareId: number | null;
+  onSelectShare: (shareId: number | null) => void;
 }) {
   const booksById = useMemo(
     () => new Map(books.map((book) => [book.txtId, book])),
     [books],
   );
+  const matchingBookIds = useMemo(() => {
+    if (!query.trim()) return null;
+    return new Set(
+      createBookSearch(books)
+        .search(query)
+        .map((book) => book.txtId),
+    );
+  }, [books, query]);
+  const visibleShares = matchingBookIds
+    ? shares.filter((share) => matchingBookIds.has(share.txtId))
+    : shares;
   if (!shares.length) return <EmptyStateContainer message="No shared books yet." />;
+  if (!visibleShares.length) return <EmptyStateContainer message="No shares match." />;
   return (
     <GridList
       aria-label="Shares"
+      selectionMode="single"
+      selectionBehavior="replace"
+      selectedKeys={selectedShareId === null ? [] : [selectedShareId]}
+      onSelectionChange={(selection) => onSelectShare(selectedId(selection))}
       className="book-row-grid overflow-y-auto overflow-x-hidden px-2 px-md-3 min-w-0"
     >
-      {shares.map((share) => (
-        <BookRow
+      {visibleShares.map((share) => (
+        <SelectableBookRow
           key={share.id}
-          rowId={`share-${share.id}`}
+          id={share.id}
           book={booksById.get(share.txtId) ?? shareBookFallback(share)}
-          removeLabel="Delete this share"
-          onRemove={() => onDeleteShare(share)}
-          action={
-            <Button
-              className="btn btn-sm btn-outline-secondary"
-              isDisabled={share.state !== "active"}
-              onPress={() => onCopyShare(share)}
-            >
-              <i className="bi bi-copy me-1" aria-hidden="true" />
-              Copy
-            </Button>
-          }
         />
       ))}
     </GridList>
   );
+}
+
+function selectedId(selection: Selection): number | null {
+  if (selection === "all") return null;
+  const value = selection.values().next().value;
+  return typeof value === "number" ? value : null;
 }
 
 function shareBookFallback(share: BookShare): LibraryBook {

@@ -61,6 +61,7 @@ export function LibraryScreen() {
   const [query, setQuery] = useState("");
   const [view, setView] = useState<LibraryView>(INITIAL_VIEW);
   const [selectedTxtId, setSelectedTxtId] = useState<number | null>(null);
+  const [selectedShareId, setSelectedShareId] = useState<number | null>(null);
   const [shareBusy, setShareBusy] = useState(false);
   const shareOperation = useRef(false);
   const libraryRoot = useRef<HTMLDivElement>(null);
@@ -80,16 +81,20 @@ export function LibraryScreen() {
     setView(next);
     setQuery("");
     setSelectedTxtId(null);
+    setSelectedShareId(null);
   };
   const search = (next: string) => {
     setQuery(next);
     setSelectedTxtId(null);
+    setSelectedShareId(null);
     if (parseSearch(next).activity || (next.trim() && view.kind === "recent")) {
       setView(ALL_BOOKS_VIEW);
     }
   };
   const selectedBook =
     library.books.find((book) => book.txtId === selectedTxtId) ?? null;
+  const selectedShare =
+    shared.shares.find((share) => share.id === selectedShareId) ?? null;
   const clearActivity = async (kind: "access" | "bookmarks", txtId: number) => {
     if (!session) return;
     const mutation =
@@ -163,6 +168,7 @@ export function LibraryScreen() {
     try {
       await deleteBookShare(session, share, progress);
       shared.remove(share.id);
+      setSelectedShareId(null);
       showShareToast({ status: "success", message: "Share deleted" }, SUCCESS_TOAST_MS);
     } catch (error) {
       showShareToast({ status: "error", message: errorMessage(error) });
@@ -200,13 +206,21 @@ export function LibraryScreen() {
             )
           }
           selectedBook={selectedBook}
+          selectedShare={selectedShare}
           showBookActions={view.kind === "books"}
+          showShareActions={view.kind === "shares"}
           canShare={isAdmin}
           onRead={() => {
             if (selectedBook) routerNavigate(`/read/${selectedBook.txtId}`);
           }}
           onShare={() => {
             if (selectedBook) void createShare(selectedBook.txtId);
+          }}
+          onCopyShare={() => {
+            if (selectedShare) void copyShare(selectedShare);
+          }}
+          onDeleteShare={() => {
+            if (selectedShare) void removeShare(selectedShare);
           }}
         />
         <div
@@ -231,12 +245,12 @@ export function LibraryScreen() {
             query={query}
             selectedTxtId={selectedTxtId}
             onSelectBook={setSelectedTxtId}
+            selectedShareId={selectedShareId}
+            onSelectShare={setSelectedShareId}
             onNavigate={navigate}
             onClearAccess={(txtId) => void clearActivity("access", txtId)}
             onClearBookmarks={(txtId) => void clearActivity("bookmarks", txtId)}
             shares={shared.shares}
-            onCopyShare={(share) => void copyShare(share)}
-            onDeleteShare={(share) => void removeShare(share)}
           />
         </div>
       </div>
