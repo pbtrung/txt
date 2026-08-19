@@ -215,18 +215,20 @@
 }
 
 .reader-side-panel {
-  width: 100%;
+  width: calc(100vw - 1.5rem);
   max-width: 350px;
 }
 
-/* React Aria owns modal focus containment, outside-click dismissal, and
-   focus restoration. This element is its full-screen backdrop; the nested
-   Bootstrap offcanvas keeps the app's existing panel visuals. */
+/* React Aria owns focus containment, outside-click dismissal, and focus
+   restoration. Keep the reader panels visually lighter than a full-height
+   Bootstrap drawer by floating them just inside the viewport. */
 .aria-offcanvas-overlay {
   position: fixed;
   inset: 0;
   z-index: var(--bs-offcanvas-zindex, 1045);
-  background: rgba(0, 0, 0, 0.5);
+  padding: 0.75rem;
+  background: rgba(61, 57, 41, 0.28);
+  backdrop-filter: blur(2px);
 }
 
 .aria-offcanvas-modal {
@@ -234,7 +236,40 @@
 }
 
 .aria-offcanvas-overlay .offcanvas {
+  top: 0.75rem;
+  bottom: 0.75rem;
   z-index: 1;
+  height: auto;
+  border: var(--bs-border-width) solid var(--bs-border-color);
+  border-radius: var(--bs-border-radius-lg);
+  background: var(--bs-body-bg);
+  box-shadow: 0 1rem 3rem rgba(61, 57, 41, 0.22);
+  overflow: hidden;
+}
+
+.aria-offcanvas-overlay .offcanvas-start {
+  left: 0.75rem;
+}
+
+.aria-offcanvas-overlay .offcanvas-end {
+  right: 0.75rem;
+}
+
+.aria-offcanvas-overlay .offcanvas-header {
+  min-height: 3.75rem;
+  padding: 0.875rem 1.25rem;
+  border-bottom: var(--bs-border-width) solid var(--bs-border-color);
+  background: var(--bs-tertiary-bg);
+}
+
+.aria-offcanvas-overlay .offcanvas-title {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.aria-offcanvas-overlay .offcanvas-body {
+  padding: 1.25rem;
+  overscroll-behavior: contain;
 }
 
 /* A compact, theme-aware tooltip for icon-only controls. React Aria owns
