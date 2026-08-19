@@ -78,15 +78,22 @@ Minimum valid blob length: 2 + 2 + 64 + 0 + 64 = 132 bytes.
 
 ### Public-share path grants
 
-Public-share grants are a separate Worker-side envelope because the Worker does not load the leancrypto WASM used by user-data blobs. The Worker decodes the dedicated 32-byte `SHARE_GRANT_KEY` and uses Web Crypto AES-256-GCM with a fresh 12-byte nonce:
+Public-share grants are a separate Worker-side envelope because the Worker does not load the leancrypto WASM used by user-data blobs. The Worker decodes the dedicated 32-byte `SHARE_GRANT_KEY`, generates an independent 32-byte salt and 12-byte nonce, and derives a separate AES-256-GCM key for every grant:
 
 ```text
+id_hash   = SHA-256(raw 32-byte share_id)
+grant_key = HKDF-SHA-256(
+  IKM  = SHARE_GRANT_KEY,
+  salt = random salt_32,
+  info = UTF8("txt:share-grant-key:v1") || id_hash,
+  len  = 32
+)
 plaintext = UTF8(exact shared-object path)
-AAD       = UTF8("txt:share-grant:v1") || SHA-256(raw 32-byte share_id)
-grant     = 0x01 || nonce_12 || AES-GCM-ciphertext-and-tag
+AAD       = UTF8("txt:share-grant:v1") || id_hash
+grant     = 0x01 || salt_32 || nonce_12 || AES-GCM-ciphertext-and-tag
 ```
 
-The grant is base64url encoded without padding. On decryption the Worker validates the path grammar and requires `SHA-256(path)` to equal the D1 row's registered path hash. D1 therefore authorizes deletion without learning the path, while cross-capability substitution and database row substitution fail authentication or the path-hash comparison. The EPUB continues to use the standard Ascon-Keccak blob format and its independent 128-byte `share_content_key`.
+Salt and nonce are public, independently generated, and carried inside the grant; neither is reused as the other. The per-grant derivation isolates grants and makes a nonce collision across different salts harmless. The grant is base64url encoded without padding. On decryption the Worker validates the path grammar and requires `SHA-256(path)` to equal the D1 row's registered path hash. D1 therefore authorizes deletion without learning the path, while cross-capability substitution and database row substitution fail authentication or the path-hash comparison. The EPUB continues to use the standard Ascon-Keccak blob format and its independent 128-byte `share_content_key`.
 
 ## Version Numbering
 
