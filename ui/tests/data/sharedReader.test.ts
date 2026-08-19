@@ -16,7 +16,7 @@ import { toBase64 } from "../../src/util/base64";
 
 const ID = base64Url(new Uint8Array(32).fill(1));
 const KEY = base64Url(new Uint8Array(128).fill(2));
-const GRANT = base64Url(new Uint8Array(64).fill(3));
+const GRANT = base64Url(new Uint8Array(226).fill(3));
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -38,6 +38,11 @@ describe("shared reader references", () => {
     expect(
       parseSharedReference(
         `#id=${base64Url(new Uint8Array(31))}&grant=${GRANT}&key=${KEY}`,
+      ),
+    ).toBeNull();
+    expect(
+      parseSharedReference(
+        `#id=${ID}&grant=${base64Url(new Uint8Array(225))}&key=${KEY}`,
       ),
     ).toBeNull();
   });

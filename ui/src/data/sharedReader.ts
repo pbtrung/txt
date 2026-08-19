@@ -7,6 +7,7 @@ import type { ReaderDocument, ReaderLoadProgress } from "./readerDocument";
 
 const SHARE_ID_BYTES = 32;
 const CONTENT_KEY_BYTES = 128;
+const GRANT_BYTES = 226;
 const BASE64URL = /^[A-Za-z0-9_-]+$/;
 
 export const SHARED_READER_LOAD_TOTAL_STEPS = 4;
@@ -27,8 +28,10 @@ export function parseSharedReference(hash: string): SharedReference | null {
   }
   try {
     const shareId = decodeBase64Url(id);
+    const grantBytes = decodeBase64Url(grant);
     const contentKey = decodeBase64Url(key);
     return shareId.byteLength === SHARE_ID_BYTES &&
+      grantBytes.byteLength === GRANT_BYTES &&
       contentKey.byteLength === CONTENT_KEY_BYTES
       ? { id, grant, contentKey }
       : null;

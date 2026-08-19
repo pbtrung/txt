@@ -10,6 +10,13 @@ const GRANT_VERSION = 1;
 const SHARE_ID_BYTES = 32;
 const SALT_BYTES = 32;
 const NONCE_BYTES = 12;
+const GCM_TAG_BYTES = 16;
+const STORAGE_PATH_CHARS = 52;
+const SHARED_OBJECT_PATH_BYTES =
+  STORAGE_PATH_CHARS + "/shared/".length + STORAGE_PATH_CHARS + 1 + STORAGE_PATH_CHARS;
+const GRANT_BYTES =
+  1 + SALT_BYTES + NONCE_BYTES + SHARED_OBJECT_PATH_BYTES + GCM_TAG_BYTES;
+const MAX_SHARE_REQUEST_BYTES = 1024;
 const GRANT_DOMAIN = new TextEncoder().encode("txt:share-grant:v1");
 const GRANT_KEY_DOMAIN = new TextEncoder().encode("txt:share-grant-key:v1");
 
@@ -77,6 +84,8 @@ export async function handleSharedContent(
 ): Promise<Response> {
   const input = await readContentRequest(request);
   if (!input) return new Response("malformed share", { status: 400 });
+  const rateLimit = await sharedContentRateLimit(request, env);
+  if (rateLimit) return rateLimit;
   const idHash = await sha256(input.shareId);
   const row = await registryRow(env, idHash);
   if (!row) return new Response("share not found", { status: 404 });
@@ -246,7 +255,8 @@ async function deleteEncryptedObject(
 
 async function readShareBody(request: Request): Promise<ShareBody | null> {
   try {
-    const body = (await request.json()) as Record<string, unknown>;
+    const body = await readBoundedJson(request);
+    if (!body) return null;
     const paths = [body.db_path, body.db_prefix, body.share_prefix, body.share_path];
     if (!paths.every((value) => typeof value === "string" && isStoragePath(value)))
       return null;
@@ -268,15 +278,74 @@ async function readContentRequest(
   request: Request,
 ): Promise<{ shareId: Uint8Array; grant: Uint8Array } | null> {
   try {
-    const body = (await request.json()) as Record<string, unknown>;
+    const body = await readBoundedJson(request);
+    if (!body) return null;
     if (typeof body.share_id !== "string" || typeof body.grant !== "string")
       return null;
     const shareId = base64url.decode(body.share_id);
     const grant = base64url.decode(body.grant);
-    return shareId.byteLength === SHARE_ID_BYTES ? { shareId, grant } : null;
+    return shareId.byteLength === SHARE_ID_BYTES &&
+      grant.byteLength === GRANT_BYTES &&
+      base64url.encode(shareId) === body.share_id &&
+      base64url.encode(grant) === body.grant
+      ? { shareId, grant }
+      : null;
   } catch {
     return null;
   }
+}
+
+async function readBoundedJson(
+  request: Request,
+): Promise<Record<string, unknown> | null> {
+  const declaredLength = request.headers.get("Content-Length");
+  if (declaredLength !== null) {
+    const bytes = Number(declaredLength);
+    if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > MAX_SHARE_REQUEST_BYTES) {
+      return null;
+    }
+  }
+  if (!request.body) return null;
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      length += value.byteLength;
+      if (length > MAX_SHARE_REQUEST_BYTES) {
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const parsed = JSON.parse(
+    new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(
+      concat(...chunks),
+    ),
+  ) as unknown;
+  return isRecord(parsed) ? parsed : null;
+}
+
+async function sharedContentRateLimit(
+  request: Request,
+  env: Env,
+): Promise<Response | null> {
+  try {
+    const key = request.headers.get("CF-Connecting-IP")?.slice(0, 128) || "unknown";
+    const { success } = await env.SHARE_RATE_LIMITER.limit({ key });
+    return success ? null : new Response("rate limit exceeded", { status: 429 });
+  } catch {
+    return new Response("rate limiter unavailable", { status: 503 });
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function parseStandardShareId(value: unknown): Uint8Array | null {

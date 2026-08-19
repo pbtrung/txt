@@ -45,4 +45,15 @@
 			"database_id": "d8d906d6-2187-409d-8227-374b5e8ba35d",
 		},
 	],
+	"ratelimits": [
+		{
+			"name": "SHARE_RATE_LIMITER",
+			// Account-local identifier for this binding; it is not a secret.
+			"namespace_id": "870319421",
+			"simple": {
+				"limit": 120,
+				"period": 60,
+			},
+		},
+	],
 }

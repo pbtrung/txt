@@ -25,6 +25,9 @@ const ENV = {
   FIREBASE_PROJECT_ID: "project",
   R2_TICKET_SECRET: toBase64(new Uint8Array(32).fill(5)),
   SHARE_GRANT_KEY: toBase64(new Uint8Array(32).fill(6)),
+  SHARE_RATE_LIMITER: {
+    limit: vi.fn(async () => ({ success: true })),
+  },
   R2_ENDPOINT: "https://account.r2.cloudflarestorage.com",
   R2_BUCKET: "bucket",
   R2_REGION: "auto",
@@ -56,6 +59,7 @@ beforeEach(async () => {
     "fetch",
     vi.fn(async () => new Response(new Uint8Array([7, 8, 9]))),
   );
+  vi.mocked(ENV.SHARE_RATE_LIMITER.limit).mockResolvedValue({ success: true });
 });
 
 describe("D1-backed book shares", () => {
@@ -118,6 +122,46 @@ describe("D1-backed book shares", () => {
     ).toBe(404);
     await handleDeleteShare(deleteRequest(), ENV);
     expect((await handleCreateShareGrant(createRequest(), ENV)).status).toBe(200);
+  });
+
+  it("rejects oversized bodies and non-canonical or incorrectly sized grants", async () => {
+    expect(
+      (
+        await handleSharedContent(
+          jsonRequest("POST", "/v1/shared-content", {
+            share_id: base64url.encode(SHARE_ID_BYTES),
+            grant: base64url.encode(new Uint8Array(227)),
+          }),
+          ENV,
+        )
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await handleSharedContent(
+          new Request("https://example/v1/shared-content", {
+            method: "POST",
+            body: JSON.stringify({ padding: "x".repeat(1024) }),
+          }),
+          ENV,
+        )
+      ).status,
+    ).toBe(400);
+    expect(ENV.SHARE_RATE_LIMITER.limit).not.toHaveBeenCalled();
+  });
+
+  it("rate limits valid anonymous requests before D1 and R2 access", async () => {
+    const { grant } = (await (
+      await handleCreateShareGrant(createRequest(), ENV)
+    ).json()) as { grant: string };
+    vi.mocked(ENV.SHARE_RATE_LIMITER.limit).mockResolvedValueOnce({ success: false });
+    vi.mocked(fetch).mockClear();
+
+    const response = await handleSharedContent(contentRequest(grant), ENV);
+
+    expect(response.status).toBe(429);
+    expect(ENV.SHARE_RATE_LIMITER.limit).toHaveBeenCalledWith({ key: "203.0.113.10" });
+    expect(fetch).not.toHaveBeenCalled();
   });
 });
 
@@ -187,7 +231,11 @@ function contentRequest(
 function jsonRequest(method: string, path: string, body: unknown): Request {
   return new Request(`https://example${path}`, {
     method,
-    headers: { Authorization: "Bearer token", "Content-Type": "application/json" },
+    headers: {
+      Authorization: "Bearer token",
+      "CF-Connecting-IP": "203.0.113.10",
+      "Content-Type": "application/json",
+    },
     body: JSON.stringify(body),
   });
 }

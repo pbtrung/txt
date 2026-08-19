@@ -23,6 +23,7 @@ There is one Turso control database, `ctl` (§2). User data lives as encrypted o
 | `R2_READ_WRITE_ACCESS_KEY_ID` / `R2_READ_WRITE_SECRET_ACCESS_KEY` | parent credential used to sign path-limited temporary R2 credentials and to fetch/delete exact shared objects inside the Worker |
 | `SHARE_GRANT_KEY` | standard padded base64 encoding of exactly 32 random bytes; AES-256-GCM key for opaque shared-object grants |
 | `SHARE_REGISTRY` | D1 binding containing 32-byte capability/path hash BLOBs for live shares; it never stores a raw capability or object path |
+| `SHARE_RATE_LIMITER` | native Workers rate-limit binding for anonymous shared-content requests; configured in `wrangler.jsonc` at 120 requests per source address per minute per Cloudflare location |
 
 `R2_TICKET_SECRET` must not reuse the R2 secret access key. All Worker instances use the same ticket secret. Rotating it invalidates every outstanding ticket and is an emergency global response, not routine per-user revocation.
 
@@ -275,6 +276,8 @@ The administrator endpoints use a Firebase bearer token and accept the same path
 `DELETE /v1/share` performs the same identity and path checks, rejects a registered id/path mismatch, deletes the exact R2 object with the Worker's parent credential, and then deletes the D1 row. A missing R2 object is treated as already deleted. The success response is 204.
 
 `POST /v1/shared-content` is anonymous. It accepts `{ "share_id": "<base64url id>", "grant": "<base64url envelope>" }`, requires a matching live D1 row, authenticates and decrypts the object path, fetches the ciphertext with the Worker's parent credential, and streams it without caching. It never receives the fragment's content key.
+
+The endpoint accepts at most 1 KiB of JSON, requires canonical base64url with exactly 32 decoded capability bytes and 226 decoded grant bytes, and applies the `SHARE_RATE_LIMITER` budget before its D1 lookup. Cloudflare's native counter is a permissive abuse control local to each edge location, not an accounting or authorization mechanism.
 
 ---
 

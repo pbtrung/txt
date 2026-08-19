@@ -9,6 +9,7 @@ interface Env {
   ADMIN_UID: string;
   SHARE_GRANT_KEY: string;
   SHARE_REGISTRY: D1Database;
+  SHARE_RATE_LIMITER: RateLimit;
   CTL_DB_URL: string;
   CTL_DB_TOKEN: string;
   // Standard padded base64 encoding of at least 32 random bytes.
