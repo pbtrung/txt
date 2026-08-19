@@ -1,13 +1,26 @@
 // @vitest-environment jsdom
-import { render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState, type ReactNode } from "react";
 import { MemoryRouter, useLocation } from "react-router-dom";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../../src/state/VaultContext", () => ({ useVault: vi.fn() }));
 vi.mock("../../../src/screens/Library/useLibraryBooks", () => ({
   useLibraryBooks: vi.fn(),
+}));
+vi.mock("../../../src/data/shares", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../src/data/shares")>()),
+  createBookShare: vi.fn(),
+  deleteBookShare: vi.fn(),
+  shareUrl: vi.fn(),
 }));
 // jsdom reports a zero-size scroll container, so the real virtualizer would
 // see nothing as "in view" and render no rows at all -- these tests care
@@ -22,7 +35,12 @@ vi.mock("react-aria-components", async (importOriginal) => {
 });
 
 import type { LibraryBook } from "../../../src/data/libraryDb";
-import type { BookShare } from "../../../src/data/shares";
+import {
+  createBookShare,
+  deleteBookShare,
+  shareUrl,
+  type BookShare,
+} from "../../../src/data/shares";
 import { LibraryContent } from "../../../src/screens/Library/LibraryContent";
 import * as libraryModel from "../../../src/screens/Library/libraryModel";
 import { LibraryHeader } from "../../../src/screens/Library/LibraryHeader";
@@ -82,9 +100,10 @@ function renderLibrary(
   lock = vi.fn(),
   mutate = vi.fn().mockResolvedValue(undefined),
   accountType: "admin" | "user" = "user",
+  shares: BookShare[] = [],
 ) {
   const session = {
-    database: { mutate, read: vi.fn().mockResolvedValue([]) },
+    database: { mutate, read: vi.fn().mockResolvedValue(shares) },
     displayName: "Trung",
     accountType,
   } as unknown as VaultSession;
@@ -130,6 +149,12 @@ function ControlledSearchHeader({ onChange }: { onChange: (value: string) => voi
 }
 
 describe("LibraryScreen", () => {
+  beforeEach(() => {
+    vi.mocked(createBookShare).mockReset();
+    vi.mocked(deleteBookShare).mockReset();
+    vi.mocked(shareUrl).mockReset();
+  });
+
   it("shows a loading message before books resolve", () => {
     renderScreen(null);
     expect(screen.getByText(/Loading your library/)).toBeInTheDocument();
@@ -269,6 +294,82 @@ describe("LibraryScreen", () => {
     expect(share).toBeEnabled();
   });
 
+  it("blocks the Library and reports share progress without overlapping work", async () => {
+    let complete: () => void = () => undefined;
+    const pending = new Promise<void>((resolve) => {
+      complete = resolve;
+    });
+    vi.mocked(createBookShare).mockImplementation(async (_session, _txtId, step) => {
+      step?.("Encrypting shared copy");
+      await pending;
+    });
+    renderLibrary(
+      { status: "ready", books: LIBRARY, reload: vi.fn() },
+      vi.fn(),
+      vi.fn().mockResolvedValue(undefined),
+      "admin",
+    );
+    await userEvent.click(screen.getByRole("button", { name: /^All Books/ }));
+    await userEvent.click(screen.getByRole("row", { name: "Dune" }));
+    const shareButton = screen.getByRole("button", { name: "Share" });
+
+    fireEvent.click(shareButton);
+    fireEvent.click(shareButton);
+
+    expect(createBookShare).toHaveBeenCalledOnce();
+    expect(screen.getByTestId("library-operation-surface")).toHaveAttribute("inert");
+    expect(screen.getByTestId("library-operation-surface")).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
+    expect(shareToast()).toHaveTextContent("Creating share: Dune");
+    expect(shareToast()).toHaveTextContent("Encrypting shared copy");
+    expect(document.querySelector(".library-operation-blocker")).not.toBeNull();
+
+    await act(async () => complete());
+    await waitFor(() =>
+      expect(shareToast()).toHaveTextContent("Share created for “Dune”"),
+    );
+    expect(screen.getByTestId("library-operation-surface")).not.toHaveAttribute(
+      "inert",
+    );
+  });
+
+  it("reports deletion progress and removes the completed share", async () => {
+    const existingShare = share(5, LIBRARY[0].txtId);
+    let complete: () => void = () => undefined;
+    const pending = new Promise<void>((resolve) => {
+      complete = resolve;
+    });
+    vi.mocked(deleteBookShare).mockImplementation(async (_session, _share, step) => {
+      step?.("Deleting shared copy");
+      await pending;
+    });
+    renderLibrary(
+      { status: "ready", books: LIBRARY, reload: vi.fn() },
+      vi.fn(),
+      vi.fn().mockResolvedValue(undefined),
+      "admin",
+      [existingShare],
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /^Shares/ })).toHaveTextContent("1"),
+    );
+    await userEvent.click(screen.getByRole("button", { name: /^Shares/ }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete this share" }));
+    expect(shareToast()).toHaveTextContent("Deleting share");
+    expect(shareToast()).toHaveTextContent("Deleting shared copy");
+
+    await act(async () => complete());
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Delete this share" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(shareToast()).toHaveTextContent("Share deleted");
+  });
+
   it("shows source-book metadata and unique deletion actions for shares", async () => {
     const source = book({
       txtId: 7,
@@ -311,8 +412,7 @@ describe("LibraryScreen", () => {
     );
 
     const deletes = screen.getAllByRole("button", { name: "Delete this share" });
-    await userEvent.hover(deletes[0]);
-    expect(await screen.findByRole("tooltip")).toHaveTextContent("Delete this share");
+    expect(deletes[0]).toHaveAttribute("aria-label", "Delete this share");
     await userEvent.click(deletes[0]);
     expect(onDeleteShare).toHaveBeenCalledWith(shares[0]);
   });
@@ -351,6 +451,11 @@ describe("LibraryScreen", () => {
 
   it("keeps desktop navigation in the left pane with browse counts", () => {
     renderScreen(LIBRARY);
+    expect(document.querySelector(".library-brand-col")).toHaveClass(
+      "library-pane-col",
+    );
+    expect(document.querySelector(".library-sidebar")).toHaveClass("library-pane-col");
+    expect(document.querySelector(".library-search-col")).toHaveClass("min-w-0");
     expect(screen.getByRole("button", { name: /^Recent/ })).toHaveTextContent("2");
     expect(screen.getByRole("button", { name: /^All Books/ })).toHaveTextContent("2");
     expect(screen.getByRole("button", { name: /^Authors/ })).toHaveTextContent("2");
@@ -516,4 +621,10 @@ function share(id: number, txtId: number): BookShare {
     state: "active",
     createdAt: id,
   };
+}
+
+function shareToast(): HTMLElement {
+  const toast = document.querySelector<HTMLElement>(".library-share-toast");
+  if (!toast) throw new Error("share toast is missing");
+  return toast;
 }

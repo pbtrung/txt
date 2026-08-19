@@ -23,14 +23,14 @@ export function LibraryHeader({
 }) {
   return (
     <div className="d-flex align-items-center border-bottom flex-shrink-0">
-      <div className="d-flex align-items-center gap-2 px-2 px-md-3 py-2 library-brand-col">
+      <div className="d-flex align-items-center gap-2 px-2 px-md-3 py-2 library-brand-col library-pane-col">
         {menu}
         <div className="d-none d-md-flex align-items-center gap-2">
           <i className="bi bi-book fs-5" aria-hidden="true" />
           <span className="fw-semibold fs-5">Skypiea</span>
         </div>
       </div>
-      <div className="d-flex flex-grow-1 px-2 px-md-3 py-2 min-w-0">
+      <div className="d-flex flex-grow-1 px-2 px-md-3 py-2 min-w-0 library-search-col">
         <div className="library-search-group d-flex min-w-0">
           <SearchField
             className="search-box position-relative min-w-0"

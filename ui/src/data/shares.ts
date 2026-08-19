@@ -19,6 +19,8 @@ export interface BookShare {
   createdAt: number;
 }
 
+export type ShareProgress = (step: string) => void;
+
 export async function loadShares(db: SqliteDatabase): Promise<BookShare[]> {
   const rows = db.query(
     "SELECT s.id, s.txt_id, t.catalog, s.share_id, s.share_content_key, " +
@@ -46,28 +48,38 @@ async function toShare(row: unknown[]): Promise<BookShare> {
 export async function createBookShare(
   session: VaultSession,
   txtId: number,
+  onProgress?: ShareProgress,
 ): Promise<void> {
+  onProgress?.("Loading book");
   const document = await session.database.read((db) =>
     loadReaderDocument(db, session.storage, session.dbPrefix, txtId),
   );
   if (!document) throw new Error("book content is missing");
   const material = newShareMaterial();
+  onProgress?.("Saving share details");
   await session.database.mutate(insertShare(txtId, material));
+  onProgress?.("Encrypting shared copy");
   const encrypted = await encrypt(document.epubBytes, material.contentKey);
+  onProgress?.("Uploading shared copy");
   await session.storage.putShared(objectKey(session.dbPrefix, material), encrypted);
+  onProgress?.("Finishing share");
   await session.database.mutate(setShareState(material.shareId, "active"));
 }
 
 export async function deleteBookShare(
   session: VaultSession,
   share: BookShare,
+  onProgress?: ShareProgress,
 ): Promise<void> {
+  onProgress?.("Marking share for deletion");
   await session.database.mutate(setShareState(share.shareId, "deleting"));
+  onProgress?.("Deleting shared copy");
   await session.storage.deleteShareRegistration(
     toBase32Crockford(share.prefix),
     toBase32Crockford(share.path),
     toBase64(share.shareId),
   );
+  onProgress?.("Removing share details");
   await session.database.mutate(deleteShare(share.shareId));
 }
 

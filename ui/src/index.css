@@ -131,10 +131,12 @@
 
 .search-box {
   flex: 1 1 auto;
+  min-width: 0;
 }
 
 .library-search-group {
   width: 100%;
+  max-width: 100%;
 }
 
 .library-search-group:has(.library-book-actions) .search-box-input {
@@ -214,11 +216,6 @@
   width: auto;
 }
 
-.library-sidebar {
-  width: var(--library-sidebar-width);
-  flex-shrink: 0;
-}
-
 .library-dropdown {
   width: min(var(--library-sidebar-width), calc(100vw - 1rem));
   max-height: calc(100dvh - 4rem);
@@ -238,10 +235,40 @@
     width: max(350px, 50%);
   }
 
+  .library-pane-col {
+    width: min(var(--library-sidebar-width), 40%);
+    flex: 0 0 min(var(--library-sidebar-width), 40%);
+  }
+
   .library-brand-col {
-    width: var(--library-sidebar-width);
     border-right: var(--bs-border-width) solid var(--bs-border-color);
   }
+}
+
+.library-operation-blocker {
+  position: absolute;
+  inset: 0;
+  z-index: 1070;
+  cursor: wait;
+  background: rgba(var(--bs-body-bg-rgb), 0.28);
+  backdrop-filter: blur(2px);
+}
+
+.library-share-toast-region {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  left: 1rem;
+  z-index: 1080;
+  display: flex;
+  justify-content: center;
+  outline: none;
+}
+
+.library-share-toast {
+  width: 100%;
+  max-width: 26rem;
+  outline: none;
 }
 
 /* A flex child needs an explicit min-width: 0 to shrink below its text's
