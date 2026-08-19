@@ -101,6 +101,9 @@ class FakeLibsqlClient:
         elif "INSERT INTO cred_store" in normalized:
             owner_id, for_user_id, content = args
             FakeLibsqlClient.cred_store[(owner_id, for_user_id)] = content
+        elif "UPDATE cred_store SET content" in normalized:
+            content, owner_id, for_user_id = args
+            FakeLibsqlClient.cred_store[(owner_id, for_user_id)] = content
         elif "UPDATE key_store SET sign_version" in normalized:
             version, algorithm, sign_pub, sign_priv, uid = args
             umk, pubkey, privkey, *_ = FakeLibsqlClient.key_store[uid]
@@ -400,6 +403,7 @@ def test_cred_store_decrypts_correctly(
     assert len(base64.b64decode(payload["db_master_key"])) == 256
     assert len(payload["db_path"]) == len(payload["db_prefix"]) == 52
     assert payload["db_path"] != payload["db_prefix"]
+    assert "user_root_key" not in payload
 
 
 @pytest.mark.parametrize("account_type", ["admin", "user"])
@@ -418,7 +422,7 @@ def test_second_run_does_not_reinsert(
     assert inserts == []
 
 
-def test_admin_backup_row_decrypts_to_the_same_payload(
+def test_admin_backup_adds_user_root_key_to_the_self_payload(
     creds_path, user_creds_path, engine
 ):
     admin_umk = _provision_admin(engine)
@@ -435,14 +439,26 @@ def test_admin_backup_row_decrypts_to_the_same_payload(
     self_payload = blob.decrypt_json(self_content, user_umk)
     backup_payload = blob.decrypt_json(backup_content, admin_umk)
 
-    assert backup_payload == self_payload
+    with open(user_creds_path) as f:
+        user_root_key = json.load(f)["user_root_key"]
+    assert backup_payload == {**self_payload, "user_root_key": user_root_key}
 
 
-def test_admin_backup_row_skipped_when_already_present(
+def test_existing_admin_backup_is_upgraded_with_user_root_key(
     creds_path, user_creds_path, engine
 ):
-    _provision_admin(engine)
-    FakeLibsqlClient.cred_store[(ADMIN_UID, USER_UID)] = b"already-backed-up"
+    admin_umk = _provision_admin(engine)
+    initializer, _ = _build("user", creds_path, user_creds_path)
+    initializer.run()
+
+    blob = CryptoBlob(engine)
+    content = FakeLibsqlClient.cred_store[(ADMIN_UID, USER_UID)]
+    legacy = blob.decrypt_json(content, admin_umk)
+    legacy.pop("user_root_key")
+    FakeLibsqlClient.cred_store[(ADMIN_UID, USER_UID)] = blob.encrypt_json(
+        legacy, admin_umk
+    )
+
     initializer, _ = _build("user", creds_path, user_creds_path)
     initializer.run()
     ctl = FakeLibsqlClient.last_instance
@@ -451,9 +467,12 @@ def test_admin_backup_row_skipped_when_already_present(
         for kind, s, a in ctl.calls
         if kind == "execute" and "INSERT INTO cred_store" in s
     ]
-    assert len(cred_store_inserts) == 1
-    assert cred_store_inserts[0][0] == cred_store_inserts[0][1] == USER_UID
-    assert FakeLibsqlClient.cred_store[(ADMIN_UID, USER_UID)] == b"already-backed-up"
+    assert cred_store_inserts == []
+    upgraded = blob.decrypt_json(
+        FakeLibsqlClient.cred_store[(ADMIN_UID, USER_UID)], admin_umk
+    )
+    with open(user_creds_path) as f:
+        assert upgraded["user_root_key"] == json.load(f)["user_root_key"]
 
 
 def test_admin_backup_not_created_for_admin_self_init(creds_path, engine):

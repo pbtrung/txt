@@ -205,24 +205,33 @@ class AccountInitializer:
         self, ctl: LibsqlClient, user_uid: str, user_umk: bytes
     ) -> None:
         admin_uid = self._sign_in(self.admin_creds)
-        if self._admin_backup_exists(ctl, admin_uid, user_uid):
-            self.logger.verbose(f"admin backup row for {user_uid} already exists.")
-            return
         admin_umk = unwrap_umk(
             ctl, admin_uid, self.admin_creds.user_root_key, self.blob
         )
         payload = self._self_payload(ctl, user_uid, user_umk)
-        self._insert_admin_backup(ctl, admin_uid, user_uid, admin_umk, payload)
+        backup = {**payload, "user_root_key": self.target_creds.user_root_key}
+        self._write_admin_backup(ctl, admin_uid, user_uid, admin_umk, backup)
 
-    def _admin_backup_exists(
-        self, ctl: LibsqlClient, admin_uid: str, user_uid: str
-    ) -> bool:
-        return bool(
-            ctl.query(
-                "SELECT 1 FROM cred_store WHERE owner_id = ? AND for_user_id = ?",
-                [admin_uid, user_uid],
-            )
+    def _write_admin_backup(self, ctl, admin_uid, user_uid, admin_umk, payload):
+        rows = ctl.query(
+            "SELECT content FROM cred_store WHERE owner_id = ? AND for_user_id = ?",
+            [admin_uid, user_uid],
         )
+        if not rows:
+            self._insert_admin_backup(ctl, admin_uid, user_uid, admin_umk, payload)
+            return
+        if self.blob.decrypt_json(rows[0][0], admin_umk) == payload:
+            self.logger.verbose(f"admin backup row for {user_uid} is current.")
+            return
+        self._update_admin_backup(ctl, admin_uid, user_uid, admin_umk, payload)
+
+    def _update_admin_backup(self, ctl, admin_uid, user_uid, admin_umk, payload):
+        content = self.blob.encrypt_json(payload, admin_umk)
+        ctl.execute(
+            "UPDATE cred_store SET content = ? WHERE owner_id = ? AND for_user_id = ?",
+            [content, admin_uid, user_uid],
+        )
+        self.logger.verbose(f"Updated admin backup row for {user_uid}.")
 
     def _self_payload(self, ctl: LibsqlClient, uid: str, umk: bytes) -> dict:
         rows = ctl.query(
