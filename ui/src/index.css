@@ -257,15 +257,22 @@
 }
 
 .aria-offcanvas-overlay .offcanvas-header {
-  min-height: 3rem;
-  padding: 0.625rem 1rem;
+  min-height: 2.625rem;
+  padding: 0.375rem 0.875rem;
   border-bottom: var(--bs-border-width) solid var(--bs-border-color);
   background: var(--bs-tertiary-bg);
 }
 
 .aria-offcanvas-overlay .offcanvas-title {
-  font-size: 1rem;
+  font-size: 0.875rem;
   font-weight: 600;
+}
+
+.aria-offcanvas-overlay .btn-close {
+  width: 0.75rem;
+  height: 0.75rem;
+  padding: 0.375rem;
+  background-size: 0.625rem;
 }
 
 .aria-offcanvas-overlay .offcanvas-body {
