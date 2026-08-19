@@ -36,4 +36,11 @@
 		// fetch() calls, but this removes the distinction entirely).
 		"run_worker_first": ["/v1/*"],
 	},
+	"d1_databases": [
+		{
+			"binding": "SHARE_REGISTRY",
+			"database_name": "txt-share-registry",
+			"database_id": "e80980e9-dcfc-4805-9378-39f5a37a7b3b",
+		},
+	],
 }
