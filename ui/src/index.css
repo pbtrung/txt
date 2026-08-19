@@ -80,6 +80,10 @@
   pointer-events: none;
 }
 
+.search-box {
+  width: 100%;
+}
+
 .search-box-input {
   padding-left: 2rem;
   padding-right: 2rem;
@@ -157,6 +161,10 @@
 }
 
 @media (min-width: 768px) {
+  .search-box {
+    width: max(350px, 50%);
+  }
+
   .library-brand-col {
     width: var(--library-sidebar-width);
     border-right: var(--bs-border-width) solid var(--bs-border-color);
