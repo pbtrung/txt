@@ -262,6 +262,8 @@
 @media (min-width: 768px) {
   .reader-offcanvas-overlay {
     position: absolute;
+    background: transparent;
+    backdrop-filter: none;
   }
 }
 
