@@ -6,7 +6,11 @@
 
 import { handleKeys } from "./keys";
 import { handleR2Token } from "./r2Token";
-import { handleCreateShareGrant, handleSharedR2Token } from "./share";
+import {
+  handleCreateShareGrant,
+  handleDeleteShare,
+  handleSharedContent,
+} from "./share";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -20,8 +24,11 @@ export default {
     if (request.method === "POST" && url.pathname === "/v1/share-grant") {
       return handleCreateShareGrant(request, env);
     }
-    if (request.method === "POST" && url.pathname === "/v1/shared-r2-token") {
-      return handleSharedR2Token(request, env);
+    if (request.method === "DELETE" && url.pathname === "/v1/share") {
+      return handleDeleteShare(request, env);
+    }
+    if (request.method === "POST" && url.pathname === "/v1/shared-content") {
+      return handleSharedContent(request, env);
     }
     return new Response("Not Found", { status: 404 });
   },
