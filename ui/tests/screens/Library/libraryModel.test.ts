@@ -22,6 +22,7 @@ function book(overrides: Partial<LibraryBook>): LibraryBook {
     bookmarkCount: 0,
     lastBookmarked: null,
     latestBookmarkCfi: null,
+    bookmarks: [],
     ...overrides,
   };
 }
@@ -66,7 +67,7 @@ describe("allBooksSorted", () => {
 });
 
 describe("recent books", () => {
-  it("limits access and bookmark lists to the seven newest books", () => {
+  it("limits access items and bookmark entries to the seven newest", () => {
     const books = Array.from({ length: 9 }, (_, index) =>
       book({
         txtId: index + 1,
@@ -74,15 +75,37 @@ describe("recent books", () => {
         lastAccessed: index + 1,
         bookmarkCount: 1,
         lastBookmarked: 100 + index,
+        bookmarks: [
+          {
+            cfi: `bookmark-${index + 1}`,
+            pageNumber: index + 1,
+            createdAt: 100 + index,
+          },
+        ],
       }),
     );
 
     expect(recentlyAccessed(books).map((item) => item.txtId)).toEqual([
       9, 8, 7, 6, 5, 4, 3,
     ]);
-    expect(recentlyBookmarked(books).map((item) => item.txtId)).toEqual([
+    expect(recentlyBookmarked(books).map((item) => item.book.txtId)).toEqual([
       9, 8, 7, 6, 5, 4, 3,
     ]);
+  });
+
+  it("limits multiple bookmarks from one book to seven entries", () => {
+    const marked = book({
+      bookmarkCount: 9,
+      bookmarks: Array.from({ length: 9 }, (_, index) => ({
+        cfi: `bookmark-${index + 1}`,
+        pageNumber: index + 1,
+        createdAt: index + 1,
+      })),
+    });
+
+    expect(
+      recentlyBookmarked([marked]).map((item) => item.bookmark.pageNumber),
+    ).toEqual([9, 8, 7, 6, 5, 4, 3]);
   });
 
   it("counts each active book only once", () => {

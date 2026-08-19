@@ -29,7 +29,7 @@ export function LibraryContent({
   onSelectShare,
   onNavigate,
   onClearAccess,
-  onClearBookmarks,
+  onDeleteBookmark,
   shares,
 }: {
   books: LibraryBook[];
@@ -41,7 +41,7 @@ export function LibraryContent({
   onSelectShare: (shareId: number | null) => void;
   onNavigate: (view: LibraryView) => void;
   onClearAccess: (txtId: number) => void;
-  onClearBookmarks: (txtId: number) => void;
+  onDeleteBookmark: (txtId: number, cfi: string) => void;
   shares: BookShare[];
 }) {
   const search = useMemo(() => createBookSearch(books), [books]);
@@ -53,7 +53,7 @@ export function LibraryContent({
     <div className="library-content-pane d-flex flex-column flex-grow-1 overflow-hidden min-w-0">
       <ContentHeader view={view} onNavigate={onNavigate} />
       {view.kind === "recent" ? (
-        <RecentBooks {...{ books, onClearAccess, onClearBookmarks }} />
+        <RecentBooks {...{ books, onClearAccess, onDeleteBookmark }} />
       ) : view.kind === "shares" ? (
         <SharesList {...{ books, shares, query, selectedShareId, onSelectShare }} />
       ) : view.kind === "entries" ? (
@@ -137,6 +137,7 @@ function shareBookFallback(share: BookShare): LibraryBook {
     bookmarkCount: 0,
     lastBookmarked: null,
     latestBookmarkCfi: null,
+    bookmarks: [],
   };
 }
 
@@ -165,11 +166,11 @@ function ContentHeader({
 function RecentBooks({
   books,
   onClearAccess,
-  onClearBookmarks,
+  onDeleteBookmark,
 }: {
   books: LibraryBook[];
   onClearAccess: (txtId: number) => void;
-  onClearBookmarks: (txtId: number) => void;
+  onDeleteBookmark: (txtId: number, cfi: string) => void;
 }) {
   const accessed = useMemo(() => recentlyAccessed(books), [books]);
   const bookmarked = useMemo(() => recentlyBookmarked(books), [books]);
@@ -184,13 +185,7 @@ function RecentBooks({
         removeLabel={(book) => `Delete recent access for ${book.title}`}
         onRemove={onClearAccess}
       />
-      <RecentSection
-        title="Bookmarks"
-        books={bookmarked}
-        openAtLatestBookmark
-        removeLabel={(book) => `Delete bookmarks for ${book.title}`}
-        onRemove={onClearBookmarks}
-      />
+      <RecentBookmarks items={bookmarked} onDeleteBookmark={onDeleteBookmark} />
     </div>
   );
 }
@@ -198,13 +193,11 @@ function RecentBooks({
 function RecentSection({
   title,
   books,
-  openAtLatestBookmark = false,
   removeLabel,
   onRemove,
 }: {
   title: string;
   books: LibraryBook[];
-  openAtLatestBookmark?: boolean;
   removeLabel: (book: LibraryBook) => string;
   onRemove: (txtId: number) => void;
 }) {
@@ -217,7 +210,6 @@ function RecentSection({
           <BookRow
             key={book.txtId}
             book={book}
-            initialCfi={openAtLatestBookmark ? book.latestBookmarkCfi : null}
             removeLabel={removeLabel(book)}
             onRemove={() => onRemove(book.txtId)}
           />
@@ -225,6 +217,37 @@ function RecentSection({
       </GridList>
     </section>
   );
+}
+
+function RecentBookmarks({
+  items,
+  onDeleteBookmark,
+}: {
+  items: ReturnType<typeof recentlyBookmarked>;
+  onDeleteBookmark: (txtId: number, cfi: string) => void;
+}) {
+  if (!items.length) return null;
+  return (
+    <section className="mb-3" aria-label="Bookmarks">
+      <h3 className="h6 text-muted px-2 py-2 mb-0">Bookmarks</h3>
+      <GridList aria-label="Bookmarks" className="book-row-grid">
+        {items.map(({ book, bookmark }) => (
+          <BookRow
+            key={`${book.txtId}-${bookmark.cfi}`}
+            rowId={`bookmark-${book.txtId}-${bookmark.cfi}`}
+            book={book}
+            bookmark={bookmark}
+            removeLabel={`Delete bookmark for ${book.title} on ${bookmarkPageLabel(bookmark.pageNumber)}`}
+            onRemove={() => onDeleteBookmark(book.txtId, bookmark.cfi)}
+          />
+        ))}
+      </GridList>
+    </section>
+  );
+}
+
+function bookmarkPageLabel(pageNumber: number | null): string {
+  return pageNumber === null ? "an unknown page" : `page ${pageNumber}`;
 }
 
 function EmptyStateContainer({ message }: { message: string }) {

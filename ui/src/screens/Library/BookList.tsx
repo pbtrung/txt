@@ -7,7 +7,7 @@ import {
   type Selection,
 } from "react-aria-components";
 import { IconButton } from "../../components/IconButton";
-import type { LibraryBook } from "../../data/libraryDb";
+import type { LibraryBook, LibraryBookmark } from "../../data/libraryDb";
 import { classNames } from "../../util/classNames";
 
 const ROW_HEIGHT_PX = 72;
@@ -79,12 +79,14 @@ export function BookRow({
   rowId,
   book,
   initialCfi,
+  bookmark,
   onRemove,
   removeLabel,
 }: {
   rowId?: string | number;
   book: LibraryBook;
   initialCfi?: string | null;
+  bookmark?: LibraryBookmark;
   onRemove: () => void;
   removeLabel: string;
 }) {
@@ -96,7 +98,12 @@ export function BookRow({
       className="position-relative book-row-container"
       style={{ height: ROW_HEIGHT_PX }}
     >
-      <BookLinkRow book={book} initialCfi={initialCfi} hasRemoveAction />
+      <BookLinkRow
+        book={book}
+        initialCfi={bookmark?.cfi ?? initialCfi}
+        bookmark={bookmark}
+        hasRemoveAction
+      />
       <IconButton
         label={removeLabel}
         icon="trash"
@@ -110,10 +117,12 @@ export function BookRow({
 function BookLinkRow({
   book,
   initialCfi,
+  bookmark,
   hasRemoveAction = false,
 }: {
   book: LibraryBook;
   initialCfi?: string | null;
+  bookmark?: LibraryBookmark;
   hasRemoveAction?: boolean;
 }) {
   const active = book.lastAccessed > 0 || book.bookmarkCount > 0;
@@ -125,7 +134,7 @@ function BookLinkRow({
         hasRemoveAction && "pe-5",
       )}
     >
-      <BookRowDetails book={book} active={active} />
+      <BookRowDetails book={book} active={active} bookmark={bookmark} />
     </Link>
   );
 }
@@ -139,7 +148,15 @@ function BookRowContent({ book }: { book: LibraryBook }) {
   );
 }
 
-function BookRowDetails({ book, active }: { book: LibraryBook; active: boolean }) {
+function BookRowDetails({
+  book,
+  active,
+  bookmark,
+}: {
+  book: LibraryBook;
+  active: boolean;
+  bookmark?: LibraryBookmark;
+}) {
   return (
     <span className="d-block overflow-hidden min-w-0">
       <span className="d-flex align-items-center gap-2">
@@ -155,7 +172,7 @@ function BookRowDetails({ book, active }: { book: LibraryBook; active: boolean }
           {book.title}
         </span>
       </span>
-      <BookMetadata book={book} />
+      <BookMetadata book={book} bookmark={bookmark} />
     </span>
   );
 }
@@ -172,16 +189,39 @@ function readerPath(txtId: number, initialCfi?: string | null): string {
   return `${path}?${new URLSearchParams({ cfi: initialCfi })}`;
 }
 
-function BookMetadata({ book }: { book: LibraryBook }) {
+function BookMetadata({
+  book,
+  bookmark,
+}: {
+  book: LibraryBook;
+  bookmark?: LibraryBookmark;
+}) {
   return (
     <span className="d-flex align-items-center gap-1 min-w-0 overflow-hidden book-row-meta mt-1">
-      {book.bookmarkCount > 0 && <BookmarkBadge count={book.bookmarkCount} />}
+      {bookmark ? (
+        <BookmarkPageBadge pageNumber={bookmark.pageNumber} />
+      ) : (
+        book.bookmarkCount > 0 && <BookmarkBadge count={book.bookmarkCount} />
+      )}
       {book.lastAccessed > 0 && <LastAccessedBadge timestamp={book.lastAccessed} />}
       {book.authors.length > 0 && (
         <span className="text-truncate small text-muted min-w-0">
           {book.authors.join(", ")}
         </span>
       )}
+    </span>
+  );
+}
+
+function BookmarkPageBadge({ pageNumber }: { pageNumber: number | null }) {
+  const page = pageNumber ?? "—";
+  return (
+    <span
+      className="badge rounded-pill text-bg-light border fw-normal flex-shrink-0"
+      aria-label={pageNumber === null ? "Page unavailable" : `Page ${pageNumber}`}
+    >
+      <i className="bi bi-file-earmark-text me-1" aria-hidden="true" />
+      Page {page}
     </span>
   );
 }

@@ -62,6 +62,7 @@ function book(overrides: Partial<LibraryBook>): LibraryBook {
     bookmarkCount: 0,
     lastBookmarked: null,
     latestBookmarkCfi: null,
+    bookmarks: [],
     ...overrides,
   };
 }
@@ -83,6 +84,13 @@ const LIBRARY: LibraryBook[] = [
     bookmarkCount: 1,
     lastBookmarked: 200,
     latestBookmarkCfi: "epubcfi(/6/8)",
+    bookmarks: [
+      {
+        cfi: "epubcfi(/6/8)",
+        pageNumber: 8,
+        createdAt: 200,
+      },
+    ],
   }),
 ];
 
@@ -441,7 +449,7 @@ describe("LibraryScreen", () => {
           onSelectShare={onSelectShare}
           onNavigate={() => undefined}
           onClearAccess={() => undefined}
-          onClearBookmarks={() => undefined}
+          onDeleteBookmark={() => undefined}
           shares={shares}
         />
       </MemoryRouter>,
@@ -594,6 +602,10 @@ describe("LibraryScreen", () => {
         title: "Recently marked",
         bookmarkCount: 2,
         lastBookmarked: 3000,
+        bookmarks: [
+          { cfi: "page-9", pageNumber: 9, createdAt: 3000 },
+          { cfi: "page-4", pageNumber: 4, createdAt: 2000 },
+        ],
       }),
     ]);
 
@@ -604,9 +616,25 @@ describe("LibraryScreen", () => {
     expect(screen.getByRole("region", { name: "Bookmarks" })).toHaveTextContent(
       "Recently marked",
     );
+    expect(screen.getByLabelText("Page 9")).toBeInTheDocument();
+    expect(screen.getByLabelText("Page 4")).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("region", { name: "Bookmarks" }))
+        .getAllByRole("link")
+        .map((link) =>
+          new URL(link.getAttribute("href")!, "https://txt.test").searchParams.get(
+            "cfi",
+          ),
+        ),
+    ).toEqual(["page-9", "page-4"]);
+    expect(
+      within(screen.getByRole("region", { name: "Bookmarks" })).queryByLabelText(
+        "2 bookmarks",
+      ),
+    ).toBeNull();
   });
 
-  it("removes access or all bookmarks from their Recent sections", async () => {
+  it("deletes recent access or one bookmark from their Recent rows", async () => {
     const mutate = vi.fn().mockResolvedValue(undefined);
     const reload = vi.fn();
     renderLibrary(
@@ -616,8 +644,9 @@ describe("LibraryScreen", () => {
           book({
             title: "Active book",
             lastAccessed: 100,
-            bookmarkCount: 2,
+            bookmarkCount: 1,
             lastBookmarked: 200,
+            bookmarks: [{ cfi: "saved-place", pageNumber: 12, createdAt: 200 }],
           }),
         ],
         reload,
@@ -631,12 +660,14 @@ describe("LibraryScreen", () => {
       }),
     );
     await userEvent.click(
-      screen.getByRole("button", { name: "Delete bookmarks for Active book" }),
+      screen.getByRole("button", {
+        name: "Delete bookmark for Active book on page 12",
+      }),
     );
 
     expect(mutate.mock.calls.map(([mutation]) => mutation.description)).toEqual([
       "clear last access",
-      "clear bookmarks",
+      "delete bookmark",
     ]);
     expect(
       screen
@@ -648,14 +679,19 @@ describe("LibraryScreen", () => {
 
   it("shows the bookmark deletion action on hover", async () => {
     renderScreen([
-      book({ title: "Marked book", bookmarkCount: 1, lastBookmarked: 200 }),
+      book({
+        title: "Marked book",
+        bookmarkCount: 1,
+        lastBookmarked: 200,
+        bookmarks: [{ cfi: "marked-place", pageNumber: 6, createdAt: 200 }],
+      }),
     ]);
     const remove = screen.getByRole("button", {
-      name: "Delete bookmarks for Marked book",
+      name: "Delete bookmark for Marked book on page 6",
     });
     await userEvent.hover(remove);
     expect(await screen.findByRole("tooltip")).toHaveTextContent(
-      "Delete bookmarks for Marked book",
+      "Delete bookmark for Marked book on page 6",
     );
     expect(remove).toHaveClass("compact-delete-button", "book-row-remove");
     const row = remove.closest('[role="row"]');

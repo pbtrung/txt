@@ -50,6 +50,7 @@ describe("loadLibraryBooks (real sqlcipher.wasm)", () => {
       bookmarkCount: 0,
       lastBookmarked: null,
       latestBookmarkCfi: null,
+      bookmarks: [],
     });
   });
 
@@ -59,8 +60,8 @@ describe("loadLibraryBooks (real sqlcipher.wasm)", () => {
     await insertTxt(db, 1, { name: "dune.epub", title: "Dune" });
     db.execute("UPDATE txt SET last_accessed = 1234 WHERE id = 1");
     db.execute(
-      "INSERT INTO txt_bookmarks (txt_id, cfi, preview, created_at) VALUES " +
-        "(1, 'one', 'First', 2000), (1, 'two', 'Second', 3000)",
+      "INSERT INTO txt_bookmarks (txt_id, cfi, page_number, preview, created_at) VALUES " +
+        "(1, 'one', 4, 'First', 2000), (1, 'two', 9, 'Second', 3000)",
     );
 
     const [book] = await loadLibraryBooks(db);
@@ -71,6 +72,10 @@ describe("loadLibraryBooks (real sqlcipher.wasm)", () => {
       bookmarkCount: 2,
       lastBookmarked: 3000,
       latestBookmarkCfi: "two",
+      bookmarks: [
+        { cfi: "two", pageNumber: 9, createdAt: 3000 },
+        { cfi: "one", pageNumber: 4, createdAt: 2000 },
+      ],
     });
   });
 

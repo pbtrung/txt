@@ -23,6 +23,7 @@ const BOOKS: LibraryBook[] = [
     bookmarkCount: 0,
     lastBookmarked: null,
     latestBookmarkCfi: null,
+    bookmarks: [],
   },
 ];
 

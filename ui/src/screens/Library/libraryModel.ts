@@ -1,7 +1,7 @@
 // Pure search/sort/browse logic over an already-loaded LibraryBook[]
 // (ui/src/data/libraryDb.ts).
 import Fuse, { type IFuseOptions } from "fuse.js";
-import type { LibraryBook } from "../../data/libraryDb";
+import type { LibraryBook, LibraryBookmark } from "../../data/libraryDb";
 
 const SEARCH_OPTIONS: IFuseOptions<LibraryBook> = {
   keys: [
@@ -28,10 +28,15 @@ export function recentlyAccessed(books: LibraryBook[]): LibraryBook[] {
     .slice(0, 7);
 }
 
-export function recentlyBookmarked(books: LibraryBook[]): LibraryBook[] {
-  return [...books]
-    .filter((book) => book.bookmarkCount > 0)
-    .sort((a, b) => (b.lastBookmarked ?? 0) - (a.lastBookmarked ?? 0))
+export interface RecentBookmark {
+  book: LibraryBook;
+  bookmark: LibraryBookmark;
+}
+
+export function recentlyBookmarked(books: LibraryBook[]): RecentBookmark[] {
+  return books
+    .flatMap((book) => book.bookmarks.map((bookmark) => ({ book, bookmark })))
+    .sort((a, b) => b.bookmark.createdAt - a.bookmark.createdAt)
     .slice(0, 7);
 }
 

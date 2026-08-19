@@ -6,6 +6,12 @@ import { decodeCatalog } from "./catalog";
 import type { DatabaseMutation } from "./databaseStore";
 import type { SqliteDatabase } from "./sqlite";
 
+export interface LibraryBookmark {
+  cfi: string;
+  pageNumber: number | null;
+  createdAt: number;
+}
+
 export interface LibraryBook {
   txtId: number;
   title: string;
@@ -16,9 +22,13 @@ export interface LibraryBook {
   bookmarkCount: number;
   lastBookmarked: number | null;
   latestBookmarkCfi: string | null;
+  bookmarks: LibraryBookmark[];
 }
 
-async function toBook(row: unknown[]): Promise<LibraryBook> {
+async function toBook(
+  row: unknown[],
+  bookmarks: LibraryBookmark[],
+): Promise<LibraryBook> {
   const [
     txtId,
     catalogBlob,
@@ -38,10 +48,12 @@ async function toBook(row: unknown[]): Promise<LibraryBook> {
     bookmarkCount: bookmarkCount as number,
     lastBookmarked: lastBookmarked as number | null,
     latestBookmarkCfi: latestBookmarkCfi as string | null,
+    bookmarks,
   };
 }
 
 export async function loadLibraryBooks(db: SqliteDatabase): Promise<LibraryBook[]> {
+  const bookmarks = bookmarksByBook(db);
   const rows = db.query(
     "SELECT t.id, t.catalog, t.last_accessed, COUNT(b.id), MAX(b.created_at), " +
       "(SELECT latest.cfi FROM txt_bookmarks latest WHERE latest.txt_id = t.id " +
@@ -49,7 +61,28 @@ export async function loadLibraryBooks(db: SqliteDatabase): Promise<LibraryBook[
       "FROM txt t LEFT JOIN txt_bookmarks b ON b.txt_id = t.id " +
       "GROUP BY t.id ORDER BY t.id",
   );
-  return Promise.all(rows.map(toBook));
+  return Promise.all(
+    rows.map((row) => toBook(row, bookmarks.get(row[0] as number) ?? [])),
+  );
+}
+
+function bookmarksByBook(db: SqliteDatabase): Map<number, LibraryBookmark[]> {
+  const result = new Map<number, LibraryBookmark[]>();
+  const rows = db.query(
+    "SELECT txt_id, cfi, page_number, created_at FROM txt_bookmarks " +
+      "ORDER BY created_at DESC, id DESC",
+  );
+  for (const [txtId, cfi, pageNumber, createdAt] of rows) {
+    const bookmark: LibraryBookmark = {
+      cfi: cfi as string,
+      pageNumber: pageNumber as number | null,
+      createdAt: createdAt as number,
+    };
+    const bookBookmarks = result.get(txtId as number);
+    if (bookBookmarks) bookBookmarks.push(bookmark);
+    else result.set(txtId as number, [bookmark]);
+  }
+  return result;
 }
 
 export function clearLastAccessMutation(txtId: number): DatabaseMutation {

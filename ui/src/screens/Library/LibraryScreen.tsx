@@ -14,7 +14,9 @@ import { useNavigate } from "react-router-dom";
 import { LoadingMessage, ScreenMessage } from "../../components/ScreenMessage";
 import { useVault } from "../../state/VaultContext";
 import { errorMessage } from "../../util/errorMessage";
-import { clearBookmarksMutation, clearLastAccessMutation } from "../../data/libraryDb";
+import type { DatabaseMutation } from "../../data/databaseStore";
+import { clearLastAccessMutation } from "../../data/libraryDb";
+import { deleteBookmarkMutation } from "../../data/readingState";
 import {
   createBookShare,
   deleteBookShare,
@@ -98,12 +100,8 @@ export function LibraryScreen() {
     library.books.find((book) => book.txtId === selectedTxtId) ?? null;
   const selectedShare =
     shared.shares.find((share) => share.id === selectedShareId) ?? null;
-  const clearActivity = async (kind: "access" | "bookmarks", txtId: number) => {
+  const updateActivity = async (mutation: DatabaseMutation) => {
     if (!session) return;
-    const mutation =
-      kind === "access"
-        ? clearLastAccessMutation(txtId)
-        : clearBookmarksMutation(txtId);
     try {
       await session.database.mutate(mutation);
     } catch {
@@ -254,8 +252,12 @@ export function LibraryScreen() {
             selectedShareId={selectedShareId}
             onSelectShare={setSelectedShareId}
             onNavigate={navigate}
-            onClearAccess={(txtId) => void clearActivity("access", txtId)}
-            onClearBookmarks={(txtId) => void clearActivity("bookmarks", txtId)}
+            onClearAccess={(txtId) =>
+              void updateActivity(clearLastAccessMutation(txtId))
+            }
+            onDeleteBookmark={(txtId, cfi) =>
+              void updateActivity(deleteBookmarkMutation(txtId, cfi))
+            }
             shares={shared.shares}
           />
         </div>
