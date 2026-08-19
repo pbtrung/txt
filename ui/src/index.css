@@ -243,6 +243,9 @@
 .reader-side-panel {
   width: calc(100vw - 1.5rem);
   max-width: 350px;
+  font-family: var(--bs-body-font-family);
+  font-size: var(--bs-body-font-size);
+  line-height: var(--bs-body-line-height);
 }
 
 /* React Aria owns focus containment, outside-click dismissal, and focus
