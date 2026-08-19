@@ -15,10 +15,12 @@ export function TocPanel({
   open,
   onClose,
   renderer,
+  portalContainer,
 }: {
   open: boolean;
   onClose: () => void;
   renderer: EpubRenderer | null;
+  portalContainer?: Element;
 }) {
   const [loaded, setLoaded] = useState<LoadedToc | null>(null);
   useEffect(() => {
@@ -44,6 +46,8 @@ export function TocPanel({
       title="Content"
       placement="start"
       className="reader-side-panel"
+      overlayClassName="reader-offcanvas-overlay"
+      portalContainer={portalContainer}
     >
       {toc === undefined ? (
         <p className="text-muted">Loading…</p>

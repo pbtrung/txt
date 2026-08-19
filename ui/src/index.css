@@ -231,6 +231,15 @@
   backdrop-filter: blur(2px);
 }
 
+/* Reader panels are portalled into the centered reader shell. Keep mobile
+   drawers viewport-bound, but on desktop constrain both the backdrop and the
+   panel edges to that shell instead of the physical screen edges. */
+@media (min-width: 768px) {
+  .reader-offcanvas-overlay {
+    position: absolute;
+  }
+}
+
 .aria-offcanvas-modal {
   display: contents;
 }

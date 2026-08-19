@@ -8,6 +8,8 @@ export function OffcanvasPanel({
   title,
   placement = "end",
   className,
+  overlayClassName,
+  portalContainer,
   style,
   children,
 }: {
@@ -16,6 +18,8 @@ export function OffcanvasPanel({
   title: string;
   placement?: "start" | "end";
   className?: string;
+  overlayClassName?: string;
+  portalContainer?: Element;
   style?: CSSProperties;
   children: ReactNode;
 }) {
@@ -32,7 +36,8 @@ export function OffcanvasPanel({
       isOpen={open}
       onOpenChange={(isOpen) => !isOpen && onClose()}
       isDismissable
-      className="aria-offcanvas-overlay"
+      className={classNames("aria-offcanvas-overlay", overlayClassName)}
+      UNSTABLE_portalContainer={portalContainer}
     >
       <Modal className="aria-offcanvas-modal">
         <Dialog

@@ -437,6 +437,9 @@ describe("ReaderScreen", () => {
     expect(screen.getByRole("dialog", { name: "Info" })).toHaveClass(
       "reader-side-panel",
     );
+    expect(
+      document.querySelector(".reader-offcanvas-overlay")?.parentElement,
+    ).toHaveClass("reader-width");
     expect(screen.getByText("Frank Herbert")).toBeInTheDocument();
     expect(screen.getByText("Ace")).toBeInTheDocument();
     expect(screen.getByText("Science Fiction")).toBeInTheDocument();

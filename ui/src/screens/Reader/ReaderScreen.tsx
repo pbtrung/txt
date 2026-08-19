@@ -51,12 +51,16 @@ function ReadyReader({
 }) {
   const [infoOpen, setInfoOpen] = useState(false);
   const [tocOpen, setTocOpen] = useState(false);
+  const [readerContainer, setReaderContainer] = useState<HTMLDivElement | null>(null);
   const { setHost, renderer, ready, page, location, fontPx, changeFontSize, error } =
     useEpubRenderer(document, initialCfi);
   const reading = useReadingState(session, document, renderer, ready, location);
   if (error) return <ReaderError>{error}</ReaderError>;
   return (
-    <div className="reader-width vh-100 mx-auto">
+    <div
+      ref={setReaderContainer}
+      className="reader-width vh-100 mx-auto position-relative"
+    >
       <div className="reader-column d-flex flex-column h-100 px-2 px-md-0">
         <ReaderToolbar
           title={document.title}
@@ -103,11 +107,13 @@ function ReadyReader({
           open={infoOpen}
           onClose={() => setInfoOpen(false)}
           document={document}
+          portalContainer={readerContainer ?? undefined}
         />
         <TocPanel
           open={tocOpen}
           onClose={() => setTocOpen(false)}
           renderer={renderer}
+          portalContainer={readerContainer ?? undefined}
         />
       </div>
     </div>

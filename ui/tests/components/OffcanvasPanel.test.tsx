@@ -84,4 +84,26 @@ describe("OffcanvasPanel", () => {
     expect(panel).toHaveClass("border-end");
     expect(panel).toHaveStyle({ width: "288px" }); // jsdom resolves 18rem -> 288px (16px root)
   });
+
+  it("renders the overlay inside an explicit portal container", () => {
+    const portalContainer = document.createElement("div");
+    document.body.append(portalContainer);
+    const { unmount } = render(
+      <OffcanvasPanel
+        open
+        onClose={vi.fn()}
+        title="Info"
+        overlayClassName="reader-offcanvas-overlay"
+        portalContainer={portalContainer}
+      >
+        content
+      </OffcanvasPanel>,
+    );
+
+    const overlay = portalContainer.querySelector(".aria-offcanvas-overlay");
+    expect(overlay).toHaveClass("reader-offcanvas-overlay");
+    expect(overlay).toContainElement(screen.getByRole("dialog", { name: "Info" }));
+    unmount();
+    portalContainer.remove();
+  });
 });

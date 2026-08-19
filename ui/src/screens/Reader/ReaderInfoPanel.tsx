@@ -10,10 +10,12 @@ export function ReaderInfoPanel({
   open,
   onClose,
   document,
+  portalContainer,
 }: {
   open: boolean;
   onClose: () => void;
   document: ReaderDocument;
+  portalContainer?: Element;
 }) {
   return (
     <OffcanvasPanel
@@ -21,6 +23,8 @@ export function ReaderInfoPanel({
       onClose={onClose}
       title="Info"
       className="reader-side-panel"
+      overlayClassName="reader-offcanvas-overlay"
+      portalContainer={portalContainer}
     >
       <h2 className="h5 mb-1">{document.title}</h2>
       {document.authors.length > 0 && (
