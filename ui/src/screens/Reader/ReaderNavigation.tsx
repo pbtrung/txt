@@ -1,4 +1,3 @@
-import { useState } from "react";
 import {
   Button,
   Dialog,
@@ -8,6 +7,7 @@ import {
   Menu,
   MenuItem,
   MenuTrigger,
+  NumberField,
   Popover,
 } from "react-aria-components";
 import { IconButton } from "../../components/IconButton";
@@ -297,33 +297,18 @@ function PageInput({
   renderer: EpubRenderer | null;
   page: PagePosition;
 }) {
-  const [draft, setDraft] = useState({
-    page: page.current,
-    value: String(page.current),
-  });
-  const value = draft.page === page.current ? draft.value : String(page.current);
-  const submit = () => {
-    const target = Number(value);
-    if (Number.isInteger(target) && target >= 1 && target <= page.total) {
-      void renderer?.displayPage(target);
-    } else {
-      setDraft({ page: page.current, value: String(page.current) });
-    }
-  };
   return (
-    <Input
-      type="text"
-      inputMode="numeric"
-      className="form-control form-control-sm text-end"
+    <NumberField
       aria-label="Current page"
-      value={value}
-      disabled={!renderer}
+      value={page.current}
+      minValue={1}
+      maxValue={page.total}
+      step={1}
+      isDisabled={!renderer}
       style={{ width: `calc(${String(page.total).length}ch + 1.5rem)` }}
-      onChange={(event) => setDraft({ page: page.current, value: event.target.value })}
-      onBlur={submit}
-      onKeyDown={(event) => {
-        if (event.key === "Enter") event.currentTarget.blur();
-      }}
-    />
+      onChange={(target) => void renderer?.displayPage(target)}
+    >
+      <Input className="form-control form-control-sm text-end w-100" />
+    </NumberField>
   );
 }

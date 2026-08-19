@@ -377,7 +377,7 @@ describe("ReaderScreen", () => {
     await userEvent.type(input, "42{Enter}");
 
     expect(instance.displayPage).toHaveBeenCalledWith(42);
-    expect(input.getAttribute("style")).toContain("calc(3ch + 1.5rem)");
+    expect(input.parentElement?.getAttribute("style")).toContain("calc(3ch + 1.5rem)");
   });
 
   it("uses one bookmark button for creation and the saved bookmark list", async () => {
