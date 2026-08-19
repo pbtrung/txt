@@ -291,7 +291,7 @@ function EntryRow({
 }) {
   return (
     <Button
-      className="list-group-item list-group-item-action d-flex justify-content-between align-items-center"
+      className="list-group-item list-group-item-action rounded-3 d-flex justify-content-between align-items-center"
       onPress={() => onNavigate({ kind: "books", filter: { dimension, value } })}
     >
       <span className="text-truncate min-w-0">{value}</span>

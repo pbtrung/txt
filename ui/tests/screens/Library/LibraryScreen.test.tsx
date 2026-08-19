@@ -475,7 +475,8 @@ describe("LibraryScreen", () => {
     expect(document.querySelector(".library-search-col")).toHaveClass("min-w-0");
     const recent = screen.getByRole("button", { name: /^Recent/ });
     expect(recent).toHaveTextContent("2");
-    expect(recent).toHaveClass("active", "rounded-3");
+    expect(recent).toHaveClass("active");
+    expect(recent).not.toHaveClass("rounded-3");
     expect(screen.getByRole("button", { name: /^All Books/ })).toHaveTextContent("2");
     expect(screen.getByRole("button", { name: /^Authors/ })).toHaveTextContent("2");
     expect(screen.getByRole("button", { name: /^Subjects/ })).toHaveTextContent("2");
@@ -603,6 +604,7 @@ describe("LibraryScreen", () => {
     expect(screen.getByRole("heading", { name: "Subjects" })).toBeInTheDocument();
     const fantasyRow = screen.getByRole("button", { name: /^Fantasy/ });
     expect(fantasyRow).toHaveTextContent("1");
+    expect(fantasyRow).toHaveClass("rounded-3");
     expect(fantasyRow.querySelector(".badge")).toHaveClass("text-bg-dark");
     expect(screen.getByRole("button", { name: /^Science Fiction/ })).toHaveTextContent(
       "1",
@@ -662,6 +664,8 @@ describe("LibraryScreen", () => {
     expect(within(menu).getByRole("button", { name: /^Recent/ })).toHaveClass(
       "list-group-item",
       "active",
+    );
+    expect(within(menu).getByRole("button", { name: /^Recent/ })).not.toHaveClass(
       "rounded-3",
     );
     const lock = within(menu).getByRole("button", { name: "Lock" });
