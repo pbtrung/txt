@@ -37,7 +37,7 @@ export function OffcanvasPanel({
       <Modal className="aria-offcanvas-modal">
         <Dialog
           aria-labelledby={titleId}
-          className={classNames(panelClassName, "d-flex flex-column h-100")}
+          className={classNames(panelClassName, "d-flex flex-column")}
           style={style}
         >
           <PanelContents title={title} titleId={titleId} onClose={onClose}>
