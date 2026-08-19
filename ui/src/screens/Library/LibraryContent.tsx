@@ -181,7 +181,7 @@ function RecentBooks({
       <RecentSection
         title="Recent access"
         books={accessed}
-        removeLabel={(book) => `Clear recent access for ${book.title}`}
+        removeLabel={(book) => `Delete recent access for ${book.title}`}
         onRemove={onClearAccess}
       />
       <RecentSection

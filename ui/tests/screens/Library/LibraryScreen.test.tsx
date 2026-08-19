@@ -627,7 +627,7 @@ describe("LibraryScreen", () => {
     );
     await userEvent.click(
       screen.getByRole("button", {
-        name: "Clear recent access for Active book",
+        name: "Delete recent access for Active book",
       }),
     );
     await userEvent.click(
@@ -638,6 +638,11 @@ describe("LibraryScreen", () => {
       "clear last access",
       "clear bookmarks",
     ]);
+    expect(
+      screen
+        .getByRole("button", { name: "Delete recent access for Active book" })
+        .querySelector(".bi-trash"),
+    ).not.toBeNull();
     await waitFor(() => expect(reload).toHaveBeenCalledTimes(2));
   });
 

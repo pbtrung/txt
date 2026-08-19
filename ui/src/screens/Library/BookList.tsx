@@ -99,7 +99,7 @@ export function BookRow({
       <BookLinkRow book={book} initialCfi={initialCfi} hasRemoveAction />
       <IconButton
         label={removeLabel}
-        icon="x-lg"
+        icon="trash"
         className="border-0 position-absolute top-50 end-0 translate-middle-y me-1 compact-delete-button book-row-remove"
         onPress={onRemove}
       />
