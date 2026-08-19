@@ -369,13 +369,13 @@ describe("LibraryScreen", () => {
       "aria-busy",
       "true",
     );
-    expect(shareToast()).toHaveTextContent("Creating share: Dune");
-    expect(shareToast()).toHaveTextContent("Encrypting shared copy");
+    expect(libraryToast()).toHaveTextContent("Creating share: Dune");
+    expect(libraryToast()).toHaveTextContent("Encrypting shared copy");
     expect(document.querySelector(".library-operation-blocker")).not.toBeNull();
 
     await act(async () => complete());
     await waitFor(() =>
-      expect(shareToast()).toHaveTextContent("Share created for “Dune”"),
+      expect(libraryToast()).toHaveTextContent("Share created for “Dune”"),
     );
     expect(screen.getByTestId("library-operation-surface")).not.toHaveAttribute(
       "inert",
@@ -418,13 +418,13 @@ describe("LibraryScreen", () => {
     expect(deleteButton).toBeEnabled();
 
     fireEvent.click(deleteButton);
-    expect(shareToast()).toHaveTextContent("Deleting share");
-    expect(shareToast()).toHaveTextContent("Deleting shared copy");
+    expect(libraryToast()).toHaveTextContent("Deleting share");
+    expect(libraryToast()).toHaveTextContent("Deleting shared copy");
 
     await act(async () => complete());
     await waitFor(() => expect(deleteButton).toBeDisabled());
     expect(screen.getByText("No shared books yet.")).toBeInTheDocument();
-    expect(shareToast()).toHaveTextContent("Share deleted");
+    expect(libraryToast()).toHaveTextContent("Share deleted");
   });
 
   it("shows source-book metadata and selects the requested share", async () => {
@@ -634,8 +634,14 @@ describe("LibraryScreen", () => {
     ).toBeNull();
   });
 
-  it("deletes recent access or one bookmark from their Recent rows", async () => {
-    const mutate = vi.fn().mockResolvedValue(undefined);
+  it("blocks and reports each Recent deletion without overlapping work", async () => {
+    const completions: Array<() => void> = [];
+    const mutate = vi.fn().mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          completions.push(resolve);
+        }),
+    );
     const reload = vi.fn();
     renderLibrary(
       {
@@ -654,26 +660,44 @@ describe("LibraryScreen", () => {
       vi.fn(),
       mutate,
     );
-    await userEvent.click(
-      screen.getByRole("button", {
-        name: "Delete recent access for Active book",
-      }),
+    const accessDelete = screen.getByRole("button", {
+      name: "Delete recent access for Active book",
+    });
+    const bookmarkDelete = screen.getByRole("button", {
+      name: "Delete bookmark for Active book on page 12",
+    });
+
+    await userEvent.click(accessDelete);
+    fireEvent.click(bookmarkDelete);
+
+    expect(mutate).toHaveBeenCalledOnce();
+    expect(screen.getByTestId("library-operation-surface")).toHaveAttribute("inert");
+    expect(document.querySelector(".library-operation-blocker")).not.toBeNull();
+    expect(libraryToast()).toHaveTextContent("Deleting recent access: Active book");
+    expect(libraryToast()).toHaveTextContent("Saving encrypted library");
+
+    await act(async () => completions[0]());
+    await waitFor(() =>
+      expect(libraryToast()).toHaveTextContent("Recent access deleted"),
     );
-    await userEvent.click(
-      screen.getByRole("button", {
-        name: "Delete bookmark for Active book on page 12",
-      }),
+    expect(screen.getByTestId("library-operation-surface")).not.toHaveAttribute(
+      "inert",
     );
+
+    await userEvent.click(bookmarkDelete);
+    expect(libraryToast()).toHaveTextContent("Deleting bookmark: Active book");
+    expect(libraryToast()).toHaveTextContent("Saving encrypted library");
+    expect(screen.getByTestId("library-operation-surface")).toHaveAttribute("inert");
+
+    await act(async () => completions[1]());
+    await waitFor(() => expect(libraryToast()).toHaveTextContent("Bookmark deleted"));
 
     expect(mutate.mock.calls.map(([mutation]) => mutation.description)).toEqual([
       "clear last access",
       "delete bookmark",
     ]);
-    expect(
-      screen
-        .getByRole("button", { name: "Delete recent access for Active book" })
-        .querySelector(".bi-trash"),
-    ).not.toBeNull();
+    expect(accessDelete.querySelector(".bi-x-lg")).not.toBeNull();
+    expect(bookmarkDelete.querySelector(".bi-x-lg")).not.toBeNull();
     await waitFor(() => expect(reload).toHaveBeenCalledTimes(2));
   });
 
@@ -790,8 +814,8 @@ function share(id: number, txtId: number): BookShare {
   };
 }
 
-function shareToast(): HTMLElement {
-  const toast = document.querySelector<HTMLElement>(".library-share-toast");
-  if (!toast) throw new Error("share toast is missing");
+function libraryToast(): HTMLElement {
+  const toast = document.querySelector<HTMLElement>(".library-toast");
+  if (!toast) throw new Error("library toast is missing");
   return toast;
 }

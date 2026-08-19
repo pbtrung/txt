@@ -255,7 +255,7 @@
   backdrop-filter: blur(2px);
 }
 
-.library-share-toast-region {
+.library-toast-region {
   position: fixed;
   right: 1rem;
   bottom: 1rem;
@@ -266,7 +266,7 @@
   outline: none;
 }
 
-.library-share-toast {
+.library-toast {
   width: 100%;
   max-width: 26rem;
   outline: none;

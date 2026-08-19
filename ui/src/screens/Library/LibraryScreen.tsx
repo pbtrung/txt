@@ -40,16 +40,23 @@ const LIBRARY_SIDEBAR_WIDTH_PX = 16 * 16;
 const LIBRARY_RIGHT_PANE_MIN_PX = 400;
 const SUCCESS_TOAST_MS = 2500;
 
-type ShareNotice =
+type LibraryOperationAction =
+  | "Creating share"
+  | "Copying share link"
+  | "Deleting share"
+  | "Deleting recent access"
+  | "Deleting bookmark";
+
+type LibraryNotice =
   | {
       status: "busy";
-      action: "Creating share" | "Copying share link" | "Deleting share";
+      action: LibraryOperationAction;
       title: string;
       step: string;
     }
   | { status: "success" | "error"; message: string };
 
-const shareToastQueue = new UNSTABLE_ToastQueue<ShareNotice>({
+const libraryToastQueue = new UNSTABLE_ToastQueue<LibraryNotice>({
   maxVisibleToasts: 1,
 });
 
@@ -62,8 +69,8 @@ export function LibraryScreen() {
   const [view, setView] = useState<LibraryView>(INITIAL_VIEW);
   const [selectedTxtId, setSelectedTxtId] = useState<number | null>(null);
   const [selectedShareId, setSelectedShareId] = useState<number | null>(null);
-  const [shareBusy, setShareBusy] = useState(false);
-  const shareOperation = useRef(false);
+  const [operationBusy, setOperationBusy] = useState(false);
+  const operation = useRef(false);
   const libraryRoot = useRef<HTMLDivElement>(null);
   const librarySidebar = useRef<HTMLElement>(null);
   const showSidebar = useLibrarySidebar(
@@ -73,7 +80,7 @@ export function LibraryScreen() {
   );
   const routerNavigate = useNavigate();
 
-  useEffect(() => () => shareToastQueue.clear(), []);
+  useEffect(() => () => libraryToastQueue.clear(), []);
 
   if (library.status === "loading") {
     return <LoadingMessage>Loading your library…</LoadingMessage>;
@@ -100,83 +107,104 @@ export function LibraryScreen() {
     library.books.find((book) => book.txtId === selectedTxtId) ?? null;
   const selectedShare =
     shared.shares.find((share) => share.id === selectedShareId) ?? null;
-  const updateActivity = async (mutation: DatabaseMutation) => {
+  const updateActivity = async (
+    action: Extract<
+      LibraryOperationAction,
+      "Deleting recent access" | "Deleting bookmark"
+    >,
+    title: string,
+    mutation: DatabaseMutation,
+    success: string,
+  ) => {
     if (!session) return;
+    const progress = beginOperation(action, title);
+    if (!progress) return;
     try {
+      progress("Saving encrypted library");
       await session.database.mutate(mutation);
-    } catch {
-      // LibraryDatabaseStore retains the failed mutation and error for retry.
-    } finally {
+      progress("Refreshing Recent");
       library.reload();
+      showLibraryToast({ status: "success", message: success }, SUCCESS_TOAST_MS);
+    } catch (error) {
+      showLibraryToast({ status: "error", message: errorMessage(error) });
+      // LibraryDatabaseStore retains a failed mutation for retry. Reload so
+      // Recent reflects the store's authoritative post-failure state.
+      library.reload();
+    } finally {
+      setOperationBusy(false);
+      operation.current = false;
     }
   };
-  const beginShareOperation = (
-    action: Extract<ShareNotice, { status: "busy" }>["action"],
+  const beginOperation = (
+    action: LibraryOperationAction,
     title: string,
   ): ShareProgress | null => {
-    if (shareOperation.current) return null;
+    if (operation.current) return null;
     // Set the lock before React renders the inert overlay so two presses in
-    // the same frame cannot start overlapping share operations.
-    shareOperation.current = true;
-    setShareBusy(true);
+    // the same frame cannot start overlapping Library operations.
+    operation.current = true;
+    setOperationBusy(true);
     const progress: ShareProgress = (step) =>
-      showShareToast({ status: "busy", action, title, step });
+      showLibraryToast({ status: "busy", action, title, step });
     progress("Starting");
     return progress;
   };
   const createShare = async (txtId: number) => {
     if (!session || !isAdmin) return;
     const title = library.books.find((book) => book.txtId === txtId)?.title ?? "Book";
-    const progress = beginShareOperation("Creating share", title);
+    const progress = beginOperation("Creating share", title);
     if (!progress) return;
     try {
       await createBookShare(session, txtId, progress);
-      showShareToast(
+      showLibraryToast(
         { status: "success", message: `Share created for “${title}”` },
         SUCCESS_TOAST_MS,
       );
     } catch (error) {
-      showShareToast({ status: "error", message: errorMessage(error) });
+      showLibraryToast({ status: "error", message: errorMessage(error) });
     } finally {
-      setShareBusy(false);
-      shareOperation.current = false;
+      setOperationBusy(false);
+      operation.current = false;
       shared.reload();
     }
   };
   const copyShare = async (share: BookShare) => {
     if (!session || !isAdmin) return;
-    const progress = beginShareOperation("Copying share link", share.title);
+    const progress = beginOperation("Copying share link", share.title);
     if (!progress) return;
     try {
       const url = await shareUrl(session, share);
       progress("Copying link to clipboard");
       await navigator.clipboard.writeText(url);
-      showShareToast(
+      showLibraryToast(
         { status: "success", message: "Share link copied" },
         SUCCESS_TOAST_MS,
       );
     } catch (error) {
-      showShareToast({ status: "error", message: errorMessage(error) });
+      showLibraryToast({ status: "error", message: errorMessage(error) });
     } finally {
-      setShareBusy(false);
-      shareOperation.current = false;
+      setOperationBusy(false);
+      operation.current = false;
     }
   };
   const removeShare = async (share: BookShare) => {
     if (!session || !isAdmin) return;
-    const progress = beginShareOperation("Deleting share", share.title);
+    const progress = beginOperation("Deleting share", share.title);
     if (!progress) return;
     try {
       await deleteBookShare(session, share, progress);
       shared.remove(share.id);
       setSelectedShareId(null);
-      showShareToast({ status: "success", message: "Share deleted" }, SUCCESS_TOAST_MS);
+      showLibraryToast(
+        { status: "success", message: "Share deleted" },
+        SUCCESS_TOAST_MS,
+      );
     } catch (error) {
-      showShareToast({ status: "error", message: errorMessage(error) });
+      showLibraryToast({ status: "error", message: errorMessage(error) });
       shared.reload();
     } finally {
-      setShareBusy(false);
-      shareOperation.current = false;
+      setOperationBusy(false);
+      operation.current = false;
     }
   };
   return (
@@ -187,8 +215,8 @@ export function LibraryScreen() {
       <div
         className="d-flex flex-column h-100"
         data-testid="library-operation-surface"
-        aria-busy={shareBusy || undefined}
-        inert={shareBusy || undefined}
+        aria-busy={operationBusy || undefined}
+        inert={operationBusy || undefined}
       >
         <LibraryHeader
           query={query}
@@ -252,45 +280,63 @@ export function LibraryScreen() {
             selectedShareId={selectedShareId}
             onSelectShare={setSelectedShareId}
             onNavigate={navigate}
-            onClearAccess={(txtId) =>
-              void updateActivity(clearLastAccessMutation(txtId))
-            }
-            onDeleteBookmark={(txtId, cfi) =>
-              void updateActivity(deleteBookmarkMutation(txtId, cfi))
-            }
+            onClearAccess={(txtId) => {
+              const book = library.books.find((candidate) => candidate.txtId === txtId);
+              if (book) {
+                void updateActivity(
+                  "Deleting recent access",
+                  book.title,
+                  clearLastAccessMutation(txtId),
+                  "Recent access deleted",
+                );
+              }
+            }}
+            onDeleteBookmark={(txtId, cfi) => {
+              const book = library.books.find((candidate) => candidate.txtId === txtId);
+              if (book) {
+                void updateActivity(
+                  "Deleting bookmark",
+                  book.title,
+                  deleteBookmarkMutation(txtId, cfi),
+                  "Bookmark deleted",
+                );
+              }
+            }}
             shares={shared.shares}
           />
         </div>
       </div>
-      {shareBusy && <div className="library-operation-blocker" aria-hidden="true" />}
-      <ShareToastRegion />
+      {operationBusy && (
+        <div className="library-operation-blocker" aria-hidden="true" />
+      )}
+      <LibraryToastRegion />
     </div>
   );
 }
 
-function showShareToast(notice: ShareNotice, timeout?: number): void {
-  shareToastQueue.clear();
-  shareToastQueue.add(notice, { timeout });
+function showLibraryToast(notice: LibraryNotice, timeout?: number): void {
+  libraryToastQueue.clear();
+  libraryToastQueue.add(notice, { timeout });
 }
 
-function ShareToastRegion() {
+function LibraryToastRegion() {
   return (
     <UNSTABLE_ToastRegion
-      queue={shareToastQueue}
-      className="library-share-toast-region"
-      aria-label="Share notifications"
+      queue={libraryToastQueue}
+      className="library-toast-region"
+      aria-label="Library notifications"
     >
-      {({ toast }) => <ShareToast toast={toast} />}
+      {({ toast }) => <LibraryToast toast={toast} />}
     </UNSTABLE_ToastRegion>
   );
 }
 
-function ShareToast({ toast }: { toast: QueuedToast<ShareNotice> }) {
+function LibraryToast({ toast }: { toast: QueuedToast<LibraryNotice> }) {
   const notice = toast.content;
   return (
     <UNSTABLE_Toast
       toast={toast}
-      className={`toast show library-share-toast ${notice.status === "error" ? "text-bg-danger" : ""}`}
+      className={`toast show library-toast ${notice.status === "error" ? "text-bg-danger" : ""}`}
     >
       <UNSTABLE_ToastContent className="toast-body d-flex align-items-center gap-2">
         {notice.status === "busy" && (
