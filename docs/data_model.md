@@ -24,10 +24,10 @@ The first is the user's whole SQLCipher database. The second is one immutable ow
 
 ## 2. The read-write round trip
 
-1. The client authenticates and obtains `db_path`, `db_prefix`, `db_master_key`, an exact-`db_path` read-write credential, and a `{db_prefix}/*` read-only credential (docs/auth.md).
+1. The client authenticates and obtains `db_path`, `db_prefix`, `db_master_key`, an exact-`db_path` read-write credential, and a `{db_prefix}/*` credential (read-only for ordinary accounts, read-write for the configured administrator; docs/auth.md).
 2. It downloads `s3://{bucket}/{db_path}` without HTTP caching and retains the response `ETag` alongside the bytes. If no object exists yet at that key, it creates a fresh database from the schema below and records that the next upload is a create.
 3. It opens the database with `db_master_key`, reapplies `PRAGMA page_size = 16384` before the first schema access, and runs the idempotent schema check.
-4. It reads document metadata and reading state locally. Document content is downloaded and decrypted separately through the read-only prefix credential.
+4. It reads document metadata and reading state locally. Document content is downloaded and decrypted separately through the prefix credential.
 5. A reading-state change is represented as a semantic mutation — update last access/location, add or remove a bookmark — and serialized through one write queue in the page. The mutation runs in a SQLite transaction.
 6. The client uploads the whole encrypted database with `If-Match: <downloaded ETag>`. Creating a previously absent database uses `If-None-Match: *`. A successful response supplies the new current `ETag`.
 7. `412 PreconditionFailed` means another tab or device committed first. The client downloads and opens the latest database, reapplies the same semantic mutation, and retries with the new `ETag`, up to a bounded limit. It never merges encrypted bytes or blindly overwrites the winner.
@@ -125,7 +125,7 @@ When the grace period completes, one semantic mutation sets `last_accessed` for 
 
 An EPUB Canonical Fragment Identifier (CFI) identifies a content position independently of viewport width, font size, column count, and generated page numbering. It remains the bookmark's navigation authority. `page_number` is only the positive page number shown when the bookmark was created; it is a nullable display hint because reflow can change page numbering. On open, a non-null `last_cfi` is passed to the renderer's `display(cfi)`; an invalid CFI falls back to the beginning without discarding the rest of the database.
 
-A manual bookmark stores the current page-start CFI, the current display page number, and a short nearby plain-text preview. A future text-selection bookmark may store the CFI range emitted by the renderer without changing the schema. Re-bookmarking the same `(txt_id, cfi)` updates its page number, preview, and display timestamp rather than adding a duplicate. Bookmark creation and deletion are uploaded immediately; deletion is replayed by `(txt_id, cfi)` during conflict recovery rather than by local numeric `id`.
+A manual bookmark stores the current page-start CFI, the current display page number, and a short nearby plain-text preview. Re-bookmarking the same `(txt_id, cfi)` updates its page number, preview, and display timestamp rather than adding a duplicate. Bookmark creation and deletion are uploaded immediately; deletion is replayed by `(txt_id, cfi)` during conflict recovery rather than by local numeric `id`.
 
 `preview` is capped at 100 UTF-8 bytes rather than 100 characters (`CAST(... AS BLOB)`), since one character can occupy up to four bytes. `trg_txt_bookmarks_cap` keeps at most 20 bookmarks per document, deleting the oldest by `id`. `AUTOINCREMENT` makes that ordering monotonic even after manual deletions and avoids relying on client clocks. `idx_txt_bookmarks_txt_id` supports listing one document's bookmarks and the cap trigger without a table scan.
 
@@ -137,7 +137,7 @@ Only the account whose Firebase uid equals the Worker's trusted `ADMIN_UID` can 
 
 The `creating` state is committed before upload and a completed upload becomes `active`. Copying the URL registers the share in D1. Deletion changes the local row to `deleting`; the Worker validates the bound path, deletes the R2 object, removes the D1 row, and then the browser removes the local row. A failed Worker deletion leaves the local entry retryable. There is no revoked state, registry tombstone, or `object_etag`: share paths are immutable, never reused, and deletion is unconditional. `ON DELETE RESTRICT` prevents deleting the source book before its shares are removed.
 
-The Library exposes Shares below Recent only for the administrator. Shares shows the source book's normal row metadata with Copy and Delete actions. Browse/All Books adds a Share action beside search; selecting books creates independent shares. The copied URL fragment contains the random share capability, opaque encrypted-path grant, and client-side decryption key. D1 stores only 32-byte SHA-256 capability and object-path BLOBs plus the creation timestamp; deleting a share removes that row. Anonymous reading state and bookmarks remain browser-local and never mutate the owner's `db_path`.
+The Library exposes Shares below Recent only for the administrator. Shares shows the source book's normal row metadata with Copy and Delete actions. Browse/All Books adds a Share action beside search; selecting books creates independent shares. Copy asks the Worker to register the live D1 row and creates a fresh opaque grant; the resulting URL is returned to the clipboard and is not stored. Its fragment contains the random share capability, opaque encrypted-path grant, and client-side decryption key. D1 stores only 32-byte SHA-256 capability and object-path BLOBs plus the creation timestamp; deleting a share removes that row. Anonymous reading state and bookmarks remain browser-local under a local-storage key containing the base64url share id and never mutate the owner's `db_path`.
 
 ### 3.4 Migration
 
@@ -153,18 +153,16 @@ Migration is driven by inspecting the tables, columns, indexes, and triggers tha
 6. Ensure `txt_schema_migrations` exists. If it lacks `reset_initial_last_accessed`, correct the original ingestion bug by resetting every existing `txt.last_accessed` to `0`, then record that named migration in the same transaction. Subsequent runs see the marker row and never repeat the reset. A browser opening an old database may create the marker table but does not insert this row, so browser-before-CLI deployment order cannot accidentally skip the reset. Fresh databases record the marker immediately because new ingestion initializes `last_accessed` to `0` rather than `created_at`.
 7. `VACUUM`, write the local checkpoint, and conditionally upload the database only after every step succeeds.
 
-The command reaches the administrator through its self-owned `cred_store` row and every ordinary account through the administrator-owned backup guaranteed by docs/auth.md. Each ordinary-user backup includes that user's `user_root_key`, encrypted under the administrator's `umk`; self-owned payloads and the administrator's own payload do not. It verifies that every required row is present and decryptable before making changes. R2 is always its input source; `--local-db-dir` contains checkpoints for inspection only, never a later upload base. A changed database is uploaded with `If-Match` against the downloaded ETag, so a concurrent browser commit aborts without data loss and the operator reruns from the new remote object. An already-migrated database is not uploaded. Account provisioning and `--update-ctl`—not `--update-db`—install `users.user_handle_hash`, add the raw handle only to encrypted self/admin credential payloads, compute `users.db_binding_hash`, and install the signing-key material required by the ticket flow. There is no `users.user_handle` column.
+The command reaches the administrator through its self-owned `cred_store` row and every ordinary account through the administrator-owned backup guaranteed by docs/auth.md. Each ordinary-user backup includes that user's `user_root_key`, encrypted under the administrator's `umk`; self-owned payloads and the administrator's own payload do not. It verifies that every required row is present and decryptable before making changes. R2 is always its input source; `--local-db-dir` contains checkpoints for inspection only, never a later upload base. A changed database is uploaded with `If-Match` against the downloaded ETag, so a concurrent browser commit aborts without data loss and the operator reruns from the new remote object. An already-migrated database is not uploaded. Idempotent account provisioning installs path bindings and signing keys; `--update-ctl` installs encrypted handles, `users.user_handle_hash`, and its unique index. Neither operation belongs to `--update-db`, and there is no `users.user_handle` column.
 
 `txt_key` is unrelated to `db_master_key`: it is the AEAD key for one document's content object, generated fresh per document, so leaking one document's key exposes nothing about any other document or about the database file itself.
 
 ---
 
-## 4. Build order
+## 4. Deployment order
 
-1. Provision the encrypted user handle, plaintext `users.user_handle_hash`, SHA-512 path-pair binding, and versioned P-521 signing key in docs/auth.md before any browser receives database write access.
-2. Migrate the SQLCipher schema through `--update-db`; deploy this safely before the writing UI because the existing read-only UI ignores the added column and CFI bookmark table.
-3. Return and parse the separate `db_path` read-write and `db_prefix` read-only credentials, including refresh and R2 CORS support for `PUT`, `If-Match`, `If-None-Match`, and exposed `ETag`.
-4. Introduce the browser database store: no-cache GET plus `ETag`, one mutation queue, conditional PUT, conflict reload/replay, bounded retries, and explicit unsaved state.
-5. Apply the six-second visible-reading grace period, then update `last_accessed` and persist/resume debounced `last_cfi` values from renderer relocation events.
-6. Add CFI bookmark creation, listing, navigation, deletion, preview generation, and saved/error UI.
-7. Test migration states, credential scope, path mismatch rejection, credential refresh, two-client conflicts, CFI reflow stability, and bookmark-cap behavior before deployment.
+1. Bring the control plane to the current encrypted-handle, path-binding, and P-521 signing schema using docs/auth.md §3 and §9.
+2. Run `--update-db` against every reachable R2 database before deploying UI code that creates bookmarks or shares.
+3. Configure R2 CORS for `GET`, `PUT`, conditional-write headers, range reads, and exposed `ETag` as shown in `docs/r2-cors.example.json`.
+4. Create and migrate the D1 `SHARE_REGISTRY` binding before enabling public share links.
+5. Deploy the Worker and UI together, then test credential renewal, conditional database conflicts, bookmark persistence, and the complete share copy/read/delete flow.

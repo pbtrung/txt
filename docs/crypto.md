@@ -11,7 +11,7 @@
 
 ### Composite KEM Key Sizes
 
-Each `keyStore` keypair is leancrypto's `lc_kyber_1024_x448` hybrid keypair — a single `lc_kyber_1024_x448_keypair` call, not something this codebase assembles by hand. Internally it combines an ML-KEM-1024 keypair with an X448 keypair:
+The administrator's `key_store` KEM keypair is leancrypto's `lc_kyber_1024_x448` hybrid keypair—a single `lc_kyber_1024_x448_keypair` call, not something this codebase assembles by hand. Internally it combines an ML-KEM-1024 keypair with an X448 keypair:
 
 | Component     | pubKey         | privKey        |
 | ------------- | -------------- | -------------- |
@@ -19,7 +19,7 @@ Each `keyStore` keypair is leancrypto's `lc_kyber_1024_x448` hybrid keypair — 
 | X448          | 56 bytes       | 56 bytes       |
 | **Composite** | **1624 bytes** | **3224 bytes** |
 
-`keyStore.pubKey` stores the raw 1624-byte composite public key. `keyStore.privKey` wraps the raw 3224-byte composite private key using the standard Encrypt procedure below (IKM = that row's unwrapped `keyStoreKey`), so the stored blob is 3224 + 132 = 3356 bytes. The owner's `umk` wraps `keyStoreKey`, not `privKey` directly.
+`key_store.pubkey` stores the raw 1624-byte composite public key. `key_store.privkey` wraps the raw 3224-byte composite private key using the standard Encrypt procedure below with the administrator's 128-byte `umk` as IKM, so the stored blob is 3224 + 132 = 3356 bytes. The row's `umk` is separately wrapped by the administrator's 256-byte `user_root_key`. Ordinary accounts have null `pubkey`/`privkey` columns. Public book sharing does not use this KEM keypair.
 
 ### Versioned request signatures
 
@@ -28,9 +28,8 @@ Every account has a separate signing key for proving possession when calling `/v
 | version | algorithm | public-key encoding | private-key encoding | signature encoding |
 |---:|---|---|---|---|
 | 1 | ECDSA P-521 with SHA-512 | SubjectPublicKeyInfo DER | PKCS#8 DER, wrapped by `umk` | Web Crypto raw signature: 66-byte `r` followed by 66-byte `s` (132 bytes total) |
-| 2 (reserved) | P-521 plus ML-DSA-87 hybrid | versioned composite envelope | versioned composite envelope, wrapped by `umk` | versioned envelope containing both signatures |
 
-Version 2 is reserved as the migration direction, not accepted today. When enabled, the Worker must verify both the P-521 and ML-DSA-87 components over the identical canonical message; accepting either component alone would permit downgrade. Version-specific public/private blobs are opaque to the generic endpoint layer, so adding the hybrid does not change the JSON envelope. P-521 offers approximately 256-bit classical security but is not post-quantum secure.
+Signing suite 1 is the only accepted suite. P-521 offers approximately 256-bit classical security but is not post-quantum secure.
 
 For proof protocol version 2 using signing suite 1, the client and Worker construct these bytes exactly:
 
@@ -93,7 +92,7 @@ AAD       = UTF8("txt:share-grant:v1") || id_hash
 grant     = 0x01 || salt_32 || nonce_12 || AES-GCM-ciphertext-and-tag
 ```
 
-Salt and nonce are public, independently generated, and carried inside the grant; neither is reused as the other. The per-grant derivation isolates grants and makes a nonce collision across different salts harmless. The grant is base64url encoded without padding. On decryption the Worker validates the path grammar and requires `SHA-256(path)` to equal the D1 row's registered 32-byte BLOB. D1 therefore authorizes deletion without learning the path, while cross-capability substitution and database row substitution fail authentication or the path-hash comparison. The EPUB continues to use the standard Ascon-Keccak blob format and its independent 128-byte `share_content_key`.
+Salt and nonce are public, independently generated, and carried inside the grant; neither is reused as the other. The per-grant derivation isolates grants and makes a nonce collision across different salts harmless. The grant is base64url encoded without padding. On decryption the Worker validates the path grammar and requires `SHA-256(path)` to equal the D1 row's registered 32-byte BLOB. D1 therefore authorizes anonymous reads without learning the path, while cross-capability substitution and database row substitution fail authentication or the path-hash comparison. The EPUB continues to use the standard Ascon-Keccak blob format and its independent 128-byte `share_content_key`.
 
 ## Version Numbering
 
@@ -105,58 +104,43 @@ Bump minor for additive, backward-compatible changes (e.g. new optional fields i
 
 Bump major for breaking changes (different cipher/KDF, different field sizes/ordering, different magic bytes) — a decoder must refuse a blob whose major version it doesn't recognize rather than attempt to decode it.
 
-## Additional Data (AD)
+## Additional Data and HKDF info
 
-**Not yet implemented.** `txt/crypto.ts`'s `blobEncrypt`/`blobDecrypt` currently build `AD = magic || version || salt` only, with no `context` input, and no caller passes one — everything below describes the intended design for the layer that will consume it (key_hierarchy.md's `<field>Context` columns), not current code.
+The implemented blob format has no caller-supplied context. HKDF's `info` input is the empty byte string, and AEAD additional data is exactly the stored header:
 
 ```
-AD = magic (2) || version (2) || salt (64) || context (var)
+HKDF-info = empty
+AD = magic (2) || version (2) || salt (64)
 ```
 
-The AEAD tag covers the blob header, `context`, and the ciphertext: any single-bit modification to the magic, version, salt, context, ciphertext, or tag causes authentication failure before any plaintext is returned — this binds the blob's format identity, version, and context to its authenticity, not just its salt.
-
-`context` is an opaque byte string the caller supplies alongside the IKM, for domain separation — it is never stored in the blob and never derived from the blob's own bytes, the same as the IKM itself. Its job: when one IKM protects more than one logically distinct value (the common case throughout this design's key hierarchy — see key_hierarchy.md), each such value is encrypted under its own distinct `context`, so a blob copied from one column or row into another decrypts under the wrong `context` and fails authentication rather than silently succeeding against the wrong value. `context` is not secret — its security value comes entirely from living outside the ciphertext being moved, not from being hidden, so it is typically stored in plaintext next to the column it protects (see key_hierarchy.md's Context columns). This document only defines the mechanism; which columns need one and what value each uses is a question for the layer that actually has a schema (key_hierarchy.md/data_model.md), not this one.
+The tag therefore authenticates the magic, version, salt, and ciphertext. A blob is bound to its IKM but not to a particular table, column, row, or application purpose; callers must not assume that moving a valid blob between two locations protected by the same IKM will fail authentication.
 
 ## Encrypt
 
-Given a plaintext payload, an IKM (input keying material — the caller's key from the applicable key hierarchy), and a `context` (see Additional Data above):
+Given a plaintext payload and an IKM (input keying material):
 
 1. Generate a random 64-byte `salt`.
-2. Derive OKM via `HKDF-SHA3-512(IKM, salt, info=context)` — 128 bytes (64-byte AEAD key + 64-byte IV).
+2. Derive OKM via `HKDF-SHA3-512(IKM, salt, info=empty)`—128 bytes (64-byte AEAD key + 64-byte IV).
 3. Split the OKM into the AEAD key and IV.
 4. If the payload is a structured (e.g. JSON) payload, brotli-compress it first; raw binary payloads are used as-is.
 5. Set `magic = 0x54 0x58`, `version` to the current format version.
-6. Build `AD = magic || version || salt || context`.
+6. Build `AD = magic || version || salt`.
 7. Run Ascon-Keccak AEAD encrypt with the derived key, IV, and AD over the (compressed) payload, producing `ciphertext` and a 64-byte `tag`.
-8. Assemble the blob: `magic || version || salt || ciphertext || tag` — `context` is not part of the assembled blob; the caller must supply the identical `context` again at Decrypt.
+8. Assemble the blob: `magic || version || salt || ciphertext || tag`.
 
 ## Decrypt
 
-Given a blob, the same IKM used to encrypt it, and the same `context` used to encrypt it:
+Given a blob and the same IKM used to encrypt it:
 
 1. Reject the blob if it is shorter than 132 bytes.
 2. Parse `magic`, `version`, `salt`, `ciphertext`, `tag` from their fixed offsets.
 3. Verify `magic == 0x54 0x58`; reject otherwise.
 4. Verify `version`'s major byte matches a major version this decoder supports; reject otherwise (see Version Numbering).
-5. Rebuild `AD = magic || version || salt || context`.
-6. Derive the same OKM via `HKDF-SHA3-512(IKM, salt, info=context)` and split it into the AEAD key and IV, exactly as in Encrypt steps 2–3.
-7. Run Ascon-Keccak AEAD decrypt with the derived key, IV, AD, `ciphertext`, and `tag`. If tag verification fails — including because the wrong `context` was supplied — abort; no plaintext is returned.
+5. Rebuild `AD = magic || version || salt`.
+6. Derive the same OKM via `HKDF-SHA3-512(IKM, salt, info=empty)` and split it into the AEAD key and IV, exactly as in Encrypt steps 2–3.
+7. Run Ascon-Keccak AEAD decrypt with the derived key, IV, AD, `ciphertext`, and `tag`. If tag verification fails, abort; no plaintext is returned.
 8. If the payload was brotli-compressed at encrypt time, brotli-decompress the decrypted bytes to recover the original payload.
 
-## Encapsulate / Decapsulate (Asymmetric Wrap)
+## Composite KEM support
 
-Used wherever key material must be wrapped under a _recipient's_ public key rather than a key the wrapper already holds. Public book sharing does not use this operation: the administrator creates a fresh symmetric content key and puts it only in the capability URL and the administrator's encrypted SQLCipher database. `keyStore`'s composite keypair, and this section, are kept for a future feature that needs an asymmetric recipient wrap.
-
-**Encapsulate** (sender, holding the recipient's composite `pubKey`):
-
-1. Run `lc_kyber_1024_x448_enc` against `pubKey`, producing a KEM ciphertext (`ct`, 1624 bytes) and an 88-byte shared secret (`ss`). Deliberately not `lc_kyber_1024_x448_enc_kdf`: the plain `_enc` call hands back `ss` as leancrypto's `lc_kyber_1024_x448_ss` struct, the raw concatenation of the 32-byte ML-KEM-1024 shared secret and the 56-byte X448 shared secret — uncombined. (`_enc_kdf` would instead run its own internal KMAC256-based combiner and return a caller-chosen-length already-combined secret; using it here would mean trusting/depending on a second KDF construction alongside HKDF-SHA3-512 for no benefit.)
-2. Run the standard Encrypt procedure using `ss` as its IKM and a caller-supplied `context` (see key_hierarchy.md for the value this design uses) to wrap the key material being shared. Encrypt generates a random 64-byte `salt`, derives a 128-byte OKM via `HKDF-SHA3-512(ss, salt, info=context)`, and embeds that salt (not `context`) in the standard blob (`magic||version||salt||ciphertext||tag`). This HKDF call is also where the ML-KEM-1024/X448 combining actually happens (see below) — it isn't a separate step.
-3. Store `ct` alongside the resulting blob — a `<field>Ct`/`<field>` pair, in whichever entity ends up using this (none does today; see the note above). The KEM ciphertext is sufficient for decapsulation; the recipient obtains the wrapping salt from the wrapped blob itself, and the same `context` from wherever the encrypting side got it (a fixed, non-secret value both sides can compute independently — see key_hierarchy.md).
-
-**Decapsulate** (recipient, holding their composite `privKey`):
-
-1. Read the stored `ct`.
-2. Run `lc_kyber_1024_x448_dec` on `ct` using `privKey`, recovering the same raw `ss`.
-3. Run the standard Decrypt procedure on the blob using `ss` as its IKM and the same `context` used at Encapsulate time — Decrypt parses the salt from the blob header itself.
-
-The combiner is concatenate-then-HKDF: `ss` is `ML-KEM-1024-SS (32 bytes) || X448-SS (56 bytes)`, uncombined, and `HKDF-SHA3-512(ss, salt, info=context)` in Encapsulate step 2 above is what actually combines them — the same KDF this codebase already uses for every other Encrypt/Decrypt call, rather than a second, separate combiner. This is a standard robust construction: the derived key stays secure as long as at least one of ML-KEM-1024 or X448 remains unbroken. By itself it does not bind `ct` or either party's public key into the derivation, only the two raw shared secrets, `salt`, and whatever `context` happens to be. Hybrid-KEM designs such as X-Wing additionally fold `ct` and the recipient's static X448 `pubKey` into the derivation for domain separation and cross-protocol safety — this design's `context` mechanism is general enough to provide that too, by choosing `context = ct || pubKey` (or that concatenated onto the fixed per-share label from key_hierarchy.md) for this specific call site, rather than needing a second, separate mechanism.
+The Python leancrypto wrapper exposes `lc_kyber_1024_x448_enc` and `lc_kyber_1024_x448_dec`. Encapsulation returns a 1624-byte KEM ciphertext and leancrypto's raw 88-byte hybrid shared-secret structure: 32 ML-KEM-1024 bytes followed by 56 X448 bytes. Decapsulation recovers the same 88 bytes. No persisted application record or current browser/Worker flow invokes these operations; the only active use of the composite KEM API is administrator keypair provisioning. Public sharing instead creates an independent 128-byte symmetric content key and places it only in the URL fragment and the administrator's encrypted SQLCipher database.

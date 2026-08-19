@@ -26,7 +26,8 @@ This repo holds the txt document-storage system's design docs, the Cloudflare Wo
   - `r2_client.py` — `R2Client`, a thin boto3/S3-compatible wrapper for R2 (get/put object, list keys, list common prefixes, delete keys).
   - `opf.py` — Calibre `.opf` sidecar detection and `<metadata>` parsing; `ingest.py` extracts just `title`/`authors`/`subjects`/`publisher` from it into `txt.catalog` (docs/data_model.md §3.1).
   - `ingest.py` — `TxtIngester`, the `--ingest` command: uploads each EPUB in a directory as one R2 object, keeps a resumable local SQLCipher working copy, and dedups against already-recorded filenames.
-  - `db_updater.py` — `DbUpdater`, the `--update-db` command: migrates every account an administrator's creds.json can reach (their own database, plus every user backup row `account_init.py`'s admin-backup mechanism has written) from `txt.metadata` to `txt.catalog` (docs/data_model.md §3.1), idempotent and resumable at both the per-account and per-row level.
+  - `ctl_updater.py` — `CtlUpdater`, the `--update-ctl` command: validates every self-owned/admin-backup credential payload reachable with the administrator credentials, installs encrypted user handles and their Turso hashes, and supports a full `--dry-run` preview.
+  - `db_updater.py` — `DbUpdater`, the `--update-db` command: migrates and validates the complete catalog, CFI reading-state, bookmark, share, and named-migration schema for every account an administrator's creds.json can reach. R2 is always the input; local files are inspection checkpoints only.
   - `replace_images.py` — `--replace-images`: replaces EPUB images with placeholders and constrains their display size; unrelated to the rest of this package's account/storage logic.
   - `edit_epub.py` — `--edit-epub`: splits EPUB spine items into soft 1.2 MB parts, rewrites title/series metadata and sidecars, then applies the same image replacement rules as `--replace-images`.
   - `cli.py` — the click entry point.
@@ -35,12 +36,15 @@ This repo holds the txt document-storage system's design docs, the Cloudflare Wo
 - `creds/` — local, gitignored credential files. Never commit these. Never run a command against a real one yourself — hand it to the user to run.
 - `worker/` — the Cloudflare Worker implementing docs/auth.md, one module per concern:
   - `firebaseAuth.ts` — RS256/JWKS verification of a Firebase ID token, cached per the response's own `Cache-Control`.
-  - `auth.ts` — bearer-token extraction + `verifiedUid`, shared by both endpoints.
+  - `auth.ts` — bearer-token extraction + `verifiedUid` for `/v1/keys` and the administrator-only share-management endpoints.
   - `ctl.ts` — the `ctl` join (docs/auth.md §2) over the libsql HTTP `/v2/pipeline` protocol.
-  - `cache.ts` — the `keys:{uid}` KV cache and per-uid rate limit (docs/auth.md §6).
-  - `account.ts` — `getAccount`, orchestrating cache → rate limit → `ctl.ts`, shared by both endpoints (a cache hit skips the rate limiter, since it never touches the resource the limiter protects).
+  - `cache.ts` — the versioned `keys:v3:{uid}` KV cache and per-uid endpoint rate limits (docs/auth.md §6).
+  - `account.ts` — `getAccount`, applying the keys rate limit before resolving an account through cache → `ctl.ts`; used by `/v1/keys` and authenticated share management, never by `/v1/r2-token`.
   - `keys.ts` — `POST /v1/keys`.
-  - `r2Token.ts` — `POST /v1/r2-token`: local JWT-signing of a scoped R2 temporary credential (no outbound Cloudflare API call), from a single parent R2 key pair for both the admin's bucket-wide and an ordinary user's `db_path`/`db_prefix`-scoped credential.
+  - `r2Ticket.ts` — issues and verifies 24-hour Worker-signed account/path/signing-key tickets.
+  - `r2Token.ts` — `POST /v1/r2-token`: verifies a ticket plus P-521 proof and locally signs exact-`db_path` and `{db_prefix}/*` R2 credentials from one parent R2 key pair. The prefix is read-only for ordinary users and read-write for the configured administrator.
+  - `share.ts` — administrator-only share registration/deletion plus anonymous shared-content reads, with opaque path grants and a D1 live-share registry.
+  - `migrations/` — D1 schema files applied through Wrangler; `0001_share_registry.sql` is the authoritative registry schema.
   - `index.ts` — the fetch handler/router.
   - `env.d.ts` — the `Env` interface for secrets/bindings `wrangler types` doesn't know about.
 - `worker/tests/`, `ui/tests/` — vitest, mirroring each tree's own source subdirectory structure (e.g. `ui/tests/screens/Reader/ReaderScreen.test.tsx` for `ui/src/screens/Reader/ReaderScreen.tsx`) rather than living alongside the source files they test.
@@ -55,4 +59,4 @@ This repo holds the txt document-storage system's design docs, the Cloudflare Wo
 - The Python tree is linted and formatted with ruff (`[tool.ruff]` in `pyproject.toml`, 88 columns to match the TS side): `python3 -m ruff check .` and `python3 -m ruff format .` before committing.
 - `worker/` and `ui/` are linted with ESLint (`eslint.config.js`): `npm run lint` before committing.
 - The project's own TypeScript is 7.x (`typescript7`, aliased since typescript-eslint doesn't support TS 7 yet); a plain `typescript@6.0.3` devDependency exists solely to satisfy typescript-eslint's own peer range. `npm run tsc` (used by every `*:typecheck`/`ui:build` script) always resolves to the real 7.x compiler, never the 6.x one — the alias exists only so both can coexist under `node_modules` without conflict.
-- Docs (this file, README, docs/*) describe current state only — no commit hashes, no "legacy"/"previously" framing, no narrated history.
+- Docs (this file, README, docs/*) describe current behavior and supported migration inputs only — no commit hashes or narrated development history.

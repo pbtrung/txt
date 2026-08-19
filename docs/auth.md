@@ -4,7 +4,7 @@ Firebase authenticates the browser once at `POST /v1/keys`. That response return
 
 The ticket is an integrity-protected certificate, not a bearer credential. It binds the Firebase-provisioned account to the hash of the user's decrypted handle, its signing public key, and its authorized path-pair hash. A caller must possess both the decrypted handle and the matching P-521 private key to use it.
 
-The Worker mints one read-write credential for the exact `db_path` object. An ordinary account receives read-only scope for `{db_prefix}/*`; the configured administrator receives read-write scope so the browser can create and delete immutable objects under `{db_prefix}/shared/*`. It never creates users or storage prefixes; an administrator provisions both out of band.
+The Worker mints one read-write credential for the exact `db_path` object. An ordinary account receives read-only scope for `{db_prefix}/*`; the configured administrator receives read-write scope so the browser can upload immutable objects under `{db_prefix}/shared/*`. Normal share deletion goes through the trusted Worker and its D1 registry. The Worker never creates users or storage prefixes; an administrator provisions both out of band.
 
 ---
 
@@ -20,13 +20,13 @@ There is one Turso control database, `ctl` (§2). User data lives as encrypted o
 | `ADMIN_UID` | the one Firebase uid authorized as administrator; this trusted value, not Turso's mutable `users.type`, controls elevated R2 scope and sharing |
 | `R2_TICKET_SECRET` | standard padded base64 encoding of at least 32 random bytes, used only to sign and verify R2 binding tickets |
 | `R2_ENDPOINT`, `R2_BUCKET`, `R2_REGION` | R2 destination returned with temporary credentials |
-| `R2_READ_WRITE_ACCESS_KEY_ID` / `R2_READ_WRITE_SECRET_ACCESS_KEY` | parent credential used to sign path-limited temporary R2 credentials |
+| `R2_READ_WRITE_ACCESS_KEY_ID` / `R2_READ_WRITE_SECRET_ACCESS_KEY` | parent credential used to sign path-limited temporary R2 credentials and to fetch/delete exact shared objects inside the Worker |
 | `SHARE_GRANT_KEY` | standard padded base64 encoding of exactly 32 random bytes; AES-256-GCM key for opaque shared-object grants |
 | `SHARE_REGISTRY` | D1 binding containing 32-byte capability/path hash BLOBs for live shares; it never stores a raw capability or object path |
 
 `R2_TICKET_SECRET` must not reuse the R2 secret access key. All Worker instances use the same ticket secret. Rotating it invalidates every outstanding ticket and is an emergency global response, not routine per-user revocation.
 
-`SHARE_GRANT_KEY` is independent from `R2_TICKET_SECRET`, R2 credentials, and all user keys. Rotation requires retaining the previous key until active share URLs have been replaced. D1 is trusted for authorization integrity and deletion ordering, but receives no plaintext object paths or content keys.
+`SHARE_GRANT_KEY` is independent from `R2_TICKET_SECRET`, R2 credentials, and all user keys. Grants do not carry a key identifier, so replacing this secret immediately invalidates every existing share URL. After rotation, copy and distribute new URLs; uninterrupted rotation would require multi-key verification, which is not implemented. D1 is trusted for authorization integrity and deletion ordering, but receives no plaintext object paths or content keys. Apply `worker/migrations/0001_share_registry.sql` to the configured `SHARE_REGISTRY` binding before enabling shares.
 
 The Worker Turso token is read-only. A leaked Worker database token can expose ciphertext and control metadata, but cannot alter or delete rows.
 
@@ -52,8 +52,8 @@ CREATE TABLE key_store (
   umk            BLOB NOT NULL,  -- wrapped by user_root_key
   pubkey         BLOB,           -- composite KEM public key; admin only
   privkey        BLOB,           -- wrapped composite KEM private key; admin only
-  sign_version   INTEGER NOT NULL CHECK (sign_version >= 1),
-  sign_algorithm TEXT NOT NULL,
+  sign_version   INTEGER NOT NULL CHECK (sign_version = 1),
+  sign_algorithm TEXT NOT NULL CHECK (sign_algorithm = 'ECDSA-P521-SHA512'),
   sign_pubkey    BLOB NOT NULL,  -- v1: P-521 SPKI DER
   sign_privkey   BLOB NOT NULL   -- v1: wrapped P-521 PKCS#8 DER
 );
@@ -124,7 +124,9 @@ Provisioning performs these idempotent operations:
 6. Encrypt the credential payload, including the same base64-encoded `user_handle`, into the account's self-owned `cred_store` row.
 7. For an ordinary user, add that user's `user_root_key` to the administrator copy and encrypt it into the administrator-owned backup row. Do not add a root key to either self-owned row.
 
-For a legacy ordinary account, re-run `--init-user` first so its administrator backup receives `user_root_key`. Then run `txt --update-ctl admin_creds.json --verbose --dry-run`, inspect the complete plan, and repeat without `--dry-run`. The command uses only the administrator credentials and administrator-owned backups; it does not require every user's credentials file. It validates every reachable account before writing, adds `users.user_handle_hash`, creates or verifies one handle in both encrypted payloads, fills its SHA-256 hash, and installs the unique index. A missing backup/root or any self/backup/hash mismatch aborts the run. Re-running it is idempotent.
+For an existing control database, re-run `--init-admin` once and `--init-user` for every ordinary account. Those idempotent provisioning commands add the current compatibility columns, install or verify each account's path binding and signing key, and ensure every administrator backup contains the ordinary user's `user_root_key`. Each `--init-user` run still requires that user's credentials file.
+
+Then run `txt --update-ctl admin_creds.json --verbose --dry-run`, inspect the complete plan, and repeat without `--dry-run`. This command needs only the administrator credentials and administrator-owned backups. It adds `users.user_handle_hash` when absent, creates or verifies one raw handle in the encrypted self/admin payloads, stores its SHA-256 hash, and installs the unique index. It does not install signing keys or path bindings. A missing backup/root or any self/backup/hash mismatch aborts the run. Re-running every step is idempotent.
 
 `--update-db` remains responsible only for schemas inside users' encrypted SQLCipher databases in R2; it never migrates the Turso control schema.
 
@@ -254,6 +256,26 @@ The response contains exactly one credential of each type:
 | 429 | per-account R2-token rate limit exceeded |
 | 503 | R2 signing unavailable |
 
+### 4.3 Public-share endpoints
+
+The administrator endpoints use a Firebase bearer token and accept the same path-bound body:
+
+```json
+{
+  "db_path": "<administrator database path>",
+  "db_prefix": "<administrator content prefix>",
+  "share_prefix": "<52-character shared-object segment>",
+  "share_path": "<52-character shared-object segment>",
+  "share_id": "<standard-base64 32 random bytes>"
+}
+```
+
+`POST /v1/share-grant` validates the Firebase uid against `ADMIN_UID`, verifies the `db_path`/`db_prefix` binding through the administrator's control record, inserts the capability/path hashes into D1 when absent, and returns `{ "grant": "<base64url envelope>" }`. Re-registering the same id and path is idempotent; reusing an id for a different path returns 409.
+
+`DELETE /v1/share` performs the same identity and path checks, rejects a registered id/path mismatch, deletes the exact R2 object with the Worker's parent credential, and then deletes the D1 row. A missing R2 object is treated as already deleted. The success response is 204.
+
+`POST /v1/shared-content` is anonymous. It accepts `{ "share_id": "<base64url id>", "grant": "<base64url envelope>" }`, requires a matching live D1 row, authenticates and decrypts the object path, fetches the ciphertext with the Worker's parent credential, and streams it without caching. It never receives the fragment's content key.
+
 ---
 
 ## 5. End-to-end flow
@@ -269,7 +291,7 @@ Proofs and tickets use fixed expirations, not sliding renewal. `/v1/r2-token` ne
 
 ### 5.1 Public-share authorization
 
-Only a Firebase identity equal to `ADMIN_UID` may call `POST /v1/share-grant` or `DELETE /v1/share`. Grant creation validates the administrator's `db_path`/`db_prefix` binding, computes `SHA-256(share_id)` and `SHA-256(object_path)`, stores both 32-byte hashes as BLOBs in D1, and returns an encrypted-path grant. Registering an existing share id is idempotent only when its path hash matches.
+Only a Firebase identity equal to `ADMIN_UID` may call `POST /v1/share-grant` or `DELETE /v1/share`. Grant creation validates the administrator's `db_path`/`db_prefix` binding, computes `SHA-256(share_id)` and `SHA-256(object_path)`, stores both 32-byte hashes as BLOBs in D1, and returns an encrypted-path grant. Registering an existing share id is idempotent only when its path hash matches. The browser generates a grant when it copies a share URL; the complete URL is never stored in SQLCipher, D1, Turso, or R2.
 
 The returned grant derives a per-grant AES-256-GCM key from `SHARE_GRANT_KEY`, a random 32-byte salt, and the capability hash using HKDF-SHA-256, then encrypts the exact object path with an independent random 12-byte nonce. Associated data is `UTF8("txt:share-grant:v1") || SHA-256(share_id)`, preventing a grant from being moved to another capability. The URL fragment carries the raw 32-byte share id, opaque grant, and content key, so none appears in the initial navigation request.
 
@@ -301,7 +323,7 @@ An outstanding ticket can mint R2 credentials until its final second. Because a 
 
 ### 6.2 KV expiration
 
-KV caches only the account record used by `/v1/keys` and the rate counters. The account cache expires 24 hours after each write:
+KV caches the account record used by `/v1/keys` and the authenticated share-management endpoints, plus rate counters. The account cache expires 24 hours after each write:
 
 ```ts
 const KEYS_TTL_SECONDS = 24 * 60 * 60;
@@ -316,12 +338,12 @@ Cloudflare KV's `expirationTtl` is a relative number of seconds from the `put`. 
 | KV key | contents | TTL |
 |---|---|---|
 | `keys:v3:{uid}` | account type, handle hash, path binding, signing suite/public and wrapped-private key, wrapped `umk`, and encrypted `cred_store.content` | 24 hours |
-| `ratelimit:v3:keys:{uid}:{window}` | `/v1/keys` count | 1 hour |
+| `ratelimit:v3:keys:{uid}:{window}` | account resolutions for `/v1/keys`, `/v1/share-grant`, and `DELETE /v1/share` | 1 hour |
 | `ratelimit:v3:r2-token:{sub}:{window}` | valid `/v1/r2-token` count | 1 hour |
 
 The R2 endpoint derives its account identity from the verified ticket. It applies the per-account R2 limit only after validating the ticket and proof so someone holding only public ticket metadata cannot spend another user's quota with invalid signatures. Coarse platform protections can reject abusive unauthenticated traffic before cryptographic verification.
 
-Suggested budgets remain 60 `/v1/keys` calls and 30 valid `/v1/r2-token` calls per account per hour.
+The implemented budgets are 60 account resolutions (keys and administrator share management combined) and 30 valid `/v1/r2-token` calls per account per hour. The keys limit is checked before the account-cache lookup; a cache hit still consumes the budget.
 
 ---
 
@@ -337,7 +359,8 @@ There is no active per-user ticket revocation. Normal changes take effect as fol
 | temporary R2 credential leaked | no early revocation; it expires after 15 minutes |
 | ticket and P-521 private key leaked together | rotate the signing key and accept the remaining ticket lifetime, or rotate `R2_TICKET_SECRET` to invalidate all tickets in an emergency |
 | Worker ticket secret leaked | replace `R2_TICKET_SECRET` and redeploy; all tickets stop verifying |
-| parent R2 signing credential leaked | replace the parent key and redeploy; already-issued credentials expire naturally |
+| share-grant key leaked or rotated | replace `SHARE_GRANT_KEY`, redeploy, and issue new URLs; every grant made with the prior key stops decrypting |
+| parent R2 credential leaked | replace the parent key and redeploy; already-issued credentials expire naturally |
 
 Purging the account cache affects only future `/v1/keys` calls. It cannot revoke a stateless ticket already held by a client.
 
@@ -345,20 +368,22 @@ Purging the account cache affects only future `/v1/keys` calls. It cannot revoke
 
 ## 8. Trust boundary
 
-The client, administrator, and Worker are trusted; Turso and R2 are not trusted with plaintext user data. The Worker holds the Turso token, ticket secret, parent R2 signing credential, and trusted `ADMIN_UID`, but no `user_root_key`, raw `user_handle`, or plaintext `umk`. Turso sees the handle hash and encrypted user material. `users.type` is descriptive and may be checked for provisioning consistency, but it never grants administrator scope. The administrator can decrypt ordinary-user backup roots by design so that admin-only migrations remain possible.
+The client, administrator, Worker, and D1 authorization state are trusted; Turso and R2 are not trusted with plaintext user data or authorization integrity. The Worker holds the Turso token, ticket secret, share-grant key, parent R2 credential, trusted `ADMIN_UID`, and D1 binding, but no `user_root_key`, raw `user_handle`, plaintext `umk`, or share content key. Turso sees the handle hash and encrypted user material. D1 sees only capability/path hashes and creation times. `users.type` is descriptive and may be checked for provisioning consistency, but it never grants administrator scope. The administrator can decrypt ordinary-user backup roots by design so that admin-only migrations remain possible.
 
 The signed ticket moves the R2 authorization record out of Turso for the ticket's lifetime. Turso can corrupt the hash, public key, ciphertext, or path binding returned during a Firebase-authenticated `/v1/keys` call, but the resulting ticket is delivered only to that authenticated browser. Turso cannot replace the encrypted raw handle or private key with chosen plaintext without the account's `umk`; substitutions therefore make decryption, handle comparison, path comparison, or signature verification fail. Without the Firebase token and decrypted client material, Turso cannot use the replacement ticket itself. This reduces active Turso tampering to denial of service for that account rather than R2 impersonation.
 
 A stolen ticket is insufficient by itself. A caller also needs the raw handle and the P-521 private key. A compromised client holding all decrypted material can access its own provisioned paths, while a compromised Worker can sign arbitrary tickets and R2 credentials and is therefore inside the trusted computing base.
 
-The ticket's `sign_version` selects the signing key suite. The proof's `version` selects the canonical request protocol. Neither is client-negotiated downward. P-521 provides approximately 256-bit classical security but no post-quantum security; a future hybrid suite must require both its classical and post-quantum signatures.
+The ticket's `sign_version` selects the signing key suite. The proof's `version` selects the canonical request protocol. Neither is client-negotiated downward. The only accepted signing suite is P-521, which provides approximately 256-bit classical security but no post-quantum security.
 
 ---
 
 ## 9. Rollout order
 
-1. Back up `ctl`, then re-run `--init-user` for every legacy ordinary user so each administrator backup contains that user's root key.
-2. Run `txt --update-ctl admin_creds.json --verbose --dry-run`; resolve every reported backup or binding problem before running it without `--dry-run`.
-3. Generate a dedicated secret with `openssl rand -base64 32` and install that exact padded value as `R2_TICKET_SECRET`.
-4. Deploy the Worker and browser together. The browser requires both `r2_ticket` and encrypted payload `user_handle`; the new R2 endpoint no longer accepts the Firebase-bound version-1 proof.
-5. Confirm `/v1/keys`, automatic ticket renewal after a 401, exact-path read/write, prefix reads, and negative handle/path/signature cases. Old `keys:v2:*` cache entries are misses under `keys:v3:*` and may be purged later.
+1. Back up `ctl` and R2. Re-run `--init-admin`, then re-run `--init-user` for every ordinary account so path bindings, signing keys, and administrator backups are current.
+2. Run `txt --update-ctl admin_creds.json --verbose --dry-run`; resolve every reported backup or handle problem before running it without `--dry-run`.
+3. Run `--update-db` for every reachable encrypted database.
+4. Configure `KEYS_CACHE` and `SHARE_REGISTRY`, then apply the registry schema with `npx wrangler d1 execute SHARE_REGISTRY --remote --file worker/migrations/0001_share_registry.sql`.
+5. Generate separate values with `openssl rand -base64 32` and install them as `R2_TICKET_SECRET` and `SHARE_GRANT_KEY`; also configure the remaining §1 values, especially `ADMIN_UID`.
+6. Apply the R2 CORS policy and deploy the Worker and browser together.
+7. Confirm `/v1/keys`, automatic ticket renewal after a 401, exact-path read/write, ordinary/admin prefix scope, share copy/read/delete, and negative handle/path/signature/grant cases.
