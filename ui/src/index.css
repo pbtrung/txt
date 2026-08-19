@@ -126,7 +126,8 @@
 }
 
 .search-box {
-  flex: 1 1 auto;
+  width: 0;
+  flex: 1 1 0%;
   min-width: 0;
 }
 
@@ -141,6 +142,7 @@
 }
 
 .library-book-actions {
+  flex: 0 0 auto;
   margin-left: calc(-1 * var(--bs-border-width));
 }
 
@@ -238,6 +240,10 @@
 
 .library-sidebar-layout .library-content-pane {
   min-width: var(--library-right-pane-min-width);
+}
+
+.library-search-col {
+  flex-basis: 0;
 }
 
 @media (min-width: 768px) {
