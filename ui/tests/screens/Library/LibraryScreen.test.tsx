@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 
@@ -23,6 +23,7 @@ vi.mock("react-aria-components", async (importOriginal) => {
 
 import type { LibraryBook } from "../../../src/data/libraryDb";
 import * as libraryModel from "../../../src/screens/Library/libraryModel";
+import { LibraryHeader } from "../../../src/screens/Library/LibraryHeader";
 import { LibraryScreen } from "../../../src/screens/Library/LibraryScreen";
 import {
   useLibraryBooks,
@@ -96,6 +97,15 @@ function renderLibrary(
   );
 }
 
+function ControlledSearchHeader({ onChange }: { onChange: (value: string) => void }) {
+  const [query, setQuery] = useState("wizard");
+  const update = (value: string) => {
+    onChange(value);
+    setQuery(value);
+  };
+  return <LibraryHeader query={query} onQuery={update} menu={null} />;
+}
+
 describe("LibraryScreen", () => {
   it("shows a loading message before books resolve", () => {
     renderScreen(null);
@@ -144,6 +154,17 @@ describe("LibraryScreen", () => {
     expect(searchField).toHaveAttribute("data-empty", "true");
     expect(screen.getByRole("link", { name: /Dune/ })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Wizard/ })).toBeInTheDocument();
+  });
+
+  it("clears the controlled search with one change event", async () => {
+    const onChange = vi.fn();
+    render(<ControlledSearchHeader onChange={onChange} />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Clear search" }));
+
+    expect(onChange).toHaveBeenCalledOnce();
+    expect(onChange).toHaveBeenCalledWith("");
+    expect(screen.getByRole("searchbox")).toHaveValue("");
   });
 
   it("reuses the search index while the query changes", async () => {
