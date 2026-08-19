@@ -308,7 +308,7 @@ function PageInput({
       style={{ width: `calc(${String(page.total).length}ch + 1.5rem)` }}
       onChange={(target) => void renderer?.displayPage(target)}
     >
-      <Input className="form-control form-control-sm text-end w-100" />
+      <Input className="form-control form-control-sm text-end w-100 reader-page-input" />
     </NumberField>
   );
 }

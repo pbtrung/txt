@@ -372,6 +372,7 @@ describe("ReaderScreen", () => {
     const callback = vi.mocked(instance.onPageChange).mock.calls[0][0];
     act(() => callback({ current: 4, total: 120 }));
     const input = screen.getByRole("textbox", { name: "Current page" });
+    expect(input).toHaveClass("reader-page-input");
 
     await userEvent.clear(input);
     await userEvent.type(input, "42{Enter}");
