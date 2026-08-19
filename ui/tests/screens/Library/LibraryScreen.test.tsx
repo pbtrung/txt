@@ -557,6 +557,9 @@ describe("LibraryScreen", () => {
     });
     expect(document.querySelector(".library-sidebar")).toBeNull();
     expect(screen.getByRole("button", { name: "Open menu" })).toBeInTheDocument();
+    expect(screen.getByRole("searchbox").closest(".library-search-group")).toHaveClass(
+      "library-search-group-single-pane",
+    );
 
     rootRect.mockReturnValue({ width: 680 } as DOMRect);
     act(() => {
@@ -564,6 +567,9 @@ describe("LibraryScreen", () => {
     });
     expect(document.querySelector(".library-sidebar")).not.toBeNull();
     expect(document.querySelector(".library-sidebar-layout")).not.toBeNull();
+    expect(
+      screen.getByRole("searchbox").closest(".library-search-group"),
+    ).not.toHaveClass("library-search-group-single-pane");
   });
 
   it("shows the sidebar below the desktop breakpoint when 400px remains", () => {

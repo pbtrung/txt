@@ -242,7 +242,11 @@
 
 @media (min-width: 768px) {
   .library-search-group {
-    width: max(350px, 50%);
+    width: max(75%, 400px);
+  }
+
+  .library-search-group-single-pane {
+    width: 100%;
   }
 }
 

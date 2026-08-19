@@ -49,7 +49,12 @@ export function LibraryHeader({
         )}
       </div>
       <div className="d-flex flex-grow-1 px-2 px-md-3 py-2 min-w-0 library-search-col">
-        <div className="library-search-group d-flex min-w-0">
+        <div
+          className={classNames(
+            "library-search-group d-flex min-w-0",
+            !showFullBrand && "library-search-group-single-pane",
+          )}
+        >
           <SearchField
             className="search-box position-relative min-w-0"
             aria-label="Search"
