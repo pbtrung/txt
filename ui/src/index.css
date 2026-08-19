@@ -101,9 +101,10 @@
   position: absolute;
   right: 0.25rem;
   top: 50%;
+  z-index: 1;
   display: grid;
-  width: 1.5rem;
-  height: 1.5rem;
+  width: 1.75rem;
+  height: 1.75rem;
   padding: 0;
   transform: translateY(-50%);
   place-items: center;
@@ -114,7 +115,7 @@
 }
 
 .search-box-clear-icon {
-  font-size: 1.1rem;
+  font-size: 1.25rem;
   font-weight: 700;
   line-height: 1;
 }

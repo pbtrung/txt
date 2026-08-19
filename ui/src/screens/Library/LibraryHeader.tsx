@@ -31,13 +31,15 @@ export function LibraryHeader({
             className="form-control form-control-sm search-box-input"
             placeholder="Search…"
           />
-          {query && (
-            <Button className="search-box-clear" aria-label="Clear search">
-              <span className="search-box-clear-icon" aria-hidden="true">
-                ×
-              </span>
-            </Button>
-          )}
+          <Button
+            className="search-box-clear"
+            aria-label="Clear search"
+            onPress={() => onQuery("")}
+          >
+            <span className="search-box-clear-icon" aria-hidden="true">
+              ×
+            </span>
+          </Button>
         </SearchField>
       </div>
     </div>
