@@ -17,6 +17,8 @@ An `account` Actor keyed by the Firebase uid (or a deterministic opaque derivati
 - account-cache refresh timestamps and schema version;
 - actions corresponding to `keys` and `r2Token`.
 
+Administrator authorization must still come from the deployment's trusted `ADMIN_UID`, not Actor routing input or Turso's `users.type`. If public share registration moves into Actors, the administrator's account Actor may also own the hash-to-object mapping for 32-byte share capabilities. Deleting that mapping and the immutable R2 object is the share-deletion operation; already minted 15-minute read credentials expire naturally.
+
 Do not persist `user_root_key`, raw `user_handle`, plaintext `umk`, the P-521 private key, `R2_TICKET_SECRET`, or the parent R2 secret in Actor state. The global signing secrets remain server environment secrets. The `r2Token` action still verifies the stateless ticket, raw-handle hash, path binding, and proof exactly as docs/auth.md specifies; moving runtimes must not weaken the protocol.
 
 The Actor key is routing information, not authorization. Rivet documents credential validation in `onBeforeConnect` or `createConnState` and recommends using connection state inside actions ([Authentication](https://rivet.dev/docs/actors/authentication/)). The `keys` connection must verify Firebase and require the verified uid to match the account Actor. The `r2Token` path must verify the ticket and require its authenticated `sub` to match that Actor. Never trust a uid or role supplied as an action parameter.

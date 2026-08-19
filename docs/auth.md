@@ -4,7 +4,7 @@ Firebase authenticates the browser once at `POST /v1/keys`. That response return
 
 The ticket is an integrity-protected certificate, not a bearer credential. It binds the Firebase-provisioned account to the hash of the user's decrypted handle, its signing public key, and its authorized path-pair hash. A caller must possess both the decrypted handle and the matching P-521 private key to use it.
 
-The Worker mints one read-write credential for the exact `db_path` object and one read-only credential for `{db_prefix}/*`. It never creates users or storage prefixes; an administrator provisions both out of band.
+The Worker mints one read-write credential for the exact `db_path` object. An ordinary account receives read-only scope for `{db_prefix}/*`; the configured administrator receives read-write scope so the browser can create and delete immutable objects under `{db_prefix}/shared/*`. It never creates users or storage prefixes; an administrator provisions both out of band.
 
 ---
 
@@ -17,6 +17,7 @@ There is one Turso control database, `ctl` (§2). User data lives as encrypted o
 | `CTL_DB_URL` | control database URL |
 | `CTL_DB_TOKEN` | non-expiring, read-only token for `ctl` |
 | `FIREBASE_PROJECT_ID` | expected Firebase token issuer and audience for `/v1/keys` |
+| `ADMIN_UID` | the one Firebase uid authorized as administrator; this trusted value, not Turso's mutable `users.type`, controls elevated R2 scope and sharing |
 | `R2_TICKET_SECRET` | standard padded base64 encoding of at least 32 random bytes, used only to sign and verify R2 binding tickets |
 | `R2_ENDPOINT`, `R2_BUCKET`, `R2_REGION` | R2 destination returned with temporary credentials |
 | `R2_READ_WRITE_ACCESS_KEY_ID` / `R2_READ_WRITE_SECRET_ACCESS_KEY` | parent credential used to sign path-limited temporary R2 credentials |
@@ -153,9 +154,10 @@ The Worker verifies the Firebase ID token, loads the account by the verified `su
 
 ```json
 {
-  "v": 1,
+  "v": 2,
   "aud": "r2-token",
   "sub": "<Firebase uid>",
+  "account_type": "user",
   "jti": "<base64 32 random bytes>",
   "user_handle_hash": "<base64url SHA-256(raw user_handle)>",
   "sign_version": 1,
@@ -167,7 +169,7 @@ The Worker verifies the Firebase ID token, loads the account by the verified `su
 }
 ```
 
-`exp` is exactly 24 hours after `iat`. The ticket is returned outside `cred_store` because it does not contain plaintext handles, paths, or private keys. The client keeps it only in memory and discards it when the vault locks.
+`exp` is exactly 24 hours after `iat`. The ticket is returned outside `cred_store` because it does not contain plaintext handles, paths, or private keys. The client keeps it only in memory and discards it when the vault locks. The Worker derives `account_type` from `sub === ADMIN_UID`; it never copies the authorization role from Turso.
 
 | status | condition |
 |---|---|
@@ -237,7 +239,7 @@ The response contains exactly one credential of each type:
 }
 ```
 
-`db_path` receives exact-object read-write scope. `{db_prefix}/*` receives prefix read-only scope. Administrators receive the same scopes for their own browser sessions; an administrator's backup rows do not authorize other users' paths in the browser.
+`db_path` receives exact-object read-write scope. `{db_prefix}/*` receives prefix read-only scope for ordinary accounts and prefix read-write scope only when the verified ticket has `account_type = "admin"` and `sub = ADMIN_UID`. The JWS signature authenticates the role claim, and the P-521 proof hashes the exact compact JWS, so the proof is bound to that role without a second role field in its canonical message. An administrator's backup rows do not authorize other users' paths in the browser.
 
 | status | condition |
 |---|---|
@@ -329,7 +331,7 @@ Purging the account cache affects only future `/v1/keys` calls. It cannot revoke
 
 ## 8. Trust boundary
 
-The client, administrator, and Worker are trusted; Turso and R2 are not trusted with plaintext user data. The Worker holds the Turso token, ticket secret, and parent R2 signing credential, but no `user_root_key`, raw `user_handle`, or plaintext `umk`. Turso sees the handle hash and encrypted user material. The administrator can decrypt ordinary-user backup roots by design so that admin-only migrations remain possible.
+The client, administrator, and Worker are trusted; Turso and R2 are not trusted with plaintext user data. The Worker holds the Turso token, ticket secret, parent R2 signing credential, and trusted `ADMIN_UID`, but no `user_root_key`, raw `user_handle`, or plaintext `umk`. Turso sees the handle hash and encrypted user material. `users.type` is descriptive and may be checked for provisioning consistency, but it never grants administrator scope. The administrator can decrypt ordinary-user backup roots by design so that admin-only migrations remain possible.
 
 The signed ticket moves the R2 authorization record out of Turso for the ticket's lifetime. Turso can corrupt the hash, public key, ciphertext, or path binding returned during a Firebase-authenticated `/v1/keys` call, but the resulting ticket is delivered only to that authenticated browser. Turso cannot replace the encrypted raw handle or private key with chosen plaintext without the account's `umk`; substitutions therefore make decryption, handle comparison, path comparison, or signature verification fail. Without the Firebase token and decrypted client material, Turso cannot use the replacement ticket itself. This reduces active Turso tampering to denial of service for that account rather than R2 impersonation.
 

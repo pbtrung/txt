@@ -126,7 +126,7 @@ Given a blob, the same IKM used to encrypt it, and the same `context` used to en
 
 ## Encapsulate / Decapsulate (Asymmetric Wrap)
 
-Used wherever key material must be wrapped under a _recipient's_ public key rather than a key the wrapper already holds — the standard Encrypt/Decrypt above requires holding the same IKM on both ends, which doesn't work when the wrapper isn't the recipient. This design's current sharing flow (`sharedTxt`, data_model.md) doesn't call Encapsulate/Decapsulate at all — the admin can already recover a recipient's `umk` directly (via that recipient's admin-owned recovery `credStore` row) and wraps symmetrically instead. `keyStore`'s composite keypair, and this section, are kept for a future feature that needs an asymmetric wrap without the admin recovering the target's `umk`.
+Used wherever key material must be wrapped under a _recipient's_ public key rather than a key the wrapper already holds. Public book sharing does not use this operation: the administrator creates a fresh symmetric content key and puts it only in the capability URL and the administrator's encrypted SQLCipher database. `keyStore`'s composite keypair, and this section, are kept for a future feature that needs an asymmetric recipient wrap.
 
 **Encapsulate** (sender, holding the recipient's composite `pubKey`):
 

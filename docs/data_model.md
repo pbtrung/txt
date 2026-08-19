@@ -13,9 +13,10 @@ A document's own content is not in that file. Each document is a separate encryp
 ```
 s3://{bucket}/{db_path}
 s3://{bucket}/{db_prefix}/{txt.txt_prefix}/{txt.path}
+s3://{bucket}/{db_prefix}/shared/{txt_shares.share_prefix}/{txt_shares.share_path}
 ```
 
-The first is the user's whole SQLCipher database — one object, downloaded and conditionally uploaded as a whole with the exact-`db_path` read-write credential. The second is one immutable document-content object per `txt` row, fetched with the `{db_prefix}/*` read-only credential and addressed by that row's own `txt_prefix`/`path` columns rather than by `id`, so listing or guessing one document's key reveals nothing about any other. Both `txt_prefix` and `path` are raw random bytes in the database and rendered as base32-Crockford strings when used as key segments, the same recipe as `db_path`/`db_prefix` (docs/auth.md).
+The first is the user's whole SQLCipher database. The second is one immutable owner document per `txt` row. The third is an independently encrypted copy created only by the administrator for one public share. Every random path component is stored as 32 raw bytes and rendered as 52 lowercase base32-Crockford characters. A shared copy never reuses the owner's `txt_key`, `txt_prefix`, or `path`.
 
 `{bucket}` is not a secret, but the client carries no R2 connection details of its own — `bucket`, along with the endpoint and region, travels in the `/v1/r2-token` response itself (docs/auth.md §4.2), the client's only source of R2 configuration.
 
@@ -63,6 +64,20 @@ CREATE TABLE txt_bookmarks (
     UNIQUE (txt_id, cfi)
 );
 CREATE INDEX idx_txt_bookmarks_txt_id ON txt_bookmarks(txt_id, id);
+
+CREATE TABLE txt_shares (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    txt_id            INTEGER NOT NULL REFERENCES txt(id) ON DELETE RESTRICT,
+    share_id          BLOB NOT NULL CHECK (length(share_id) = 32),
+    share_content_key BLOB NOT NULL CHECK (length(share_content_key) = 128),
+    share_prefix      BLOB NOT NULL CHECK (length(share_prefix) = 32),
+    share_path        BLOB NOT NULL CHECK (length(share_path) = 32),
+    state             TEXT NOT NULL CHECK (state IN ('creating', 'active', 'deleting')),
+    created_at        INTEGER NOT NULL,
+    UNIQUE (share_id),
+    UNIQUE (share_prefix, share_path)
+);
+CREATE INDEX idx_txt_shares_txt_id ON txt_shares(txt_id, state, id);
 
 CREATE TABLE txt_schema_migrations (
     name TEXT PRIMARY KEY
@@ -116,7 +131,15 @@ A manual bookmark stores the current page-start CFI, the current display page nu
 
 The EPUB content object referenced by a `txt` row is immutable. That makes a structural CFI sufficient even when the renderer does not emit optional text-location assertions. Replacing a book creates a new content object/row rather than silently changing the document underneath saved CFIs.
 
-### 3.3 Migration
+### 3.3 Administrator shares
+
+Only the account whose Firebase uid equals the Worker's trusted `ADMIN_UID` can create or delete shares. Creation generates a 32-byte `share_id`, a fresh 128-byte `share_content_key`, and independent 32-byte `share_prefix` and `share_path` values. The browser decrypts the owner object locally, re-encrypts the EPUB under `share_content_key`, and uploads it immutably with `If-None-Match: *` to `{db_prefix}/shared/{share_prefix}/{share_path}`.
+
+The `creating` state is committed before registration/upload so a failed operation is resumable. A completed operation becomes `active`. Deletion changes it to `deleting`, removes the public share registration and R2 object, then removes the row. There is no revoked state or `object_etag`: share paths are immutable, never reused, and deletion is unconditional. `ON DELETE RESTRICT` prevents deleting the source book before its shares are removed.
+
+The Library exposes Shares below Recent only for the administrator. Shares lists the source title with Copy and Delete actions. Browse/All Books adds a Share action beside search; selecting books creates independent shares. The copied URL contains the random share capability and client-side decryption material. Anonymous reading state and bookmarks remain browser-local and never mutate the owner's `db_path`.
+
+### 3.4 Migration
 
 Migration is driven by inspecting the tables, columns, indexes, and triggers that are actually present. Fresh databases are created directly from the complete schema above; existing databases receive only the missing changes.
 
@@ -126,8 +149,9 @@ Migration is driven by inspecting the tables, columns, indexes, and triggers tha
 2. Add nullable `txt.last_cfi` when absent.
 3. If the legacy `txt_bookmarks(line, ...)` table exists, require it to be empty because a line number cannot be converted reliably to a CFI, then replace it with the CFI table, index, and trigger above. A nonempty legacy table aborts that account rather than losing data.
 4. Add nullable `txt_bookmarks.page_number` when absent.
-5. Ensure `txt_schema_migrations` exists. If it lacks `reset_initial_last_accessed`, correct the original ingestion bug by resetting every existing `txt.last_accessed` to `0`, then record that named migration in the same transaction. Subsequent runs see the marker row and never repeat the reset. A browser opening an old database may create the marker table but does not insert this row, so browser-before-CLI deployment order cannot accidentally skip the reset. Fresh databases record the marker immediately because new ingestion initializes `last_accessed` to `0` rather than `created_at`.
-6. `VACUUM`, write the local checkpoint, and conditionally upload the database only after every step succeeds.
+5. Create and validate `txt_shares` and its lookup index when absent.
+6. Ensure `txt_schema_migrations` exists. If it lacks `reset_initial_last_accessed`, correct the original ingestion bug by resetting every existing `txt.last_accessed` to `0`, then record that named migration in the same transaction. Subsequent runs see the marker row and never repeat the reset. A browser opening an old database may create the marker table but does not insert this row, so browser-before-CLI deployment order cannot accidentally skip the reset. Fresh databases record the marker immediately because new ingestion initializes `last_accessed` to `0` rather than `created_at`.
+7. `VACUUM`, write the local checkpoint, and conditionally upload the database only after every step succeeds.
 
 The command reaches the administrator through its self-owned `cred_store` row and every ordinary account through the administrator-owned backup guaranteed by docs/auth.md. Each ordinary-user backup includes that user's `user_root_key`, encrypted under the administrator's `umk`; self-owned payloads and the administrator's own payload do not. It verifies that every required row is present and decryptable before making changes. R2 is always its input source; `--local-db-dir` contains checkpoints for inspection only, never a later upload base. A changed database is uploaded with `If-Match` against the downloaded ETag, so a concurrent browser commit aborts without data loss and the operator reruns from the new remote object. An already-migrated database is not uploaded. Account provisioning and `--update-ctl`—not `--update-db`—install `users.user_handle_hash`, add the raw handle only to encrypted self/admin credential payloads, compute `users.db_binding_hash`, and install the signing-key material required by the ticket flow. There is no `users.user_handle` column.
 
