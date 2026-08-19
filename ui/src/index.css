@@ -5,13 +5,13 @@
    vary per breakpoint. Uses the same `md` breakpoint (768px) the rest of
    the app's mobile/desktop split already keys off of (Library's browse
    drawer, Reader's default font size). */
-.max-w-md-80 {
+.max-w-md-60 {
   max-width: 100%;
 }
 
 @media (min-width: 768px) {
-  .max-w-md-80 {
-    max-width: 80%;
+  .max-w-md-60 {
+    max-width: 60%;
   }
 }
 

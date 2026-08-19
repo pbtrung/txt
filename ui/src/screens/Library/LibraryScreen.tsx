@@ -55,7 +55,7 @@ export function LibraryScreen() {
     }
   };
   return (
-    <div className="d-flex flex-column vh-100 mx-auto max-w-md-80 px-2 px-md-0">
+    <div className="d-flex flex-column vh-100 mx-auto max-w-md-60 px-2 px-md-0">
       <LibraryHeader
         query={query}
         onQuery={search}
