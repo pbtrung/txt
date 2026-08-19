@@ -455,6 +455,14 @@
   color: var(--bs-emphasis-color);
 }
 
+/* Keep the left navigation's selected row identical to the original
+   Bootstrap active state, including while the pointer is over it. */
+.library-sidebar-content .list-group-item.active:is(:hover, [data-hovered]) {
+  border-color: var(--bs-list-group-active-border-color);
+  background-color: var(--bs-list-group-active-bg);
+  color: var(--bs-list-group-active-color);
+}
+
 .bookmark-menu-row .dropdown-item {
   min-width: 0;
 }
