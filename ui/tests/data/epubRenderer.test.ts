@@ -72,6 +72,11 @@ describe("EpubRenderer", () => {
     expect(READER_THEME_CSS).toContain("text-wrap: pretty");
     expect(READER_THEME_CSS).toContain("hyphens: auto !important");
     expect(READER_THEME_CSS).toContain("text-wrap: balance");
+    expect(READER_THEME_CSS).toMatch(
+      /pre \{\s*font-family: 'Txt Literata', serif !important;/,
+    );
+    expect(READER_THEME_CSS).toMatch(/code, kbd, samp \{\s*font-family: ui-monospace/);
+    expect(READER_THEME_CSS).not.toContain("pre, code, kbd, samp");
   });
 
   it("opens the book from the given bytes", () => {

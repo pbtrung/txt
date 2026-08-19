@@ -175,7 +175,13 @@ h1, h2, h3, h4, h5, h6 {
   break-after: avoid;
   text-wrap: balance;
 }
-pre, code, kbd, samp {
+/* Some EPUB generators use preformatted blocks for ordinary prose. Keep
+   those blocks in the reading face; only elements that semantically mark
+   code or keyboard/sample output should opt into monospace. */
+pre {
+  font-family: 'Txt Literata', serif !important;
+}
+code, kbd, samp {
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace !important;
   font-variant-ligatures: none !important;
   hyphens: none !important;
