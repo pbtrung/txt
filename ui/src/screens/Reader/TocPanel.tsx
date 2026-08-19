@@ -2,7 +2,7 @@
 // entry jump straight to that section.
 import type { NavItem } from "@likecoin/epub-ts";
 import { useEffect, useState } from "react";
-import { Button } from "react-aria-components";
+import { Button, Tree, TreeItem, TreeItemContent } from "react-aria-components";
 import { OffcanvasPanel } from "../../components/OffcanvasPanel";
 import type { EpubRenderer } from "../../data/epubRenderer";
 
@@ -78,22 +78,75 @@ function TocList({
   onSelect: (href: string) => void;
 }) {
   return (
-    <ul className="list-unstyled ps-0">
+    <Tree
+      aria-label="Table of contents"
+      className="toc-tree"
+      defaultExpandedKeys={tocBranchKeys(items)}
+    >
       {items.map((item) => (
-        <li key={item.id} className="mb-1">
-          <Button
-            className="btn btn-link p-0 text-start text-decoration-none"
-            onPress={() => onSelect(item.href)}
-          >
-            {item.label.trim()}
-          </Button>
-          {item.subitems && item.subitems.length > 0 && (
-            <div className="ps-3">
-              <TocList items={item.subitems} onSelect={onSelect} />
-            </div>
-          )}
-        </li>
+        <TocTreeItem key={item.id} item={item} path={item.id} onSelect={onSelect} />
       ))}
-    </ul>
+    </Tree>
   );
+}
+
+function TocTreeItem({
+  item,
+  path,
+  onSelect,
+}: {
+  item: NavItem;
+  path: string;
+  onSelect: (href: string) => void;
+}) {
+  const label = item.label.trim();
+  return (
+    <TreeItem
+      id={path}
+      textValue={label}
+      className="toc-tree-item"
+      onAction={() => onSelect(item.href)}
+    >
+      <TreeItemContent>
+        {({ hasChildItems, isExpanded, level }) => (
+          <span
+            className="d-flex align-items-start gap-1 toc-tree-row"
+            style={{ paddingInlineStart: `${level - 1}rem` }}
+          >
+            {hasChildItems ? (
+              <Button
+                slot="chevron"
+                className="btn btn-link btn-sm border-0 p-0 flex-shrink-0 toc-tree-chevron"
+              >
+                <i
+                  className={`bi bi-chevron-${isExpanded ? "down" : "right"}`}
+                  aria-hidden="true"
+                />
+              </Button>
+            ) : (
+              <span className="toc-tree-chevron" aria-hidden="true" />
+            )}
+            <span className="btn btn-link p-0 text-start text-decoration-none">
+              {label}
+            </span>
+          </span>
+        )}
+      </TreeItemContent>
+      {item.subitems?.map((child) => (
+        <TocTreeItem
+          key={child.id}
+          item={child}
+          path={`${path}/${child.id}`}
+          onSelect={onSelect}
+        />
+      ))}
+    </TreeItem>
+  );
+}
+
+function tocBranchKeys(items: NavItem[], parent = ""): string[] {
+  return items.flatMap((item) => {
+    const path = parent ? `${parent}/${item.id}` : item.id;
+    return item.subitems?.length ? [path, ...tocBranchKeys(item.subitems, path)] : [];
+  });
 }

@@ -31,6 +31,7 @@ describe("TocPanel", () => {
   });
 
   it("renders top-level and nested entries once loaded", async () => {
+    const onClose = vi.fn();
     const renderer = fakeRenderer([
       {
         id: "1",
@@ -40,10 +41,20 @@ describe("TocPanel", () => {
       },
     ]);
 
-    render(<TocPanel open onClose={vi.fn()} renderer={renderer} />);
+    render(<TocPanel open onClose={onClose} renderer={renderer} />);
 
     await waitFor(() => expect(screen.getByText("Chapter 1")).toBeInTheDocument());
     expect(screen.getByText("Section 1.1")).toBeInTheDocument();
+    expect(screen.getByRole("treegrid", { name: "Table of contents" })).toBeVisible();
+    const chapter = screen.getByRole("row", { name: "Chapter 1" });
+    expect(chapter).toHaveAttribute("aria-expanded", "true");
+
+    const chevron = chapter.querySelector("button[slot='chevron']");
+    expect(chevron).not.toBeNull();
+    await userEvent.click(chevron!);
+    expect(chapter).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("Section 1.1")).not.toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it("jumps to the entry's href and closes on click", async () => {
