@@ -558,6 +558,34 @@ describe("LibraryScreen", () => {
     expect(document.querySelector(".library-sidebar-layout")).not.toBeNull();
   });
 
+  it("shows the sidebar below the desktop breakpoint when 400px remains", () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn().mockImplementation((query: string) => ({
+        matches: false,
+        media: query,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      })),
+    );
+    const bounds = vi
+      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockImplementation(function () {
+        const width = this.classList.contains("library-sidebar")
+          ? 280
+          : this.classList.contains("library-screen")
+            ? 700
+            : 0;
+        return { width } as DOMRect;
+      });
+
+    renderScreen(LIBRARY);
+
+    expect(document.querySelector(".library-sidebar")).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "Open menu" })).toBeNull();
+    bounds.mockRestore();
+  });
+
   it("shows recent access and bookmarked books in the Recent view", async () => {
     renderScreen([
       book({ txtId: 1, title: "Recently read", lastAccessed: 2000 }),

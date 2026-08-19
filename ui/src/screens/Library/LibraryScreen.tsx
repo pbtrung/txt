@@ -338,7 +338,6 @@ function useLibrarySidebar(
     if (!active) return;
     const element = root.current;
     if (!element) return;
-    const media = window.matchMedia(DESKTOP_MEDIA_QUERY);
     const measure = () => {
       const rootWidth = element.getBoundingClientRect().width;
       const renderedSidebarWidth = sidebar.current?.getBoundingClientRect().width ?? 0;
@@ -347,18 +346,14 @@ function useLibrarySidebar(
       }
       if (rootWidth > 0) {
         const rightPaneWidth = rootWidth - measuredSidebarWidth.current;
-        setVisible(media.matches && rightPaneWidth >= LIBRARY_RIGHT_PANE_MIN_PX);
+        setVisible(rightPaneWidth >= LIBRARY_RIGHT_PANE_MIN_PX);
       }
     };
     const observer = new ResizeObserver(measure);
     measure();
     observer.observe(element);
     if (sidebar.current) observer.observe(sidebar.current);
-    media.addEventListener?.("change", measure);
-    return () => {
-      observer.disconnect();
-      media.removeEventListener?.("change", measure);
-    };
+    return () => observer.disconnect();
   }, [active, root, sidebar, visible]);
   return visible;
 }
