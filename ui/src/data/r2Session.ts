@@ -56,8 +56,18 @@ export class R2Session {
     });
   }
 
-  deleteShareRegistration(shareId: string): Promise<void> {
-    return this.worker.deleteShare(shareId);
+  deleteShareRegistration(
+    sharePrefix: string,
+    sharePath: string,
+    shareId: string,
+  ): Promise<void> {
+    return this.worker.deleteShare({
+      dbPath: this.dbPath,
+      dbPrefix: this.dbPrefix,
+      sharePrefix,
+      sharePath,
+      shareId,
+    });
   }
 
   private async withCredential<T>(

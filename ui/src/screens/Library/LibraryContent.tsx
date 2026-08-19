@@ -50,12 +50,12 @@ export function LibraryContent({
     [query, search, view],
   );
   return (
-    <div className="d-flex flex-column flex-grow-1 overflow-hidden">
+    <div className="d-flex flex-column flex-grow-1 overflow-hidden min-w-0">
       <ContentHeader view={view} onNavigate={onNavigate} />
       {view.kind === "recent" ? (
         <RecentBooks {...{ books, onClearAccess, onClearBookmarks }} />
       ) : view.kind === "shares" ? (
-        <SharesList {...{ shares, onCopyShare, onDeleteShare }} />
+        <SharesList {...{ books, shares, onCopyShare, onDeleteShare }} />
       ) : view.kind === "entries" ? (
         <EntriesList {...{ books, query, onNavigate }} dimension={view.dimension} />
       ) : (
@@ -71,35 +71,32 @@ export function LibraryContent({
 }
 
 function SharesList({
+  books,
   shares,
   onCopyShare,
   onDeleteShare,
 }: {
+  books: LibraryBook[];
   shares: BookShare[];
   onCopyShare: (share: BookShare) => void;
   onDeleteShare: (share: BookShare) => void;
 }) {
+  const booksById = useMemo(
+    () => new Map(books.map((book) => [book.txtId, book])),
+    [books],
+  );
   if (!shares.length) return <EmptyStateContainer message="No shared books yet." />;
   return (
     <GridList
       aria-label="Shares"
-      className="book-row-grid overflow-y-auto px-2 px-md-3"
+      className="book-row-grid overflow-y-auto overflow-x-hidden px-2 px-md-3 min-w-0"
     >
       {shares.map((share) => (
         <BookRow
           key={share.id}
-          book={{
-            txtId: share.txtId,
-            title: share.title,
-            authors: [],
-            subjects: [],
-            publisher: null,
-            lastAccessed: 0,
-            bookmarkCount: 0,
-            lastBookmarked: null,
-            latestBookmarkCfi: null,
-          }}
-          removeLabel={`Delete share for ${share.title}`}
+          rowId={`share-${share.id}`}
+          book={booksById.get(share.txtId) ?? shareBookFallback(share)}
+          removeLabel="Delete this share"
           onRemove={() => onDeleteShare(share)}
           action={
             <Button
@@ -117,6 +114,20 @@ function SharesList({
   );
 }
 
+function shareBookFallback(share: BookShare): LibraryBook {
+  return {
+    txtId: share.txtId,
+    title: share.title,
+    authors: [],
+    subjects: [],
+    publisher: null,
+    lastAccessed: 0,
+    bookmarkCount: 0,
+    lastBookmarked: null,
+    latestBookmarkCfi: null,
+  };
+}
+
 function ContentHeader({
   view,
   onNavigate,
@@ -126,7 +137,7 @@ function ContentHeader({
 }) {
   const filter = view.kind === "books" ? view.filter : null;
   return (
-    <div className="d-flex align-items-center gap-2 px-2 px-md-3 pt-2 pb-2 flex-shrink-0">
+    <div className="d-flex align-items-center gap-2 px-2 px-md-3 pt-2 pb-2 flex-shrink-0 min-w-0">
       {filter && (
         <IconButton
           label={`Back to ${DIMENSION_LABEL[filter.dimension]}`}
@@ -134,7 +145,7 @@ function ContentHeader({
           onPress={() => onNavigate({ kind: "entries", dimension: filter.dimension })}
         />
       )}
-      <h2 className="h5 mb-0 text-truncate flex-grow-1">{viewTitle(view)}</h2>
+      <h2 className="h5 mb-0 text-truncate flex-grow-1 min-w-0">{viewTitle(view)}</h2>
     </div>
   );
 }
@@ -154,7 +165,7 @@ function RecentBooks({
     return <EmptyStateContainer message="No recent activity yet." />;
   }
   return (
-    <div className="flex-grow-1 overflow-y-auto px-2 px-md-3">
+    <div className="flex-grow-1 overflow-y-auto overflow-x-hidden px-2 px-md-3 min-w-0">
       <RecentSection
         title="Recent access"
         books={accessed}
@@ -206,7 +217,7 @@ function RecentSection({
 
 function EmptyStateContainer({ message }: { message: string }) {
   return (
-    <div className="flex-grow-1 overflow-y-auto px-3">
+    <div className="flex-grow-1 overflow-y-auto overflow-x-hidden px-3 min-w-0">
       <EmptyState message={message} />
     </div>
   );
@@ -233,13 +244,13 @@ function EntriesList({
       ? "No matches."
       : `No ${DIMENSION_LABEL[dimension].toLowerCase()} yet.`;
     return (
-      <div className="flex-grow-1 overflow-y-auto px-3">
+      <div className="flex-grow-1 overflow-y-auto overflow-x-hidden px-3 min-w-0">
         <EmptyState message={message} />
       </div>
     );
   }
   return (
-    <div className="flex-grow-1 overflow-y-auto px-2 px-md-3">
+    <div className="flex-grow-1 overflow-y-auto overflow-x-hidden px-2 px-md-3 min-w-0">
       <div className="list-group list-group-flush">
         {entries.map((entry) => (
           <EntryRow

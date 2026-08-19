@@ -26,29 +26,31 @@ export function BookList({
 }) {
   if (books.length === 0) return <EmptyBookList totalCount={totalCount} />;
   return (
-    <Virtualizer layout={ListLayout} layoutOptions={{ rowSize: ROW_HEIGHT_PX }}>
-      <GridList
-        aria-label="Books"
-        items={books}
-        selectionMode="single"
-        selectionBehavior="replace"
-        selectedKeys={selectedTxtId === null ? [] : [selectedTxtId]}
-        onSelectionChange={(selection) => onSelectBook(selectedId(selection))}
-        className="flex-grow-1 overflow-y-auto px-2 px-md-3 book-list-grid"
-      >
-        {/* The collection builder reads identity from this direct child's id
-            before VirtualBookRow renders; keeping it here prevents filtered
-            rows from being reused for a different book. */}
-        {(book) => <VirtualBookRow id={book.txtId} book={book} />}
-      </GridList>
-    </Virtualizer>
+    <div className="d-flex flex-column flex-grow-1 overflow-hidden min-w-0">
+      <Virtualizer layout={ListLayout} layoutOptions={{ rowSize: ROW_HEIGHT_PX }}>
+        <GridList
+          aria-label="Books"
+          items={books}
+          selectionMode="single"
+          selectionBehavior="replace"
+          selectedKeys={selectedTxtId === null ? [] : [selectedTxtId]}
+          onSelectionChange={(selection) => onSelectBook(selectedId(selection))}
+          className="flex-grow-1 overflow-y-auto overflow-x-hidden px-2 px-md-3 book-list-grid min-w-0"
+        >
+          {/* The collection builder reads identity from this direct child's id
+              before VirtualBookRow renders; keeping it here prevents filtered
+              rows from being reused for a different book. */}
+          {(book) => <VirtualBookRow id={book.txtId} book={book} />}
+        </GridList>
+      </Virtualizer>
+    </div>
   );
 }
 
 function EmptyBookList({ totalCount }: { totalCount: number }) {
   const message = totalCount === 0 ? "Your library is empty." : "No books match.";
   return (
-    <div className="flex-grow-1 overflow-y-auto px-3">
+    <div className="flex-grow-1 overflow-y-auto overflow-x-hidden px-3 min-w-0">
       <EmptyState message={message} />
     </div>
   );
@@ -60,7 +62,7 @@ function VirtualBookRow({ id, book }: { id: number; book: LibraryBook }) {
       id={id}
       textValue={book.title}
       focusMode="child"
-      className="book-row-container"
+      className="book-row-container book-select-row"
       style={{ height: ROW_HEIGHT_PX }}
     >
       <BookRowContent book={book} />
@@ -69,12 +71,14 @@ function VirtualBookRow({ id, book }: { id: number; book: LibraryBook }) {
 }
 
 export function BookRow({
+  rowId,
   book,
   initialCfi,
   onRemove,
   removeLabel,
   action,
 }: {
+  rowId?: string | number;
   book: LibraryBook;
   initialCfi?: string | null;
   onRemove: () => void;
@@ -83,13 +87,18 @@ export function BookRow({
 }) {
   return (
     <GridListItem
-      id={`${book.txtId}-${initialCfi ?? "book"}`}
+      id={rowId ?? `${book.txtId}-${initialCfi ?? "book"}`}
       textValue={book.title}
       focusMode="child"
       className="position-relative book-row-container"
       style={{ height: ROW_HEIGHT_PX }}
     >
-      <BookLinkRow book={book} initialCfi={initialCfi} hasRemoveAction />
+      <BookLinkRow
+        book={book}
+        initialCfi={initialCfi}
+        hasRemoveAction
+        hasInlineAction={Boolean(action)}
+      />
       {action && (
         <span className="position-absolute top-50 end-0 translate-middle-y me-5">
           {action}
@@ -109,10 +118,12 @@ function BookLinkRow({
   book,
   initialCfi,
   hasRemoveAction = false,
+  hasInlineAction = false,
 }: {
   book: LibraryBook;
   initialCfi?: string | null;
   hasRemoveAction?: boolean;
+  hasInlineAction?: boolean;
 }) {
   const active = book.lastAccessed > 0 || book.bookmarkCount > 0;
   return (
@@ -121,6 +132,7 @@ function BookLinkRow({
       className={classNames(
         "d-block py-2 px-2 rounded-3 text-decoration-none text-body book-row h-100",
         hasRemoveAction && "pe-5",
+        hasInlineAction && "book-row-action-padding",
       )}
     >
       <BookRowDetails book={book} active={active} />
@@ -149,7 +161,9 @@ function BookRowDetails({ book, active }: { book: LibraryBook; active: boolean }
         >
           <i className="bi bi-journal-bookmark" aria-hidden="true" />
         </span>
-        <span className="text-truncate fw-medium">{book.title}</span>
+        <span className="text-truncate fw-medium min-w-0 flex-grow-1">
+          {book.title}
+        </span>
       </span>
       <BookMetadata book={book} />
     </span>
@@ -170,7 +184,7 @@ function readerPath(txtId: number, initialCfi?: string | null): string {
 
 function BookMetadata({ book }: { book: LibraryBook }) {
   return (
-    <span className="d-flex align-items-center gap-1 min-w-0 book-row-meta mt-1">
+    <span className="d-flex align-items-center gap-1 min-w-0 overflow-hidden book-row-meta mt-1">
       {book.bookmarkCount > 0 && <BookmarkBadge count={book.bookmarkCount} />}
       {book.lastAccessed > 0 && <LastAccessedBadge timestamp={book.lastAccessed} />}
       {book.authors.length > 0 && (

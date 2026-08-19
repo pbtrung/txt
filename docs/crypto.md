@@ -93,7 +93,7 @@ AAD       = UTF8("txt:share-grant:v1") || id_hash
 grant     = 0x01 || salt_32 || nonce_12 || AES-GCM-ciphertext-and-tag
 ```
 
-Salt and nonce are public, independently generated, and carried inside the grant; neither is reused as the other. The per-grant derivation isolates grants and makes a nonce collision across different salts harmless. The grant is base64url encoded without padding. On decryption the Worker validates the path grammar and requires `SHA-256(path)` to equal the D1 row's registered path hash. D1 therefore authorizes deletion without learning the path, while cross-capability substitution and database row substitution fail authentication or the path-hash comparison. The EPUB continues to use the standard Ascon-Keccak blob format and its independent 128-byte `share_content_key`.
+Salt and nonce are public, independently generated, and carried inside the grant; neither is reused as the other. The per-grant derivation isolates grants and makes a nonce collision across different salts harmless. The grant is base64url encoded without padding. On decryption the Worker validates the path grammar and requires `SHA-256(path)` to equal the D1 row's registered 32-byte BLOB. D1 therefore authorizes deletion without learning the path, while cross-capability substitution and database row substitution fail authentication or the path-hash comparison. The EPUB continues to use the standard Ascon-Keccak blob format and its independent 128-byte `share_content_key`.
 
 ## Version Numbering
 

@@ -66,12 +66,15 @@ describe("D1-backed book shares", () => {
     expect(new TextDecoder().decode(base64url.decode(grant))).not.toContain(DB_PREFIX);
     const repeated = await handleCreateShareGrant(createRequest(), ENV);
     expect(((await repeated.json()) as { grant: string }).grant).not.toBe(grant);
+    const registry = ENV.SHARE_REGISTRY as unknown as FakeD1;
+    expect(registry.rows.size).toBe(1);
+    expect([...registry.rows.values()][0].object_path_hash.byteLength).toBe(32);
 
     vi.mocked(verifyFirebaseIdToken).mockResolvedValue({ uid: "other" });
     expect((await handleCreateShareGrant(createRequest(), ENV)).status).toBe(403);
   });
 
-  it("proxies encrypted content only while the D1 row is active", async () => {
+  it("proxies encrypted content only while the D1 row exists", async () => {
     const { grant } = (await (
       await handleCreateShareGrant(createRequest(), ENV)
     ).json()) as { grant: string };
@@ -82,10 +85,26 @@ describe("D1-backed book shares", () => {
     );
 
     expect((await handleDeleteShare(deleteRequest(), ENV)).status).toBe(204);
+    const r2Delete = vi.mocked(fetch).mock.calls.at(-1)?.[0] as Request;
+    expect(r2Delete.url).toBe(
+      `${ENV.R2_ENDPOINT}/${ENV.R2_BUCKET}/${DB_PREFIX}/shared/${SHARE_PREFIX}/${SHARE_PATH}`,
+    );
+    expect(r2Delete.method).toBe("DELETE");
     expect((await handleSharedContent(contentRequest(grant), ENV)).status).toBe(404);
   });
 
-  it("rejects path changes, moved grants, and deleted-id reactivation", async () => {
+  it("keeps the registry row when R2 deletion fails", async () => {
+    await handleCreateShareGrant(createRequest(), ENV);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 403 })),
+    );
+
+    expect((await handleDeleteShare(deleteRequest(), ENV)).status).toBe(503);
+    expect((ENV.SHARE_REGISTRY as unknown as FakeD1).rows.size).toBe(1);
+  });
+
+  it("rejects path changes and moved grants, then permits registration after delete", async () => {
     expect(
       (await handleCreateShareGrant(createRequest({ db_prefix: "9".repeat(52) }), ENV))
         .status,
@@ -98,15 +117,12 @@ describe("D1-backed book shares", () => {
       (await handleSharedContent(contentRequest(grant, otherId), ENV)).status,
     ).toBe(404);
     await handleDeleteShare(deleteRequest(), ENV);
-    expect((await handleCreateShareGrant(createRequest(), ENV)).status).toBe(409);
+    expect((await handleCreateShareGrant(createRequest(), ENV)).status).toBe(200);
   });
 });
 
 class FakeD1 {
-  rows = new Map<
-    string,
-    { object_path_hash: ArrayBuffer; state: "active" | "deleted" }
-  >();
+  rows = new Map<string, { object_path_hash: ArrayBuffer }>();
 
   prepare(sql: string) {
     let values: unknown[] = [];
@@ -122,19 +138,18 @@ class FakeD1 {
     return {
       run: async () => {
         const args = values();
-        const key = hex(args[sql.startsWith("UPDATE") ? 1 : 0] as ArrayBuffer);
+        const key = hex(args[0]);
         if (sql.startsWith("INSERT") && !this.rows.has(key)) {
           this.rows.set(key, {
             object_path_hash: buffer(args[1]),
-            state: "active",
           });
-        } else if (sql.startsWith("UPDATE") && this.rows.has(key)) {
-          this.rows.get(key)!.state = "deleted";
+        } else if (sql.startsWith("DELETE")) {
+          this.rows.delete(key);
         }
         return { success: true };
       },
       first: async <T>() => {
-        const row = this.rows.get(hex(values()[0] as ArrayBuffer));
+        const row = this.rows.get(hex(values()[0]));
         return (row ?? null) as T | null;
       },
     };
@@ -153,7 +168,13 @@ function createRequest(overrides: Record<string, string> = {}): Request {
 }
 
 function deleteRequest(): Request {
-  return jsonRequest("DELETE", "/v1/share", { share_id: SHARE_ID });
+  return jsonRequest("DELETE", "/v1/share", {
+    db_path: DB_PATH,
+    db_prefix: DB_PREFIX,
+    share_prefix: SHARE_PREFIX,
+    share_path: SHARE_PATH,
+    share_id: SHARE_ID,
+  });
 }
 
 function contentRequest(
@@ -176,8 +197,9 @@ function buffer(value: unknown): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
 }
 
-function hex(value: ArrayBuffer): string {
-  return [...new Uint8Array(value)]
+function hex(value: unknown): string {
+  const bytes = value instanceof ArrayBuffer ? new Uint8Array(value) : value;
+  return [...(bytes as Uint8Array)]
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
 }

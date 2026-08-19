@@ -257,7 +257,7 @@ describe("WorkerClient.fetchR2Token", () => {
 });
 
 describe("WorkerClient share administration", () => {
-  it("creates encrypted-path grants and tombstones shares with Firebase", async () => {
+  it("creates grants and requests bound object deletion with Firebase", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce({
@@ -277,13 +277,17 @@ describe("WorkerClient share administration", () => {
     };
 
     await expect(client.createShareGrant(request)).resolves.toBe("opaque");
-    await expect(client.deleteShare(request.shareId)).resolves.toBeUndefined();
+    await expect(client.deleteShare(request)).resolves.toBeUndefined();
     expect(fetchMock.mock.calls.map(([url, init]) => [url, init.method])).toEqual([
       ["/v1/share-grant", "POST"],
       ["/v1/share", "DELETE"],
     ]);
     expect(fetchMock.mock.calls[1][1].headers.Authorization).toBe("Bearer idtok");
     expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({
+      db_path: request.dbPath,
+      db_prefix: request.dbPrefix,
+      share_prefix: request.sharePrefix,
+      share_path: request.sharePath,
       share_id: request.shareId,
     });
   });

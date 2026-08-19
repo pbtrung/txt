@@ -22,6 +22,8 @@ vi.mock("react-aria-components", async (importOriginal) => {
 });
 
 import type { LibraryBook } from "../../../src/data/libraryDb";
+import type { BookShare } from "../../../src/data/shares";
+import { LibraryContent } from "../../../src/screens/Library/LibraryContent";
 import * as libraryModel from "../../../src/screens/Library/libraryModel";
 import { LibraryHeader } from "../../../src/screens/Library/LibraryHeader";
 import { LibraryScreen } from "../../../src/screens/Library/LibraryScreen";
@@ -267,6 +269,54 @@ describe("LibraryScreen", () => {
     expect(share).toBeEnabled();
   });
 
+  it("shows source-book metadata and unique deletion actions for shares", async () => {
+    const source = book({
+      txtId: 7,
+      title: "A title long enough to need truncation",
+      authors: ["A very long author name"],
+      bookmarkCount: 3,
+      lastAccessed: new Date(2026, 7, 19, 9, 8, 7).getTime(),
+    });
+    const shares = [share(1, source.txtId), share(2, source.txtId)];
+    const onDeleteShare = vi.fn();
+    render(
+      <MemoryRouter>
+        <LibraryContent
+          books={[source]}
+          view={{ kind: "shares" }}
+          query=""
+          selectedTxtId={null}
+          onSelectBook={() => undefined}
+          onNavigate={() => undefined}
+          onClearAccess={() => undefined}
+          onClearBookmarks={() => undefined}
+          shares={shares}
+          onCopyShare={() => undefined}
+          onDeleteShare={onDeleteShare}
+        />
+      </MemoryRouter>,
+    );
+
+    const rows = screen.getAllByRole("row");
+    expect(rows.map((row) => row.getAttribute("data-key"))).toEqual([
+      "share-1",
+      "share-2",
+    ]);
+    expect(screen.getAllByLabelText("3 bookmarks")).toHaveLength(2);
+    expect(screen.getAllByLabelText(/Last accessed/)).toHaveLength(2);
+    expect(screen.getAllByText("A very long author name")).toHaveLength(2);
+    expect(screen.getByRole("grid", { name: "Shares" })).toHaveClass(
+      "overflow-x-hidden",
+      "min-w-0",
+    );
+
+    const deletes = screen.getAllByRole("button", { name: "Delete this share" });
+    await userEvent.hover(deletes[0]);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Delete this share");
+    await userEvent.click(deletes[0]);
+    expect(onDeleteShare).toHaveBeenCalledWith(shares[0]);
+  });
+
   it("opens a bookmark row at the book's newest bookmark", () => {
     renderScreen(LIBRARY);
     const bookmarks = screen.getByRole("region", { name: "Bookmarks" });
@@ -453,3 +503,17 @@ describe("LibraryScreen", () => {
     expect(lock.parentElement).toHaveTextContent("Trung");
   });
 });
+
+function share(id: number, txtId: number): BookShare {
+  return {
+    id,
+    txtId,
+    title: "Fallback title",
+    shareId: new Uint8Array(32),
+    contentKey: new Uint8Array(128),
+    prefix: new Uint8Array(32),
+    path: new Uint8Array(32),
+    state: "active",
+    createdAt: id,
+  };
+}

@@ -23,7 +23,6 @@ interface ShareBody {
 
 interface RegistryRow {
   object_path_hash: ArrayBuffer;
-  state: "active" | "deleted";
 }
 
 export async function handleCreateShareGrant(
@@ -48,13 +47,26 @@ export async function handleCreateShareGrant(
 export async function handleDeleteShare(request: Request, env: Env): Promise<Response> {
   const uid = await verifiedAdmin(request, env);
   if (uid instanceof Response) return uid;
-  const shareId = await readShareId(request);
-  if (!shareId) return new Response("malformed share id", { status: 400 });
-  await env.SHARE_REGISTRY.prepare(
-    "UPDATE share_registry SET state = 'deleted', deleted_at = ? " +
-      "WHERE share_id_hash = ? AND state = 'active'",
-  )
-    .bind(Date.now(), await sha256(shareId))
+  const body = await readShareBody(request);
+  if (!body) return new Response("malformed share", { status: 400 });
+  const account = await getAccount(env, uid);
+  if (account.status !== "ok") return accountFailure(account.status);
+  if (!(await pathsMatch(account.account.dbBindingHash, body))) {
+    return new Response("path not authorized", { status: 403 });
+  }
+  const idHash = await sha256(body.shareId);
+  const objectPath = shareObjectPath(body);
+  const row = await registryRow(env, idHash);
+  if (
+    row &&
+    !equalBytes(new Uint8Array(row.object_path_hash), await sha256Text(objectPath))
+  ) {
+    return new Response("share path mismatch", { status: 409 });
+  }
+  const deleted = await deleteEncryptedObject(env, objectPath);
+  if (deleted instanceof Response) return deleted;
+  await env.SHARE_REGISTRY.prepare("DELETE FROM share_registry WHERE share_id_hash = ?")
+    .bind(idHash)
     .run();
   return new Response(null, { status: 204 });
 }
@@ -67,8 +79,7 @@ export async function handleSharedContent(
   if (!input) return new Response("malformed share", { status: 400 });
   const idHash = await sha256(input.shareId);
   const row = await registryRow(env, idHash);
-  if (!row || row.state !== "active")
-    return new Response("share not found", { status: 404 });
+  if (!row) return new Response("share not found", { status: 404 });
   const objectPath = await decryptGrant(env, input.shareId, input.grant);
   if (!objectPath) return new Response("invalid share grant", { status: 401 });
   if (!equalBytes(new Uint8Array(row.object_path_hash), await sha256Text(objectPath))) {
@@ -101,23 +112,19 @@ async function registerShare(
   const pathHash = await sha256Text(objectPath);
   await env.SHARE_REGISTRY.prepare(
     "INSERT OR IGNORE INTO share_registry " +
-      "(share_id_hash, object_path_hash, state, created_at) " +
-      "VALUES (?, ?, 'active', ?)",
+      "(share_id_hash, object_path_hash, created_at) VALUES (?, ?, ?)",
   )
     .bind(idHash, pathHash, Date.now())
     .run();
   const row = await registryRow(env, idHash);
-  if (!row || row.state !== "active") {
-    return new Response("share was deleted", { status: 409 });
-  }
-  return equalBytes(new Uint8Array(row.object_path_hash), pathHash)
+  return row && equalBytes(new Uint8Array(row.object_path_hash), pathHash)
     ? true
     : new Response("share id already registered", { status: 409 });
 }
 
 function registryRow(env: Env, idHash: Uint8Array): Promise<RegistryRow | null> {
   return env.SHARE_REGISTRY.prepare(
-    "SELECT object_path_hash, state FROM share_registry WHERE share_id_hash = ?",
+    "SELECT object_path_hash FROM share_registry WHERE share_id_hash = ?",
   )
     .bind(idHash)
     .first<RegistryRow>();
@@ -220,6 +227,23 @@ async function fetchEncryptedObject(env: Env, objectPath: string): Promise<Respo
   });
 }
 
+async function deleteEncryptedObject(
+  env: Env,
+  objectPath: string,
+): Promise<true | Response> {
+  const aws = new AwsClient({
+    accessKeyId: env.R2_READ_WRITE_ACCESS_KEY_ID,
+    secretAccessKey: env.R2_READ_WRITE_SECRET_ACCESS_KEY,
+    region: env.R2_REGION,
+    service: "s3",
+  });
+  const base = `${env.R2_ENDPOINT.replace(/\/$/, "")}/${env.R2_BUCKET}`;
+  const response = await aws.fetch(`${base}/${objectPath}`, { method: "DELETE" });
+  return response.ok || response.status === 404
+    ? true
+    : new Response("shared content deletion failed", { status: 503 });
+}
+
 async function readShareBody(request: Request): Promise<ShareBody | null> {
   try {
     const body = (await request.json()) as Record<string, unknown>;
@@ -235,15 +259,6 @@ async function readShareBody(request: Request): Promise<ShareBody | null> {
       sharePath: body.share_path as string,
       shareId,
     };
-  } catch {
-    return null;
-  }
-}
-
-async function readShareId(request: Request): Promise<Uint8Array | null> {
-  try {
-    const body = (await request.json()) as Record<string, unknown>;
-    return parseStandardShareId(body.share_id);
   } catch {
     return null;
   }

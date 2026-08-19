@@ -22,7 +22,7 @@ There is one Turso control database, `ctl` (§2). User data lives as encrypted o
 | `R2_ENDPOINT`, `R2_BUCKET`, `R2_REGION` | R2 destination returned with temporary credentials |
 | `R2_READ_WRITE_ACCESS_KEY_ID` / `R2_READ_WRITE_SECRET_ACCESS_KEY` | parent credential used to sign path-limited temporary R2 credentials |
 | `SHARE_GRANT_KEY` | standard padded base64 encoding of exactly 32 random bytes; AES-256-GCM key for opaque shared-object grants |
-| `SHARE_REGISTRY` | D1 binding containing capability/path hashes and active/deleted state; it never stores a raw capability or object path |
+| `SHARE_REGISTRY` | D1 binding containing 32-byte capability/path hash BLOBs for live shares; it never stores a raw capability or object path |
 
 `R2_TICKET_SECRET` must not reuse the R2 secret access key. All Worker instances use the same ticket secret. Rotating it invalidates every outstanding ticket and is an emergency global response, not routine per-user revocation.
 
@@ -269,13 +269,13 @@ Proofs and tickets use fixed expirations, not sliding renewal. `/v1/r2-token` ne
 
 ### 5.1 Public-share authorization
 
-Only a Firebase identity equal to `ADMIN_UID` may call `POST /v1/share-grant` or `DELETE /v1/share`. Share creation validates the administrator's `db_path`/`db_prefix` binding, computes `SHA-256(share_id)` and `SHA-256(object_path)`, and inserts an `active` D1 row. An existing active row is idempotent only when its path hash matches; a deleted row is a permanent tombstone and cannot be reactivated.
+Only a Firebase identity equal to `ADMIN_UID` may call `POST /v1/share-grant` or `DELETE /v1/share`. Grant creation validates the administrator's `db_path`/`db_prefix` binding, computes `SHA-256(share_id)` and `SHA-256(object_path)`, stores both 32-byte hashes as BLOBs in D1, and returns an encrypted-path grant. Registering an existing share id is idempotent only when its path hash matches.
 
 The returned grant derives a per-grant AES-256-GCM key from `SHARE_GRANT_KEY`, a random 32-byte salt, and the capability hash using HKDF-SHA-256, then encrypts the exact object path with an independent random 12-byte nonce. Associated data is `UTF8("txt:share-grant:v1") || SHA-256(share_id)`, preventing a grant from being moved to another capability. The URL fragment carries the raw 32-byte share id, opaque grant, and content key, so none appears in the initial navigation request.
 
-An anonymous reader posts the id and grant to `POST /v1/shared-content`. The Worker requires an active D1 row, decrypts and validates the path, compares its hash with the registered path hash, fetches the encrypted object using the server-held R2 credential, and streams it with `Cache-Control: no-store`. Anonymous clients never receive R2 credentials. The Worker never receives the fragment's content key; decryption remains in the browser.
+An anonymous reader posts the id and grant to `POST /v1/shared-content`. The Worker requires the corresponding D1 row, decrypts and validates the path, compares its SHA-256 hash with the registered BLOB, fetches the encrypted object using the server-held R2 credential, and streams it with `Cache-Control: no-store`. Anonymous clients never receive R2 credentials. The Worker never receives the fragment's content key; decryption remains in the browser.
 
-Deletion first commits the D1 tombstone, which immediately prevents subsequent reads, then deletes the R2 object, and finally deletes the owner's SQLCipher row. A malicious or rolled-back R2 object cannot bypass the tombstone. A request authorized before the tombstone may finish, just as a viewer may retain plaintext already downloaded.
+Deletion sends the bound object path to the trusted Worker, which validates the administrator and path binding, deletes the R2 object with its server-held credential, and only then removes the D1 row. The browser removes the owner's SQLCipher row only after the Worker succeeds. A failed object deletion therefore remains visible and retryable, while a stale or rolled-back R2 object cannot be read after the registry row is gone. A request authorized before deletion may finish, just as a viewer may retain plaintext already downloaded. Because deletion leaves no tombstone, the same random share id can be registered again; clients generate a fresh 32-byte id for every new share.
 
 ---
 

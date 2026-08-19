@@ -23,14 +23,38 @@
   background-color: var(--bs-tertiary-bg);
 }
 
-.book-row-container[data-selected] .book-row {
+.book-row {
+  overflow: hidden;
+}
+
+.book-row-container {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.book-select-row {
+  overflow: hidden;
+  border-radius: var(--bs-border-radius-lg);
+}
+
+.book-select-row[data-selected] {
   background-color: var(--bs-primary-bg-subtle);
   box-shadow: inset 0 0 0 var(--bs-border-width) var(--bs-primary-border-subtle);
+}
+
+.book-select-row[data-selected] .book-row {
+  background: transparent;
+}
+
+.book-row-action-padding {
+  padding-right: 7rem !important;
 }
 
 .book-list-grid,
 .book-row-grid,
 .bookmark-grid {
+  max-width: 100%;
+  overflow-x: hidden;
   outline: none;
 }
 

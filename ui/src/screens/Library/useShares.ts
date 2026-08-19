@@ -6,6 +6,10 @@ export function useShares(database: LibraryDatabaseStore | null) {
   const [shares, setShares] = useState<BookShare[]>([]);
   const [revision, setRevision] = useState(0);
   const reload = useCallback(() => setRevision((value) => value + 1), []);
+  const remove = useCallback(
+    (id: number) => setShares((current) => current.filter((share) => share.id !== id)),
+    [],
+  );
   useEffect(() => {
     let cancelled = false;
     if (database) {
@@ -17,5 +21,5 @@ export function useShares(database: LibraryDatabaseStore | null) {
       cancelled = true;
     };
   }, [database, revision]);
-  return { shares, reload };
+  return { shares, reload, remove };
 }

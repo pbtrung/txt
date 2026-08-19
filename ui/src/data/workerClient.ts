@@ -96,9 +96,13 @@ export class WorkerClient {
     return stringField(data, "grant", "share grant response");
   }
 
-  async deleteShare(shareId: string): Promise<void> {
+  async deleteShare(request: ShareGrantRequest): Promise<void> {
     const response = await this.authorizedRequest("/v1/share", "DELETE", false, {
-      share_id: shareId,
+      db_path: request.dbPath,
+      db_prefix: request.dbPrefix,
+      share_prefix: request.sharePrefix,
+      share_path: request.sharePath,
+      share_id: request.shareId,
     });
     if (!response.ok) throw new Error(`could not delete share: ${response.status}`);
   }

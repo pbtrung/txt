@@ -97,9 +97,9 @@ export function LibraryScreen() {
     try {
       setShareError(null);
       await deleteBookShare(session, share);
+      shared.remove(share.id);
     } catch (error) {
       setShareError(errorMessage(error));
-    } finally {
       shared.reload();
     }
   };
@@ -136,7 +136,7 @@ export function LibraryScreen() {
           {shareError}
         </div>
       )}
-      <div className="d-flex flex-grow-1 overflow-hidden">
+      <div className="d-flex flex-grow-1 overflow-hidden min-w-0">
         {desktop && (
           <aside className="h-100 border-end library-sidebar">
             <LibrarySidebar

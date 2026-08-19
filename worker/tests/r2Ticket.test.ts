@@ -43,7 +43,9 @@ describe("R2 binding tickets", () => {
   it("rejects another signing secret and a modified compact ticket", async () => {
     const encoded = await issueR2Ticket(ACCOUNT, "uid-123", SECRET, "admin-uid");
     expect(await verifyR2Ticket(encoded, OTHER_SECRET)).toBeNull();
-    expect(await verifyR2Ticket(`${encoded.slice(0, -1)}x`, SECRET)).toBeNull();
+    const parts = encoded.split(".");
+    parts[2] = `${parts[2][0] === "A" ? "B" : "A"}${parts[2].slice(1)}`;
+    expect(await verifyR2Ticket(parts.join("."), SECRET)).toBeNull();
   });
 
   it("expires after 24 hours without an active revocation lookup", async () => {

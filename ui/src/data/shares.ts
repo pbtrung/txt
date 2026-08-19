@@ -63,8 +63,11 @@ export async function deleteBookShare(
   share: BookShare,
 ): Promise<void> {
   await session.database.mutate(setShareState(share.shareId, "deleting"));
-  await session.storage.deleteShareRegistration(toBase64(share.shareId));
-  await session.storage.deleteShared(objectKey(session.dbPrefix, share));
+  await session.storage.deleteShareRegistration(
+    toBase32Crockford(share.prefix),
+    toBase32Crockford(share.path),
+    toBase64(share.shareId),
+  );
   await session.database.mutate(deleteShare(share.shareId));
 }
 
