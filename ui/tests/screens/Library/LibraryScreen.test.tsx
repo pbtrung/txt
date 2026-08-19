@@ -594,32 +594,43 @@ describe("LibraryScreen", () => {
     bounds.mockRestore();
   });
 
-  it("shows recent access and bookmarked books in the Recent view", async () => {
+  it("shows recent access and bookmarked books in the Recent view", () => {
+    const accessed = new Date(2026, 7, 19, 10, 11, 12).getTime();
+    const latestBookmark = new Date(2026, 7, 19, 9, 8, 7).getTime();
+    const olderBookmark = new Date(2026, 7, 18, 8, 7, 6).getTime();
     renderScreen([
-      book({ txtId: 1, title: "Recently read", lastAccessed: 2000 }),
       book({
-        txtId: 2,
-        title: "Recently marked",
+        txtId: 1,
+        title: "Recent book",
+        lastAccessed: accessed,
         bookmarkCount: 2,
-        lastBookmarked: 3000,
+        lastBookmarked: latestBookmark,
         bookmarks: [
-          { cfi: "page-9", pageNumber: 9, createdAt: 3000 },
-          { cfi: "page-4", pageNumber: 4, createdAt: 2000 },
+          { cfi: "page-9", pageNumber: 9, createdAt: latestBookmark },
+          { cfi: "page-4", pageNumber: 4, createdAt: olderBookmark },
         ],
       }),
     ]);
 
     expect(screen.getByRole("heading", { name: "Recent" })).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Recent access" })).toHaveTextContent(
-      "Recently read",
-    );
-    expect(screen.getByRole("region", { name: "Bookmarks" })).toHaveTextContent(
-      "Recently marked",
-    );
+    const accessRegion = screen.getByRole("region", { name: "Recent access" });
+    const bookmarkRegion = screen.getByRole("region", { name: "Bookmarks" });
+    expect(accessRegion).toHaveTextContent("Recent book");
+    expect(bookmarkRegion).toHaveTextContent("Recent book");
+    expect(
+      within(accessRegion).getByLabelText("Last accessed 10:11:12 19/08/26"),
+    ).toBeVisible();
+    expect(
+      within(bookmarkRegion).getByLabelText("Bookmarked 09:08:07 19/08/26"),
+    ).toBeVisible();
+    expect(
+      within(bookmarkRegion).getByLabelText("Bookmarked 08:07:06 18/08/26"),
+    ).toBeVisible();
+    expect(within(bookmarkRegion).queryByLabelText(/Last accessed/)).toBeNull();
     expect(screen.getByLabelText("Page 9")).toBeInTheDocument();
     expect(screen.getByLabelText("Page 4")).toBeInTheDocument();
     expect(
-      within(screen.getByRole("region", { name: "Bookmarks" }))
+      within(bookmarkRegion)
         .getAllByRole("link")
         .map((link) =>
           new URL(link.getAttribute("href")!, "https://txt.test").searchParams.get(
@@ -627,11 +638,7 @@ describe("LibraryScreen", () => {
           ),
         ),
     ).toEqual(["page-9", "page-4"]);
-    expect(
-      within(screen.getByRole("region", { name: "Bookmarks" })).queryByLabelText(
-        "2 bookmarks",
-      ),
-    ).toBeNull();
+    expect(within(bookmarkRegion).queryByLabelText("2 bookmarks")).toBeNull();
   });
 
   it("blocks and reports each Recent deletion without overlapping work", async () => {

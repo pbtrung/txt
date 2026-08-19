@@ -203,7 +203,13 @@ function BookMetadata({
       ) : (
         book.bookmarkCount > 0 && <BookmarkBadge count={book.bookmarkCount} />
       )}
-      {book.lastAccessed > 0 && <LastAccessedBadge timestamp={book.lastAccessed} />}
+      {bookmark ? (
+        <ActivityTimeBadge label="Bookmarked" timestamp={bookmark.createdAt} />
+      ) : (
+        book.lastAccessed > 0 && (
+          <ActivityTimeBadge label="Last accessed" timestamp={book.lastAccessed} />
+        )
+      )}
       {book.authors.length > 0 && (
         <span className="text-truncate small text-muted min-w-0">
           {book.authors.join(", ")}
@@ -226,12 +232,18 @@ function BookmarkPageBadge({ pageNumber }: { pageNumber: number | null }) {
   );
 }
 
-function LastAccessedBadge({ timestamp }: { timestamp: number }) {
+function ActivityTimeBadge({
+  label,
+  timestamp,
+}: {
+  label: "Bookmarked" | "Last accessed";
+  timestamp: number;
+}) {
   const formatted = formatLastAccessed(timestamp);
   return (
     <span
       className="badge rounded-pill text-bg-light border fw-normal flex-shrink-0"
-      aria-label={`Last accessed ${formatted}`}
+      aria-label={`${label} ${formatted}`}
     >
       <i className="bi bi-clock-history me-1" aria-hidden="true" />
       {formatted}
