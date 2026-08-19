@@ -1,18 +1,10 @@
 // Reader shell: document loading and panel visibility stay here; rendering,
 // navigation, toolbar, and metadata presentation live in focused modules.
-import { useState, type ReactNode } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { LoadingMessage, ScreenMessage } from "../../components/ScreenMessage";
-import {
-  READER_LOAD_TOTAL_STEPS,
-  type ReaderDocument,
-} from "../../data/readerDocument";
+import type { ReaderDocument } from "../../data/readerDocument";
 import { useVault, type VaultSession } from "../../state/VaultContext";
-import { classNames } from "../../util/classNames";
-import { ReaderInfoPanel } from "./ReaderInfoPanel";
-import { ReaderNavigation } from "./ReaderNavigation";
-import { ReaderToolbar } from "./ReaderToolbar";
-import { TocPanel } from "./TocPanel";
+import { ReaderError, ReadyReaderView } from "./ReadyReaderView";
 import { useEpubRenderer } from "./useEpubRenderer";
 import { useReadingState } from "./useReadingState";
 import { useReaderDocument } from "./useReaderDocument";
@@ -49,83 +41,13 @@ function ReadyReader({
   session: VaultSession;
   initialCfi: string | null;
 }) {
-  const [infoOpen, setInfoOpen] = useState(false);
-  const [tocOpen, setTocOpen] = useState(false);
-  const [readerContainer, setReaderContainer] = useState<HTMLDivElement | null>(null);
-  const { setHost, renderer, ready, page, location, fontPx, changeFontSize, error } =
-    useEpubRenderer(document, initialCfi);
-  const reading = useReadingState(session, document, renderer, ready, location);
-  if (error) return <ReaderError>{error}</ReaderError>;
-  return (
-    <div
-      ref={setReaderContainer}
-      className="reader-width vh-100 mx-auto position-relative"
-    >
-      <div className="reader-column d-flex flex-column h-100 px-2 px-md-0">
-        <ReaderToolbar
-          title={document.title}
-          authors={document.authors}
-          onMenu={() => setTocOpen(true)}
-          onInfo={() => setInfoOpen(true)}
-        />
-        <div
-          className="reader-viewport flex-grow-1 align-self-center position-relative"
-          style={{ fontSize: `${fontPx}px` }}
-        >
-          <div
-            ref={setHost}
-            className={classNames("reader-epub-host h-100", !ready && "invisible")}
-          />
-          {!ready && (
-            <LoadingMessage
-              compact
-              progress={{
-                label: "Laying out text",
-                step: READER_LOAD_TOTAL_STEPS,
-                total: READER_LOAD_TOTAL_STEPS,
-              }}
-            >
-              Preparing your book…
-            </LoadingMessage>
-          )}
-        </div>
-        <ReaderNavigation
-          renderer={renderer}
-          page={page}
-          fontPx={fontPx}
-          onFontSize={changeFontSize}
-          bookmarkSaved={reading.currentSaved}
-          bookmarkBusy={reading.bookmarkBusy}
-          bookmarks={reading.bookmarks}
-          status={reading.databaseStatus}
-          error={reading.error}
-          onBookmark={() => void reading.toggleCurrent(page.current)}
-          onRemove={(cfi) => void reading.remove(cfi)}
-          onRetry={() => void reading.retry()}
-        />
-        <ReaderInfoPanel
-          open={infoOpen}
-          onClose={() => setInfoOpen(false)}
-          document={document}
-          portalContainer={readerContainer ?? undefined}
-        />
-        <TocPanel
-          open={tocOpen}
-          onClose={() => setTocOpen(false)}
-          renderer={renderer}
-          portalContainer={readerContainer ?? undefined}
-        />
-      </div>
-    </div>
+  const reader = useEpubRenderer(document, initialCfi);
+  const reading = useReadingState(
+    session,
+    document,
+    reader.renderer,
+    reader.ready,
+    reader.location,
   );
-}
-
-function ReaderError({ children }: { children: ReactNode }) {
-  return (
-    <div className="reader-width reader-column mx-auto px-2 px-md-0">
-      <ScreenMessage error compact>
-        {children}
-      </ScreenMessage>
-    </div>
-  );
+  return <ReadyReaderView document={document} reading={reading} {...reader} />;
 }

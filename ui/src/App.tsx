@@ -10,6 +10,7 @@ import {
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
 import { LibraryScreen } from "./screens/Library/LibraryScreen";
 import { ReaderScreen } from "./screens/Reader/ReaderScreen";
+import { SharedReaderScreen } from "./screens/Reader/SharedReaderScreen";
 import { UnlockScreen } from "./screens/Unlock/UnlockScreen";
 import { useVault, VaultProvider } from "./state/VaultContext";
 
@@ -24,6 +25,7 @@ function AppRoutes() {
     <AriaRouterProvider navigate={navigate}>
       <Routes>
         <Route path="/" element={<UnlockScreen />} />
+        <Route path="/shared" element={<SharedReaderScreen />} />
         <Route element={<RequireUnlocked />}>
           <Route path="/library" element={<LibraryScreen />} />
           <Route path="/read/:txtId" element={<ReaderScreen />} />

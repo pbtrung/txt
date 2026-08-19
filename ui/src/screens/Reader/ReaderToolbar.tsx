@@ -6,24 +6,28 @@ export function ReaderToolbar({
   authors,
   onMenu,
   onInfo,
+  backHref = "/library",
 }: {
   title: string;
   authors: string[];
   onMenu: () => void;
   onInfo: () => void;
+  backHref?: string | null;
 }) {
   return (
     <Toolbar
       aria-label="Reader actions"
       className="reader-toolbar d-flex align-items-center border-bottom py-1 gap-1"
     >
-      <Link
-        href="/library"
-        className="btn btn-sm btn-outline-secondary"
-        aria-label="Back to library"
-      >
-        <i className="bi bi-arrow-left" aria-hidden="true" />
-      </Link>
+      {backHref && (
+        <Link
+          href={backHref}
+          className="btn btn-sm btn-outline-secondary"
+          aria-label="Back to library"
+        >
+          <i className="bi bi-arrow-left" aria-hidden="true" />
+        </Link>
+      )}
       <h1 className="h6 mb-0 mx-2 text-truncate flex-grow-1">
         {readerTitle(title, authors)}
       </h1>
