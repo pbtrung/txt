@@ -1,6 +1,6 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useRef } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-aria-components";
 import { IconButton } from "../../components/IconButton";
 import type { LibraryBook } from "../../data/libraryDb";
 import { classNames } from "../../util/classNames";
@@ -85,7 +85,7 @@ export function BookRow({
       style={{ height: ROW_HEIGHT_PX }}
     >
       <Link
-        to={readerPath(book.txtId, initialCfi)}
+        href={readerPath(book.txtId, initialCfi)}
         className={classNames(
           "d-block py-2 px-2 rounded-3 text-decoration-none text-body book-row h-100",
           onRemove && "pe-5",

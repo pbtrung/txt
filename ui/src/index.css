@@ -118,6 +118,11 @@
   color: var(--bs-secondary-color);
 }
 
+.search-box[data-empty]:not(:focus-within) .search-box-clear {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .search-box-clear-icon {
   font-size: 1.25rem;
   font-weight: 700;

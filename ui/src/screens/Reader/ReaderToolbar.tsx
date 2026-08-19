@@ -1,5 +1,4 @@
-import { Link } from "react-router-dom";
-import { Toolbar } from "react-aria-components";
+import { Link, Toolbar } from "react-aria-components";
 import { IconButton } from "../../components/IconButton";
 
 export function ReaderToolbar({
@@ -19,7 +18,7 @@ export function ReaderToolbar({
       className="reader-toolbar d-flex align-items-center border-bottom py-1 gap-1"
     >
       <Link
-        to="/library"
+        href="/library"
         className="btn btn-sm btn-outline-secondary"
         aria-label="Back to library"
       >

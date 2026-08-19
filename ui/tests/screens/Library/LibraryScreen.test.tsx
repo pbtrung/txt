@@ -126,16 +126,25 @@ describe("LibraryScreen", () => {
   it("filters by search query", async () => {
     renderScreen(LIBRARY);
     const searchbox = screen.getByRole("searchbox");
+    const searchField = searchbox.closest(".search-box");
     const clear = screen.getByRole("button", { name: "Clear search" });
     expect(clear).toHaveTextContent("×");
     expect(clear.firstElementChild).toHaveClass("search-box-clear-icon");
+    expect(searchField).toHaveAttribute("data-empty", "true");
+
+    await userEvent.click(searchbox);
+    expect(searchbox).toHaveFocus();
     await userEvent.type(searchbox, "wizard");
+    expect(searchField).not.toHaveAttribute("data-empty");
 
     expect(screen.getByRole("link", { name: /Wizard/ })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /Dune/ })).not.toBeInTheDocument();
 
     await userEvent.click(clear);
     expect(searchbox).toHaveValue("");
+    expect(searchbox).toHaveFocus();
+    await userEvent.tab();
+    expect(searchField).toHaveAttribute("data-empty", "true");
     expect(screen.getByRole("link", { name: /Dune/ })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Wizard/ })).toBeInTheDocument();
   });
