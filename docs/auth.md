@@ -21,8 +21,12 @@ There is one Turso control database, `ctl` (§2). User data lives as encrypted o
 | `R2_TICKET_SECRET` | standard padded base64 encoding of at least 32 random bytes, used only to sign and verify R2 binding tickets |
 | `R2_ENDPOINT`, `R2_BUCKET`, `R2_REGION` | R2 destination returned with temporary credentials |
 | `R2_READ_WRITE_ACCESS_KEY_ID` / `R2_READ_WRITE_SECRET_ACCESS_KEY` | parent credential used to sign path-limited temporary R2 credentials |
+| `SHARE_GRANT_KEY` | standard padded base64 encoding of exactly 32 random bytes; AES-256-GCM key for opaque shared-object grants |
+| `SHARE_REGISTRY` | D1 binding containing capability/path hashes and active/deleted state; it never stores a raw capability or object path |
 
 `R2_TICKET_SECRET` must not reuse the R2 secret access key. All Worker instances use the same ticket secret. Rotating it invalidates every outstanding ticket and is an emergency global response, not routine per-user revocation.
+
+`SHARE_GRANT_KEY` is independent from `R2_TICKET_SECRET`, R2 credentials, and all user keys. Rotation requires retaining the previous key until active share URLs have been replaced. D1 is trusted for authorization integrity and deletion ordering, but receives no plaintext object paths or content keys.
 
 The Worker Turso token is read-only. A leaked Worker database token can expose ciphertext and control metadata, but cannot alter or delete rows.
 
@@ -262,6 +266,16 @@ The response contains exactly one credential of each type:
 6. The client renews R2 credentials with the same ticket until the ticket expires. It calls Firebase-authenticated `/v1/keys` again only when a new ticket is required.
 
 Proofs and tickets use fixed expirations, not sliding renewal. `/v1/r2-token` never extends a ticket.
+
+### 5.1 Public-share authorization
+
+Only a Firebase identity equal to `ADMIN_UID` may call `POST /v1/share-grant` or `DELETE /v1/share`. Share creation validates the administrator's `db_path`/`db_prefix` binding, computes `SHA-256(share_id)` and `SHA-256(object_path)`, and inserts an `active` D1 row. An existing active row is idempotent only when its path hash matches; a deleted row is a permanent tombstone and cannot be reactivated.
+
+The returned grant encrypts the exact object path with AES-256-GCM under `SHARE_GRANT_KEY`. Associated data is `UTF8("txt:share-grant:v1") || SHA-256(share_id)`, preventing a grant from being moved to another capability. The URL fragment carries the raw 32-byte share id, opaque grant, and content key, so none appears in the initial navigation request.
+
+An anonymous reader posts the id and grant to `POST /v1/shared-content`. The Worker requires an active D1 row, decrypts and validates the path, compares its hash with the registered path hash, fetches the encrypted object using the server-held R2 credential, and streams it with `Cache-Control: no-store`. Anonymous clients never receive R2 credentials. The Worker never receives the fragment's content key; decryption remains in the browser.
+
+Deletion first commits the D1 tombstone, which immediately prevents subsequent reads, then deletes the R2 object, and finally deletes the owner's SQLCipher row. A malicious or rolled-back R2 object cannot bypass the tombstone. A request authorized before the tombstone may finish, just as a viewer may retain plaintext already downloaded.
 
 ---
 
