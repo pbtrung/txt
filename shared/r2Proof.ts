@@ -1,23 +1,11 @@
 const STORAGE_PATH_PATTERN = /^[0-9abcdefghjkmnpqrstvwxyz]{52}$/;
-const PROOF_DOMAIN = "txt:r2-token-proof";
 const TICKET_PROOF_DOMAIN = "txt:r2-ticket-proof";
 
-export const R2_PROOF_VERSION = 1;
 export const R2_TICKET_PROOF_VERSION = 2;
 export const R2_PROOF_REQUEST_ID_BYTES = 32;
 export const R2_USER_HANDLE_BYTES = 32;
 export const P521_COMPONENT_BYTES = 66;
 export const P521_SIGNATURE_BYTES = P521_COMPONENT_BYTES * 2;
-
-export interface R2ProofInput {
-  version: number;
-  uid: string;
-  firebaseIdToken: string;
-  expiresAt: number;
-  requestId: Uint8Array;
-  dbPath: string;
-  dbPrefix: string;
-}
 
 export interface R2TicketProofInput {
   version: number;
@@ -46,28 +34,6 @@ export async function storagePathBinding(
   requireStoragePath(dbPath, "db_path");
   requireStoragePath(dbPrefix, "db_prefix");
   return digest("SHA-512", concatBytes(utf8(dbPath), utf8(dbPrefix)));
-}
-
-export async function canonicalR2Proof(input: R2ProofInput): Promise<Uint8Array> {
-  requireProofFields(input.version, input.expiresAt, input.requestId);
-
-  const uid = utf8(input.uid);
-  if (uid.byteLength > 0xffffffff) throw new Error("uid is too long");
-
-  const tokenHash = await digest("SHA-256", utf8(input.firebaseIdToken));
-  const pathBinding = await storagePathBinding(input.dbPath, input.dbPrefix);
-
-  return concatBytes(
-    utf8(PROOF_DOMAIN),
-    new Uint8Array([0]),
-    u32be(input.version),
-    u32be(uid.byteLength),
-    uid,
-    tokenHash,
-    u64be(input.expiresAt),
-    input.requestId,
-    pathBinding,
-  );
 }
 
 export async function canonicalR2TicketProof(

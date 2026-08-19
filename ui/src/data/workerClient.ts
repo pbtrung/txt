@@ -1,12 +1,16 @@
 // Same-origin client for wrapped key material and signed, short-lived R2
-// credentials. Proofs are built only after choosing the exact Firebase token
-// that will be sent in the Authorization header.
-import { P521_SIGNATURE_BYTES, canonicalR2Proof } from "../../../shared/r2Proof";
+// credentials. Firebase is sent only to /v1/keys; R2 proofs bind the signed
+// ticket returned there to the handle decrypted from cred_store.
+import {
+  P521_SIGNATURE_BYTES,
+  R2_TICKET_PROOF_VERSION,
+  canonicalR2TicketProof,
+} from "../../../shared/r2Proof";
 import type { FirebaseTokenProvider } from "../auth/firebaseSignIn";
 import { toBase64 } from "../util/base64";
 import { objectRecord, stringField } from "../util/validation";
 
-const PROOF_VERSION = 1;
+const SIGNING_VERSION = 1;
 const PROOF_LIFETIME_SECONDS = 45;
 
 export interface KeysResponse {
@@ -18,11 +22,12 @@ export interface KeysResponse {
     privateKey: string; // base64 ciphertext
   };
   credStore: string; // base64
+  r2Ticket: string;
 }
 
 export interface R2SigningIdentity {
-  uid: string;
-  version: number;
+  ticket: string;
+  userHandle: Uint8Array;
   privateKey: CryptoKey;
 }
 
@@ -66,9 +71,10 @@ export class WorkerClient {
     signing: R2SigningIdentity,
     signal?: AbortSignal,
   ): Promise<R2CredentialPair> {
-    let response = await this.signedR2Request(dbPath, dbPrefix, signing, false, signal);
+    let response = await this.signedR2Request(dbPath, dbPrefix, signing, signal);
     if (response.status === 401) {
-      response = await this.signedR2Request(dbPath, dbPrefix, signing, true, signal);
+      signing.ticket = (await this.fetchKeys()).r2Ticket;
+      response = await this.signedR2Request(dbPath, dbPrefix, signing, signal);
     }
     if (!response.ok) {
       throw new Error(`could not obtain R2 credentials: ${response.status}`);
@@ -80,16 +86,14 @@ export class WorkerClient {
     dbPath: string,
     dbPrefix: string,
     signing: R2SigningIdentity,
-    forceRefresh: boolean,
     signal?: AbortSignal,
   ): Promise<Response> {
-    const idToken = await this.tokens.getIdToken(forceRefresh);
     const expiresAt = Math.floor(Date.now() / 1000) + PROOF_LIFETIME_SECONDS;
     const requestId = crypto.getRandomValues(new Uint8Array(32));
-    const canonical = await canonicalR2Proof({
-      version: signing.version,
-      uid: signing.uid,
-      firebaseIdToken: idToken,
+    const canonical = await canonicalR2TicketProof({
+      version: R2_TICKET_PROOF_VERSION,
+      ticket: signing.ticket,
+      userHandle: signing.userHandle,
       expiresAt,
       requestId,
       dbPath,
@@ -107,21 +111,23 @@ export class WorkerClient {
         `Web Crypto returned an invalid P-521 signature size: ${signature.byteLength}`,
       );
     }
-    return this.post(
-      "/v1/r2-token",
-      idToken,
-      {
+    return fetch("/v1/r2-token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ticket: signing.ticket,
+        user_handle: toBase64(signing.userHandle),
         db_path: dbPath,
         db_prefix: dbPrefix,
         proof: {
-          version: signing.version,
+          version: R2_TICKET_PROOF_VERSION,
           expires_at: expiresAt,
           request_id: toBase64(requestId),
           signature: toBase64(signature),
         },
-      },
+      }),
       signal,
-    );
+    });
   }
 
   private async authorizedPost(path: string, forceRefresh: boolean): Promise<Response> {
@@ -152,7 +158,7 @@ function parseKeysResponse(value: unknown): KeysResponse {
     throw new Error("key response has an invalid account type");
   }
   const signing = objectRecord(data.signing, "key response signing suite");
-  if (signing.version !== PROOF_VERSION) {
+  if (signing.version !== SIGNING_VERSION) {
     throw new Error("key response has an unsupported signing version");
   }
   if (signing.algorithm !== "ECDSA-P521-SHA512") {
@@ -162,11 +168,12 @@ function parseKeysResponse(value: unknown): KeysResponse {
     uid: stringField(data, "uid", "key response"),
     umk: stringField(data, "umk", "key response"),
     signing: {
-      version: PROOF_VERSION,
+      version: SIGNING_VERSION,
       algorithm: "ECDSA-P521-SHA512",
       privateKey: stringField(signing, "private_key", "key response signing suite"),
     },
     credStore: stringField(data, "cred_store", "key response"),
+    r2Ticket: stringField(data, "r2_ticket", "key response"),
   };
 }
 

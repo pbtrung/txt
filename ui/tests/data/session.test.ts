@@ -29,6 +29,7 @@ async function wrappedKeys(
         privateKey: toBase64(await encrypt(privateDer, umk)),
       },
       credStore: toBase64(await encryptJson(payload, umk)),
+      r2Ticket: "header.payload.signature",
     },
   };
 }
@@ -39,6 +40,7 @@ describe("unwrapKeys (real crypto)", () => {
     const umk = crypto.getRandomValues(new Uint8Array(128));
     const payload = {
       display_name: "Ada",
+      user_handle: toBase64(new Uint8Array(32).fill(7)),
       db_master_key: toBase64(crypto.getRandomValues(new Uint8Array(256))),
       db_path: "a".repeat(52),
       db_prefix: "b".repeat(52),
@@ -49,7 +51,8 @@ describe("unwrapKeys (real crypto)", () => {
 
     expect([...result.umk]).toEqual([...umk]);
     expect(result.credStore).toEqual(payload);
-    expect(result.signing.uid).toBe("uid-123");
+    expect(result.signing.ticket).toBe("header.payload.signature");
+    expect(result.signing.userHandle).toEqual(new Uint8Array(32).fill(7));
     expect(result.signing.privateKey.extractable).toBe(false);
     const message = new TextEncoder().encode("proof");
     const signature = await crypto.subtle.sign(
@@ -79,10 +82,29 @@ describe("unwrapKeys (real crypto)", () => {
   it("rejects an incomplete decrypted credential store", async () => {
     const userRootKey = crypto.getRandomValues(new Uint8Array(256));
     const umk = crypto.getRandomValues(new Uint8Array(128));
-    const { keys } = await wrappedKeys(userRootKey, umk, { display_name: "Ada" });
+    const { keys } = await wrappedKeys(userRootKey, umk, {
+      display_name: "Ada",
+      user_handle: toBase64(new Uint8Array(32)),
+    });
 
     await expect(unwrapKeys(keys, toBase64(userRootKey))).rejects.toThrow(
       /db_master_key/,
+    );
+  });
+
+  it("rejects a decrypted user handle with the wrong size", async () => {
+    const userRootKey = crypto.getRandomValues(new Uint8Array(256));
+    const umk = crypto.getRandomValues(new Uint8Array(128));
+    const payload = {
+      display_name: "Ada",
+      user_handle: toBase64(new Uint8Array(31)),
+      db_master_key: toBase64(new Uint8Array(256)),
+      db_path: "a".repeat(52),
+      db_prefix: "b".repeat(52),
+    };
+    const { keys } = await wrappedKeys(userRootKey, umk, payload);
+    await expect(unwrapKeys(keys, toBase64(userRootKey))).rejects.toThrow(
+      /user_handle must be 32 bytes/,
     );
   });
 });

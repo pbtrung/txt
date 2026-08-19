@@ -1,6 +1,9 @@
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { canonicalR2Proof } from "../../../shared/r2Proof";
+import {
+  R2_TICKET_PROOF_VERSION,
+  canonicalR2TicketProof,
+} from "../../../shared/r2Proof";
 import type { FirebaseTokenProvider } from "../../src/auth/firebaseSignIn";
 import { WorkerClient, type R2SigningIdentity } from "../../src/data/workerClient";
 import { fromBase64 } from "../../src/util/base64";
@@ -8,6 +11,8 @@ import { fromBase64 } from "../../src/util/base64";
 const UID = "uid-123";
 const DB_PATH = "0123456789abcdefghjkmnpqrstvwxyz0123456789abcdefghjk";
 const DB_PREFIX = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz";
+const USER_HANDLE = new Uint8Array(32).fill(7);
+const TICKET = "header.payload.signature";
 
 let signing: R2SigningIdentity;
 let publicKey: CryptoKey;
@@ -22,7 +27,7 @@ function tokenProvider(tokens = ["idtok"]): FirebaseTokenProvider {
   };
 }
 
-function keysResponse() {
+function keysResponse(r2Ticket = TICKET) {
   return {
     type: "user",
     uid: UID,
@@ -33,6 +38,7 @@ function keysResponse() {
       private_key: "cHJpdmF0ZQ==",
     },
     cred_store: "Y29udGVudA==",
+    r2_ticket: r2Ticket,
   };
 }
 
@@ -63,12 +69,20 @@ beforeAll(async () => {
     false,
     ["sign", "verify"],
   )) as CryptoKeyPair;
-  signing = { uid: UID, version: 1, privateKey: pair.privateKey };
+  signing = {
+    ticket: TICKET,
+    userHandle: USER_HANDLE,
+    privateKey: pair.privateKey,
+  };
   publicKey = pair.publicKey;
 });
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+beforeEach(() => {
+  signing.ticket = TICKET;
 });
 
 describe("WorkerClient.fetchKeys", () => {
@@ -91,6 +105,7 @@ describe("WorkerClient.fetchKeys", () => {
         privateKey: "cHJpdmF0ZQ==",
       },
       credStore: "Y29udGVudA==",
+      r2Ticket: TICKET,
     });
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe("/v1/keys");
@@ -158,18 +173,20 @@ describe("WorkerClient.fetchR2Token", () => {
 
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe("/v1/r2-token");
-    expect(init.headers.Authorization).toBe("Bearer idtok");
+    expect(init.headers.Authorization).toBeUndefined();
     const body = JSON.parse(init.body);
+    expect(body.ticket).toBe(TICKET);
+    expect(fromBase64(body.user_handle)).toEqual(USER_HANDLE);
     expect(body.db_path).toBe(DB_PATH);
     expect(body.db_prefix).toBe(DB_PREFIX);
-    expect(body.proof.version).toBe(1);
+    expect(body.proof.version).toBe(R2_TICKET_PROOF_VERSION);
     expect(fromBase64(body.proof.request_id)).toHaveLength(32);
     expect(fromBase64(body.proof.signature)).toHaveLength(132);
 
-    const canonical = await canonicalR2Proof({
-      version: 1,
-      uid: UID,
-      firebaseIdToken: "idtok",
+    const canonical = await canonicalR2TicketProof({
+      version: R2_TICKET_PROOF_VERSION,
+      ticket: TICKET,
+      userHandle: USER_HANDLE,
       expiresAt: body.proof.expires_at,
       requestId: fromBase64(body.proof.request_id),
       dbPath: DB_PATH,
@@ -185,11 +202,16 @@ describe("WorkerClient.fetchR2Token", () => {
     ).resolves.toBe(true);
   });
 
-  it("rebuilds the proof with the refreshed token after a 401", async () => {
-    const provider = tokenProvider(["expired", "fresh"]);
+  it("fetches a replacement ticket after a 401 and rebuilds the proof", async () => {
+    const provider = tokenProvider(["idtok"]);
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce({ ok: false, status: 401 })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => keysResponse("new.header.signature"),
+      })
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
@@ -199,9 +221,17 @@ describe("WorkerClient.fetchR2Token", () => {
 
     await new WorkerClient(provider).fetchR2Token(DB_PATH, DB_PREFIX, signing);
 
-    expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe("Bearer expired");
-    expect(fetchMock.mock.calls[1][1].headers.Authorization).toBe("Bearer fresh");
-    expect(fetchMock.mock.calls[0][1].body).not.toBe(fetchMock.mock.calls[1][1].body);
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "/v1/r2-token",
+      "/v1/keys",
+      "/v1/r2-token",
+    ]);
+    expect(fetchMock.mock.calls[0][1].headers.Authorization).toBeUndefined();
+    expect(fetchMock.mock.calls[1][1].headers.Authorization).toBe("Bearer idtok");
+    expect(JSON.parse(fetchMock.mock.calls[2][1].body).ticket).toBe(
+      "new.header.signature",
+    );
+    expect(provider.getIdToken).toHaveBeenCalledTimes(1);
   });
 
   it("rejects missing, duplicate, and unknown credential types", async () => {
