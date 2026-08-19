@@ -1,8 +1,8 @@
 import "@testing-library/jest-dom/vitest";
 
-// jsdom doesn't implement ResizeObserver -- @tanstack/react-virtual (the
+// jsdom doesn't implement ResizeObserver -- React Aria's Virtualizer (the
 // Library screen's book list) observes its scroll container with one.
-// Tests that render it mock the library's useVirtualizer directly instead
+// Tests that render it mock the Virtualizer wrapper directly instead
 // of relying on this to produce real measurements; it only exists so an
 // unmocked render doesn't throw "ResizeObserver is not defined".
 if (typeof window !== "undefined" && !window.ResizeObserver) {

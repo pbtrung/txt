@@ -1,6 +1,10 @@
-import { useVirtualizer } from "@tanstack/react-virtual";
-import { useRef } from "react";
-import { GridListItem, Link } from "react-aria-components";
+import {
+  GridList,
+  GridListItem,
+  Link,
+  ListLayout,
+  Virtualizer,
+} from "react-aria-components";
 import { IconButton } from "../../components/IconButton";
 import type { LibraryBook } from "../../data/libraryDb";
 import { classNames } from "../../util/classNames";
@@ -14,24 +18,17 @@ export function BookList({
   books: LibraryBook[];
   totalCount: number;
 }) {
-  const parentRef = useRef<HTMLDivElement>(null);
-  // TanStack Virtual returns mutable helpers that React Compiler cannot memoize.
-  // eslint-disable-next-line react-hooks/incompatible-library
-  const virtualizer = useVirtualizer({
-    count: books.length,
-    getScrollElement: () => parentRef.current,
-    estimateSize: () => ROW_HEIGHT_PX,
-    overscan: 8,
-  });
   if (books.length === 0) return <EmptyBookList totalCount={totalCount} />;
   return (
-    <div ref={parentRef} className="flex-grow-1 overflow-y-auto px-2 px-md-3">
-      <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
-        {virtualizer.getVirtualItems().map((row) => (
-          <VirtualBookRow key={row.key} book={books[row.index]} row={row} />
-        ))}
-      </div>
-    </div>
+    <Virtualizer layout={ListLayout} layoutOptions={{ rowSize: ROW_HEIGHT_PX }}>
+      <GridList
+        aria-label="Books"
+        items={books}
+        className="flex-grow-1 overflow-y-auto px-2 px-md-3 book-list-grid"
+      >
+        {(book) => <VirtualBookRow book={book} />}
+      </GridList>
+    </Virtualizer>
   );
 }
 
@@ -44,26 +41,17 @@ function EmptyBookList({ totalCount }: { totalCount: number }) {
   );
 }
 
-function VirtualBookRow({
-  book,
-  row,
-}: {
-  book: LibraryBook;
-  row: { index: number; key: string | number | bigint; start: number };
-}) {
+function VirtualBookRow({ book }: { book: LibraryBook }) {
   return (
-    <div
-      data-index={row.index}
-      style={{
-        position: "absolute",
-        top: 0,
-        left: 0,
-        width: "100%",
-        transform: `translateY(${row.start}px)`,
-      }}
+    <GridListItem
+      id={book.txtId}
+      textValue={book.title}
+      focusMode="child"
+      className="book-row-container"
+      style={{ height: ROW_HEIGHT_PX }}
     >
       <BookLinkRow book={book} />
-    </div>
+    </GridListItem>
   );
 }
 

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 
@@ -11,18 +12,14 @@ vi.mock("../../../src/screens/Library/useLibraryBooks", () => ({
 // jsdom reports a zero-size scroll container, so the real virtualizer would
 // see nothing as "in view" and render no rows at all -- these tests care
 // about search/filter/link behavior, not which rows a real viewport would
-// show, so every row is rendered unconditionally instead.
-vi.mock("@tanstack/react-virtual", () => ({
-  useVirtualizer: (options: { count: number }) => ({
-    getTotalSize: () => options.count * 72,
-    getVirtualItems: () =>
-      Array.from({ length: options.count }, (_, index) => ({
-        index,
-        start: index * 72,
-        key: index,
-      })),
-  }),
-}));
+// show, so the collection is rendered without its virtualizer wrapper.
+vi.mock("react-aria-components", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react-aria-components")>();
+  return {
+    ...actual,
+    Virtualizer: ({ children }: { children: ReactNode }) => children,
+  };
+});
 
 import type { LibraryBook } from "../../../src/data/libraryDb";
 import * as libraryModel from "../../../src/screens/Library/libraryModel";
@@ -221,6 +218,7 @@ describe("LibraryScreen", () => {
     await userEvent.click(screen.getByRole("button", { name: /^All Books/ }));
 
     const row = screen.getByRole("link", { name: /Active book/ });
+    expect(screen.getByRole("grid", { name: "Books" })).toContainElement(row);
     expect(row.querySelector(".book-row-icon")).toHaveClass("book-row-icon-active");
     expect(screen.getByLabelText("2 bookmarks")).toHaveTextContent("2");
     expect(screen.getByLabelText("Last accessed 14:05:09 17/08/26")).toBeVisible();

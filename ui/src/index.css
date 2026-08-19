@@ -23,6 +23,7 @@
   background-color: var(--bs-tertiary-bg);
 }
 
+.book-list-grid,
 .book-row-grid,
 .bookmark-grid {
   outline: none;
