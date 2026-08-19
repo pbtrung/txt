@@ -5,6 +5,7 @@ import {
   ListLayout,
   Virtualizer,
 } from "react-aria-components";
+import type { ReactNode } from "react";
 import { IconButton } from "../../components/IconButton";
 import type { LibraryBook } from "../../data/libraryDb";
 import { classNames } from "../../util/classNames";
@@ -63,11 +64,13 @@ export function BookRow({
   initialCfi,
   onRemove,
   removeLabel,
+  action,
 }: {
   book: LibraryBook;
   initialCfi?: string | null;
   onRemove: () => void;
   removeLabel: string;
+  action?: ReactNode;
 }) {
   return (
     <GridListItem
@@ -78,6 +81,11 @@ export function BookRow({
       style={{ height: ROW_HEIGHT_PX }}
     >
       <BookLinkRow book={book} initialCfi={initialCfi} hasRemoveAction />
+      {action && (
+        <span className="position-absolute top-50 end-0 translate-middle-y me-5">
+          {action}
+        </span>
+      )}
       <IconButton
         label={removeLabel}
         icon="x-lg"

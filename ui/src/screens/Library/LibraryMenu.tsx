@@ -1,5 +1,6 @@
 import { Button, Dialog, DialogTrigger, Popover } from "react-aria-components";
 import type { LibraryBook } from "../../data/libraryDb";
+import type { BookShare } from "../../data/shares";
 import type { LibraryView } from "./libraryView";
 import { LibrarySidebar } from "./LibrarySidebar";
 
@@ -9,6 +10,8 @@ export function LibraryMenu(props: {
   displayName: string;
   onNavigate: (view: LibraryView) => void;
   onLock: () => void;
+  shares: BookShare[];
+  isAdmin: boolean;
 }) {
   return (
     <DialogTrigger>

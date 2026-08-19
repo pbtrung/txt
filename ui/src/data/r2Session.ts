@@ -34,6 +34,32 @@ export class R2Session {
     return this.withCredential("dbPrefix", (client) => client.getObject(key));
   }
 
+  putShared(key: string, bytes: Uint8Array): Promise<void> {
+    return this.withCredential("dbPrefix", (client) => client.putImmutable(key, bytes));
+  }
+
+  deleteShared(key: string): Promise<void> {
+    return this.withCredential("dbPrefix", (client) => client.deleteObject(key));
+  }
+
+  createShareGrant(
+    sharePrefix: string,
+    sharePath: string,
+    shareId: string,
+  ): Promise<string> {
+    return this.worker.createShareGrant({
+      dbPath: this.dbPath,
+      dbPrefix: this.dbPrefix,
+      sharePrefix,
+      sharePath,
+      shareId,
+    });
+  }
+
+  deleteShareRegistration(shareId: string): Promise<void> {
+    return this.worker.deleteShare(shareId);
+  }
+
   private async withCredential<T>(
     type: "dbPath" | "dbPrefix",
     operation: (client: R2Client) => Promise<T>,

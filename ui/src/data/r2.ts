@@ -73,6 +73,26 @@ export class R2Client {
     return etag;
   }
 
+  async putImmutable(key: string, bytes: Uint8Array): Promise<void> {
+    const response = await withNetworkRetries((signal) =>
+      this.aws.fetch(`${this.base}/${key}`, {
+        method: "PUT",
+        headers: { "If-None-Match": "*" },
+        body: new Uint8Array(bytes),
+        signal,
+      }),
+    );
+    if (response.status === 412) throw new R2ConflictError(`R2 PUT ${key} exists`);
+    this.requireSuccess(response, `R2 PUT ${key}`);
+  }
+
+  async deleteObject(key: string): Promise<void> {
+    const response = await withNetworkRetries((signal) =>
+      this.aws.fetch(`${this.base}/${key}`, { method: "DELETE", signal }),
+    );
+    this.requireSuccess(response, `R2 DELETE ${key}`);
+  }
+
   private requireSuccess(response: Response, operation: string): void {
     if (response.status === 401 || response.status === 403) {
       throw new R2AuthorizationError(`${operation} authorization failed`);

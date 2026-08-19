@@ -3,7 +3,14 @@
 import { useEffect, useState } from "react";
 import { LoadingMessage, ScreenMessage } from "../../components/ScreenMessage";
 import { useVault } from "../../state/VaultContext";
+import { errorMessage } from "../../util/errorMessage";
 import { clearBookmarksMutation, clearLastAccessMutation } from "../../data/libraryDb";
+import {
+  createBookShare,
+  deleteBookShare,
+  shareUrl,
+  type BookShare,
+} from "../../data/shares";
 import { LibraryContent } from "./LibraryContent";
 import { LibraryHeader } from "./LibraryHeader";
 import { LibraryMenu } from "./LibraryMenu";
@@ -11,6 +18,7 @@ import { LibrarySidebar } from "./LibrarySidebar";
 import { parseSearch } from "./libraryModel";
 import type { LibraryView } from "./libraryView";
 import { useLibraryBooks } from "./useLibraryBooks";
+import { useShares } from "./useShares";
 
 const INITIAL_VIEW: LibraryView = { kind: "recent" };
 const ALL_BOOKS_VIEW: LibraryView = { kind: "books", filter: null };
@@ -19,8 +27,11 @@ const DESKTOP_MEDIA_QUERY = "(min-width: 768px)";
 export function LibraryScreen() {
   const { session, lock } = useVault();
   const library = useLibraryBooks(session?.database ?? null);
+  const isAdmin = session?.accountType === "admin";
+  const shared = useShares(isAdmin ? (session?.database ?? null) : null);
   const [query, setQuery] = useState("");
   const [view, setView] = useState<LibraryView>(INITIAL_VIEW);
+  const [shareError, setShareError] = useState<string | null>(null);
   const desktop = useMediaQuery(DESKTOP_MEDIA_QUERY);
 
   if (library.status === "loading") {
@@ -54,6 +65,37 @@ export function LibraryScreen() {
       library.reload();
     }
   };
+  const createShare = async (txtId: number) => {
+    if (!session || !isAdmin) return;
+    try {
+      setShareError(null);
+      await createBookShare(session, txtId);
+    } catch (error) {
+      setShareError(errorMessage(error));
+    } finally {
+      shared.reload();
+    }
+  };
+  const copyShare = async (share: BookShare) => {
+    if (!session || !isAdmin) return;
+    try {
+      setShareError(null);
+      await navigator.clipboard.writeText(await shareUrl(session, share));
+    } catch (error) {
+      setShareError(errorMessage(error));
+    }
+  };
+  const removeShare = async (share: BookShare) => {
+    if (!session || !isAdmin) return;
+    try {
+      setShareError(null);
+      await deleteBookShare(session, share);
+    } catch (error) {
+      setShareError(errorMessage(error));
+    } finally {
+      shared.reload();
+    }
+  };
   return (
     <div className="d-flex flex-column vh-100 mx-auto max-w-md-60 px-2 px-md-0">
       <LibraryHeader
@@ -67,10 +109,23 @@ export function LibraryScreen() {
               displayName={session?.displayName ?? ""}
               onNavigate={navigate}
               onLock={lock}
+              shares={shared.shares}
+              isAdmin={isAdmin}
             />
           )
         }
+        shareBooks={
+          isAdmin && (view.kind === "books" || view.kind === "entries")
+            ? library.books
+            : []
+        }
+        onShare={(txtId) => void createShare(txtId)}
       />
+      {shareError && (
+        <div className="alert alert-danger py-2 mx-2 my-1 small" role="alert">
+          {shareError}
+        </div>
+      )}
       <div className="d-flex flex-grow-1 overflow-hidden">
         {desktop && (
           <aside className="h-100 border-end library-sidebar">
@@ -80,6 +135,8 @@ export function LibraryScreen() {
               displayName={session?.displayName ?? ""}
               onNavigate={navigate}
               onLock={lock}
+              shares={shared.shares}
+              isAdmin={isAdmin}
             />
           </aside>
         )}
@@ -90,6 +147,9 @@ export function LibraryScreen() {
           onNavigate={navigate}
           onClearAccess={(txtId) => void clearActivity("access", txtId)}
           onClearBookmarks={(txtId) => void clearActivity("bookmarks", txtId)}
+          shares={shared.shares}
+          onCopyShare={(share) => void copyShare(share)}
+          onDeleteShare={(share) => void removeShare(share)}
         />
       </div>
     </div>

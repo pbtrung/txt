@@ -14,6 +14,7 @@ const SIGNING_VERSION = 1;
 const PROOF_LIFETIME_SECONDS = 45;
 
 export interface KeysResponse {
+  type: "admin" | "user";
   uid: string;
   umk: string; // base64
   signing: {
@@ -82,6 +83,26 @@ export class WorkerClient {
     return parseR2CredentialPair(await response.json());
   }
 
+  async createShareGrant(request: ShareGrantRequest): Promise<string> {
+    const response = await this.authorizedPost("/v1/share-grant", false, {
+      db_path: request.dbPath,
+      db_prefix: request.dbPrefix,
+      share_prefix: request.sharePrefix,
+      share_path: request.sharePath,
+      share_id: request.shareId,
+    });
+    if (!response.ok) throw new Error(`could not create share URL: ${response.status}`);
+    const data = objectRecord(await response.json(), "share grant response");
+    return stringField(data, "grant", "share grant response");
+  }
+
+  async deleteShare(shareId: string): Promise<void> {
+    const response = await this.authorizedRequest("/v1/share", "DELETE", false, {
+      share_id: shareId,
+    });
+    if (!response.ok) throw new Error(`could not delete share: ${response.status}`);
+  }
+
   private async signedR2Request(
     dbPath: string,
     dbPrefix: string,
@@ -130,24 +151,28 @@ export class WorkerClient {
     });
   }
 
-  private async authorizedPost(path: string, forceRefresh: boolean): Promise<Response> {
-    return this.post(path, await this.tokens.getIdToken(forceRefresh));
+  private async authorizedPost(
+    path: string,
+    forceRefresh: boolean,
+    body?: unknown,
+  ): Promise<Response> {
+    return this.authorizedRequest(path, "POST", forceRefresh, body);
   }
 
-  private post(
+  private async authorizedRequest(
     path: string,
-    idToken: string,
+    method: string,
+    forceRefresh: boolean,
     body?: unknown,
-    signal?: AbortSignal,
   ): Promise<Response> {
+    const idToken = await this.tokens.getIdToken(forceRefresh);
     return fetch(path, {
-      method: "POST",
+      method,
       headers: {
         Authorization: `Bearer ${idToken}`,
         ...(body ? { "Content-Type": "application/json" } : {}),
       },
       ...(body ? { body: JSON.stringify(body) } : {}),
-      signal,
     });
   }
 }
@@ -165,6 +190,7 @@ function parseKeysResponse(value: unknown): KeysResponse {
     throw new Error("key response has an unsupported signing algorithm");
   }
   return {
+    type: data.type,
     uid: stringField(data, "uid", "key response"),
     umk: stringField(data, "umk", "key response"),
     signing: {
@@ -175,6 +201,14 @@ function parseKeysResponse(value: unknown): KeysResponse {
     credStore: stringField(data, "cred_store", "key response"),
     r2Ticket: stringField(data, "r2_ticket", "key response"),
   };
+}
+
+export interface ShareGrantRequest {
+  dbPath: string;
+  dbPrefix: string;
+  sharePrefix: string;
+  sharePath: string;
+  shareId: string;
 }
 
 function parseR2CredentialPair(value: unknown): R2CredentialPair {

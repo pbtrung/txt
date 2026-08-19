@@ -41,6 +41,7 @@ export interface VaultSession {
   storage: R2Session;
   displayName: string;
   dbPrefix: string;
+  accountType: "admin" | "user";
 }
 
 interface VaultContextValue {
@@ -73,7 +74,7 @@ class SessionResolver {
       credStore.db_prefix,
       signing,
     );
-    return this.openSession(credStore, credential, worker, signing);
+    return this.openSession(credStore, credential, worker, signing, keys.type);
   }
 
   private async readCredentials(): Promise<BrowserCreds> {
@@ -96,6 +97,7 @@ class SessionResolver {
     credentials: Awaited<ReturnType<WorkerClient["fetchR2Token"]>>,
     worker: WorkerClient,
     signing: R2SigningIdentity,
+    accountType: "admin" | "user",
   ): Promise<VaultSession> {
     const key = fromBase64(credStore.db_master_key);
     const storage = new R2Session(
@@ -111,6 +113,7 @@ class SessionResolver {
       storage,
       displayName: credStore.display_name,
       dbPrefix: credStore.db_prefix,
+      accountType,
     };
   }
 }

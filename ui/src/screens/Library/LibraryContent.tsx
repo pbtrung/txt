@@ -2,6 +2,7 @@ import { IconButton } from "../../components/IconButton";
 import { useMemo } from "react";
 import { Button, GridList } from "react-aria-components";
 import type { LibraryBook } from "../../data/libraryDb";
+import type { BookShare } from "../../data/shares";
 import { BookList, BookRow, EmptyState } from "./BookList";
 import {
   browseEntries,
@@ -25,6 +26,9 @@ export function LibraryContent({
   onNavigate,
   onClearAccess,
   onClearBookmarks,
+  shares,
+  onCopyShare,
+  onDeleteShare,
 }: {
   books: LibraryBook[];
   view: LibraryView;
@@ -32,6 +36,9 @@ export function LibraryContent({
   onNavigate: (view: LibraryView) => void;
   onClearAccess: (txtId: number) => void;
   onClearBookmarks: (txtId: number) => void;
+  shares: BookShare[];
+  onCopyShare: (share: BookShare) => void;
+  onDeleteShare: (share: BookShare) => void;
 }) {
   const search = useMemo(() => createBookSearch(books), [books]);
   const filteredBooks = useMemo(
@@ -43,12 +50,61 @@ export function LibraryContent({
       <ContentHeader view={view} onNavigate={onNavigate} />
       {view.kind === "recent" ? (
         <RecentBooks {...{ books, onClearAccess, onClearBookmarks }} />
+      ) : view.kind === "shares" ? (
+        <SharesList {...{ shares, onCopyShare, onDeleteShare }} />
       ) : view.kind === "entries" ? (
         <EntriesList {...{ books, query, onNavigate }} dimension={view.dimension} />
       ) : (
         <BookList books={filteredBooks} totalCount={books.length} />
       )}
     </div>
+  );
+}
+
+function SharesList({
+  shares,
+  onCopyShare,
+  onDeleteShare,
+}: {
+  shares: BookShare[];
+  onCopyShare: (share: BookShare) => void;
+  onDeleteShare: (share: BookShare) => void;
+}) {
+  if (!shares.length) return <EmptyStateContainer message="No shared books yet." />;
+  return (
+    <GridList
+      aria-label="Shares"
+      className="book-row-grid overflow-y-auto px-2 px-md-3"
+    >
+      {shares.map((share) => (
+        <BookRow
+          key={share.id}
+          book={{
+            txtId: share.txtId,
+            title: share.title,
+            authors: [],
+            subjects: [],
+            publisher: null,
+            lastAccessed: 0,
+            bookmarkCount: 0,
+            lastBookmarked: null,
+            latestBookmarkCfi: null,
+          }}
+          removeLabel={`Delete share for ${share.title}`}
+          onRemove={() => onDeleteShare(share)}
+          action={
+            <Button
+              className="btn btn-sm btn-outline-secondary"
+              isDisabled={share.state !== "active"}
+              onPress={() => onCopyShare(share)}
+            >
+              <i className="bi bi-copy me-1" aria-hidden="true" />
+              Copy
+            </Button>
+          }
+        />
+      ))}
+    </GridList>
   );
 }
 

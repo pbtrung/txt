@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { Button } from "react-aria-components";
 import { IconButton } from "../../components/IconButton";
 import type { LibraryBook } from "../../data/libraryDb";
+import type { BookShare } from "../../data/shares";
 import { classNames } from "../../util/classNames";
 import { browseEntries, recentBookCount, type BrowseDimension } from "./libraryModel";
 import { DIMENSIONS, DIMENSION_LABEL, type LibraryView } from "./libraryView";
@@ -12,16 +13,20 @@ export function LibrarySidebar({
   displayName,
   onNavigate,
   onLock,
+  shares,
+  isAdmin,
 }: {
   books: LibraryBook[];
   view: LibraryView;
   displayName: string;
   onNavigate: (view: LibraryView) => void;
   onLock: () => void;
+  shares: BookShare[];
+  isAdmin: boolean;
 }) {
   return (
     <div className="library-sidebar-content d-flex flex-column h-100 w-100">
-      <LibraryNav books={books} view={view} onNavigate={onNavigate} />
+      <LibraryNav {...{ books, view, onNavigate, shares, isAdmin }} />
       <AccountRow displayName={displayName} onLock={onLock} />
     </div>
   );
@@ -31,10 +36,14 @@ function LibraryNav({
   books,
   view,
   onNavigate,
+  shares,
+  isAdmin,
 }: {
   books: LibraryBook[];
   view: LibraryView;
   onNavigate: (view: LibraryView) => void;
+  shares: BookShare[];
+  isAdmin: boolean;
 }) {
   const counts = useBrowseCounts(books);
   return (
@@ -46,6 +55,14 @@ function LibraryNav({
           active={view.kind === "recent"}
           onPress={() => onNavigate({ kind: "recent" })}
         />
+        {isAdmin && (
+          <NavRow
+            label="Shares"
+            count={shares.length}
+            active={view.kind === "shares"}
+            onPress={() => onNavigate({ kind: "shares" })}
+          />
+        )}
         <div className="px-3 pt-3 pb-1 small fw-semibold text-uppercase text-muted">
           Browse
         </div>

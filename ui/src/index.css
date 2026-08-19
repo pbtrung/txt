@@ -104,6 +104,13 @@
   width: 100%;
 }
 
+.share-book-menu {
+  width: min(24rem, calc(100vw - 1rem));
+  max-height: 60vh;
+  overflow-y: auto;
+  outline: none;
+}
+
 .search-box-input {
   padding-left: 2rem;
   padding-right: 2rem;

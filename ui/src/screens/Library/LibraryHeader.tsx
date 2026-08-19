@@ -1,14 +1,27 @@
 import type { ReactNode } from "react";
-import { Button, Input, SearchField } from "react-aria-components";
+import {
+  Button,
+  Input,
+  Menu,
+  MenuItem,
+  MenuTrigger,
+  Popover,
+  SearchField,
+} from "react-aria-components";
+import type { LibraryBook } from "../../data/libraryDb";
 
 export function LibraryHeader({
   query,
   onQuery,
   menu,
+  shareBooks = [],
+  onShare = () => undefined,
 }: {
   query: string;
   onQuery: (query: string) => void;
   menu: ReactNode;
+  shareBooks?: LibraryBook[];
+  onShare?: (txtId: number) => void;
 }) {
   return (
     <div className="d-flex align-items-center border-bottom flex-shrink-0">
@@ -19,7 +32,7 @@ export function LibraryHeader({
           <span className="fw-semibold fs-5">Skypiea</span>
         </div>
       </div>
-      <div className="flex-grow-1 px-2 px-md-3 py-2">
+      <div className="d-flex flex-grow-1 gap-2 px-2 px-md-3 py-2">
         <SearchField
           className="search-box position-relative"
           aria-label="Search"
@@ -37,6 +50,28 @@ export function LibraryHeader({
             </span>
           </Button>
         </SearchField>
+        {shareBooks.length > 0 && (
+          <MenuTrigger>
+            <Button className="btn btn-sm btn-outline-secondary flex-shrink-0">
+              <i className="bi bi-share me-1" aria-hidden="true" />
+              Share
+            </Button>
+            <Popover className="border rounded shadow bg-body">
+              <Menu aria-label="Choose a book to share" className="share-book-menu p-1">
+                {shareBooks.map((book) => (
+                  <MenuItem
+                    key={book.txtId}
+                    id={book.txtId}
+                    className="dropdown-item rounded"
+                    onAction={() => onShare(book.txtId)}
+                  >
+                    {book.title}
+                  </MenuItem>
+                ))}
+              </Menu>
+            </Popover>
+          </MenuTrigger>
+        )}
       </div>
     </div>
   );

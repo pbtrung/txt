@@ -212,3 +212,22 @@ describe("R2Client database operations", () => {
     );
   });
 });
+
+describe("R2Client immutable share operations", () => {
+  it("creates without replacement and deletes unconditionally", async () => {
+    const client = new R2Client(CREDENTIAL);
+    const fetchMock = (
+      client as unknown as { aws: { fetch: ReturnType<typeof vi.fn> } }
+    ).aws.fetch;
+    fetchMock.mockResolvedValue({ status: 200, ok: true, headers: new Headers() });
+
+    await client.putImmutable("shared/key", new Uint8Array([1]));
+    await client.deleteObject("shared/key");
+
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({
+      method: "PUT",
+      headers: { "If-None-Match": "*" },
+    });
+    expect(fetchMock.mock.calls[1][1]).toMatchObject({ method: "DELETE" });
+  });
+});
