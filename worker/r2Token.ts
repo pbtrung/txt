@@ -17,6 +17,7 @@ import { decodeBase64, encodeBase64, equalBytes } from "./base64";
 import { checkRateLimit } from "./cache";
 import type { R2Ticket } from "./r2Ticket";
 import { verifyR2Ticket } from "./r2Ticket";
+import { trustedAccountType } from "./r2Ticket";
 
 const TTL_SECONDS = 900;
 const MAX_PROOF_LIFETIME_SECONDS = 60;
@@ -55,18 +56,25 @@ export async function handleR2Token(request: Request, env: Env): Promise<Respons
 
   const ticket = await verifyR2Ticket(proof.ticket, env.R2_TICKET_SECRET);
   if (!ticket) return new Response("invalid or expired ticket", { status: 401 });
+  if (ticket.accountType !== trustedAccountType(ticket.subject, env.ADMIN_UID)) {
+    return new Response("ticket role not authorized", { status: 403 });
+  }
   if (!(await verifyProof(ticket, proof))) {
     return new Response("path or proof not authorized", { status: 403 });
   }
   if (!(await checkRateLimit(env.KEYS_CACHE, ticket.subject, "r2-token"))) {
     return new Response("rate limit exceeded", { status: 429 });
   }
-  return mintResponse(env, proof);
+  return mintResponse(env, proof, ticket);
 }
 
-async function mintResponse(env: Env, proof: ProofRequest): Promise<Response> {
+async function mintResponse(
+  env: Env,
+  proof: ProofRequest,
+  ticket: R2Ticket,
+): Promise<Response> {
   try {
-    const credentials = await mintCredentials(env, proof);
+    const credentials = await mintCredentials(env, proof, ticket.accountType);
     return Response.json({
       credentials,
       endpoint: env.R2_ENDPOINT,
@@ -78,16 +86,25 @@ async function mintResponse(env: Env, proof: ProofRequest): Promise<Response> {
   }
 }
 
-function mintCredentials(env: Env, proof: ProofRequest): Promise<R2Credential[]> {
+function mintCredentials(
+  env: Env,
+  proof: ProofRequest,
+  accountType: R2Ticket["accountType"],
+): Promise<R2Credential[]> {
   return Promise.all([
     mintCredential(env, "db_path", "object-read-write", {
       objectPaths: [proof.dbPath],
       prefixPaths: [],
     }),
-    mintCredential(env, "db_prefix", "object-read-only", {
-      objectPaths: [],
-      prefixPaths: [`${proof.dbPrefix}/`],
-    }),
+    mintCredential(
+      env,
+      "db_prefix",
+      accountType === "admin" ? "object-read-write" : "object-read-only",
+      {
+        objectPaths: [],
+        prefixPaths: [`${proof.dbPrefix}/`],
+      },
+    ),
   ]);
 }
 

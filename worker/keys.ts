@@ -7,7 +7,7 @@
 import type { AccountLookup } from "./account";
 import { getAccount } from "./account";
 import { verifiedUid } from "./auth";
-import { issueR2Ticket } from "./r2Ticket";
+import { issueR2Ticket, trustedAccountType } from "./r2Ticket";
 
 export async function handleKeys(request: Request, env: Env): Promise<Response> {
   const uid = await verifiedUid(request, env.FIREBASE_PROJECT_ID);
@@ -25,7 +25,7 @@ async function respond(
     case "ok": {
       try {
         return Response.json({
-          type: result.account.type,
+          type: trustedAccountType(uid, env.ADMIN_UID),
           uid,
           umk: result.account.umk,
           signing: {
@@ -34,7 +34,12 @@ async function respond(
             private_key: result.account.signPrivateKey,
           },
           cred_store: result.account.credStoreContent,
-          r2_ticket: await issueR2Ticket(result.account, uid, env.R2_TICKET_SECRET),
+          r2_ticket: await issueR2Ticket(
+            result.account,
+            uid,
+            env.R2_TICKET_SECRET,
+            env.ADMIN_UID,
+          ),
         });
       } catch {
         return new Response("ticket signing unavailable", { status: 503 });

@@ -27,10 +27,11 @@ afterEach(() => {
 
 describe("R2 binding tickets", () => {
   it("round-trips claims and uses a 32-byte standard-base64 id", async () => {
-    const encoded = await issueR2Ticket(ACCOUNT, "uid-123", SECRET);
+    const encoded = await issueR2Ticket(ACCOUNT, "uid-123", SECRET, "admin-uid");
     const ticket = await verifyR2Ticket(encoded, SECRET);
     expect(ticket).toMatchObject({
       subject: "uid-123",
+      accountType: "user",
       signVersion: 1,
       signAlgorithm: "ECDSA-P521-SHA512",
     });
@@ -40,7 +41,7 @@ describe("R2 binding tickets", () => {
   });
 
   it("rejects another signing secret and a modified compact ticket", async () => {
-    const encoded = await issueR2Ticket(ACCOUNT, "uid-123", SECRET);
+    const encoded = await issueR2Ticket(ACCOUNT, "uid-123", SECRET, "admin-uid");
     expect(await verifyR2Ticket(encoded, OTHER_SECRET)).toBeNull();
     expect(await verifyR2Ticket(`${encoded.slice(0, -1)}x`, SECRET)).toBeNull();
   });
@@ -48,8 +49,13 @@ describe("R2 binding tickets", () => {
   it("expires after 24 hours without an active revocation lookup", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-19T00:00:00Z"));
-    const encoded = await issueR2Ticket(ACCOUNT, "uid-123", SECRET);
+    const encoded = await issueR2Ticket(ACCOUNT, "uid-123", SECRET, "admin-uid");
     vi.setSystemTime(new Date("2026-08-20T00:00:01Z"));
     expect(await verifyR2Ticket(encoded, SECRET)).toBeNull();
+  });
+
+  it("derives administrator role only from the trusted uid", async () => {
+    const encoded = await issueR2Ticket(ACCOUNT, "admin-uid", SECRET, "admin-uid");
+    expect((await verifyR2Ticket(encoded, SECRET))?.accountType).toBe("admin");
   });
 });

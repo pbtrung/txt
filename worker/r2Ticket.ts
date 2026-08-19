@@ -6,13 +6,14 @@ import { decodeBase64, encodeBase64 } from "./base64";
 const AUDIENCE = "r2-token";
 const ALGORITHM = "HS256";
 const TICKET_TTL_SECONDS = 24 * 60 * 60;
-const TICKET_VERSION = 1;
+const TICKET_VERSION = 2;
 const HANDLE_HASH_BYTES = 32;
 const BINDING_HASH_BYTES = 64;
 const TICKET_ID_BYTES = 32;
 
 export interface R2Ticket {
   subject: string;
+  accountType: "admin" | "user";
   userHandleHash: Uint8Array;
   signVersion: number;
   signAlgorithm: string;
@@ -25,10 +26,15 @@ export async function issueR2Ticket(
   account: Account,
   uid: string,
   secret: string,
+  adminUid: string,
 ): Promise<string> {
   const ticketId = encodeBase64(crypto.getRandomValues(new Uint8Array(32)));
   const claims = accountClaims(account);
-  return new SignJWT({ v: TICKET_VERSION, ...claims })
+  return new SignJWT({
+    v: TICKET_VERSION,
+    account_type: trustedAccountType(uid, adminUid),
+    ...claims,
+  })
     .setProtectedHeader({ alg: ALGORITHM, typ: "JWT" })
     .setSubject(uid)
     .setAudience(AUDIENCE)
@@ -69,6 +75,7 @@ function parseTicketClaims(payload: Record<string, unknown>): R2Ticket {
   requireStandardClaims(payload);
   const ticket = {
     subject: payload.sub as string,
+    accountType: payload.account_type as "admin" | "user",
     userHandleHash: decodeClaim(payload.user_handle_hash, HANDLE_HASH_BYTES),
     signVersion: payload.sign_version as number,
     signAlgorithm: payload.sign_algorithm as string,
@@ -86,6 +93,9 @@ function requireStandardClaims(payload: Record<string, unknown>): void {
     throw new Error("invalid ticket subject");
   }
   if (typeof payload.jti !== "string") throw new Error("invalid ticket id");
+  if (payload.account_type !== "admin" && payload.account_type !== "user") {
+    throw new Error("invalid account type");
+  }
   if (payload.sign_version !== 1) throw new Error("invalid signing version");
   if (typeof payload.sign_algorithm !== "string") {
     throw new Error("invalid signing algorithm");
@@ -96,6 +106,11 @@ function requireStandardClaims(payload: Record<string, unknown>): void {
   if ((payload.exp as number) - (payload.iat as number) !== TICKET_TTL_SECONDS) {
     throw new Error("invalid ticket lifetime");
   }
+}
+
+export function trustedAccountType(uid: string, adminUid: string): "admin" | "user" {
+  if (!adminUid) throw new Error("ADMIN_UID is not configured");
+  return uid === adminUid ? "admin" : "user";
 }
 
 function decodeClaim(value: unknown, length?: number): Uint8Array {

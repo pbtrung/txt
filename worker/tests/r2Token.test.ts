@@ -16,6 +16,7 @@ vi.mock("../cache");
 const TICKET_SECRET = toBase64(new Uint8Array(32).fill(7));
 const ENV = {
   R2_TICKET_SECRET: TICKET_SECRET,
+  ADMIN_UID: "admin-uid",
   R2_ENDPOINT: "https://account123.r2.cloudflarestorage.com",
   R2_BUCKET: "txt-bucket",
   R2_REGION: "auto",
@@ -125,7 +126,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   vi.resetAllMocks();
   vi.mocked(checkRateLimit).mockResolvedValue(true);
-  ticket = await issueR2Ticket(account, UID, TICKET_SECRET);
+  ticket = await issueR2Ticket(account, UID, TICKET_SECRET, ENV.ADMIN_UID);
 });
 
 describe("handleR2Token", () => {
@@ -201,6 +202,20 @@ describe("handleR2Token", () => {
     expect((await handleR2Token(makeRequest(await signedBody()), ENV)).status).toBe(
       429,
     );
+  });
+
+  it("grants prefix writes only to the configured administrator", async () => {
+    const adminEnv = { ...ENV, ADMIN_UID: UID } as Env;
+    ticket = await issueR2Ticket(account, UID, TICKET_SECRET, adminEnv.ADMIN_UID);
+    const response = await handleR2Token(makeRequest(await signedBody()), adminEnv);
+    const body = (await response.json()) as {
+      credentials: Array<{ type: string; session_token: string }>;
+    };
+    const prefix = body.credentials.find(({ type }) => type === "db_prefix")!;
+    expect((await decodeSessionTokenJwt(prefix.session_token)).payload).toMatchObject({
+      scope: "object-read-write",
+      paths: { objectPaths: [], prefixPaths: [`${DB_PREFIX}/`] },
+    });
   });
 });
 

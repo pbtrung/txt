@@ -6,6 +6,7 @@
 // in the vars/secrets the Worker expects at runtime (docs/auth.md §1).
 interface Env {
   FIREBASE_PROJECT_ID: string;
+  ADMIN_UID: string;
   CTL_DB_URL: string;
   CTL_DB_TOKEN: string;
   // Standard padded base64 encoding of at least 32 random bytes.

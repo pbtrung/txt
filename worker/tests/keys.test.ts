@@ -10,6 +10,7 @@ vi.mock("../account");
 const TICKET_SECRET = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
 const ENV = {
   FIREBASE_PROJECT_ID: "proj",
+  ADMIN_UID: "admin-uid",
   R2_TICKET_SECRET: TICKET_SECRET,
 } as unknown as Env;
 
@@ -117,5 +118,32 @@ describe("handleKeys", () => {
     });
     const badEnv = { ...ENV, R2_TICKET_SECRET: "c2hvcnQ=" } as Env;
     expect((await handleKeys(makeRequest("good"), badEnv)).status).toBe(503);
+  });
+
+  it("ignores a Turso role change when deriving administrator access", async () => {
+    vi.mocked(verifyFirebaseIdToken).mockResolvedValue({ uid: "uid-123" });
+    vi.mocked(getAccount).mockResolvedValue({
+      status: "ok",
+      account: {
+        type: "admin",
+        umk: "dW1r",
+        signVersion: 1,
+        signAlgorithm: "ECDSA-P521-SHA512",
+        signPublicKey: "cHVi",
+        signPrivateKey: "cHJpdg==",
+        userHandleHash: toBase64(new Uint8Array(32)),
+        dbBindingHash: toBase64(new Uint8Array(64)),
+        credStoreContent: "Y3JlZA==",
+      },
+    });
+
+    const body = (await (await handleKeys(makeRequest("good"), ENV)).json()) as {
+      type: string;
+      r2_ticket: string;
+    };
+    expect(body.type).toBe("user");
+    expect((await verifyR2Ticket(body.r2_ticket, TICKET_SECRET))?.accountType).toBe(
+      "user",
+    );
   });
 });
