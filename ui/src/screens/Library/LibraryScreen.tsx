@@ -36,8 +36,6 @@ const ALL_BOOKS_VIEW: LibraryView = { kind: "books", filter: null };
 const DESKTOP_MEDIA_QUERY = "(min-width: 768px)";
 const LIBRARY_SIDEBAR_WIDTH_PX = 16 * 16;
 const LIBRARY_RIGHT_PANE_MIN_PX = 400;
-const LIBRARY_SIDEBAR_LAYOUT_MIN_PX =
-  LIBRARY_SIDEBAR_WIDTH_PX + LIBRARY_RIGHT_PANE_MIN_PX;
 const SUCCESS_TOAST_MS = 2500;
 
 type ShareNotice =
@@ -65,7 +63,8 @@ export function LibraryScreen() {
   const [shareBusy, setShareBusy] = useState(false);
   const shareOperation = useRef(false);
   const libraryRoot = useRef<HTMLDivElement>(null);
-  const showSidebar = useLibrarySidebar(libraryRoot);
+  const librarySidebar = useRef<HTMLElement>(null);
+  const showSidebar = useLibrarySidebar(libraryRoot, librarySidebar);
   const routerNavigate = useNavigate();
 
   useEffect(() => () => shareToastQueue.clear(), []);
@@ -227,7 +226,10 @@ export function LibraryScreen() {
           className={`d-flex flex-grow-1 overflow-hidden min-w-0 ${showSidebar ? "library-sidebar-layout" : ""}`}
         >
           {showSidebar && (
-            <aside className="h-100 border-end library-sidebar library-pane-col">
+            <aside
+              ref={librarySidebar}
+              className="h-100 border-end library-sidebar library-pane-col"
+            >
               <LibrarySidebar
                 books={library.books}
                 view={view}
@@ -319,30 +321,38 @@ function ShareToast({ toast }: { toast: QueuedToast<ShareNotice> }) {
   );
 }
 
-function useLibrarySidebar(root: RefObject<HTMLDivElement | null>): boolean {
+function useLibrarySidebar(
+  root: RefObject<HTMLDivElement | null>,
+  sidebar: RefObject<HTMLElement | null>,
+): boolean {
   const [visible, setVisible] = useState(
     () => window.matchMedia(DESKTOP_MEDIA_QUERY).matches,
   );
+  const measuredSidebarWidth = useRef(LIBRARY_SIDEBAR_WIDTH_PX);
   useLayoutEffect(() => {
     const element = root.current;
     if (!element) return;
     const media = window.matchMedia(DESKTOP_MEDIA_QUERY);
-    const update = (width: number) => {
-      if (width > 0) {
-        setVisible(media.matches && width >= LIBRARY_SIDEBAR_LAYOUT_MIN_PX);
+    const measure = () => {
+      const rootWidth = element.getBoundingClientRect().width;
+      const renderedSidebarWidth = sidebar.current?.getBoundingClientRect().width ?? 0;
+      if (renderedSidebarWidth > 0) {
+        measuredSidebarWidth.current = renderedSidebarWidth;
+      }
+      if (rootWidth > 0) {
+        const rightPaneWidth = rootWidth - measuredSidebarWidth.current;
+        setVisible(media.matches && rightPaneWidth >= LIBRARY_RIGHT_PANE_MIN_PX);
       }
     };
-    const measure = () => update(element.getBoundingClientRect().width);
-    const observer = new ResizeObserver(([entry]) =>
-      update(entry?.contentRect.width ?? 0),
-    );
+    const observer = new ResizeObserver(measure);
     measure();
     observer.observe(element);
+    if (sidebar.current) observer.observe(sidebar.current);
     media.addEventListener?.("change", measure);
     return () => {
       observer.disconnect();
       media.removeEventListener?.("change", measure);
     };
-  }, [root]);
+  }, [root, sidebar, visible]);
   return visible;
 }

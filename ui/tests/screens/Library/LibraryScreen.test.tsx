@@ -503,22 +503,25 @@ describe("LibraryScreen", () => {
     }
     vi.stubGlobal("ResizeObserver", ResizeObserverMock);
     renderScreen(LIBRARY);
-    expect(document.querySelector(".library-sidebar")).not.toBeNull();
+    const root = document.querySelector(".library-screen");
+    const sidebar = document.querySelector(".library-sidebar");
+    expect(root).not.toBeNull();
+    expect(sidebar).not.toBeNull();
+    const rootRect = vi.spyOn(root!, "getBoundingClientRect");
+    vi.spyOn(sidebar!, "getBoundingClientRect").mockReturnValue({
+      width: 280,
+    } as DOMRect);
 
+    rootRect.mockReturnValue({ width: 679 } as DOMRect);
     act(() => {
-      resize(
-        [{ contentRect: { width: 655 } } as ResizeObserverEntry],
-        observer as unknown as ResizeObserver,
-      );
+      resize([], observer as unknown as ResizeObserver);
     });
     expect(document.querySelector(".library-sidebar")).toBeNull();
     expect(screen.getByRole("button", { name: "Open menu" })).toBeInTheDocument();
 
+    rootRect.mockReturnValue({ width: 680 } as DOMRect);
     act(() => {
-      resize(
-        [{ contentRect: { width: 656 } } as ResizeObserverEntry],
-        observer as unknown as ResizeObserver,
-      );
+      resize([], observer as unknown as ResizeObserver);
     });
     expect(document.querySelector(".library-sidebar")).not.toBeNull();
     expect(document.querySelector(".library-sidebar-layout")).not.toBeNull();
