@@ -1,6 +1,6 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useRef } from "react";
-import { Link } from "react-aria-components";
+import { GridListItem, Link } from "react-aria-components";
 import { IconButton } from "../../components/IconButton";
 import type { LibraryBook } from "../../data/libraryDb";
 import { classNames } from "../../util/classNames";
@@ -62,7 +62,7 @@ function VirtualBookRow({
         transform: `translateY(${row.start}px)`,
       }}
     >
-      <BookRow book={book} />
+      <BookLinkRow book={book} />
     </div>
   );
 }
@@ -75,46 +75,61 @@ export function BookRow({
 }: {
   book: LibraryBook;
   initialCfi?: string | null;
-  onRemove?: () => void;
-  removeLabel?: string;
+  onRemove: () => void;
+  removeLabel: string;
 }) {
-  const active = book.lastAccessed > 0 || book.bookmarkCount > 0;
   return (
-    <div
+    <GridListItem
+      id={`${book.txtId}-${initialCfi ?? "book"}`}
+      textValue={book.title}
+      focusMode="child"
       className="position-relative book-row-container"
       style={{ height: ROW_HEIGHT_PX }}
     >
-      <Link
-        href={readerPath(book.txtId, initialCfi)}
-        className={classNames(
-          "d-block py-2 px-2 rounded-3 text-decoration-none text-body book-row h-100",
-          onRemove && "pe-5",
-        )}
-      >
-        <span className="d-block overflow-hidden min-w-0">
-          <span className="d-flex align-items-center gap-2">
-            <span
-              className={classNames(
-                "book-row-icon flex-shrink-0 d-flex align-items-center justify-content-center rounded-circle",
-                active && "book-row-icon-active",
-              )}
-            >
-              <i className="bi bi-journal-bookmark" aria-hidden="true" />
-            </span>
-            <span className="text-truncate fw-medium">{book.title}</span>
-          </span>
-          <BookMetadata book={book} />
-        </span>
-      </Link>
-      {onRemove && (
-        <IconButton
-          label={removeLabel ?? "Remove book"}
-          icon="x-lg"
-          className="border-0 position-absolute top-50 end-0 translate-middle-y me-1 compact-delete-button book-row-remove"
-          onPress={onRemove}
-        />
+      <BookLinkRow book={book} initialCfi={initialCfi} hasRemoveAction />
+      <IconButton
+        label={removeLabel}
+        icon="x-lg"
+        className="border-0 position-absolute top-50 end-0 translate-middle-y me-1 compact-delete-button book-row-remove"
+        onPress={onRemove}
+      />
+    </GridListItem>
+  );
+}
+
+function BookLinkRow({
+  book,
+  initialCfi,
+  hasRemoveAction = false,
+}: {
+  book: LibraryBook;
+  initialCfi?: string | null;
+  hasRemoveAction?: boolean;
+}) {
+  const active = book.lastAccessed > 0 || book.bookmarkCount > 0;
+  return (
+    <Link
+      href={readerPath(book.txtId, initialCfi)}
+      className={classNames(
+        "d-block py-2 px-2 rounded-3 text-decoration-none text-body book-row h-100",
+        hasRemoveAction && "pe-5",
       )}
-    </div>
+    >
+      <span className="d-block overflow-hidden min-w-0">
+        <span className="d-flex align-items-center gap-2">
+          <span
+            className={classNames(
+              "book-row-icon flex-shrink-0 d-flex align-items-center justify-content-center rounded-circle",
+              active && "book-row-icon-active",
+            )}
+          >
+            <i className="bi bi-journal-bookmark" aria-hidden="true" />
+          </span>
+          <span className="text-truncate fw-medium">{book.title}</span>
+        </span>
+        <BookMetadata book={book} />
+      </span>
+    </Link>
   );
 }
 

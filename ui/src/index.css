@@ -23,6 +23,10 @@
   background-color: var(--bs-tertiary-bg);
 }
 
+.book-row-grid {
+  outline: none;
+}
+
 .compact-delete-button {
   padding: 0.25rem;
   font-size: 0.75rem;

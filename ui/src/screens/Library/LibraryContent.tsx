@@ -1,6 +1,6 @@
 import { IconButton } from "../../components/IconButton";
 import { useMemo } from "react";
-import { Button } from "react-aria-components";
+import { Button, GridList } from "react-aria-components";
 import type { LibraryBook } from "../../data/libraryDb";
 import { BookList, BookRow, EmptyState } from "./BookList";
 import {
@@ -124,15 +124,17 @@ function RecentSection({
   return (
     <section className="mb-3" aria-label={title}>
       <h3 className="h6 text-muted px-2 py-2 mb-0">{title}</h3>
-      {books.map((book) => (
-        <BookRow
-          key={book.txtId}
-          book={book}
-          initialCfi={openAtLatestBookmark ? book.latestBookmarkCfi : null}
-          removeLabel={removeLabel(book)}
-          onRemove={() => onRemove(book.txtId)}
-        />
-      ))}
+      <GridList aria-label={title} className="book-row-grid">
+        {books.map((book) => (
+          <BookRow
+            key={book.txtId}
+            book={book}
+            initialCfi={openAtLatestBookmark ? book.latestBookmarkCfi : null}
+            removeLabel={removeLabel(book)}
+            onRemove={() => onRemove(book.txtId)}
+          />
+        ))}
+      </GridList>
     </section>
   );
 }
