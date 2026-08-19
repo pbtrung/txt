@@ -24,9 +24,9 @@ const MAX_PROOF_LIFETIME_SECONDS = 60;
 const MAX_TICKET_LENGTH = 8192;
 const SIGN_ALGORITHM = "ECDSA-P521-SHA512";
 
-type CredentialType = "db_path" | "db_prefix";
+export type CredentialType = "db_path" | "db_prefix" | "shared";
 
-interface R2Credential {
+export interface R2Credential {
   type: CredentialType;
   access_key_id: string;
   secret_access_key: string;
@@ -252,7 +252,7 @@ function isTicket(value: unknown): value is string {
   );
 }
 
-async function mintCredential(
+export async function mintCredential(
   env: Env,
   type: CredentialType,
   scope: string,
