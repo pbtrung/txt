@@ -8,6 +8,8 @@ interface Env {
   FIREBASE_PROJECT_ID: string;
   CTL_DB_URL: string;
   CTL_DB_TOKEN: string;
+  // Standard padded base64 encoding of at least 32 random bytes.
+  R2_TICKET_SECRET: string;
   R2_ENDPOINT: string;
   R2_BUCKET: string;
   R2_REGION: string;

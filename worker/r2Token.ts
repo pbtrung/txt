@@ -1,23 +1,26 @@
-// Verifies a short-lived, per-user P-521 proof over the authenticated uid,
-// exact Firebase bearer token, and requested storage paths before minting
-// two least-privilege R2 credentials (docs/auth.md §4.2).
+// Verifies a signed account ticket plus a short-lived P-521 proof over the
+// decrypted user handle and requested storage paths. This endpoint does not
+// authenticate with Firebase or read Turso (docs/auth.md §4.2).
 
 import { base64url, SignJWT } from "jose";
 
 import {
   R2_PROOF_REQUEST_ID_BYTES,
-  canonicalR2Proof,
+  R2_TICKET_PROOF_VERSION,
+  R2_USER_HANDLE_BYTES,
+  canonicalR2TicketProof,
   isStoragePath,
   requireP521Signature,
   storagePathBinding,
 } from "../shared/r2Proof";
-import type { AccountLookup } from "./account";
-import { getAccount } from "./account";
-import { verifiedIdentity } from "./auth";
-import type { Account } from "./ctl";
+import { decodeBase64, encodeBase64, equalBytes } from "./base64";
+import { checkRateLimit } from "./cache";
+import type { R2Ticket } from "./r2Ticket";
+import { verifyR2Ticket } from "./r2Ticket";
 
 const TTL_SECONDS = 900;
 const MAX_PROOF_LIFETIME_SECONDS = 60;
+const MAX_TICKET_LENGTH = 8192;
 const SIGN_ALGORITHM = "ECDSA-P521-SHA512";
 
 type CredentialType = "db_path" | "db_prefix";
@@ -36,6 +39,8 @@ interface Paths {
 }
 
 interface ProofRequest {
+  ticket: string;
+  userHandle: Uint8Array;
   dbPath: string;
   dbPrefix: string;
   version: number;
@@ -45,32 +50,23 @@ interface ProofRequest {
 }
 
 export async function handleR2Token(request: Request, env: Env): Promise<Response> {
-  const identity = await verifiedIdentity(request, env.FIREBASE_PROJECT_ID);
-  if (identity === null) {
-    return new Response("missing or invalid bearer token", { status: 401 });
-  }
-
-  const result = await getAccount(env, identity.uid, "r2-token");
-  if (result.status !== "ok") return statusResponse(result);
-
   const proof = await readProofRequest(request);
   if (!proof) return new Response("malformed path or proof", { status: 400 });
 
-  if (!(await verifyProof(result.account, identity.uid, identity.idToken, proof))) {
+  const ticket = await verifyR2Ticket(proof.ticket, env.R2_TICKET_SECRET);
+  if (!ticket) return new Response("invalid or expired ticket", { status: 401 });
+  if (!(await verifyProof(ticket, proof))) {
     return new Response("path or proof not authorized", { status: 403 });
   }
+  if (!(await checkRateLimit(env.KEYS_CACHE, ticket.subject, "r2-token"))) {
+    return new Response("rate limit exceeded", { status: 429 });
+  }
+  return mintResponse(env, proof);
+}
 
+async function mintResponse(env: Env, proof: ProofRequest): Promise<Response> {
   try {
-    const credentials = await Promise.all([
-      mintCredential(env, "db_path", "object-read-write", {
-        objectPaths: [proof.dbPath],
-        prefixPaths: [],
-      }),
-      mintCredential(env, "db_prefix", "object-read-only", {
-        objectPaths: [],
-        prefixPaths: [`${proof.dbPrefix}/`],
-      }),
-    ]);
+    const credentials = await mintCredentials(env, proof);
     return Response.json({
       credentials,
       endpoint: env.R2_ENDPOINT,
@@ -82,107 +78,147 @@ export async function handleR2Token(request: Request, env: Env): Promise<Respons
   }
 }
 
-function statusResponse(result: Exclude<AccountLookup, { status: "ok" }>): Response {
-  if (result.status === "rate_limited") {
-    return new Response("rate limit exceeded", { status: 429 });
-  }
-  if (result.status === "not_provisioned") {
-    return new Response("not provisioned", { status: 403 });
-  }
-  return new Response("ctl unavailable", { status: 503 });
+function mintCredentials(env: Env, proof: ProofRequest): Promise<R2Credential[]> {
+  return Promise.all([
+    mintCredential(env, "db_path", "object-read-write", {
+      objectPaths: [proof.dbPath],
+      prefixPaths: [],
+    }),
+    mintCredential(env, "db_prefix", "object-read-only", {
+      objectPaths: [],
+      prefixPaths: [`${proof.dbPrefix}/`],
+    }),
+  ]);
 }
 
 async function readProofRequest(request: Request): Promise<ProofRequest | null> {
   try {
     const body = (await request.json()) as Record<string, unknown>;
-    if (!isStoragePathValue(body.db_path) || !isStoragePathValue(body.db_prefix)) {
-      return null;
-    }
-    if (!isRecord(body.proof)) return null;
-    const version = body.proof.version;
-    const expiresAt = body.proof.expires_at;
-    const requestIdValue = body.proof.request_id;
-    const signatureValue = body.proof.signature;
-    if (
-      !Number.isSafeInteger(version) ||
-      (version as number) < 0 ||
-      (version as number) > 0xffffffff
-    ) {
-      return null;
-    }
-    if (!Number.isSafeInteger(expiresAt)) return null;
-    if (typeof requestIdValue !== "string" || typeof signatureValue !== "string") {
-      return null;
-    }
-
-    const now = Math.floor(Date.now() / 1000);
-    if (
-      (expiresAt as number) <= now ||
-      (expiresAt as number) > now + MAX_PROOF_LIFETIME_SECONDS
-    ) {
-      return null;
-    }
-    const requestId = decodeBase64(requestIdValue);
-    const signature = decodeBase64(signatureValue);
-    if (requestId.byteLength !== R2_PROOF_REQUEST_ID_BYTES) return null;
-    requireP521Signature(signature);
-    return {
-      dbPath: body.db_path,
-      dbPrefix: body.db_prefix,
-      version: version as number,
-      expiresAt: expiresAt as number,
-      requestId,
-      signature,
-    };
+    return parseProofBody(body);
   } catch {
     return null;
   }
 }
 
-async function verifyProof(
-  account: Account,
-  uid: string,
-  idToken: string,
-  proof: ProofRequest,
-): Promise<boolean> {
-  if (
-    proof.version !== account.signVersion ||
-    account.signAlgorithm !== SIGN_ALGORITHM
-  ) {
-    return false;
+function parseProofBody(body: Record<string, unknown>): ProofRequest | null {
+  if (!isStoragePathValue(body.db_path) || !isStoragePathValue(body.db_prefix)) {
+    return null;
   }
+  if (!isTicket(body.ticket) || !isRecord(body.proof)) return null;
+  return parseProof(body, body.proof);
+}
 
+function parseProof(
+  body: Record<string, unknown>,
+  proof: Record<string, unknown>,
+): ProofRequest | null {
+  const scalars = parseProofScalars(proof);
+  if (!scalars) return null;
+  const userHandleValue = body.user_handle;
+  if (typeof userHandleValue !== "string") return null;
+  const userHandle = decodeBase64(userHandleValue);
+  if (
+    userHandle.byteLength !== R2_USER_HANDLE_BYTES ||
+    encodeBase64(userHandle) !== userHandleValue
+  ) {
+    return null;
+  }
+  return {
+    ticket: body.ticket as string,
+    userHandle,
+    dbPath: body.db_path as string,
+    dbPrefix: body.db_prefix as string,
+    ...scalars,
+  };
+}
+
+function parseProofScalars(
+  proof: Record<string, unknown>,
+): Pick<ProofRequest, "version" | "expiresAt" | "requestId" | "signature"> | null {
+  const version = proof.version;
+  const expiresAt = proof.expires_at;
+  if (!isProofVersion(version) || !isProofExpiry(expiresAt)) return null;
+  if (typeof proof.request_id !== "string" || typeof proof.signature !== "string") {
+    return null;
+  }
+  const requestId = decodeBase64(proof.request_id);
+  const signature = decodeBase64(proof.signature);
+  if (requestId.byteLength !== R2_PROOF_REQUEST_ID_BYTES) return null;
+  requireP521Signature(signature);
+  return { version, expiresAt, requestId, signature };
+}
+
+function isProofVersion(value: unknown): value is number {
+  return (
+    Number.isSafeInteger(value) &&
+    (value as number) >= 0 &&
+    (value as number) <= 0xffffffff
+  );
+}
+
+function isProofExpiry(value: unknown): value is number {
+  if (!Number.isSafeInteger(value)) return false;
+  const now = Math.floor(Date.now() / 1000);
+  return (
+    (value as number) > now && (value as number) <= now + MAX_PROOF_LIFETIME_SECONDS
+  );
+}
+
+async function verifyProof(ticket: R2Ticket, proof: ProofRequest): Promise<boolean> {
+  if (!validSigningMetadata(ticket, proof.version)) return false;
   try {
-    const expectedBinding = decodeBase64(account.dbBindingHash);
-    const actualBinding = await storagePathBinding(proof.dbPath, proof.dbPrefix);
-    if (!equalBytes(expectedBinding, actualBinding)) return false;
-
-    const publicKeyBytes = decodeBase64(account.signPublicKey);
-    const publicKey = await crypto.subtle.importKey(
-      "spki",
-      new Uint8Array(publicKeyBytes),
-      { name: "ECDSA", namedCurve: "P-521" },
-      false,
-      ["verify"],
-    );
-    const canonical = await canonicalR2Proof({
-      version: proof.version,
-      uid,
-      firebaseIdToken: idToken,
-      expiresAt: proof.expiresAt,
-      requestId: proof.requestId,
-      dbPath: proof.dbPath,
-      dbPrefix: proof.dbPrefix,
-    });
-    return crypto.subtle.verify(
-      { name: "ECDSA", hash: "SHA-512" },
-      publicKey,
-      new Uint8Array(proof.signature),
-      new Uint8Array(canonical),
-    );
+    if (!(await validBindings(ticket, proof))) return false;
+    return verifySignature(ticket, proof);
   } catch {
     return false;
   }
+}
+
+function validSigningMetadata(ticket: R2Ticket, proofVersion: number): boolean {
+  return (
+    proofVersion === R2_TICKET_PROOF_VERSION &&
+    ticket.signVersion === 1 &&
+    ticket.signAlgorithm === SIGN_ALGORITHM
+  );
+}
+
+async function validBindings(ticket: R2Ticket, proof: ProofRequest): Promise<boolean> {
+  const handleHash = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", new Uint8Array(proof.userHandle)),
+  );
+  const pathBinding = await storagePathBinding(proof.dbPath, proof.dbPrefix);
+  return (
+    equalBytes(ticket.userHandleHash, handleHash) &&
+    equalBytes(ticket.dbBindingHash, pathBinding)
+  );
+}
+
+async function verifySignature(
+  ticket: R2Ticket,
+  proof: ProofRequest,
+): Promise<boolean> {
+  const publicKey = await crypto.subtle.importKey(
+    "spki",
+    new Uint8Array(ticket.signPublicKey),
+    { name: "ECDSA", namedCurve: "P-521" },
+    false,
+    ["verify"],
+  );
+  const canonical = await canonicalR2TicketProof({
+    version: proof.version,
+    ticket: proof.ticket,
+    userHandle: proof.userHandle,
+    expiresAt: proof.expiresAt,
+    requestId: proof.requestId,
+    dbPath: proof.dbPath,
+    dbPrefix: proof.dbPrefix,
+  });
+  return crypto.subtle.verify(
+    { name: "ECDSA", hash: "SHA-512" },
+    publicKey,
+    new Uint8Array(proof.signature),
+    new Uint8Array(canonical),
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -193,21 +229,10 @@ function isStoragePathValue(value: unknown): value is string {
   return typeof value === "string" && isStoragePath(value);
 }
 
-function decodeBase64(value: string): Uint8Array {
-  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(value) || value.length % 4 === 1) {
-    throw new Error("invalid base64");
-  }
-  const padded = value + "=".repeat((4 - (value.length % 4)) % 4);
-  return Uint8Array.from(atob(padded), (character) => character.charCodeAt(0));
-}
-
-function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
-  if (left.byteLength !== right.byteLength) return false;
-  let difference = 0;
-  for (let index = 0; index < left.byteLength; index += 1) {
-    difference |= left[index] ^ right[index];
-  }
-  return difference === 0;
+function isTicket(value: unknown): value is string {
+  return (
+    typeof value === "string" && value.length > 0 && value.length <= MAX_TICKET_LENGTH
+  );
 }
 
 async function mintCredential(
@@ -218,14 +243,7 @@ async function mintCredential(
 ): Promise<R2Credential> {
   const endpointUrl = new URL(env.R2_ENDPOINT);
   const accountId = endpointUrl.hostname.split(".")[0];
-  const jwt = await new SignJWT({ bucket: env.R2_BUCKET, scope, paths })
-    .setProtectedHeader({ alg: "HS256", typ: "JWT" })
-    .setSubject(accountId)
-    .setIssuer(env.R2_READ_WRITE_ACCESS_KEY_ID)
-    .setAudience(endpointUrl.host)
-    .setIssuedAt()
-    .setExpirationTime(`${TTL_SECONDS}s`)
-    .sign(new TextEncoder().encode(env.R2_READ_WRITE_SECRET_ACCESS_KEY));
+  const jwt = await signedCredential(env, accountId, endpointUrl.host, scope, paths);
   return {
     type,
     access_key_id: env.R2_READ_WRITE_ACCESS_KEY_ID,
@@ -233,6 +251,23 @@ async function mintCredential(
     session_token: base64url.encode(`jwt/${jwt}`),
     expiration: new Date(Date.now() + TTL_SECONDS * 1000).toISOString(),
   };
+}
+
+function signedCredential(
+  env: Env,
+  accountId: string,
+  audience: string,
+  scope: string,
+  paths: Paths,
+): Promise<string> {
+  return new SignJWT({ bucket: env.R2_BUCKET, scope, paths })
+    .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+    .setSubject(accountId)
+    .setIssuer(env.R2_READ_WRITE_ACCESS_KEY_ID)
+    .setAudience(audience)
+    .setIssuedAt()
+    .setExpirationTime(`${TTL_SECONDS}s`)
+    .sign(new TextEncoder().encode(env.R2_READ_WRITE_SECRET_ACCESS_KEY));
 }
 
 async function sha256Hex(value: string): Promise<string> {

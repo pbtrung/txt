@@ -1,8 +1,11 @@
 const STORAGE_PATH_PATTERN = /^[0-9abcdefghjkmnpqrstvwxyz]{52}$/;
 const PROOF_DOMAIN = "txt:r2-token-proof";
+const TICKET_PROOF_DOMAIN = "txt:r2-ticket-proof";
 
 export const R2_PROOF_VERSION = 1;
+export const R2_TICKET_PROOF_VERSION = 2;
 export const R2_PROOF_REQUEST_ID_BYTES = 32;
+export const R2_USER_HANDLE_BYTES = 32;
 export const P521_COMPONENT_BYTES = 66;
 export const P521_SIGNATURE_BYTES = P521_COMPONENT_BYTES * 2;
 
@@ -10,6 +13,16 @@ export interface R2ProofInput {
   version: number;
   uid: string;
   firebaseIdToken: string;
+  expiresAt: number;
+  requestId: Uint8Array;
+  dbPath: string;
+  dbPrefix: string;
+}
+
+export interface R2TicketProofInput {
+  version: number;
+  ticket: string;
+  userHandle: Uint8Array;
   expiresAt: number;
   requestId: Uint8Array;
   dbPath: string;
@@ -36,19 +49,7 @@ export async function storagePathBinding(
 }
 
 export async function canonicalR2Proof(input: R2ProofInput): Promise<Uint8Array> {
-  if (
-    !Number.isSafeInteger(input.version) ||
-    input.version < 0 ||
-    input.version > 0xffffffff
-  ) {
-    throw new Error("proof version must be an unsigned 32-bit integer");
-  }
-  if (!Number.isSafeInteger(input.expiresAt) || input.expiresAt < 0) {
-    throw new Error("proof expiry must be a non-negative safe integer");
-  }
-  if (input.requestId.byteLength !== R2_PROOF_REQUEST_ID_BYTES) {
-    throw new Error(`proof request id must be ${R2_PROOF_REQUEST_ID_BYTES} bytes`);
-  }
+  requireProofFields(input.version, input.expiresAt, input.requestId);
 
   const uid = utf8(input.uid);
   if (uid.byteLength > 0xffffffff) throw new Error("uid is too long");
@@ -67,6 +68,43 @@ export async function canonicalR2Proof(input: R2ProofInput): Promise<Uint8Array>
     input.requestId,
     pathBinding,
   );
+}
+
+export async function canonicalR2TicketProof(
+  input: R2TicketProofInput,
+): Promise<Uint8Array> {
+  requireProofFields(input.version, input.expiresAt, input.requestId);
+  if (input.userHandle.byteLength !== R2_USER_HANDLE_BYTES) {
+    throw new Error(`user handle must be ${R2_USER_HANDLE_BYTES} bytes`);
+  }
+  const ticketHash = await digest("SHA-256", utf8(input.ticket));
+  const pathBinding = await storagePathBinding(input.dbPath, input.dbPrefix);
+  return concatBytes(
+    utf8(TICKET_PROOF_DOMAIN),
+    new Uint8Array([0]),
+    u32be(input.version),
+    ticketHash,
+    input.userHandle,
+    u64be(input.expiresAt),
+    input.requestId,
+    pathBinding,
+  );
+}
+
+function requireProofFields(
+  version: number,
+  expiresAt: number,
+  requestId: Uint8Array,
+): void {
+  if (!Number.isSafeInteger(version) || version < 0 || version > 0xffffffff) {
+    throw new Error("proof version must be an unsigned 32-bit integer");
+  }
+  if (!Number.isSafeInteger(expiresAt) || expiresAt < 0) {
+    throw new Error("proof expiry must be a non-negative safe integer");
+  }
+  if (requestId.byteLength !== R2_PROOF_REQUEST_ID_BYTES) {
+    throw new Error(`proof request id must be ${R2_PROOF_REQUEST_ID_BYTES} bytes`);
+  }
 }
 
 export function requireP521Signature(signature: Uint8Array): void {

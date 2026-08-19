@@ -2,11 +2,20 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getAccount } from "../account";
 import { verifyFirebaseIdToken } from "../firebaseAuth";
 import { handleKeys } from "../keys";
+import { verifyR2Ticket } from "../r2Ticket";
 
 vi.mock("../firebaseAuth");
 vi.mock("../account");
 
-const ENV = { FIREBASE_PROJECT_ID: "proj" } as unknown as Env;
+const TICKET_SECRET = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
+const ENV = {
+  FIREBASE_PROJECT_ID: "proj",
+  R2_TICKET_SECRET: TICKET_SECRET,
+} as unknown as Env;
+
+function toBase64(bytes: Uint8Array): string {
+  return btoa(String.fromCharCode(...bytes));
+}
 
 function makeRequest(idToken?: string): Request {
   const headers = idToken ? { Authorization: `Bearer ${idToken}` } : {};
@@ -50,7 +59,7 @@ describe("handleKeys", () => {
     expect(resp.status).toBe(503);
   });
 
-  it("returns type/umk/cred_store on success", async () => {
+  it("returns encrypted keys plus a signed account ticket on success", async () => {
     vi.mocked(verifyFirebaseIdToken).mockResolvedValue({ uid: "uid-123" });
     vi.mocked(getAccount).mockResolvedValue({
       status: "ok",
@@ -61,7 +70,8 @@ describe("handleKeys", () => {
         signAlgorithm: "ECDSA-P521-SHA512",
         signPublicKey: "c2lnLXB1YmxpYw==",
         signPrivateKey: "c2lnLXByaXZhdGU=",
-        dbBindingHash: "YmluZGluZw==",
+        userHandleHash: toBase64(new Uint8Array(32).fill(1)),
+        dbBindingHash: toBase64(new Uint8Array(64).fill(2)),
         credStoreContent: "Y29udGVudA==",
       },
     });
@@ -69,7 +79,8 @@ describe("handleKeys", () => {
     const resp = await handleKeys(makeRequest("good"), ENV);
 
     expect(resp.status).toBe(200);
-    expect(await resp.json()).toEqual({
+    const body = (await resp.json()) as Record<string, unknown>;
+    expect(body).toMatchObject({
       type: "user",
       uid: "uid-123",
       umk: "dW1r",
@@ -80,5 +91,31 @@ describe("handleKeys", () => {
       },
       cred_store: "Y29udGVudA==",
     });
+    const ticket = await verifyR2Ticket(body.r2_ticket as string, TICKET_SECRET);
+    expect(ticket?.subject).toBe("uid-123");
+    expect(ticket?.ticketId).toMatch(/^[A-Za-z0-9+/]{43}=$/);
+    expect(
+      Uint8Array.from(atob(ticket!.ticketId), (value) => value.charCodeAt(0)),
+    ).toHaveLength(32);
+  });
+
+  it("returns 503 when the ticket secret is invalid", async () => {
+    vi.mocked(verifyFirebaseIdToken).mockResolvedValue({ uid: "uid-123" });
+    vi.mocked(getAccount).mockResolvedValue({
+      status: "ok",
+      account: {
+        type: "user",
+        umk: "dW1r",
+        signVersion: 1,
+        signAlgorithm: "ECDSA-P521-SHA512",
+        signPublicKey: "cHVi",
+        signPrivateKey: "cHJpdg==",
+        userHandleHash: toBase64(new Uint8Array(32)),
+        dbBindingHash: toBase64(new Uint8Array(64)),
+        credStoreContent: "Y3JlZA==",
+      },
+    });
+    const badEnv = { ...ENV, R2_TICKET_SECRET: "c2hvcnQ=" } as Env;
+    expect((await handleKeys(makeRequest("good"), badEnv)).status).toBe(503);
   });
 });

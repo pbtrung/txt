@@ -1,8 +1,7 @@
 // docs/auth.md §6: one KV cache key per uid holding exactly what /v1/keys
-// returns (type/umk/cred_store content) and what /v1/r2-token needs
-// (type) -- both endpoints share it, so a cache hit for either skips the
-// ctl round trip entirely. The 24-hour TTL bounds how long a deprovisioned
-// user keeps being served; revocation (§7) purges this key explicitly.
+// returns, including the inputs used to issue an R2 binding ticket. Only
+// /v1/keys uses this cache; /v1/r2-token verifies the ticket without ctl.
+// The 24-hour TTL bounds how long a deprovisioned user keeps being served.
 //
 // Rate-limiting is per uid and endpoint and applies before cache lookup, so a
 // warm account cache cannot bypass it. Separate budgets keep routine R2 token
@@ -11,8 +10,8 @@
 import type { Account } from "./ctl";
 
 const KEYS_TTL_SECONDS = 24 * 60 * 60;
-const ACCOUNT_CACHE_VERSION = 2;
-const RATE_LIMIT_VERSION = 2;
+const ACCOUNT_CACHE_VERSION = 3;
+const RATE_LIMIT_VERSION = 3;
 const RATE_LIMIT_WINDOW_SECONDS = 60 * 60;
 const RATE_LIMIT_MAX_REQUESTS = {
   keys: 60,
@@ -42,7 +41,7 @@ export async function cacheAccount(
 export async function purgeAccount(kv: KVNamespace, uid: string): Promise<void> {
   await Promise.all([
     kv.delete(accountCacheKey(uid)),
-    // Remove the pre-signing/path-binding cache key during the rollout too.
+    kv.delete(`keys:v2:${uid}`),
     kv.delete(`keys:${uid}`),
   ]);
 }

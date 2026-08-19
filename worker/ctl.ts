@@ -4,7 +4,8 @@
 
 const LOOKUP_SQL =
   "SELECT u.type, k.umk, k.sign_version, k.sign_algorithm, " +
-  "k.sign_pubkey, k.sign_privkey, u.db_binding_hash, c.content FROM users u " +
+  "k.sign_pubkey, k.sign_privkey, u.user_handle_hash, u.db_binding_hash, " +
+  "c.content FROM users u " +
   "JOIN key_store k ON k.user_id = u.id " +
   "JOIN cred_store c ON c.owner_id = u.id AND c.for_user_id = u.id " +
   "WHERE u.id = ?";
@@ -18,6 +19,7 @@ export interface Account {
   signAlgorithm: string;
   signPublicKey: string; // base64 SPKI DER
   signPrivateKey: string; // base64 encrypted PKCS#8 DER
+  userHandleHash: string; // base64 SHA-256 digest
   dbBindingHash: string; // base64 SHA-512 digest
   credStoreContent: string; // base64
 }
@@ -76,6 +78,7 @@ function rowToAccount([
   signAlgorithmCell,
   signPublicKeyCell,
   signPrivateKeyCell,
+  userHandleHashCell,
   dbBindingHashCell,
   contentCell,
 ]: Cell[]): Account {
@@ -90,6 +93,7 @@ function rowToAccount([
     signAlgorithm: cellText(signAlgorithmCell),
     signPublicKey: cellBase64(signPublicKeyCell),
     signPrivateKey: cellBase64(signPrivateKeyCell),
+    userHandleHash: cellBase64(userHandleHashCell),
     dbBindingHash: cellBase64(dbBindingHashCell),
     credStoreContent: cellBase64(contentCell),
   };

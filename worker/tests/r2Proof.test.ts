@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   P521_SIGNATURE_BYTES,
+  canonicalR2TicketProof,
   canonicalR2Proof,
   isStoragePath,
   requireP521Signature,
@@ -36,6 +37,26 @@ describe("R2 proof encoding", () => {
     expect(hex(await storagePathBinding(DB_PATH, DB_PREFIX))).toBe(
       "bcecf24300dff23804e13645f9eb6b1231262d717559966430b124c82ed0cbc8118055ee29d7f08bf49d0008142148d0eaf4e7267b0d01d195d233dfe90513ec",
     );
+  });
+
+  it("binds version 2 proofs to the exact ticket and decrypted handle", async () => {
+    const input = {
+      version: 2,
+      ticket: "header.payload.signature",
+      userHandle: new Uint8Array(32).fill(7),
+      expiresAt: 1_800_000_000,
+      requestId: new Uint8Array(32).fill(8),
+      dbPath: DB_PATH,
+      dbPrefix: DB_PREFIX,
+    };
+    const canonical = await canonicalR2TicketProof(input);
+    const changedTicket = await canonicalR2TicketProof({ ...input, ticket: "other" });
+    const changedHandle = await canonicalR2TicketProof({
+      ...input,
+      userHandle: new Uint8Array(32).fill(9),
+    });
+    expect(canonical).not.toEqual(changedTicket);
+    expect(canonical).not.toEqual(changedHandle);
   });
 
   it("accepts only exact lowercase Crockford storage paths", () => {

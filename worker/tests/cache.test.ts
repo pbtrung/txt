@@ -22,6 +22,7 @@ const ACCOUNT: Account = {
   signAlgorithm: "ECDSA-P521-SHA512",
   signPublicKey: "c2lnLXB1YmxpYw==",
   signPrivateKey: "c2lnLXByaXZhdGU=",
+  userHandleHash: "aGFuZGxlLWhhc2g=",
   dbBindingHash: "YmluZGluZw==",
   credStoreContent: "Y29udGVudA==",
 };
@@ -31,7 +32,7 @@ describe("account cache", () => {
     const kv = fakeKv();
     await cacheAccount(kv, "uid-123", ACCOUNT);
     expect(await getCachedAccount(kv, "uid-123")).toEqual(ACCOUNT);
-    expect(kv.put).toHaveBeenCalledWith("keys:v2:uid-123", expect.any(String), {
+    expect(kv.put).toHaveBeenCalledWith("keys:v3:uid-123", expect.any(String), {
       expirationTtl: 24 * 60 * 60,
     });
   });
@@ -46,6 +47,7 @@ describe("account cache", () => {
     await cacheAccount(kv, "uid-123", ACCOUNT);
     await purgeAccount(kv, "uid-123");
     expect(await getCachedAccount(kv, "uid-123")).toBeNull();
+    expect(kv.delete).toHaveBeenCalledWith("keys:v3:uid-123");
     expect(kv.delete).toHaveBeenCalledWith("keys:v2:uid-123");
     expect(kv.delete).toHaveBeenCalledWith("keys:uid-123");
   });

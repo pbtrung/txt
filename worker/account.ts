@@ -1,14 +1,8 @@
-// Shared by keys.ts and r2Token.ts: resolve a uid to its ctl account,
-// through the cache and endpoint-specific rate limit docs/auth.md §6
-// describes. Limiting before the cache lookup protects both cached key reads
-// and credential signing without letting one endpoint exhaust the other.
+// Resolve the Firebase uid used by /v1/keys to its ctl account through the
+// cache and keys-specific rate limit. /v1/r2-token verifies a signed ticket
+// and never calls ctl.
 
-import {
-  cacheAccount,
-  checkRateLimit,
-  getCachedAccount,
-  type RateLimitScope,
-} from "./cache";
+import { cacheAccount, checkRateLimit, getCachedAccount } from "./cache";
 import type { Account } from "./ctl";
 import { lookupAccount } from "./ctl";
 
@@ -18,12 +12,8 @@ export type AccountLookup =
   | { status: "not_provisioned" }
   | { status: "unavailable" };
 
-export async function getAccount(
-  env: Env,
-  uid: string,
-  scope: RateLimitScope,
-): Promise<AccountLookup> {
-  if (!(await checkRateLimit(env.KEYS_CACHE, uid, scope))) {
+export async function getAccount(env: Env, uid: string): Promise<AccountLookup> {
+  if (!(await checkRateLimit(env.KEYS_CACHE, uid, "keys"))) {
     return { status: "rate_limited" };
   }
   const cached = await getCachedAccount(env.KEYS_CACHE, uid);
