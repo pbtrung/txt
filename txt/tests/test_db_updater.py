@@ -272,7 +272,10 @@ def test_logs_download_migration_and_schema_validation_progress(
     assert "ensuring CFI reading-state schema" in output
     assert "resetting legacy last_accessed values" in output
     assert "validating complete database schema" in output
-    assert "schema check passed: page_size=16384, txt_rows=1, bookmarks=0" in output
+    assert (
+        "schema check passed: page_size=16384, txt_rows=1, bookmarks=0, shares=0"
+        in output
+    )
     assert "uploading " in output and "with R2 precondition" in output
 
 

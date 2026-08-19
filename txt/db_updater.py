@@ -21,6 +21,7 @@ from .database_schema import (
     PAGE_SIZE,
     ensure_migration_table,
     ensure_reading_schema,
+    ensure_share_schema,
     migration_applied,
     open_database,
     record_migration,
@@ -122,6 +123,7 @@ class DbUpdater:
             changed = self._migrate_catalog(engine, uid, columns)
             reset_access = self._needs_access_reset(engine)
             changed = self._migrate_reading_state(engine, uid, changed, reset_access)
+            changed = self._migrate_shares(engine, uid, changed)
             self.logger.verbose(f"[{uid}] validating complete database schema...")
             self._validate_schema(engine, uid)
             engine.exec_sql("COMMIT")
@@ -143,6 +145,10 @@ class DbUpdater:
     def _needs_access_reset(self, engine) -> bool:
         ensure_migration_table(engine)
         return not migration_applied(engine, ACCESS_RESET_MIGRATION)
+
+    def _migrate_shares(self, engine, uid: str, changed: bool) -> bool:
+        self.logger.verbose(f"[{uid}] ensuring administrator-share schema...")
+        return ensure_share_schema(engine) or changed
 
     def _migrate_catalog(self, engine, uid: str, columns: set) -> bool:
         if "metadata" not in columns:
@@ -202,5 +208,6 @@ class DbUpdater:
             raise ValueError(f"[{uid}] {error}") from error
         self.logger.info(
             f"[{uid}] schema check passed: page_size={PAGE_SIZE}, "
-            f"txt_rows={stats.txt_rows}, bookmarks={stats.bookmarks}."
+            f"txt_rows={stats.txt_rows}, bookmarks={stats.bookmarks}, "
+            f"shares={stats.shares}."
         )

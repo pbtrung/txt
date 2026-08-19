@@ -39,6 +39,25 @@ CREATE TABLE IF NOT EXISTS txt_bookmarks (
 const CREATE_TXT_BOOKMARKS_INDEX_SQL =
   "CREATE INDEX IF NOT EXISTS idx_txt_bookmarks_txt_id ON txt_bookmarks(txt_id, id)";
 
+const CREATE_TXT_SHARES_SQL = `
+CREATE TABLE IF NOT EXISTS txt_shares (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  txt_id INTEGER NOT NULL REFERENCES txt(id) ON DELETE RESTRICT,
+  share_id BLOB NOT NULL CHECK (length(share_id) = 32),
+  share_content_key BLOB NOT NULL CHECK (length(share_content_key) = 128),
+  share_prefix BLOB NOT NULL CHECK (length(share_prefix) = 32),
+  share_path BLOB NOT NULL CHECK (length(share_path) = 32),
+  state TEXT NOT NULL CHECK (state IN ('creating', 'active', 'deleting')),
+  created_at INTEGER NOT NULL,
+  UNIQUE (share_id),
+  UNIQUE (share_prefix, share_path)
+)
+`;
+
+const CREATE_TXT_SHARES_INDEX_SQL =
+  "CREATE INDEX IF NOT EXISTS idx_txt_shares_txt_id " +
+  "ON txt_shares(txt_id, state, id)";
+
 const CREATE_TXT_BOOKMARKS_CAP_TRIGGER_SQL = `
 CREATE TRIGGER IF NOT EXISTS trg_txt_bookmarks_cap
 AFTER INSERT ON txt_bookmarks
@@ -72,7 +91,12 @@ export function ensureSchema(db: Executable): void {
   const fresh = !db.query(
     "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'txt'",
   ).length;
-  for (const stmt of [CREATE_TXT_SQL, CREATE_SCHEMA_MIGRATIONS_SQL]) {
+  for (const stmt of [
+    CREATE_TXT_SQL,
+    CREATE_TXT_SHARES_SQL,
+    CREATE_TXT_SHARES_INDEX_SQL,
+    CREATE_SCHEMA_MIGRATIONS_SQL,
+  ]) {
     db.execSql(stmt);
   }
   db.transaction(() => {

@@ -37,6 +37,25 @@ CREATE_TXT_BOOKMARKS_INDEX_SQL = (
     "CREATE INDEX IF NOT EXISTS idx_txt_bookmarks_txt_id ON txt_bookmarks(txt_id, id)"
 )
 
+CREATE_TXT_SHARES_SQL = """
+CREATE TABLE IF NOT EXISTS txt_shares (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  txt_id INTEGER NOT NULL REFERENCES txt(id) ON DELETE RESTRICT,
+  share_id BLOB NOT NULL CHECK (length(share_id) = 32),
+  share_content_key BLOB NOT NULL CHECK (length(share_content_key) = 128),
+  share_prefix BLOB NOT NULL CHECK (length(share_prefix) = 32),
+  share_path BLOB NOT NULL CHECK (length(share_path) = 32),
+  state TEXT NOT NULL CHECK (state IN ('creating', 'active', 'deleting')),
+  created_at INTEGER NOT NULL,
+  UNIQUE (share_id),
+  UNIQUE (share_prefix, share_path)
+)
+"""
+
+CREATE_TXT_SHARES_INDEX_SQL = (
+    "CREATE INDEX IF NOT EXISTS idx_txt_shares_txt_id ON txt_shares(txt_id, state, id)"
+)
+
 CREATE_TXT_BOOKMARKS_CAP_TRIGGER_SQL = """
 CREATE TRIGGER IF NOT EXISTS trg_txt_bookmarks_cap
 AFTER INSERT ON txt_bookmarks
@@ -76,12 +95,23 @@ REQUIRED_BOOKMARK_COLUMNS = {
     "preview",
     "created_at",
 }
+REQUIRED_SHARE_COLUMNS = {
+    "id",
+    "txt_id",
+    "share_id",
+    "share_content_key",
+    "share_prefix",
+    "share_path",
+    "state",
+    "created_at",
+}
 
 
 @dataclass(frozen=True)
 class SchemaStats:
     txt_rows: int
     bookmarks: int
+    shares: int
 
 
 def configure_database(engine: SqliteEngine) -> None:
@@ -138,6 +168,7 @@ def ensure_database_schema(engine: SqliteEngine) -> bool:
     fresh = not table_exists(engine, "txt")
     engine.exec_sql(CREATE_TXT_SQL)
     changed = ensure_reading_schema(engine) or fresh
+    changed = ensure_share_schema(engine) or changed
     changed = ensure_migration_table(engine) or changed
     if fresh:
         record_migration(engine, ACCESS_RESET_MIGRATION)
@@ -176,6 +207,14 @@ def ensure_reading_schema(
         if manage_transaction:
             engine.exec_sql("ROLLBACK")
         raise
+
+
+def ensure_share_schema(engine: SqliteEngine) -> bool:
+    table_missing = not table_exists(engine, "txt_shares")
+    index_missing = not _object_exists(engine, "index", "idx_txt_shares_txt_id")
+    engine.exec_sql(CREATE_TXT_SHARES_SQL)
+    engine.exec_sql(CREATE_TXT_SHARES_INDEX_SQL)
+    return table_missing or index_missing
 
 
 def _ensure_reading_objects(engine: SqliteEngine) -> bool:
@@ -250,11 +289,16 @@ def validate_schema(engine: SqliteEngine) -> SchemaStats:
     _validate_pragmas(engine, errors)
     _validate_txt(engine, errors)
     _validate_bookmarks(engine, errors)
+    _validate_shares(engine, errors)
     _validate_migrations(engine, errors)
     _validate_integrity(engine, errors)
     if errors:
         raise ValueError("schema validation failed: " + "; ".join(errors))
-    return SchemaStats(_row_count(engine, "txt"), _row_count(engine, "txt_bookmarks"))
+    return SchemaStats(
+        _row_count(engine, "txt"),
+        _row_count(engine, "txt_bookmarks"),
+        _row_count(engine, "txt_shares"),
+    )
 
 
 def _validate_migrations(engine: SqliteEngine, errors: list[str]) -> None:
@@ -323,6 +367,27 @@ def _validate_bookmark_support(engine: SqliteEngine, errors: list[str]) -> None:
         errors.append("trg_txt_bookmarks_cap does not enforce the newest-20 cap")
     if not _has_bookmark_foreign_key(engine):
         errors.append("txt_bookmarks is missing its cascading txt foreign key")
+
+
+def _validate_shares(engine: SqliteEngine, errors: list[str]) -> None:
+    columns = table_columns(engine, "txt_shares")
+    _append_missing_columns(errors, "txt_shares", REQUIRED_SHARE_COLUMNS - columns)
+    sql = compact_sql(object_sql(engine, "table", "txt_shares"))
+    checks = {
+        "length(share_id)=32": "txt_shares has no 32-byte share-id constraint",
+        "length(share_content_key)=128": (
+            "txt_shares has no 128-byte content-key constraint"
+        ),
+        "ondeleterestrict": "txt_shares is missing its restrictive txt foreign key",
+    }
+    errors.extend(
+        message for fragment, message in checks.items() if fragment not in sql
+    )
+    index_columns = [
+        row[2] for row in engine.query("PRAGMA index_info(idx_txt_shares_txt_id)")
+    ]
+    if index_columns != ["txt_id", "state", "id"]:
+        errors.append("idx_txt_shares_txt_id has the wrong columns")
 
 
 def _has_bookmark_foreign_key(engine: SqliteEngine) -> bool:

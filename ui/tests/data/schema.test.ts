@@ -3,7 +3,7 @@ import { SqliteDatabase } from "../../src/data/sqlite";
 import { ensureSchema, PAGE_SIZE } from "../../src/data/schema";
 
 describe("ensureSchema (real sqlcipher.wasm)", () => {
-  it("creates txt and txt_bookmarks with the 16 KiB page size", async () => {
+  it("creates catalog, reading, and sharing tables with 16 KiB pages", async () => {
     const db = await SqliteDatabase.openUnkeyed();
     ensureSchema(db);
 
@@ -11,6 +11,7 @@ describe("ensureSchema (real sqlcipher.wasm)", () => {
     expect(db.query("PRAGMA foreign_keys")).toEqual([[1]]);
     expect(db.query("SELECT count(*) FROM txt")).toEqual([[0]]);
     expect(db.query("SELECT count(*) FROM txt_bookmarks")).toEqual([[0]]);
+    expect(db.query("SELECT count(*) FROM txt_shares")).toEqual([[0]]);
     expect(db.query("PRAGMA table_info(txt)").map((row) => row[1])).toContain(
       "last_cfi",
     );
@@ -24,6 +25,30 @@ describe("ensureSchema (real sqlcipher.wasm)", () => {
       ["reset_initial_last_accessed"],
     ]);
     expect(db.query("PRAGMA user_version")).toEqual([[0]]);
+    db.close();
+  });
+
+  it("enforces independent share material and restricts source deletion", async () => {
+    const db = await SqliteDatabase.openUnkeyed();
+    ensureSchema(db);
+    db.execSql(
+      "INSERT INTO txt (txt_key, txt_prefix, path, catalog, last_accessed, created_at) " +
+        "VALUES (x'00', x'00', x'00', x'00', 0, 0)",
+    );
+    db.execute(
+      "INSERT INTO txt_shares " +
+        "(txt_id, share_id, share_content_key, share_prefix, share_path, state, created_at) " +
+        "VALUES (1, ?, ?, ?, ?, 'active', 0)",
+      [
+        new Uint8Array(32),
+        new Uint8Array(128),
+        new Uint8Array(32).fill(1),
+        new Uint8Array(32).fill(2),
+      ],
+    );
+
+    expect(() => db.execSql("DELETE FROM txt WHERE id = 1")).toThrow(/FOREIGN KEY/);
+    expect(db.query("SELECT state FROM txt_shares")).toEqual([["active"]]);
     db.close();
   });
 
