@@ -37,6 +37,9 @@ describe("BookmarkMenu", () => {
     const dialog = screen.getByRole("dialog", { name: "Bookmark options" });
     expect(dialog.parentElement).toHaveClass("reader-bookmark-menu", "show");
     expect(screen.getByText("Page 12")).toBeInTheDocument();
+    expect(screen.getByRole("grid", { name: "Saved bookmarks" })).toContainElement(
+      screen.getByRole("row", { name: /Fear is the mind-killer/ }),
+    );
 
     await userEvent.click(screen.getByText("Fear is the mind-killer."));
     expect(display).toHaveBeenCalledWith("epubcfi(/6/4)");

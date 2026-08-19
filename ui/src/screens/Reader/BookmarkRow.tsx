@@ -1,5 +1,5 @@
 import { IconButton } from "../../components/IconButton";
-import { Button } from "react-aria-components";
+import { Button, GridListItem } from "react-aria-components";
 import type { BookmarkRecord } from "../../data/readingState";
 
 export function BookmarkRow({
@@ -13,15 +13,19 @@ export function BookmarkRow({
   onNavigate: (cfi: string) => void;
   onRemove: (cfi: string) => void;
 }) {
+  const label = bookmark.preview || "Saved location";
   return (
-    <div className="d-flex align-items-center px-2 bookmark-menu-row">
+    <GridListItem
+      id={bookmark.id}
+      textValue={label}
+      focusMode="child"
+      className="d-flex align-items-center px-2 bookmark-menu-row"
+    >
       <Button
         className="dropdown-item d-flex flex-column align-items-start min-w-0"
         onPress={() => onNavigate(bookmark.cfi)}
       >
-        <span className="text-truncate w-100">
-          {bookmark.preview || "Saved location"}
-        </span>
+        <span className="text-truncate w-100">{label}</span>
         <span className="small text-muted">
           Page {bookmark.pageNumber ?? "unknown"}
         </span>
@@ -33,6 +37,6 @@ export function BookmarkRow({
         isDisabled={bookmarkBusy}
         onPress={() => onRemove(bookmark.cfi)}
       />
-    </div>
+    </GridListItem>
   );
 }

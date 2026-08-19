@@ -3,6 +3,7 @@ import {
   Button,
   Dialog,
   DialogTrigger,
+  GridList,
   Input,
   Menu,
   MenuItem,
@@ -187,12 +188,14 @@ function BookmarkOptions({
       <div className="dropdown-divider" />
       <BookmarkStatus {...{ status, error, onRetry }} />
       {bookmarks.length ? (
-        bookmarks.map((bookmark) => (
-          <BookmarkRow
-            key={bookmark.id}
-            {...{ bookmark, bookmarkBusy, onNavigate, onRemove }}
-          />
-        ))
+        <GridList aria-label="Saved bookmarks" className="bookmark-grid">
+          {bookmarks.map((bookmark) => (
+            <BookmarkRow
+              key={bookmark.id}
+              {...{ bookmark, bookmarkBusy, onNavigate, onRemove }}
+            />
+          ))}
+        </GridList>
       ) : (
         <span className="dropdown-item-text text-muted">No bookmarks yet.</span>
       )}
