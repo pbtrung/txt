@@ -67,6 +67,33 @@ def test_update_db_without_local_db_dir_is_a_usage_error(tmp_path):
     assert "--local-db-dir" in result.output
 
 
+def test_update_ctl_passes_dry_run_and_verbose_to_updater(monkeypatch, tmp_path):
+    captured = {}
+
+    class FakeUpdater:
+        def __init__(self, creds, logger, dry_run):
+            captured.update(creds=creds, logger=logger, dry_run=dry_run)
+
+        def run(self):
+            captured["ran"] = True
+
+    creds_path = tmp_path / "creds.json"
+    creds_path.write_text("{}")
+    creds = object()
+    monkeypatch.setattr(cli_module, "load_creds", lambda path: creds)
+    monkeypatch.setattr(cli_module, "CtlUpdater", FakeUpdater)
+
+    result = CliRunner().invoke(
+        cli, ["--update-ctl", str(creds_path), "--verbose", "--dry-run"]
+    )
+
+    assert result.exit_code == 0
+    assert captured["creds"] is creds
+    assert captured["dry_run"] is True
+    assert captured["ran"] is True
+    assert captured["logger"].verbose_enabled is True
+
+
 def test_clean_bucket_passes_dry_run_and_verbose_to_cleaner(monkeypatch, tmp_path):
     captured = {}
 
@@ -101,7 +128,7 @@ def test_dry_run_without_clean_bucket_is_a_usage_error():
     result = CliRunner().invoke(cli, ["--dry-run"])
 
     assert result.exit_code != 0
-    assert "--dry-run requires --clean-bucket" in result.output
+    assert "--dry-run requires --clean-bucket or --update-ctl" in result.output
 
 
 def test_rejects_multiple_primary_commands(tmp_path):

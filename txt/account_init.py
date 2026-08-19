@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import secrets
 import time
 
@@ -22,6 +23,7 @@ from .turso_api import TursoClient
 CREATE_USERS_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
+  user_handle_hash BLOB NOT NULL CHECK (length(user_handle_hash) = 32),
   type TEXT NOT NULL CHECK (type IN ('admin', 'user')),
   created_at INTEGER NOT NULL,
   db_binding_hash BLOB NOT NULL CHECK (length(db_binding_hash) = 64)
@@ -112,13 +114,12 @@ class AccountInitializer:
         self.logger.verbose(f"Starting {self.account_type} bootstrap...")
         uid = self._sign_in(self.target_creds)
         ctl = self._ensure_schema()
-        self._ensure_users_row(ctl, uid)
-        self.target_creds = ensure_user_root_key(
-            self.target_creds_path, self.target_creds
-        )
+        user_handle = self._ensure_users_row(ctl, uid)
+        self._ensure_target_root_key()
         ikm = decode_user_root_key(self.target_creds.user_root_key, uid)
         umk = self._ensure_key_store(ctl, uid, ikm)
-        payload = self._ensure_cred_store(ctl, uid, umk)
+        payload = self._ensure_cred_store(ctl, uid, umk, user_handle)
+        self._verify_user_handle(ctl, uid, payload)
         self._ensure_path_binding(ctl, uid, payload)
         if self.account_type == "user":
             self._ensure_admin_backup(ctl, uid, umk)
@@ -137,8 +138,21 @@ class AccountInitializer:
         ):
             ctl.execute(stmt)
         self._ensure_schema_columns(ctl)
+        self._ensure_user_handle_index(ctl)
         self.logger.verbose("ctl schema ready.")
         return ctl
+
+    def _ensure_target_root_key(self) -> None:
+        self.target_creds = ensure_user_root_key(
+            self.target_creds_path, self.target_creds
+        )
+
+    def _ensure_user_handle_index(self, ctl: LibsqlClient) -> None:
+        if self._has_user_handle_column(ctl):
+            ctl.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS users_user_handle_hash_unique "
+                "ON users(user_handle_hash)"
+            )
 
     def _ensure_schema_columns(self, ctl: LibsqlClient) -> None:
         for table, migrations in _SCHEMA_COLUMNS.items():
@@ -148,22 +162,38 @@ class AccountInitializer:
                     self.logger.verbose(f"Adding ctl column {table}.{column}...")
                     ctl.execute(statement)
 
-    def _ensure_users_row(self, ctl: LibsqlClient, uid: str) -> None:
+    def _ensure_users_row(self, ctl: LibsqlClient, uid: str) -> bytes | None:
         if ctl.query("SELECT id FROM users WHERE id = ?", [uid]):
             self.logger.verbose(f"users row for {uid} already exists.")
-            return
+            return None
+        if not self._has_user_handle_column(ctl):
+            raise ValueError("ctl requires --update-ctl before provisioning accounts")
+        return self._insert_users_row(ctl, uid)
+
+    def _insert_users_row(self, ctl: LibsqlClient, uid: str) -> bytes:
+        user_handle = secrets.token_bytes(32)
         created_at = int(time.time() * 1000)
+        handle_hash = hashlib.sha256(user_handle).digest()
         ctl.execute(
-            "INSERT INTO users (id, type, created_at, db_binding_hash) "
-            "VALUES (?, ?, ?, ?)",
-            [uid, self.account_type, created_at, _EMPTY_BINDING],
+            "INSERT INTO users "
+            "(id, user_handle_hash, type, created_at, db_binding_hash) "
+            "VALUES (?, ?, ?, ?, ?)",
+            [uid, handle_hash, self.account_type, created_at, _EMPTY_BINDING],
         )
         self.logger.verbose(f"Inserted users row for {uid} (type={self.account_type}).")
+        return user_handle
+
+    def _has_user_handle_column(self, ctl: LibsqlClient) -> bool:
+        return "user_handle_hash" in {
+            row[1] for row in ctl.query("PRAGMA table_info(users)")
+        }
 
     def _ensure_key_store(self, ctl: LibsqlClient, uid: str, ikm: bytes) -> bytes:
         return self.key_store.ensure(ctl, uid, ikm)
 
-    def _ensure_cred_store(self, ctl: LibsqlClient, uid: str, umk: bytes) -> dict:
+    def _ensure_cred_store(
+        self, ctl: LibsqlClient, uid: str, umk: bytes, user_handle: bytes | None
+    ) -> dict:
         rows = ctl.query(
             "SELECT content FROM cred_store WHERE owner_id = ? AND for_user_id = ?",
             [uid, uid],
@@ -171,16 +201,15 @@ class AccountInitializer:
         if rows:
             self.logger.verbose("cred_store row already exists.")
             return self.blob.decrypt_json(rows[0][0], umk)
-        return self._insert_cred_store(ctl, uid, umk)
+        if user_handle is None:
+            raise ValueError(f"uid={uid} requires --update-ctl")
+        return self._insert_cred_store(ctl, uid, umk, user_handle)
 
-    def _insert_cred_store(self, ctl: LibsqlClient, uid: str, umk: bytes) -> dict:
+    def _insert_cred_store(
+        self, ctl: LibsqlClient, uid: str, umk: bytes, user_handle: bytes
+    ) -> dict:
         self.logger.verbose("Generating db_path, db_prefix, and db_master_key...")
-        payload = {
-            "display_name": self.target_creds.display_name,
-            "db_master_key": base64.b64encode(secrets.token_bytes(256)).decode(),
-            "db_path": generate_random_prefix(),
-            "db_prefix": generate_random_prefix(),
-        }
+        payload = self._new_cred_payload(user_handle)
         content = self.blob.encrypt_json(payload, umk)
         ctl.execute(
             "INSERT INTO cred_store (owner_id, for_user_id, content) VALUES (?, ?, ?)",
@@ -188,6 +217,29 @@ class AccountInitializer:
         )
         self.logger.verbose("cred_store row inserted.")
         return payload
+
+    def _new_cred_payload(self, user_handle: bytes) -> dict:
+        return {
+            "user_handle": base64.b64encode(user_handle).decode(),
+            "display_name": self.target_creds.display_name,
+            "db_master_key": base64.b64encode(secrets.token_bytes(256)).decode(),
+            "db_path": generate_random_prefix(),
+            "db_prefix": generate_random_prefix(),
+        }
+
+    def _verify_user_handle(self, ctl: LibsqlClient, uid: str, payload: dict) -> None:
+        if not self._has_user_handle_column(ctl):
+            return
+        try:
+            handle = base64.b64decode(payload["user_handle"], validate=True)
+        except KeyError, ValueError:
+            raise ValueError(f"uid={uid} requires --update-ctl") from None
+        rows = ctl.query("SELECT user_handle_hash FROM users WHERE id = ?", [uid])
+        expected = rows[0][0] if rows else b""
+        if len(handle) != 32 or not secrets.compare_digest(
+            hashlib.sha256(handle).digest(), expected
+        ):
+            raise ValueError(f"cred_store user handle mismatch for uid={uid}")
 
     def _ensure_path_binding(self, ctl: LibsqlClient, uid: str, payload: dict) -> None:
         binding = storage_binding(parse_storage_account(uid, payload))

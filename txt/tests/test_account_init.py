@@ -56,7 +56,13 @@ class FakeLibsqlClient:
     key_store: dict = {}
     cred_store: dict = {}
     table_columns = {
-        "users": {"id", "type", "created_at", "db_binding_hash"},
+        "users": {
+            "id",
+            "user_handle_hash",
+            "type",
+            "created_at",
+            "db_binding_hash",
+        },
         "key_store": {
             "user_id",
             "umk",
@@ -79,8 +85,8 @@ class FakeLibsqlClient:
         normalized = " ".join(sql.split())
         self.calls.append(("execute", normalized, args))
         if "INSERT INTO users" in normalized:
-            uid, type_, created_at, binding = args
-            FakeLibsqlClient.users[uid] = (type_, created_at, binding)
+            uid, handle_hash, type_, created_at, binding = args
+            FakeLibsqlClient.users[uid] = (type_, created_at, binding, handle_hash)
         elif "INSERT INTO key_store" in normalized:
             if "pubkey, privkey" in normalized:
                 uid, umk, pubkey, privkey, version, algorithm, sign_pub, sign_priv = (
@@ -118,8 +124,14 @@ class FakeLibsqlClient:
             )
         elif "UPDATE users SET db_binding_hash" in normalized:
             binding, uid = args
-            type_, created_at, _ = FakeLibsqlClient.users[uid]
-            FakeLibsqlClient.users[uid] = (type_, created_at, binding)
+            type_, created_at, *_rest = FakeLibsqlClient.users[uid]
+            handle_hash = _rest[1] if len(_rest) > 1 else None
+            FakeLibsqlClient.users[uid] = (
+                type_,
+                created_at,
+                binding,
+                handle_hash,
+            )
         elif normalized.startswith("ALTER TABLE"):
             table = normalized.split()[2]
             column = normalized.split("ADD COLUMN", 1)[1].split()[0]
@@ -145,6 +157,10 @@ class FakeLibsqlClient:
             (uid,) = args
             entry = FakeLibsqlClient.users.get(uid)
             return [[entry[2]]] if entry else []
+        if "SELECT user_handle_hash FROM users" in normalized:
+            (uid,) = args
+            entry = FakeLibsqlClient.users.get(uid)
+            return [[entry[3]]] if entry and len(entry) > 3 else []
         if "SELECT umk, sign_version" in normalized:
             (uid,) = args
             entry = FakeLibsqlClient.key_store.get(uid)
@@ -181,7 +197,13 @@ def patch_clients(monkeypatch):
     FakeLibsqlClient.key_store = {}
     FakeLibsqlClient.cred_store = {}
     FakeLibsqlClient.table_columns = {
-        "users": {"id", "type", "created_at", "db_binding_hash"},
+        "users": {
+            "id",
+            "user_handle_hash",
+            "type",
+            "created_at",
+            "db_binding_hash",
+        },
         "key_store": {
             "user_id",
             "umk",
@@ -311,8 +333,9 @@ def test_registers_account_row(creds_path, user_creds_path, engine, account_type
     initializer, _ = _build(account_type, creds_path, user_creds_path)
     initializer.run()
     ctl = FakeLibsqlClient.last_instance
-    uid, type_, created_at, binding = ctl.insert_args("users")
+    uid, handle_hash, type_, created_at, binding = ctl.insert_args("users")
     assert (uid, type_) == (_uid_for(account_type), account_type)
+    assert len(handle_hash) == 32
     assert isinstance(created_at, int)
     assert binding == bytes(64)
     assert len(FakeLibsqlClient.users[uid][2]) == 64
@@ -403,6 +426,7 @@ def test_cred_store_decrypts_correctly(
     assert len(base64.b64decode(payload["db_master_key"])) == 256
     assert len(payload["db_path"]) == len(payload["db_prefix"]) == 52
     assert payload["db_path"] != payload["db_prefix"]
+    assert len(base64.b64decode(payload["user_handle"])) == 32
     assert "user_root_key" not in payload
 
 
@@ -512,6 +536,7 @@ def test_migrates_missing_signing_columns_and_existing_account(creds_path, engin
         payload, umk
     )
     FakeLibsqlClient.table_columns["users"].remove("db_binding_hash")
+    FakeLibsqlClient.table_columns["users"].remove("user_handle_hash")
     for column in (
         "sign_version",
         "sign_algorithm",

@@ -6,6 +6,7 @@ import click
 from .account_init import AccountInitializer
 from .bucket_cleaner import BucketCleaner
 from .creds import load_creds, load_user_creds
+from .ctl_updater import CtlUpdater
 from .db_updater import DbUpdater
 from .edit_epub import EpubEditor
 from .ingest import TxtIngester
@@ -84,6 +85,12 @@ from .replace_images import ImageReplacer
     ),
 )
 @click.option(
+    "--update-ctl",
+    "update_ctl_creds_path",
+    metavar="CREDS_JSON",
+    help="Migrate the Turso control-plane schema and encrypted account payloads",
+)
+@click.option(
     "--clean-bucket",
     "clean_bucket_creds_path",
     metavar="CREDS_JSON",
@@ -92,7 +99,7 @@ from .replace_images import ImageReplacer
 @click.option(
     "--dry-run",
     is_flag=True,
-    help="Report bucket objects that would be deleted without deleting them",
+    help="Report --clean-bucket or --update-ctl changes without writing them",
 )
 @click.option(
     "--log-file",
@@ -130,8 +137,12 @@ def _cleanup_log(opts: dict) -> Path | None:
 
 
 def _validate_options(opts: dict) -> None:
-    if opts["dry_run"] and not opts["clean_bucket_creds_path"]:
-        raise click.UsageError("--dry-run requires --clean-bucket CREDS_JSON")
+    if opts["dry_run"] and not (
+        opts["clean_bucket_creds_path"] or opts["update_ctl_creds_path"]
+    ):
+        raise click.UsageError(
+            "--dry-run requires --clean-bucket or --update-ctl CREDS_JSON"
+        )
     if len(_selected_commands(opts)) > 1:
         raise click.UsageError("choose only one primary command")
 
@@ -169,6 +180,10 @@ def _dispatch_update_db(opts: dict, logger: Logger) -> None:
     _run_update_db(opts["update_db_creds_path"], opts["local_db_dir"], logger)
 
 
+def _dispatch_update_ctl(opts: dict, logger: Logger) -> None:
+    _run_update_ctl(opts["update_ctl_creds_path"], opts["dry_run"], logger)
+
+
 def _dispatch_clean_bucket(opts: dict, logger: Logger) -> None:
     _run_clean_bucket(opts["clean_bucket_creds_path"], opts["dry_run"], logger)
 
@@ -180,6 +195,7 @@ COMMAND_HANDLERS = (
     ("edit_epub_dirs", _dispatch_edit_epub),
     ("ingest_src_dir", _dispatch_ingest),
     ("update_db_creds_path", _dispatch_update_db),
+    ("update_ctl_creds_path", _dispatch_update_ctl),
     ("clean_bucket_creds_path", _dispatch_clean_bucket),
 )
 
@@ -225,6 +241,10 @@ def _run_update_db(creds_path: str, local_db_dir: str | None, logger: Logger) ->
     if not local_db_dir:
         raise click.UsageError("--update-db requires --local-db-dir DIR")
     DbUpdater(load_creds(creds_path), Path(local_db_dir), logger).run()
+
+
+def _run_update_ctl(creds_path: str, dry_run: bool, logger: Logger) -> None:
+    CtlUpdater(load_creds(creds_path), logger, dry_run=dry_run).run()
 
 
 def _run_clean_bucket(creds_path: str, dry_run: bool, logger: Logger) -> None:
