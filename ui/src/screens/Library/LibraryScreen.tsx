@@ -1,6 +1,7 @@
 // Library shell: coordinates search/navigation state while focused child
 // components own the header, responsive navigation, and browsable content.
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { LoadingMessage, ScreenMessage } from "../../components/ScreenMessage";
 import { useVault } from "../../state/VaultContext";
 import { errorMessage } from "../../util/errorMessage";
@@ -31,8 +32,10 @@ export function LibraryScreen() {
   const shared = useShares(isAdmin ? (session?.database ?? null) : null);
   const [query, setQuery] = useState("");
   const [view, setView] = useState<LibraryView>(INITIAL_VIEW);
+  const [selectedTxtId, setSelectedTxtId] = useState<number | null>(null);
   const [shareError, setShareError] = useState<string | null>(null);
   const desktop = useMediaQuery(DESKTOP_MEDIA_QUERY);
+  const routerNavigate = useNavigate();
 
   if (library.status === "loading") {
     return <LoadingMessage>Loading your library…</LoadingMessage>;
@@ -44,13 +47,17 @@ export function LibraryScreen() {
   const navigate = (next: LibraryView) => {
     setView(next);
     setQuery("");
+    setSelectedTxtId(null);
   };
   const search = (next: string) => {
     setQuery(next);
+    setSelectedTxtId(null);
     if (parseSearch(next).activity || (next.trim() && view.kind === "recent")) {
       setView(ALL_BOOKS_VIEW);
     }
   };
+  const selectedBook =
+    library.books.find((book) => book.txtId === selectedTxtId) ?? null;
   const clearActivity = async (kind: "access" | "bookmarks", txtId: number) => {
     if (!session) return;
     const mutation =
@@ -114,12 +121,15 @@ export function LibraryScreen() {
             />
           )
         }
-        shareBooks={
-          isAdmin && (view.kind === "books" || view.kind === "entries")
-            ? library.books
-            : []
-        }
-        onShare={(txtId) => void createShare(txtId)}
+        selectedBook={selectedBook}
+        showBookActions={view.kind === "books"}
+        canShare={isAdmin}
+        onRead={() => {
+          if (selectedBook) routerNavigate(`/read/${selectedBook.txtId}`);
+        }}
+        onShare={() => {
+          if (selectedBook) void createShare(selectedBook.txtId);
+        }}
       />
       {shareError && (
         <div className="alert alert-danger py-2 mx-2 my-1 small" role="alert">
@@ -144,6 +154,8 @@ export function LibraryScreen() {
           books={library.books}
           view={view}
           query={query}
+          selectedTxtId={selectedTxtId}
+          onSelectBook={setSelectedTxtId}
           onNavigate={navigate}
           onClearAccess={(txtId) => void clearActivity("access", txtId)}
           onClearBookmarks={(txtId) => void clearActivity("bookmarks", txtId)}

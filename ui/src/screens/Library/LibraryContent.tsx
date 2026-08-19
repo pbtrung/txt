@@ -23,6 +23,8 @@ export function LibraryContent({
   books,
   view,
   query,
+  selectedTxtId,
+  onSelectBook,
   onNavigate,
   onClearAccess,
   onClearBookmarks,
@@ -33,6 +35,8 @@ export function LibraryContent({
   books: LibraryBook[];
   view: LibraryView;
   query: string;
+  selectedTxtId: number | null;
+  onSelectBook: (txtId: number | null) => void;
   onNavigate: (view: LibraryView) => void;
   onClearAccess: (txtId: number) => void;
   onClearBookmarks: (txtId: number) => void;
@@ -55,7 +59,12 @@ export function LibraryContent({
       ) : view.kind === "entries" ? (
         <EntriesList {...{ books, query, onNavigate }} dimension={view.dimension} />
       ) : (
-        <BookList books={filteredBooks} totalCount={books.length} />
+        <BookList
+          books={filteredBooks}
+          totalCount={books.length}
+          selectedTxtId={selectedTxtId}
+          onSelectBook={onSelectBook}
+        />
       )}
     </div>
   );

@@ -4,6 +4,7 @@ import {
   Link,
   ListLayout,
   Virtualizer,
+  type Selection,
 } from "react-aria-components";
 import type { ReactNode } from "react";
 import { IconButton } from "../../components/IconButton";
@@ -15,9 +16,13 @@ const ROW_HEIGHT_PX = 72;
 export function BookList({
   books,
   totalCount,
+  selectedTxtId,
+  onSelectBook,
 }: {
   books: LibraryBook[];
   totalCount: number;
+  selectedTxtId: number | null;
+  onSelectBook: (txtId: number | null) => void;
 }) {
   if (books.length === 0) return <EmptyBookList totalCount={totalCount} />;
   return (
@@ -25,6 +30,10 @@ export function BookList({
       <GridList
         aria-label="Books"
         items={books}
+        selectionMode="single"
+        selectionBehavior="replace"
+        selectedKeys={selectedTxtId === null ? [] : [selectedTxtId]}
+        onSelectionChange={(selection) => onSelectBook(selectedId(selection))}
         className="flex-grow-1 overflow-y-auto px-2 px-md-3 book-list-grid"
       >
         {/* The collection builder reads identity from this direct child's id
@@ -54,7 +63,7 @@ function VirtualBookRow({ id, book }: { id: number; book: LibraryBook }) {
       className="book-row-container"
       style={{ height: ROW_HEIGHT_PX }}
     >
-      <BookLinkRow book={book} />
+      <BookRowContent book={book} />
     </GridListItem>
   );
 }
@@ -114,22 +123,43 @@ function BookLinkRow({
         hasRemoveAction && "pe-5",
       )}
     >
-      <span className="d-block overflow-hidden min-w-0">
-        <span className="d-flex align-items-center gap-2">
-          <span
-            className={classNames(
-              "book-row-icon flex-shrink-0 d-flex align-items-center justify-content-center rounded-circle",
-              active && "book-row-icon-active",
-            )}
-          >
-            <i className="bi bi-journal-bookmark" aria-hidden="true" />
-          </span>
-          <span className="text-truncate fw-medium">{book.title}</span>
-        </span>
-        <BookMetadata book={book} />
-      </span>
+      <BookRowDetails book={book} active={active} />
     </Link>
   );
+}
+
+function BookRowContent({ book }: { book: LibraryBook }) {
+  const active = book.lastAccessed > 0 || book.bookmarkCount > 0;
+  return (
+    <div className="d-block py-2 px-2 rounded-3 text-body book-row h-100">
+      <BookRowDetails book={book} active={active} />
+    </div>
+  );
+}
+
+function BookRowDetails({ book, active }: { book: LibraryBook; active: boolean }) {
+  return (
+    <span className="d-block overflow-hidden min-w-0">
+      <span className="d-flex align-items-center gap-2">
+        <span
+          className={classNames(
+            "book-row-icon flex-shrink-0 d-flex align-items-center justify-content-center rounded-circle",
+            active && "book-row-icon-active",
+          )}
+        >
+          <i className="bi bi-journal-bookmark" aria-hidden="true" />
+        </span>
+        <span className="text-truncate fw-medium">{book.title}</span>
+      </span>
+      <BookMetadata book={book} />
+    </span>
+  );
+}
+
+function selectedId(selection: Selection): number | null {
+  if (selection === "all") return null;
+  const value = selection.values().next().value;
+  return typeof value === "number" ? value : null;
 }
 
 function readerPath(txtId: number, initialCfi?: string | null): string {

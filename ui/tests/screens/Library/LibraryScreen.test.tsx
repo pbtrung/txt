@@ -2,7 +2,7 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState, type ReactNode } from "react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("../../../src/state/VaultContext", () => ({ useVault: vi.fn() }));
@@ -79,8 +79,13 @@ function renderLibrary(
   library: LibraryState,
   lock = vi.fn(),
   mutate = vi.fn().mockResolvedValue(undefined),
+  accountType: "admin" | "user" = "user",
 ) {
-  const session = { database: { mutate }, displayName: "Trung" } as VaultSession;
+  const session = {
+    database: { mutate, read: vi.fn().mockResolvedValue([]) },
+    displayName: "Trung",
+    accountType,
+  } as unknown as VaultSession;
   vi.mocked(useVault).mockReturnValue({
     status: "unlocked",
     session,
@@ -93,8 +98,13 @@ function renderLibrary(
   return render(
     <MemoryRouter>
       <LibraryScreen />
+      <LocationProbe />
     </MemoryRouter>,
   );
+}
+
+function LocationProbe() {
+  return <output data-testid="location">{useLocation().pathname}</output>;
 }
 
 function ControlledSearchHeader({ onChange }: { onChange: (value: string) => void }) {
@@ -103,7 +113,18 @@ function ControlledSearchHeader({ onChange }: { onChange: (value: string) => voi
     onChange(value);
     setQuery(value);
   };
-  return <LibraryHeader query={query} onQuery={update} menu={null} />;
+  return (
+    <LibraryHeader
+      query={query}
+      onQuery={update}
+      menu={null}
+      selectedBook={null}
+      showBookActions={false}
+      canShare={false}
+      onRead={() => undefined}
+      onShare={() => undefined}
+    />
+  );
 }
 
 describe("LibraryScreen", () => {
@@ -144,16 +165,16 @@ describe("LibraryScreen", () => {
     await userEvent.type(searchbox, "wizard");
     expect(searchField).not.toHaveAttribute("data-empty");
 
-    expect(screen.getByRole("link", { name: /Wizard/ })).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: /Dune/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("row", { name: /Wizard/ })).toBeInTheDocument();
+    expect(screen.queryByRole("row", { name: /Dune/ })).not.toBeInTheDocument();
 
     await userEvent.click(clear);
     expect(searchbox).toHaveValue("");
     expect(searchbox).toHaveFocus();
     await userEvent.tab();
     expect(searchField).toHaveAttribute("data-empty", "true");
-    expect(screen.getByRole("link", { name: /Dune/ })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Wizard/ })).toBeInTheDocument();
+    expect(screen.getByRole("row", { name: /Dune/ })).toBeInTheDocument();
+    expect(screen.getByRole("row", { name: /Wizard/ })).toBeInTheDocument();
   });
 
   it("clears the controlled search with one change event", async () => {
@@ -186,13 +207,13 @@ describe("LibraryScreen", () => {
 
     await userEvent.type(searchbox, "a:*");
     expect(screen.getByRole("heading", { name: "All Books" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Read Dune/ })).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: /Marked Earthsea/ })).toBeNull();
+    expect(screen.getByRole("row", { name: /Read Dune/ })).toBeInTheDocument();
+    expect(screen.queryByRole("row", { name: /Marked Earthsea/ })).toBeNull();
 
     await userEvent.clear(searchbox);
     await userEvent.type(searchbox, "b:'earth'");
-    expect(screen.getByRole("link", { name: /Marked Earthsea/ })).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: /Inactive book/ })).toBeNull();
+    expect(screen.getByRole("row", { name: /Marked Earthsea/ })).toBeInTheDocument();
+    expect(screen.queryByRole("row", { name: /Inactive book/ })).toBeNull();
   });
 
   it("shows an empty-library message when there are no books at all", () => {
@@ -206,12 +227,44 @@ describe("LibraryScreen", () => {
     expect(screen.getByText("No books match.")).toBeInTheDocument();
   });
 
-  it("links each book to /read/:txtId", () => {
+  it("selects a browse row before opening it in the Reader", async () => {
     renderScreen(LIBRARY);
-    expect(screen.getByRole("link", { name: /Dune/ })).toHaveAttribute(
-      "href",
-      "/read/1",
+    await userEvent.click(screen.getByRole("button", { name: /^All Books/ }));
+    const read = screen.getByRole("button", { name: "Read" });
+    const dune = screen.getByRole("row", { name: "Dune" });
+    expect(read).toBeDisabled();
+
+    await userEvent.click(dune);
+
+    expect(dune).toHaveAttribute("aria-selected", "true");
+    expect(read).toBeEnabled();
+    await userEvent.click(read);
+    expect(screen.getByTestId("location")).toHaveTextContent("/read/1");
+  });
+
+  it("attaches Read and Share to search and enables both for an admin selection", async () => {
+    renderLibrary(
+      { status: "ready", books: LIBRARY, reload: vi.fn() },
+      vi.fn(),
+      vi.fn().mockResolvedValue(undefined),
+      "admin",
     );
+    await userEvent.click(screen.getByRole("button", { name: /^All Books/ }));
+    const search = screen.getByRole("searchbox");
+    const actions = screen.getByLabelText("Book actions");
+    const read = screen.getByRole("button", { name: "Read" });
+    const share = screen.getByRole("button", { name: "Share" });
+
+    expect(search.closest(".library-search-group")).toContainElement(actions);
+    expect(read).toBeDisabled();
+    expect(share).toBeDisabled();
+    expect(read.querySelector("span")).toHaveClass("d-none", "d-md-inline");
+    expect(share.querySelector("span")).toHaveClass("d-none", "d-md-inline");
+
+    await userEvent.click(screen.getByRole("row", { name: "Dune" }));
+
+    expect(read).toBeEnabled();
+    expect(share).toBeEnabled();
   });
 
   it("opens a bookmark row at the book's newest bookmark", () => {
@@ -238,7 +291,7 @@ describe("LibraryScreen", () => {
     ]);
     await userEvent.click(screen.getByRole("button", { name: /^All Books/ }));
 
-    const row = screen.getByRole("link", { name: /Active book/ });
+    const row = screen.getByRole("row", { name: /Active book/ });
     expect(screen.getByRole("grid", { name: "Books" })).toContainElement(row);
     expect(row.querySelector(".book-row-icon")).toHaveClass("book-row-icon-active");
     expect(screen.getByLabelText("2 bookmarks")).toHaveTextContent("2");
@@ -347,8 +400,8 @@ describe("LibraryScreen", () => {
     expect(
       screen.getByRole("heading", { name: "Subject: Fantasy" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Wizard/ })).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: /Dune/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("row", { name: /Wizard/ })).toBeInTheDocument();
+    expect(screen.queryByRole("row", { name: /Dune/ })).not.toBeInTheDocument();
   });
 
   it("the back button returns from filtered books to the dimension's entries", async () => {
