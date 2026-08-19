@@ -64,7 +64,11 @@ export function LibraryScreen() {
   const shareOperation = useRef(false);
   const libraryRoot = useRef<HTMLDivElement>(null);
   const librarySidebar = useRef<HTMLElement>(null);
-  const showSidebar = useLibrarySidebar(libraryRoot, librarySidebar);
+  const showSidebar = useLibrarySidebar(
+    libraryRoot,
+    librarySidebar,
+    library.status === "ready",
+  );
   const routerNavigate = useNavigate();
 
   useEffect(() => () => shareToastQueue.clear(), []);
@@ -324,12 +328,14 @@ function ShareToast({ toast }: { toast: QueuedToast<ShareNotice> }) {
 function useLibrarySidebar(
   root: RefObject<HTMLDivElement | null>,
   sidebar: RefObject<HTMLElement | null>,
+  active: boolean,
 ): boolean {
   const [visible, setVisible] = useState(
     () => window.matchMedia(DESKTOP_MEDIA_QUERY).matches,
   );
   const measuredSidebarWidth = useRef(LIBRARY_SIDEBAR_WIDTH_PX);
   useLayoutEffect(() => {
+    if (!active) return;
     const element = root.current;
     if (!element) return;
     const media = window.matchMedia(DESKTOP_MEDIA_QUERY);
@@ -353,6 +359,6 @@ function useLibrarySidebar(
       observer.disconnect();
       media.removeEventListener?.("change", measure);
     };
-  }, [root, sidebar, visible]);
+  }, [active, root, sidebar, visible]);
   return visible;
 }

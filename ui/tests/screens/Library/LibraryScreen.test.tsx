@@ -166,6 +166,37 @@ describe("LibraryScreen", () => {
     expect(screen.getByText(/Loading your library/)).toBeInTheDocument();
   });
 
+  it("collapses the sidebar after a narrow Library finishes loading", () => {
+    const bounds = vi
+      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockImplementation(function () {
+        const width = this.classList.contains("library-sidebar")
+          ? 280
+          : this.classList.contains("library-screen")
+            ? 679
+            : 0;
+        return { width } as DOMRect;
+      });
+    const rendered = renderLibrary({ status: "loading" });
+    expect(screen.getByText(/Loading your library/)).toBeInTheDocument();
+
+    vi.mocked(useLibraryBooks).mockReturnValue({
+      status: "ready",
+      books: LIBRARY,
+      reload: vi.fn(),
+    });
+    rendered.rerender(
+      <MemoryRouter>
+        <LibraryScreen />
+        <LocationProbe />
+      </MemoryRouter>,
+    );
+
+    expect(document.querySelector(".library-sidebar")).toBeNull();
+    expect(screen.getByRole("button", { name: "Open menu" })).toBeInTheDocument();
+    bounds.mockRestore();
+  });
+
   it("shows a library loading error", () => {
     renderLibrary({
       status: "error",
