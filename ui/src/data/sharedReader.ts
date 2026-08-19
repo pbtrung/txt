@@ -45,20 +45,20 @@ export async function loadSharedReaderDocument(
   onProgress?: (progress: ReaderLoadProgress) => void,
 ): Promise<ReaderDocument> {
   report(onProgress, "Requesting shared book", 1);
-  const response = await withNetworkRetries((signal) =>
-    fetch("/v1/shared-content", {
+  const encrypted = await withNetworkRetries(async (signal) => {
+    const response = await fetch("/v1/shared-content", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ share_id: reference.id, grant: reference.grant }),
       signal,
-    }),
-  );
-  if (!response.ok) {
-    if (response.status === 404) throw new Error("This shared book is unavailable.");
-    throw new Error(`Could not download this shared book (${response.status}).`);
-  }
-  report(onProgress, "Downloading shared book", 2);
-  const encrypted = new Uint8Array(await response.arrayBuffer());
+    });
+    if (!response.ok) {
+      if (response.status === 404) throw new Error("This shared book is unavailable.");
+      throw new Error(`Could not download this shared book (${response.status}).`);
+    }
+    report(onProgress, "Downloading shared book", 2);
+    return new Uint8Array(await response.arrayBuffer());
+  });
   report(onProgress, "Decrypting shared book", 3);
   const epubBytes = await decrypt(encrypted, reference.contentKey);
   report(onProgress, "Reading book metadata", 4);

@@ -295,5 +295,52 @@ describe("WorkerClient share administration", () => {
       share_path: request.sharePath,
       share_id: request.shareId,
     });
+    for (const [, init] of fetchMock.mock.calls) {
+      expect(init.signal).toBeInstanceOf(AbortSignal);
+    }
+  });
+
+  it("retries network failures while creating and deleting shares", async () => {
+    vi.useFakeTimers();
+    try {
+      const failedGrantResponse = {
+        ok: true,
+        status: 200,
+        json: vi.fn().mockRejectedValue(new TypeError("network load failed")),
+      };
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(failedGrantResponse)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ grant: "retried" }),
+        })
+        .mockRejectedValueOnce(new TypeError("fetch failed"))
+        .mockResolvedValueOnce({ ok: true, status: 204 });
+      vi.stubGlobal("fetch", fetchMock);
+      const client = new WorkerClient(tokenProvider());
+      const request = {
+        dbPath: DB_PATH,
+        dbPrefix: DB_PREFIX,
+        sharePrefix: "1".repeat(52),
+        sharePath: "2".repeat(52),
+        shareId: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+      };
+
+      const create = client.createShareGrant(request);
+      const created = expect(create).resolves.toBe("retried");
+      await vi.runAllTimersAsync();
+      await created;
+
+      const remove = client.deleteShare(request);
+      const removed = expect(remove).resolves.toBeUndefined();
+      await vi.runAllTimersAsync();
+      await removed;
+
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

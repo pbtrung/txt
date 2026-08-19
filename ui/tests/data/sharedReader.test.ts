@@ -102,6 +102,36 @@ describe("loadSharedReaderDocument", () => {
     );
     expect(decrypt).not.toHaveBeenCalled();
   });
+
+  it("retries when the encrypted response body fails during transfer", async () => {
+    vi.useFakeTimers();
+    try {
+      const first = new Response(new Uint8Array([1]));
+      vi.spyOn(first, "arrayBuffer").mockRejectedValue(
+        new TypeError("network load failed"),
+      );
+      const encrypted = new Uint8Array([4, 5]);
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(first)
+        .mockResolvedValueOnce(new Response(encrypted));
+      vi.stubGlobal("fetch", fetchMock);
+      vi.mocked(decrypt).mockResolvedValue(new Uint8Array([6, 7]));
+      vi.mocked(parseEpubOpf).mockResolvedValue({ metadata: { title: "Dune" } });
+      vi.mocked(extraMetadataFields).mockReturnValue([]);
+      const reference = parseSharedReference(`#id=${ID}&grant=${GRANT}&key=${KEY}`)!;
+
+      const load = loadSharedReaderDocument(reference);
+      const result = expect(load).resolves.toMatchObject({ title: "Dune" });
+      await vi.runAllTimersAsync();
+
+      await result;
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(decrypt).toHaveBeenCalledWith(encrypted, reference.contentKey);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 function base64Url(bytes: Uint8Array): string {

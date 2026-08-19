@@ -9,6 +9,7 @@ import {
 import type { FirebaseTokenProvider } from "../auth/firebaseSignIn";
 import { toBase64 } from "../util/base64";
 import { objectRecord, stringField } from "../util/validation";
+import { withNetworkRetries } from "./networkRequest";
 
 const SIGNING_VERSION = 1;
 const PROOF_LIFETIME_SECONDS = 45;
@@ -84,27 +85,44 @@ export class WorkerClient {
   }
 
   async createShareGrant(request: ShareGrantRequest): Promise<string> {
-    const response = await this.authorizedPost("/v1/share-grant", false, {
-      db_path: request.dbPath,
-      db_prefix: request.dbPrefix,
-      share_prefix: request.sharePrefix,
-      share_path: request.sharePath,
-      share_id: request.shareId,
+    return withNetworkRetries(async (signal) => {
+      const response = await this.authorizedPost(
+        "/v1/share-grant",
+        false,
+        {
+          db_path: request.dbPath,
+          db_prefix: request.dbPrefix,
+          share_prefix: request.sharePrefix,
+          share_path: request.sharePath,
+          share_id: request.shareId,
+        },
+        signal,
+      );
+      if (!response.ok) {
+        throw new Error(`could not create share URL: ${response.status}`);
+      }
+      const data = objectRecord(await response.json(), "share grant response");
+      return stringField(data, "grant", "share grant response");
     });
-    if (!response.ok) throw new Error(`could not create share URL: ${response.status}`);
-    const data = objectRecord(await response.json(), "share grant response");
-    return stringField(data, "grant", "share grant response");
   }
 
   async deleteShare(request: ShareGrantRequest): Promise<void> {
-    const response = await this.authorizedRequest("/v1/share", "DELETE", false, {
-      db_path: request.dbPath,
-      db_prefix: request.dbPrefix,
-      share_prefix: request.sharePrefix,
-      share_path: request.sharePath,
-      share_id: request.shareId,
+    await withNetworkRetries(async (signal) => {
+      const response = await this.authorizedRequest(
+        "/v1/share",
+        "DELETE",
+        false,
+        {
+          db_path: request.dbPath,
+          db_prefix: request.dbPrefix,
+          share_prefix: request.sharePrefix,
+          share_path: request.sharePath,
+          share_id: request.shareId,
+        },
+        signal,
+      );
+      if (!response.ok) throw new Error(`could not delete share: ${response.status}`);
     });
-    if (!response.ok) throw new Error(`could not delete share: ${response.status}`);
   }
 
   private async signedR2Request(
