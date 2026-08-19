@@ -372,6 +372,11 @@ def _validate_bookmark_support(engine: SqliteEngine, errors: list[str]) -> None:
 def _validate_shares(engine: SqliteEngine, errors: list[str]) -> None:
     columns = table_columns(engine, "txt_shares")
     _append_missing_columns(errors, "txt_shares", REQUIRED_SHARE_COLUMNS - columns)
+    _validate_share_sql(engine, errors)
+    _validate_share_index(engine, errors)
+
+
+def _validate_share_sql(engine: SqliteEngine, errors: list[str]) -> None:
     sql = compact_sql(object_sql(engine, "table", "txt_shares"))
     checks = {
         "length(share_id)=32": "txt_shares has no 32-byte share-id constraint",
@@ -383,6 +388,9 @@ def _validate_shares(engine: SqliteEngine, errors: list[str]) -> None:
     errors.extend(
         message for fragment, message in checks.items() if fragment not in sql
     )
+
+
+def _validate_share_index(engine: SqliteEngine, errors: list[str]) -> None:
     index_columns = [
         row[2] for row in engine.query("PRAGMA index_info(idx_txt_shares_txt_id)")
     ]
