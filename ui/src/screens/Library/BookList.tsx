@@ -34,7 +34,7 @@ export function BookList({
           selectionBehavior="replace"
           selectedKeys={selectedTxtId === null ? [] : [selectedTxtId]}
           onSelectionChange={(selection) => onSelectBook(selectedId(selection))}
-          className="flex-grow-1 overflow-y-auto overflow-x-hidden px-2 px-md-3 book-list-grid min-w-0"
+          className="flex-grow-1 overflow-y-auto overflow-x-hidden book-list-grid min-w-0"
         >
           {/* The collection builder reads identity from this direct child's id
               before SelectableBookRow renders; keeping it here prevents filtered

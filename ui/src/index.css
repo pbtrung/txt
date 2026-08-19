@@ -54,6 +54,22 @@
   outline: none;
 }
 
+/* React Aria's Virtualizer applies `padding: 0` directly to its scroll view,
+   so Bootstrap padding utilities on the All Books grid cannot keep rows away
+   from an overlaid vertical scrollbar. Inset the virtualized row itself to
+   preserve the intended gutter on both sides. */
+.book-list-grid .book-row-container {
+  margin-inline: 0.5rem;
+  max-width: calc(100% - 1rem);
+}
+
+@media (min-width: 768px) {
+  .book-list-grid .book-row-container {
+    margin-inline: 1rem;
+    max-width: calc(100% - 2rem);
+  }
+}
+
 .toc-tree,
 .toc-tree-item {
   outline: none;
