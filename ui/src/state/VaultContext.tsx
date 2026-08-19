@@ -13,6 +13,7 @@ import {
 import { signIn } from "../auth/firebaseSignIn";
 import { parseBrowserCreds, type BrowserCreds } from "../data/creds";
 import { LibraryDatabaseStore } from "../data/databaseStore";
+import { withNetworkRetries } from "../data/networkRequest";
 import { R2Session } from "../data/r2Session";
 import { unwrapKeys } from "../data/session";
 import { WorkerClient } from "../data/workerClient";
@@ -65,14 +66,12 @@ class SessionResolver {
     const creds = await this.readCredentials();
     const worker = await this.authenticate(creds);
     this.onPhase(2);
-    const keys = await worker.fetchKeys();
+    const keys = await withNetworkRetries((signal) => worker.fetchKeys(signal));
     this.onPhase(3);
     const { credStore, signing } = await unwrapKeys(keys, creds.user_root_key);
     this.onPhase(4);
-    const credential = await worker.fetchR2Token(
-      credStore.db_path,
-      credStore.db_prefix,
-      signing,
+    const credential = await withNetworkRetries((signal) =>
+      worker.fetchR2Token(credStore.db_path, credStore.db_prefix, signing, signal),
     );
     return this.openSession(credStore, credential, worker, signing, keys.type);
   }
@@ -84,10 +83,13 @@ class SessionResolver {
 
   private async authenticate(creds: BrowserCreds): Promise<WorkerClient> {
     this.onPhase(1);
-    const session = await signIn(
-      creds.firebase_api_key,
-      creds.firebase_email,
-      creds.firebase_password,
+    const session = await withNetworkRetries((signal) =>
+      signIn(
+        creds.firebase_api_key,
+        creds.firebase_email,
+        creds.firebase_password,
+        signal,
+      ),
     );
     return new WorkerClient(session);
   }

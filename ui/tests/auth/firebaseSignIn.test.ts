@@ -15,9 +15,11 @@ describe("signIn", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const session = await signIn("api key", "reader@example.com", "pw");
+    const signal = new AbortController().signal;
+    const session = await signIn("api key", "reader@example.com", "pw", signal);
     await expect(session.getIdToken()).resolves.toBe("token");
     expect(fetchMock.mock.calls[0][0]).toContain("key=api%20key");
+    expect(fetchMock.mock.calls[0][1].signal).toBe(signal);
   });
 
   it("rejects a successful response without an ID token", async () => {
@@ -53,10 +55,12 @@ describe("signIn", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const session = await signIn("api key", "reader@example.com", "pw");
-    await expect(session.getIdToken()).resolves.toBe("new-token");
+    const signal = new AbortController().signal;
+    await expect(session.getIdToken(false, signal)).resolves.toBe("new-token");
     const [url, init] = fetchMock.mock.calls[1];
     expect(url).toContain("securetoken.googleapis.com");
     expect(String(init.body)).toContain("refresh_token=old-refresh");
+    expect(init.signal).toBe(signal);
     await expect(session.getIdToken()).resolves.toBe("new-token");
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });

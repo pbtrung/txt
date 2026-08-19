@@ -94,7 +94,8 @@ describe("WorkerClient.fetchKeys", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await new WorkerClient(tokenProvider()).fetchKeys();
+    const signal = new AbortController().signal;
+    const result = await new WorkerClient(tokenProvider()).fetchKeys(signal);
 
     expect(result).toEqual({
       type: "user",
@@ -111,6 +112,7 @@ describe("WorkerClient.fetchKeys", () => {
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe("/v1/keys");
     expect(init.headers.Authorization).toBe("Bearer idtok");
+    expect(init.signal).toBe(signal);
   });
 
   it("refreshes once after a 401", async () => {
@@ -129,7 +131,7 @@ describe("WorkerClient.fetchKeys", () => {
 
     expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe("Bearer expired");
     expect(fetchMock.mock.calls[1][1].headers.Authorization).toBe("Bearer fresh");
-    expect(provider.getIdToken).toHaveBeenLastCalledWith(true);
+    expect(provider.getIdToken).toHaveBeenLastCalledWith(true, undefined);
   });
 
   it("reports provisioning and malformed response errors", async () => {
@@ -220,7 +222,8 @@ describe("WorkerClient.fetchR2Token", () => {
       });
     vi.stubGlobal("fetch", fetchMock);
 
-    await new WorkerClient(provider).fetchR2Token(DB_PATH, DB_PREFIX, signing);
+    const signal = new AbortController().signal;
+    await new WorkerClient(provider).fetchR2Token(DB_PATH, DB_PREFIX, signing, signal);
 
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
       "/v1/r2-token",
@@ -232,7 +235,9 @@ describe("WorkerClient.fetchR2Token", () => {
     expect(JSON.parse(fetchMock.mock.calls[2][1].body).ticket).toBe(
       "new.header.signature",
     );
+    for (const [, init] of fetchMock.mock.calls) expect(init.signal).toBe(signal);
     expect(provider.getIdToken).toHaveBeenCalledTimes(1);
+    expect(provider.getIdToken).toHaveBeenCalledWith(false, signal);
   });
 
   it("rejects missing, duplicate, and unknown credential types", async () => {

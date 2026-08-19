@@ -8,7 +8,7 @@ const REFRESH_URL = "https://securetoken.googleapis.com/v1/token";
 const REFRESH_SKEW_MS = 60_000;
 
 export interface FirebaseTokenProvider {
-  getIdToken(forceRefresh?: boolean): Promise<string>;
+  getIdToken(forceRefresh?: boolean, signal?: AbortSignal): Promise<string>;
 }
 
 export class FirebaseSession implements FirebaseTokenProvider {
@@ -21,19 +21,19 @@ export class FirebaseSession implements FirebaseTokenProvider {
     private expiresAt: number,
   ) {}
 
-  async getIdToken(forceRefresh = false): Promise<string> {
+  async getIdToken(forceRefresh = false, signal?: AbortSignal): Promise<string> {
     if (!forceRefresh && Date.now() + REFRESH_SKEW_MS < this.expiresAt) {
       return this.idToken;
     }
     if (!this.refreshInFlight) {
-      this.refreshInFlight = this.refresh().finally(() => {
+      this.refreshInFlight = this.refresh(signal).finally(() => {
         this.refreshInFlight = null;
       });
     }
     return this.refreshInFlight;
   }
 
-  private async refresh(): Promise<string> {
+  private async refresh(signal?: AbortSignal): Promise<string> {
     const body = new URLSearchParams({
       grant_type: "refresh_token",
       refresh_token: this.refreshToken,
@@ -44,6 +44,7 @@ export class FirebaseSession implements FirebaseTokenProvider {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body,
+        signal,
       },
     );
     if (!response.ok) {
@@ -61,11 +62,13 @@ export async function signIn(
   apiKey: string,
   email: string,
   password: string,
+  signal?: AbortSignal,
 ): Promise<FirebaseSession> {
   const response = await fetch(`${SIGN_IN_URL}?key=${encodeURIComponent(apiKey)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password, returnSecureToken: true }),
+    signal,
   });
   if (!response.ok) throw new Error(`Firebase sign-in failed: ${response.status}`);
   const data = objectRecord(await response.json(), "Firebase sign-in response");

@@ -50,10 +50,10 @@ export interface R2CredentialPair {
 export class WorkerClient {
   constructor(private readonly tokens: FirebaseTokenProvider) {}
 
-  async fetchKeys(): Promise<KeysResponse> {
-    let response = await this.authorizedPost("/v1/keys", false);
+  async fetchKeys(signal?: AbortSignal): Promise<KeysResponse> {
+    let response = await this.authorizedPost("/v1/keys", false, undefined, signal);
     if (response.status === 401) {
-      response = await this.authorizedPost("/v1/keys", true);
+      response = await this.authorizedPost("/v1/keys", true, undefined, signal);
     }
     if (response.status === 403) {
       throw new Error(
@@ -74,7 +74,7 @@ export class WorkerClient {
   ): Promise<R2CredentialPair> {
     let response = await this.signedR2Request(dbPath, dbPrefix, signing, signal);
     if (response.status === 401) {
-      signing.ticket = (await this.fetchKeys()).r2Ticket;
+      signing.ticket = (await this.fetchKeys(signal)).r2Ticket;
       response = await this.signedR2Request(dbPath, dbPrefix, signing, signal);
     }
     if (!response.ok) {
@@ -159,8 +159,9 @@ export class WorkerClient {
     path: string,
     forceRefresh: boolean,
     body?: unknown,
+    signal?: AbortSignal,
   ): Promise<Response> {
-    return this.authorizedRequest(path, "POST", forceRefresh, body);
+    return this.authorizedRequest(path, "POST", forceRefresh, body, signal);
   }
 
   private async authorizedRequest(
@@ -168,8 +169,9 @@ export class WorkerClient {
     method: string,
     forceRefresh: boolean,
     body?: unknown,
+    signal?: AbortSignal,
   ): Promise<Response> {
-    const idToken = await this.tokens.getIdToken(forceRefresh);
+    const idToken = await this.tokens.getIdToken(forceRefresh, signal);
     return fetch(path, {
       method,
       headers: {
@@ -177,6 +179,7 @@ export class WorkerClient {
         ...(body ? { "Content-Type": "application/json" } : {}),
       },
       ...(body ? { body: JSON.stringify(body) } : {}),
+      signal,
     });
   }
 }
