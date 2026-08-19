@@ -99,6 +99,11 @@ function renderLibrary(
   );
 }
 
+async function openLibraryMenu(user = userEvent.setup()) {
+  await user.click(screen.getByRole("button", { name: "Library menu" }));
+  return screen.getByRole("menu", { name: "Library menu" });
+}
+
 describe("LibraryScreen", () => {
   it("shows a loading message before books resolve", () => {
     renderScreen(null);
@@ -154,7 +159,6 @@ describe("LibraryScreen", () => {
     ]);
     const searchbox = screen.getByRole("searchbox");
 
-    await userEvent.click(screen.getByRole("button", { name: /^Recent/ }));
     await userEvent.type(searchbox, "a:*");
     expect(screen.getByRole("heading", { name: "All Books" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Read Dune/ })).toBeInTheDocument();
@@ -207,7 +211,8 @@ describe("LibraryScreen", () => {
         lastAccessed: accessed,
       }),
     ]);
-    await userEvent.click(screen.getByRole("button", { name: /^All Books/ }));
+    await openLibraryMenu();
+    await userEvent.click(screen.getByRole("menuitem", { name: /^All Books/ }));
 
     const row = screen.getByRole("link", { name: /Active book/ });
     expect(row.querySelector(".book-row-icon")).toHaveClass("book-row-icon-active");
@@ -216,13 +221,16 @@ describe("LibraryScreen", () => {
     expect(screen.getByText("A very long author name")).toHaveClass("text-truncate");
   });
 
-  it("shows nav rows with counts for All Books/Authors/Subjects/Publishers", () => {
+  it("shows nav rows with counts for All Books/Authors/Subjects/Publishers", async () => {
     renderScreen(LIBRARY);
-    expect(screen.getByRole("button", { name: /^Recent/ })).toHaveTextContent("2");
-    expect(screen.getByRole("button", { name: /^All Books/ })).toHaveTextContent("2");
-    expect(screen.getByRole("button", { name: /^Authors/ })).toHaveTextContent("2");
-    expect(screen.getByRole("button", { name: /^Subjects/ })).toHaveTextContent("2");
-    expect(screen.getByRole("button", { name: /^Publishers/ })).toHaveTextContent("1");
+    await openLibraryMenu();
+    expect(screen.getByRole("menuitem", { name: /^Recent/ })).toHaveTextContent("2");
+    expect(screen.getByRole("menuitem", { name: /^All Books/ })).toHaveTextContent("2");
+    expect(screen.getByRole("menuitem", { name: /^Authors/ })).toHaveTextContent("2");
+    expect(screen.getByRole("menuitem", { name: /^Subjects/ })).toHaveTextContent("2");
+    expect(screen.getByRole("menuitem", { name: /^Publishers/ })).toHaveTextContent(
+      "1",
+    );
     expect(screen.getByText("Browse")).toBeInTheDocument();
   });
 
@@ -236,8 +244,6 @@ describe("LibraryScreen", () => {
         lastBookmarked: 3000,
       }),
     ]);
-
-    await userEvent.click(screen.getByRole("button", { name: /^Recent/ }));
 
     expect(screen.getByRole("heading", { name: "Recent" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Recent access" })).toHaveTextContent(
@@ -267,8 +273,6 @@ describe("LibraryScreen", () => {
       vi.fn(),
       mutate,
     );
-    await userEvent.click(screen.getByRole("button", { name: /^Recent/ }));
-
     await userEvent.click(
       screen.getByRole("button", {
         name: "Clear recent access for Active book",
@@ -289,8 +293,6 @@ describe("LibraryScreen", () => {
     renderScreen([
       book({ title: "Marked book", bookmarkCount: 1, lastBookmarked: 200 }),
     ]);
-    await userEvent.click(screen.getByRole("button", { name: /^Recent/ }));
-
     const remove = screen.getByRole("button", {
       name: "Delete bookmarks for Marked book",
     });
@@ -306,7 +308,8 @@ describe("LibraryScreen", () => {
     renderScreen(LIBRARY);
     const user = userEvent.setup();
 
-    await user.click(screen.getByRole("button", { name: /^Subjects/ }));
+    await openLibraryMenu(user);
+    await user.click(screen.getByRole("menuitem", { name: /^Subjects/ }));
     expect(screen.getByRole("heading", { name: "Subjects" })).toBeInTheDocument();
     const fantasyRow = screen.getByRole("button", { name: /^Fantasy/ });
     expect(fantasyRow).toHaveTextContent("1");
@@ -327,7 +330,8 @@ describe("LibraryScreen", () => {
   it("the back button returns from filtered books to the dimension's entries", async () => {
     renderScreen(LIBRARY);
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: /^Subjects/ }));
+    await openLibraryMenu(user);
+    await user.click(screen.getByRole("menuitem", { name: /^Subjects/ }));
     await user.click(screen.getByRole("button", { name: /^Fantasy/ }));
 
     await user.click(screen.getByRole("button", { name: /Back to Subjects/ }));
@@ -338,28 +342,20 @@ describe("LibraryScreen", () => {
   it("shows the account's display name and locks on click", async () => {
     const lock = vi.fn();
     renderScreen(LIBRARY, lock);
+    await openLibraryMenu();
     expect(screen.getByText("Trung")).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "Lock" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Lock" }));
 
     expect(lock).toHaveBeenCalledTimes(1);
   });
 
-  it("the menu button opens the drawer", async () => {
-    vi.stubGlobal(
-      "matchMedia",
-      vi.fn().mockImplementation((query: string) => ({
-        matches: false,
-        media: query,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-      })),
-    );
+  it("the menu button opens a dropdown list", async () => {
     renderScreen(LIBRARY);
-    expect(screen.queryByRole("dialog", { name: "Menu" })).toBeNull();
+    expect(screen.queryByRole("menu", { name: "Library menu" })).toBeNull();
 
-    await userEvent.click(screen.getByRole("button", { name: "Open menu" }));
+    const menu = await openLibraryMenu();
 
-    expect(screen.getByRole("dialog", { name: "Menu" })).toHaveClass("show");
+    expect(menu.parentElement).toHaveClass("dropdown-menu", "show", "library-menu");
   });
 });

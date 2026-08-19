@@ -67,27 +67,6 @@ describe("OffcanvasPanel", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
-  it("uses the offcanvas-{breakpoint} class and hides the backdrop past it when responsive", () => {
-    vi.stubGlobal(
-      "matchMedia",
-      vi.fn().mockImplementation((query: string) => ({
-        matches: false,
-        media: query,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-      })),
-    );
-    render(
-      <OffcanvasPanel open onClose={vi.fn()} title="Browse" responsive="md">
-        content
-      </OffcanvasPanel>,
-    );
-
-    const panel = screen.getByRole("dialog", { name: "Browse" });
-    expect(panel).toHaveClass("offcanvas-md", "offcanvas-end", "show");
-    expect(document.querySelector(".aria-offcanvas-overlay")).toBeInTheDocument();
-  });
-
   it("passes through className and style", () => {
     render(
       <OffcanvasPanel

@@ -1,18 +1,18 @@
+import type { ReactNode } from "react";
 import { Button, Input, SearchField } from "react-aria-components";
-import { IconButton } from "../../components/IconButton";
 
 export function LibraryHeader({
   query,
   onQuery,
-  onOpenMenu,
+  menu,
 }: {
   query: string;
   onQuery: (query: string) => void;
-  onOpenMenu: () => void;
+  menu: ReactNode;
 }) {
   return (
     <div className="d-flex align-items-center border-bottom flex-shrink-0">
-      <LibraryBrand onOpenMenu={onOpenMenu} />
+      <div className="px-2 py-2">{menu}</div>
       <div className="flex-grow-1 px-2 px-md-3 py-2">
         <SearchField
           className="search-box position-relative"
@@ -31,23 +31,6 @@ export function LibraryHeader({
             </Button>
           )}
         </SearchField>
-      </div>
-    </div>
-  );
-}
-
-function LibraryBrand({ onOpenMenu }: { onOpenMenu: () => void }) {
-  return (
-    <div className="d-flex align-items-center gap-2 px-2 px-md-3 py-2 library-brand-col">
-      <IconButton
-        className="d-md-none"
-        label="Open menu"
-        icon="book"
-        onPress={onOpenMenu}
-      />
-      <div className="d-none d-md-flex align-items-center gap-2">
-        <i className="bi bi-book fs-5" aria-hidden="true" />
-        <span className="fw-semibold fs-5">Skypiea</span>
       </div>
     </div>
   );

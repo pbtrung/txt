@@ -1,13 +1,12 @@
 // Library shell: coordinates search/navigation state while focused child
-// components own the header, responsive sidebar, and browsable content.
+// components own the header, navigation menu, and browsable content.
 import { useState } from "react";
-import { OffcanvasPanel } from "../../components/OffcanvasPanel";
 import { LoadingMessage, ScreenMessage } from "../../components/ScreenMessage";
 import { useVault } from "../../state/VaultContext";
 import { clearBookmarksMutation, clearLastAccessMutation } from "../../data/libraryDb";
 import { LibraryContent } from "./LibraryContent";
 import { LibraryHeader } from "./LibraryHeader";
-import { LibrarySidebar } from "./LibrarySidebar";
+import { LibraryMenu } from "./LibraryMenu";
 import { parseSearch } from "./libraryModel";
 import type { LibraryView } from "./libraryView";
 import { useLibraryBooks } from "./useLibraryBooks";
@@ -20,7 +19,6 @@ export function LibraryScreen() {
   const library = useLibraryBooks(session?.database ?? null);
   const [query, setQuery] = useState("");
   const [view, setView] = useState<LibraryView>(INITIAL_VIEW);
-  const [drawerOpen, setDrawerOpen] = useState(false);
 
   if (library.status === "loading") {
     return <LoadingMessage>Loading your library…</LoadingMessage>;
@@ -32,7 +30,6 @@ export function LibraryScreen() {
   const navigate = (next: LibraryView) => {
     setView(next);
     setQuery("");
-    setDrawerOpen(false);
   };
   const search = (next: string) => {
     setQuery(next);
@@ -59,25 +56,17 @@ export function LibraryScreen() {
       <LibraryHeader
         query={query}
         onQuery={search}
-        onOpenMenu={() => setDrawerOpen(true)}
-      />
-      <div className="d-flex flex-grow-1 overflow-hidden">
-        <OffcanvasPanel
-          open={drawerOpen}
-          onClose={() => setDrawerOpen(false)}
-          title="Menu"
-          placement="start"
-          responsive="md"
-          className="h-100 border-end library-sidebar"
-        >
-          <LibrarySidebar
+        menu={
+          <LibraryMenu
             books={library.books}
             view={view}
             displayName={session?.displayName ?? ""}
             onNavigate={navigate}
             onLock={lock}
           />
-        </OffcanvasPanel>
+        }
+      />
+      <div className="d-flex flex-grow-1 overflow-hidden">
         <LibraryContent
           books={library.books}
           view={view}
