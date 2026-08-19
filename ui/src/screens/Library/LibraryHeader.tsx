@@ -33,7 +33,9 @@ export function LibraryHeader({
           />
           {query && (
             <Button className="search-box-clear" aria-label="Clear search">
-              <i className="bi bi-x-lg" aria-hidden="true" />
+              <span className="search-box-clear-icon" aria-hidden="true">
+                ×
+              </span>
             </Button>
           )}
         </SearchField>

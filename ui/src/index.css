@@ -111,7 +111,12 @@
   border-radius: 50%;
   background: transparent;
   color: var(--bs-secondary-color);
-  font-size: 0.7rem;
+}
+
+.search-box-clear-icon {
+  font-size: 1.1rem;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .search-box-clear:hover,

@@ -131,7 +131,10 @@ describe("LibraryScreen", () => {
     expect(screen.getByRole("link", { name: /Wizard/ })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /Dune/ })).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "Clear search" }));
+    const clear = screen.getByRole("button", { name: "Clear search" });
+    expect(clear).toHaveTextContent("×");
+    expect(clear.firstElementChild).toHaveClass("search-box-clear-icon");
+    await userEvent.click(clear);
     expect(searchbox).toHaveValue("");
     expect(screen.getByRole("link", { name: /Dune/ })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Wizard/ })).toBeInTheDocument();
