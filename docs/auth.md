@@ -17,7 +17,7 @@ There is one Turso control database, `ctl` (§2). User data lives as encrypted o
 | `CTL_DB_URL` | control database URL |
 | `CTL_DB_TOKEN` | non-expiring, read-only token for `ctl` |
 | `FIREBASE_PROJECT_ID` | expected Firebase token issuer and audience for `/v1/keys` |
-| `R2_TICKET_SECRET` | at least 32 random bytes, used only to sign and verify R2 binding tickets |
+| `R2_TICKET_SECRET` | standard padded base64 encoding of at least 32 random bytes, used only to sign and verify R2 binding tickets |
 | `R2_ENDPOINT`, `R2_BUCKET`, `R2_REGION` | R2 destination returned with temporary credentials |
 | `R2_READ_WRITE_ACCESS_KEY_ID` / `R2_READ_WRITE_SECRET_ACCESS_KEY` | parent credential used to sign path-limited temporary R2 credentials |
 
@@ -34,11 +34,13 @@ The Worker Turso token is read-only. A leaked Worker database token can expose c
 ```sql
 CREATE TABLE users (
   id              TEXT PRIMARY KEY,       -- Firebase uid
-  user_handle     BLOB NOT NULL UNIQUE CHECK (length(user_handle) = 32),
+  user_handle_hash BLOB NOT NULL CHECK (length(user_handle_hash) = 32),
   type            TEXT NOT NULL CHECK (type IN ('admin', 'user')),
   created_at      INTEGER NOT NULL,        -- unix ms
   db_binding_hash BLOB NOT NULL CHECK (length(db_binding_hash) = 64)
 );
+CREATE UNIQUE INDEX users_user_handle_hash_unique
+ON users(user_handle_hash);
 
 CREATE TABLE key_store (
   user_id        TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -59,7 +61,7 @@ CREATE TABLE cred_store (
 );
 ```
 
-`user_handle` is 32 random bytes. The identical bytes are base64-encoded as `cred_store.content.user_handle` before that JSON payload is encrypted under the owner's `umk`. The Worker reads the plaintext database column while creating a ticket, but `/v1/keys` never returns that column separately. The browser obtains the handle only from the credential store it decrypts locally.
+`user_handle` is 32 random bytes, but Turso never stores it in plaintext. Turso stores only `users.user_handle_hash = SHA-256(user_handle)`. The raw bytes are standard-base64 encoded as `cred_store.content.user_handle` before that JSON payload is encrypted under the owner's `umk`. The browser obtains the raw handle only by decrypting its credential store; the Worker obtains only the hash when creating a ticket.
 
 `db_path` and `db_prefix` are independent 32-byte random values rendered as 52 lowercase base32-Crockford characters. `db_master_key` is 256 random bytes encoded as base64. Their plaintext forms live inside encrypted `cred_store.content`:
 
@@ -73,6 +75,16 @@ CREATE TABLE cred_store (
 }
 ```
 
+An ordinary user's administrator-owned backup contains the same fields plus:
+
+```json
+{
+  "user_root_key": "<base64 256 bytes>"
+}
+```
+
+That backup is encrypted under the administrator's `umk`. It lets an administrator run whole-control-plane migrations with only the administrator `creds.json`: the administrator decrypts the backup, obtains the user's root key, unwraps that user's `umk`, and verifies the self-owned credential payload. Neither a user's self-owned payload nor the administrator's own self-owned payload contains `user_root_key`.
+
 `users.db_binding_hash` stores `SHA-512(UTF-8(db_path) || UTF-8(db_prefix))`. Both inputs have fixed validated lengths, so the concatenation is unambiguous. The ticket carries this digest rather than either raw path.
 
 Signing-suite version 1 is `ECDSA-P521-SHA512`. `sign_pubkey` is SPKI DER. `sign_privkey` is PKCS#8 DER wrapped with the account's `umk` using docs/crypto.md. The signing-suite version is separate from the R2 proof protocol version.
@@ -80,7 +92,7 @@ Signing-suite version 1 is `ECDSA-P521-SHA512`. `sign_pubkey` is SPKI DER. `sign
 The Worker's `/v1/keys` lookup is by Firebase uid:
 
 ```sql
-SELECT u.type, u.user_handle, u.db_binding_hash,
+SELECT u.type, u.user_handle_hash, u.db_binding_hash,
        k.umk, k.sign_version, k.sign_algorithm,
        k.sign_pubkey, k.sign_privkey, c.content
 FROM users u
@@ -102,12 +114,14 @@ Provisioning performs these idempotent operations:
 1. Generate one 32-byte `user_handle`.
 2. Generate `db_path` and `db_prefix` as independent 32-byte random values encoded as base32-Crockford.
 3. Generate the 128-byte `umk` and 256-byte `db_master_key`.
-4. Insert `users` with the Firebase uid, raw `user_handle`, and `db_binding_hash`.
+4. Insert `users` with the Firebase uid, `SHA-256(user_handle)`, and `db_binding_hash`; do not store the raw handle in Turso.
 5. Generate the version-1 P-521 key pair. Store its public key and wrap its private key with `umk`.
 6. Encrypt the credential payload, including the same base64-encoded `user_handle`, into the account's self-owned `cred_store` row.
-7. For an ordinary user, wrap the same complete payload into the administrator-owned backup row.
+7. For an ordinary user, add that user's `user_root_key` to the administrator copy and encrypt it into the administrator-owned backup row. Do not add a root key to either self-owned row.
 
-Re-running provisioning migrates missing control-plane columns and fills missing handle values. `--update-db` remains responsible only for schemas inside users' encrypted SQLCipher databases in R2; it does not migrate the Turso control schema.
+For a legacy ordinary account, re-run `--init-user` first so its administrator backup receives `user_root_key`. Then run `txt --update-ctl admin_creds.json --verbose --dry-run`, inspect the complete plan, and repeat without `--dry-run`. The command uses only the administrator credentials and administrator-owned backups; it does not require every user's credentials file. It validates every reachable account before writing, adds `users.user_handle_hash`, creates or verifies one handle in both encrypted payloads, fills its SHA-256 hash, and installs the unique index. A missing backup/root or any self/backup/hash mismatch aborts the run. Re-running it is idempotent.
+
+`--update-db` remains responsible only for schemas inside users' encrypted SQLCipher databases in R2; it never migrates the Turso control schema.
 
 ---
 
@@ -161,7 +175,7 @@ The Worker verifies the Firebase ID token, loads the account by the verified `su
 | 401 | Firebase token missing or invalid |
 | 403 | account not provisioned |
 | 429 | per-uid rate limit exceeded |
-| 503 | `ctl` unavailable |
+| 503 | `ctl` or ticket signing unavailable |
 
 ### 4.2 `POST /v1/r2-token`
 
@@ -285,7 +299,7 @@ Cloudflare KV's `expirationTtl` is a relative number of seconds from the `put`. 
 
 | KV key | contents | TTL |
 |---|---|---|
-| `keys:v3:{uid}` | account type, raw handle, path binding, signing suite/public and wrapped-private key, wrapped `umk`, and `cred_store.content` | 24 hours |
+| `keys:v3:{uid}` | account type, handle hash, path binding, signing suite/public and wrapped-private key, wrapped `umk`, and encrypted `cred_store.content` | 24 hours |
 | `ratelimit:v3:keys:{uid}:{window}` | `/v1/keys` count | 1 hour |
 | `ratelimit:v3:r2-token:{sub}:{window}` | valid `/v1/r2-token` count | 1 hour |
 
@@ -315,9 +329,9 @@ Purging the account cache affects only future `/v1/keys` calls. It cannot revoke
 
 ## 8. Trust boundary
 
-The client and Worker are trusted; Turso and R2 are not trusted with plaintext user data. The Worker holds the Turso token, ticket secret, and parent R2 signing credential, but no `user_root_key` or plaintext `umk`. Turso and R2 store encrypted user material.
+The client, administrator, and Worker are trusted; Turso and R2 are not trusted with plaintext user data. The Worker holds the Turso token, ticket secret, and parent R2 signing credential, but no `user_root_key`, raw `user_handle`, or plaintext `umk`. Turso sees the handle hash and encrypted user material. The administrator can decrypt ordinary-user backup roots by design so that admin-only migrations remain possible.
 
-The signed ticket moves the R2 authorization record out of Turso for the ticket's lifetime. Turso can corrupt the account fields returned during a Firebase-authenticated `/v1/keys` call, but the resulting ticket is delivered only to that authenticated browser. Substituting a public key, handle, ciphertext, or path binding causes the legitimate client's decrypted handle or private key proof to fail. Without the Firebase token, Turso cannot obtain the replacement signed ticket for itself. This reduces active Turso tampering to denial of service for that account rather than R2 impersonation.
+The signed ticket moves the R2 authorization record out of Turso for the ticket's lifetime. Turso can corrupt the hash, public key, ciphertext, or path binding returned during a Firebase-authenticated `/v1/keys` call, but the resulting ticket is delivered only to that authenticated browser. Turso cannot replace the encrypted raw handle or private key with chosen plaintext without the account's `umk`; substitutions therefore make decryption, handle comparison, path comparison, or signature verification fail. Without the Firebase token and decrypted client material, Turso cannot use the replacement ticket itself. This reduces active Turso tampering to denial of service for that account rather than R2 impersonation.
 
 A stolen ticket is insufficient by itself. A caller also needs the raw handle and the P-521 private key. A compromised client holding all decrypted material can access its own provisioned paths, while a compromised Worker can sign arbitrary tickets and R2 credentials and is therefore inside the trusted computing base.
 
@@ -325,12 +339,10 @@ The ticket's `sign_version` selects the signing key suite. The proof's `version`
 
 ---
 
-## 9. Implementation order
+## 9. Rollout order
 
-1. Add `users.user_handle`, generate one 32-byte value per account, and place its base64 representation in every corresponding encrypted credential payload and administrator backup.
-2. Extend the `/v1/keys` account lookup/cache and response with a 24-hour Worker-signed ticket.
-3. Separate signing-suite version 1 from proof-protocol version 2.
-4. Change the client proof to bind the exact ticket, raw handle, expiry, request id, and path pair.
-5. Remove Firebase and Turso lookup from `/v1/r2-token`; verify only the signed ticket and P-521 proof.
-6. Version the KV formats and apply account rate limiting only after successful ticket/proof verification.
-7. Add negative tests for expired or altered tickets, wrong handle, wrong ticket audience, ticket/proof substitution, malformed signatures, and path mismatch.
+1. Back up `ctl`, then re-run `--init-user` for every legacy ordinary user so each administrator backup contains that user's root key.
+2. Run `txt --update-ctl admin_creds.json --verbose --dry-run`; resolve every reported backup or binding problem before running it without `--dry-run`.
+3. Generate a dedicated secret with `openssl rand -base64 32` and install that exact padded value as `R2_TICKET_SECRET`.
+4. Deploy the Worker and browser together. The browser requires both `r2_ticket` and encrypted payload `user_handle`; the new R2 endpoint no longer accepts the Firebase-bound version-1 proof.
+5. Confirm `/v1/keys`, automatic ticket renewal after a 401, exact-path read/write, prefix reads, and negative handle/path/signature cases. Old `keys:v2:*` cache entries are misses under `keys:v3:*` and may be purged later.

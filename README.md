@@ -21,7 +21,7 @@ txt --init-admin creds.json --verbose                                     # the 
 txt --init-user --admin-creds admin_creds.json --user-creds user_creds.json --verbose   # an ordinary user's account
 ```
 
-Creates the `users`, `key_store`, and `cred_store` tables in `ctl` if they don't already exist, signs in to Firebase to obtain that account's uid, and provisions its row (`type = 'admin'` or `'user'`) — generating and wrapping `umk` and `db_path`/`db_prefix`/`db_master_key`; the admin's row additionally gets a composite KEM keypair. Safe to re-run: each step is skipped if it's already done.
+Creates the `users`, `key_store`, and `cred_store` tables in `ctl` if they don't already exist, signs in to Firebase to obtain that account's uid, and provisions its row (`type = 'admin'` or `'user'`) — generating and wrapping `umk`, `user_handle`, and `db_path`/`db_prefix`/`db_master_key`; the admin's row additionally gets a composite KEM keypair. Turso stores only `SHA-256(user_handle)` while the raw handle stays inside encrypted credential payloads. Safe to re-run: current data is verified and retained.
 
 `--init-admin`'s `creds.json` requires:
 
@@ -51,6 +51,19 @@ Creates the `users`, `key_store`, and `cred_store` tables in `ctl` if they don't
 ```
 
 `user_root_key` is generated (256 random bytes, base64) and written back to whichever file is being provisioned (`creds.json` for `--init-admin`, `--user-creds`'s file for `--init-user`) if left empty.
+
+For an ordinary user, `--init-user` also places that user's `user_root_key` inside the administrator-owned backup payload encrypted under the administrator's `umk`. The user's self-owned payload and the administrator's own self-owned payload never contain a root key. This lets later admin-only migrations reach every user's self-owned ciphertext without keeping every user credentials file.
+
+### Migrate the control plane for binding tickets
+
+For an existing installation, first re-run `--init-user` for each ordinary user so the administrator backups contain their root keys. Then preview and apply the migration using the administrator's full credentials:
+
+```
+txt --update-ctl admin_creds.json --verbose --dry-run
+txt --update-ctl admin_creds.json --verbose
+```
+
+The command validates all accounts before its first write, adds the unique 32-byte `users.user_handle_hash`, and creates or preserves one raw handle across each encrypted self/admin payload. It rejects missing administrator backups/root keys, mismatched payloads, invalid handles, and hash mismatches. It is idempotent and never creates a plaintext `users.user_handle` column. `--dry-run` performs all reads, decryptions, and validation but makes no Turso changes.
 
 ### Replace images in a directory of EPUBs
 
@@ -128,12 +141,14 @@ npm install
 
 ### Endpoints
 
-- `POST /v1/keys` — verifies the Firebase ID token and returns the account's wrapped `umk`, credential store, and versioned wrapped signing private key.
-- `POST /v1/r2-token` — verifies the authenticated user's short-lived P-521 path proof and SHA-512 path binding, then returns two credentials: read-write for exactly `db_path`, and read-only for `{db_prefix}/*`.
+- `POST /v1/keys` — verifies the Firebase ID token and returns the account's wrapped key material plus a signed 24-hour R2 binding ticket.
+- `POST /v1/r2-token` — without Firebase or a Turso read, verifies that ticket, the decrypted handle, the short-lived P-521 proof, and the SHA-512 path binding; then returns read-write credentials for exactly `db_path` and read-only credentials for `{db_prefix}/*`.
 
 ### Configuration
 
-`wrangler.jsonc` declares one KV binding, `KEYS_CACHE` (create with `wrangler kv namespace create keys-cache` and paste the resulting id in). Everything else — `FIREBASE_PROJECT_ID`, `CTL_DB_URL`, `CTL_DB_TOKEN`, `R2_ENDPOINT`, `R2_BUCKET`, `R2_REGION`, `R2_READ_WRITE_ACCESS_KEY_ID`, `R2_READ_WRITE_SECRET_ACCESS_KEY` (docs/auth.md §1) — is a Cloudflare dashboard Variable/Secret, never committed here; see `worker/env.d.ts`.
+`wrangler.jsonc` declares one KV binding, `KEYS_CACHE` (create with `wrangler kv namespace create keys-cache` and paste the resulting id in). Everything else — `FIREBASE_PROJECT_ID`, `CTL_DB_URL`, `CTL_DB_TOKEN`, `R2_TICKET_SECRET`, `R2_ENDPOINT`, `R2_BUCKET`, `R2_REGION`, `R2_READ_WRITE_ACCESS_KEY_ID`, `R2_READ_WRITE_SECRET_ACCESS_KEY` (docs/auth.md §1) — is a Cloudflare dashboard Variable/Secret, never committed here; see `worker/env.d.ts`.
+
+`R2_TICKET_SECRET` is the standard padded base64 encoding of at least 32 dedicated random bytes and must not reuse the R2 secret. For example, generate the value with `openssl rand -base64 32`, then install it through the dashboard or `npx wrangler secret put R2_TICKET_SECRET`.
 
 ### Worker scripts
 
@@ -167,10 +182,13 @@ The browser talks directly to the R2 S3 endpoint, so the bucket must permit its 
 
 Roll out in this order:
 
-1. Back up `ctl` and the R2 bucket, then re-run account provisioning as needed so every account has `db_binding_hash` and the version-1 P-521 signing fields.
-2. While the deployed UI is still read-only, run `txt --update-db ...` for every reachable account and resolve any legacy-bookmark or conditional-write failure.
-3. Apply and verify the bucket CORS policy, including a preflight that requests `If-Match` and confirms `ETag` is exposed.
-4. Deploy the Worker and UI together with `WORKER_NAME=... npm run deploy`. The versioned `keys:v2:*` cache namespace makes old account-cache entries automatic misses; explicit per-user purges still delete both old and current keys.
-5. Smoke-test unlock, resume, a bookmark create/delete, and a two-tab write conflict before broadening access. Keep the previous deployment available for rollback; added database columns/tables are backward-compatible with the old read-only UI.
+1. Back up `ctl` and the R2 bucket. Re-run `--init-user` for every legacy ordinary user to add their root key to the encrypted administrator backup.
+2. Run `txt --update-ctl admin_creds.json --verbose --dry-run`, resolve every validation error, then run it without `--dry-run`.
+3. While the deployed UI is still read-only, run `txt --update-db ...` for every reachable account and resolve any legacy-bookmark or conditional-write failure.
+4. Apply and verify the bucket CORS policy, including a preflight that requests `If-Match` and confirms `ETag` is exposed.
+5. Install `R2_TICKET_SECRET`, then deploy the Worker and UI together with `WORKER_NAME=... npm run deploy`. The versioned `keys:v3:*` cache makes old account-cache entries automatic misses; explicit per-user purges delete current and rollout-era keys.
+6. Smoke-test unlock, ticket-based R2 credential renewal, resume, a bookmark create/delete, and a two-tab write conflict before broadening access. Keep the previous deployment available for rollback.
 
 Deploying requires `WORKER_NAME` (the existing Cloudflare Worker's name) to be set: `WORKER_NAME=... npm run deploy`.
+
+For the evaluated Rivet Actor alternative, including the one-Actor-per-account shape, authentication constraints, durability tradeoffs, and staged migration criteria, see `docs/rivet_actor.md`. It is not part of the current deployment.

@@ -35,7 +35,7 @@ Version 2 is reserved as the migration direction, not accepted today. When enabl
 For proof protocol version 2 using signing suite 1, the client and Worker construct these bytes exactly:
 
 ```
-UTF8("txt:r2-token-proof") || 0x00 ||
+UTF8("txt:r2-ticket-proof") || 0x00 ||
 U32BE(proof_version) ||
 SHA-256(UTF8(exact_compact_r2_ticket)) ||
 user_handle_32_bytes ||
