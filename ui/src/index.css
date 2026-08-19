@@ -269,6 +269,10 @@
     background: transparent;
     backdrop-filter: none;
   }
+
+  .reader-offcanvas-overlay .offcanvas {
+    position: absolute;
+  }
 }
 
 .aria-offcanvas-modal {
