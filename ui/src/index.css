@@ -121,17 +121,40 @@
   outline: none;
 }
 
-/* The library's navigation stays compact in the header and opens as one
-   viewport-safe list. React Aria supplies menu keyboard navigation and
-   focus management while Bootstrap supplies the visual treatment. */
-.library-menu {
-  width: min(18rem, calc(100vw - 1rem));
-  max-height: calc(100dvh - 4rem);
-  overflow-y: auto;
+/* The desktop brand and navigation pane share a fixed width. On mobile,
+   the same navigation component opens below the icon as a compact popup. */
+:root {
+  --library-sidebar-width: 16rem;
 }
 
-.library-menu .dropdown-divider {
-  margin: 0.25rem 0;
+.library-brand-col {
+  width: auto;
+}
+
+.library-sidebar {
+  width: var(--library-sidebar-width);
+  flex-shrink: 0;
+}
+
+.library-dropdown {
+  width: min(var(--library-sidebar-width), calc(100vw - 1rem));
+  max-height: calc(100dvh - 4rem);
+  overflow: hidden;
+}
+
+.library-dropdown-dialog {
+  outline: none;
+}
+
+.library-dropdown .library-sidebar-content {
+  max-height: calc(100dvh - 4rem);
+}
+
+@media (min-width: 768px) {
+  .library-brand-col {
+    width: var(--library-sidebar-width);
+    border-right: var(--bs-border-width) solid var(--bs-border-color);
+  }
 }
 
 /* A flex child needs an explicit min-width: 0 to shrink below its text's

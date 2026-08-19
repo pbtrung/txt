@@ -12,7 +12,13 @@ export function LibraryHeader({
 }) {
   return (
     <div className="d-flex align-items-center border-bottom flex-shrink-0">
-      <div className="px-2 py-2">{menu}</div>
+      <div className="d-flex align-items-center gap-2 px-2 px-md-3 py-2 library-brand-col">
+        {menu}
+        <div className="d-none d-md-flex align-items-center gap-2">
+          <i className="bi bi-book fs-5" aria-hidden="true" />
+          <span className="fw-semibold fs-5">Skypiea</span>
+        </div>
+      </div>
       <div className="flex-grow-1 px-2 px-md-3 py-2">
         <SearchField
           className="search-box position-relative"
