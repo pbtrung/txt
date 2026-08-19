@@ -7,7 +7,7 @@
 | AEAD      | Ascon-Keccak (`lc_ak_alloc_taglen`)                                               | 64-byte key, 64-byte IV, 64-byte tag                      |
 | KDF       | HKDF-SHA3-512 (`lc_hkdf_*`)                                                       | produces 128 bytes of OKM (64-byte AEAD key + 64-byte IV) |
 | KEM       | ML-KEM-1024 + X448 (Curve448) hybrid (`lc_kyber_1024_x448_keypair`/`_enc`/`_dec`) | see Composite KEM Key Sizes below                         |
-| Signature | Web Crypto ECDSA P-521 with SHA-512                                               | request-proof version 1; approximately 256-bit classical security |
+| Signature | Web Crypto ECDSA P-521 with SHA-512                                               | signing-suite v1, request-proof protocol v2; approximately 256-bit classical security |
 
 ### Composite KEM Key Sizes
 
@@ -23,7 +23,7 @@ Each `keyStore` keypair is leancrypto's `lc_kyber_1024_x448` hybrid keypair — 
 
 ### Versioned request signatures
 
-Every account has a separate signing key for proving possession when calling `/v1/r2-token` (docs/auth.md). This key is unrelated to the administrator-only composite KEM keypair above. The active suite is stored with the key, and the Worker accepts only that exact version; the request cannot select an older supported algorithm.
+Every account has a separate signing key for proving possession when calling `/v1/r2-token` (docs/auth.md). This key is unrelated to the administrator-only composite KEM keypair above. The active signing suite is stored with the key and authenticated by the Worker-signed ticket. The proof protocol has its own version because changing the canonical message does not necessarily require rotating the key suite.
 
 | version | algorithm | public-key encoding | private-key encoding | signature encoding |
 |---:|---|---|---|---|
@@ -32,19 +32,19 @@ Every account has a separate signing key for proving possession when calling `/v
 
 Version 2 is reserved as the migration direction, not accepted today. When enabled, the Worker must verify both the P-521 and ML-DSA-87 components over the identical canonical message; accepting either component alone would permit downgrade. Version-specific public/private blobs are opaque to the generic endpoint layer, so adding the hybrid does not change the JSON envelope. P-521 offers approximately 256-bit classical security but is not post-quantum secure.
 
-For version 1, the client and Worker construct these bytes exactly:
+For proof protocol version 2 using signing suite 1, the client and Worker construct these bytes exactly:
 
 ```
 UTF8("txt:r2-token-proof") || 0x00 ||
-U32BE(sign_version) ||
-U32BE(length(UTF8(uid))) || UTF8(uid) ||
-SHA-256(UTF8(firebase_id_token)) ||
+U32BE(proof_version) ||
+SHA-256(UTF8(exact_compact_r2_ticket)) ||
+user_handle_32_bytes ||
 U64BE(expires_at_unix_seconds) ||
 request_id_32_bytes ||
 SHA-512(UTF8(db_path) || UTF8(db_prefix))
 ```
 
-`db_path` and `db_prefix` are each validated as exactly 52 lowercase base32-Crockford ASCII characters before this encoding is built, making their concatenation unambiguous. The fixed domain label prevents the signature from being valid in another protocol. Integer encodings are unsigned, network byte order. The request id is generated with `crypto.getRandomValues`; the expiry is at most 60 seconds after Worker time. The Worker supplies `uid` from the verified Firebase `sub` claim and hashes the exact bearer token it received rather than accepting either value from JSON.
+The client signs the hash of the exact compact JWS string it sends, including its original base64url segments. Re-serializing the ticket payload before hashing is forbidden. `user_handle` must decode to exactly 32 bytes. `db_path` and `db_prefix` must each be exactly 52 lowercase base32-Crockford characters, making their concatenation unambiguous. The fixed domain label prevents cross-protocol use. Integer encodings are unsigned network byte order. The request id comes from `crypto.getRandomValues`; expiry is at most 60 seconds after Worker time.
 
 The browser signs the canonical bytes with:
 
@@ -58,7 +58,7 @@ crypto.subtle.sign(
 
 Web Crypto returns the P-521 ECDSA signature as two fixed-width integers in order: `r` followed by `s`. Each integer is a 66-byte unsigned big-endian value, left-padded with zero bytes when necessary. The resulting signature is exactly 132 bytes (`r`, 66 bytes, plus `s`, 66 bytes). This is the raw IEEE P1363 form, not an ASN.1 DER sequence.
 
-The Worker imports `key_store.sign_pubkey` as P-521 SPKI, requires that exact 132-byte signature format, rebuilds the canonical proof independently, and verifies it with the same Web Crypto parameters. A valid signature proves access to the unwrapped per-user private key; it does not authorize the paths. Authorization is the separate equality check between the final 64-byte SHA-512 value above and `users.db_binding_hash`.
+The Worker first verifies the ticket and imports its authenticated `sign_public_key` as P-521 SPKI. It requires the exact 132-byte signature format, rebuilds the canonical proof independently, and verifies it with the same Web Crypto parameters. A valid signature proves access to the unwrapped per-user private key. Path authorization is the separate equality check between the final SHA-512 value above and the ticket's authenticated `db_binding_hash`; handle binding is `SHA-256(user_handle) == ticket.user_handle_hash`.
 
 ## Blob Format
 

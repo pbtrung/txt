@@ -8,7 +8,7 @@ A document's own content is not in that file. Each document is a separate encryp
 
 ## 1. Where things live
 
-`db_path`, `db_prefix`, and `db_master_key` (256 random bytes, base64-encoded — the SQLCipher key for the file in §1) all come from `ctl` (docs/auth.md §2 and §5): the client recovers them by decrypting its `cred_store.content` after `/v1/keys`, then submits the two paths with its versioned per-user signature proof to `/v1/r2-token` for possession checking, pair-binding authorization, and scoped R2 credentials.
+`user_handle`, `db_path`, `db_prefix`, and `db_master_key` (256 random bytes, base64-encoded — the SQLCipher key for the file in §1) all come from encrypted `cred_store.content` after `/v1/keys` (docs/auth.md §2 and §5). That endpoint also returns a 24-hour Worker-signed binding ticket. The client submits the ticket, decrypted handle, two paths, and a fresh versioned P-521 proof to `/v1/r2-token` for handle binding, possession checking, pair-binding authorization, and scoped R2 credentials. Renewing R2 credentials requires neither another Firebase token nor a Turso lookup while the ticket remains valid.
 
 ```
 s3://{bucket}/{db_path}
@@ -129,7 +129,7 @@ Migration is driven by inspecting the tables, columns, indexes, and triggers tha
 5. Ensure `txt_schema_migrations` exists. If it lacks `reset_initial_last_accessed`, correct the original ingestion bug by resetting every existing `txt.last_accessed` to `0`, then record that named migration in the same transaction. Subsequent runs see the marker row and never repeat the reset. A browser opening an old database may create the marker table but does not insert this row, so browser-before-CLI deployment order cannot accidentally skip the reset. Fresh databases record the marker immediately because new ingestion initializes `last_accessed` to `0` rather than `created_at`.
 6. `VACUUM`, write the local checkpoint, and conditionally upload the database only after every step succeeds.
 
-The command reaches every account through the administrator-owned backup `cred_store` row guaranteed by docs/auth.md. It verifies that every `users` row has a decryptable backup before making changes. R2 is always its input source; `--local-db-dir` contains checkpoints for inspection only, never a later upload base. A changed database is uploaded with `If-Match` against the downloaded ETag, so a concurrent browser commit aborts without data loss and the operator reruns from the new remote object. An already-migrated database is not uploaded. Provisioning also computes each `users.db_binding_hash` from the decrypted path pair and installs the required versioned signing-key material before the new token endpoint is enabled; there is no unsigned legacy mode.
+The command reaches every account through the administrator-owned backup `cred_store` row guaranteed by docs/auth.md. It verifies that every `users` row has a decryptable backup before making changes. R2 is always its input source; `--local-db-dir` contains checkpoints for inspection only, never a later upload base. A changed database is uploaded with `If-Match` against the downloaded ETag, so a concurrent browser commit aborts without data loss and the operator reruns from the new remote object. An already-migrated database is not uploaded. Account provisioning—not `--update-db`—installs `users.user_handle`, adds the identical handle to the encrypted self/admin credential payloads, computes `users.db_binding_hash`, and installs the signing-key material required by the ticket flow.
 
 `txt_key` is unrelated to `db_master_key`: it is the AEAD key for one document's content object, generated fresh per document, so leaking one document's key exposes nothing about any other document or about the database file itself.
 
@@ -137,7 +137,7 @@ The command reaches every account through the administrator-owned backup `cred_s
 
 ## 4. Build order
 
-1. Provision the `ctl` SHA-512 path-pair binding and versioned P-521 signing key in docs/auth.md before any browser receives database write access.
+1. Provision the `ctl` user handle, SHA-512 path-pair binding, and versioned P-521 signing key in docs/auth.md before any browser receives database write access.
 2. Migrate the SQLCipher schema through `--update-db`; deploy this safely before the writing UI because the existing read-only UI ignores the added column and CFI bookmark table.
 3. Return and parse the separate `db_path` read-write and `db_prefix` read-only credentials, including refresh and R2 CORS support for `PUT`, `If-Match`, `If-None-Match`, and exposed `ETag`.
 4. Introduce the browser database store: no-cache GET plus `ETag`, one mutation queue, conditional PUT, conflict reload/replay, bounded retries, and explicit unsaved state.

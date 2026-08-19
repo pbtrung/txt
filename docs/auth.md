@@ -1,122 +1,113 @@
 # Auth — Design
 
-Firebase identity, exchanged at a Cloudflare Worker for two things a client needs to open and update its own data: wrapped key material from the control database (`ctl`), and two short-lived R2 credentials with separate database and document scopes.
+Firebase authenticates the browser once at `POST /v1/keys`. That response returns the user's wrapped key material and a Worker-signed, 24-hour R2 binding ticket. The browser decrypts its `user_handle`, storage paths, and P-521 private key locally. It then renews short-lived R2 credentials through `POST /v1/r2-token` using the ticket and a fresh P-521 proof, without sending another Firebase token or querying Turso.
 
-The client authenticates with Firebase, sends its ID token to the Worker, and gets back its own uid, wrapped `umk`, wrapped P-521 signing private key, and wrapped `cred_store` backup (§4.1). It decrypts the private material locally, recovers `db_path`, `db_master_key`, and `db_prefix` (docs/data_model.md), then signs its `/v1/r2-token` request. After verifying both the per-user signature and the stored SHA-512 binding for `db_path || db_prefix`, the Worker returns one read-write credential for the exact `db_path` object and one read-only credential for `{db_prefix}/*` (§4.2). The signature proves possession of the user's decrypted key; the hash authorizes the requested paths. The Worker mints credentials; it does not create users or storage prefixes. Both are provisioned by an administrator out of band.
+The ticket is an integrity-protected certificate, not a bearer credential. It binds the Firebase-provisioned account to the hash of the user's decrypted handle, its signing public key, and its authorized path-pair hash. A caller must possess both the decrypted handle and the matching P-521 private key to use it.
 
-The Worker is the only component holding Turso credentials, and it holds no encryption key: `umk`, `cred_store.content`, and every object in R2 are encrypted client-side, so a compromised Worker exposes only ciphertext and the metadata described in §8.
+The Worker mints one read-write credential for the exact `db_path` object and one read-only credential for `{db_prefix}/*`. It never creates users or storage prefixes; an administrator provisions both out of band.
 
 ---
 
-## 1. Worker secrets
+## 1. Worker configuration and secrets
 
-There is exactly one Turso database, `ctl` (§2), holding the three tables that make up the whole control plane: `users`, `key_store`, `cred_store`. Every user's actual data lives as objects in R2 (docs/data_model.md), so there is no per-user Turso database and no step where the Worker mints a Turso token scoped to one; its only Turso credential is a single token against `ctl` itself.
+There is one Turso control database, `ctl` (§2). User data lives as encrypted objects in R2 (docs/data_model.md).
 
-| secret | value |
+| name | purpose |
 |---|---|
-| `CTL_DB_URL` | the control database's URL (§2) |
-| `CTL_DB_TOKEN` | a non-expiring `read-only` database token for `ctl` |
-| `FIREBASE_PROJECT_ID` | expected `iss` and `aud` of incoming ID tokens |
-| `R2_ENDPOINT`, `R2_BUCKET`, `R2_REGION` | the object store the R2 credentials in §4.2 are scoped into |
-| `R2_READ_WRITE_ACCESS_KEY_ID` / `R2_READ_WRITE_SECRET_ACCESS_KEY` | parent credential every §4.2 temporary credential is signed from; clients never receive it, and each child credential is narrowed to either the caller's exact database object or document prefix |
+| `CTL_DB_URL` | control database URL |
+| `CTL_DB_TOKEN` | non-expiring, read-only token for `ctl` |
+| `FIREBASE_PROJECT_ID` | expected Firebase token issuer and audience for `/v1/keys` |
+| `R2_TICKET_SECRET` | at least 32 random bytes, used only to sign and verify R2 binding tickets |
+| `R2_ENDPOINT`, `R2_BUCKET`, `R2_REGION` | R2 destination returned with temporary credentials |
+| `R2_READ_WRITE_ACCESS_KEY_ID` / `R2_READ_WRITE_SECRET_ACCESS_KEY` | parent credential used to sign path-limited temporary R2 credentials |
+
+`R2_TICKET_SECRET` must not reuse the R2 secret access key. All Worker instances use the same ticket secret. Rotating it invalidates every outstanding ticket and is an emergency global response, not routine per-user revocation.
+
+The Worker Turso token is read-only. A leaked Worker database token can expose ciphertext and control metadata, but cannot alter or delete rows.
 
 ---
 
-## 2. The control database
+## 2. Control database
 
-`ctl` is an ordinary Turso database in the same organization, created by an administrator and holding three tables. Its actual name is a generated value, same recipe as `db_path` below, recorded as `turso_ctl_db_name`/`turso_ctl_db_url` in the administrator's own backend config when it's created; `ctl` is only this document's shorthand for it. It is not special to Turso in any way; it is simply the database the Worker consults for identity and key material.
+`ctl` holds identity, wrapped key material, the handle binding, and the storage-path binding:
 
 ```sql
 CREATE TABLE users (
-  id              TEXT PRIMARY KEY,       -- Firebase uid (the ID token's sub claim)
-  type            TEXT NOT NULL,          -- admin or user
-  db_binding_hash BLOB NOT NULL CHECK (length(db_binding_hash) = 64),
-  created_at      INTEGER NOT NULL         -- unix ms
+  id              TEXT PRIMARY KEY,       -- Firebase uid
+  user_handle     BLOB NOT NULL UNIQUE CHECK (length(user_handle) = 32),
+  type            TEXT NOT NULL CHECK (type IN ('admin', 'user')),
+  created_at      INTEGER NOT NULL,        -- unix ms
+  db_binding_hash BLOB NOT NULL CHECK (length(db_binding_hash) = 64)
 );
 
 CREATE TABLE key_store (
   user_id        TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-  umk            BLOB NOT NULL,  -- 128 random bytes, wrapped by user_root_key
-  pubkey         BLOB,           -- composite KEM public key (docs/crypto.md), raw; admin row only
-  privkey        BLOB,           -- composite KEM private key, wrapped by umk (docs/crypto.md); admin row only
+  umk            BLOB NOT NULL,  -- wrapped by user_root_key
+  pubkey         BLOB,           -- composite KEM public key; admin only
+  privkey        BLOB,           -- wrapped composite KEM private key; admin only
   sign_version   INTEGER NOT NULL CHECK (sign_version >= 1),
   sign_algorithm TEXT NOT NULL,
-  sign_pubkey    BLOB NOT NULL,  -- v1: P-521 SubjectPublicKeyInfo DER
-  sign_privkey   BLOB NOT NULL   -- v1: P-521 PKCS#8 DER, wrapped by umk
+  sign_pubkey    BLOB NOT NULL,  -- v1: P-521 SPKI DER
+  sign_privkey   BLOB NOT NULL   -- v1: wrapped P-521 PKCS#8 DER
 );
 
 CREATE TABLE cred_store (
-  owner_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  for_user_id  TEXT NOT NULL REFERENCES users(id),   -- ctl users.id: this account's own id, or another user's
-  -- owner_id = for_user_id is an account's own row; every account, admin or not, has exactly one
-  -- owner_id = the admin's id and for_user_id = a user's id is the admin's backup of that user's creds; both wrapped under the admin's own umk
-  content      BLOB NOT NULL,          -- wrapped by owner_id's umk; { display_name, db_master_key, db_path, db_prefix }
+  owner_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  for_user_id TEXT NOT NULL REFERENCES users(id),
+  content     BLOB NOT NULL,
   PRIMARY KEY (owner_id, for_user_id)
 );
 ```
 
-`db_path` and `db_prefix` are each 32 random bytes rendered as exactly 52 lowercase base32-Crockford ASCII characters, the same recipe as every object key in the store (docs/data_model.md): `db_path` addresses a user's own SQLCipher database file in R2, `db_prefix` the R2 prefix its documents live under. `db_master_key` is 256 random bytes, base64-encoded — the SQLCipher key for that database file. The raw values live only inside encrypted `cred_store.content`; `users.db_binding_hash` stores `SHA-512(UTF-8(db_path) || UTF-8(db_prefix))`. Concatenation is unambiguous because both inputs are validated as exactly 52 ASCII bytes before hashing. This binding lets the Worker authorize the pair submitted by the authenticated uid without keeping either raw path in `ctl`. Because the two source values are independent random 256-bit identifiers, the digest does not make them practically enumerable.
+`user_handle` is 32 random bytes. The identical bytes are base64-encoded as `cred_store.content.user_handle` before that JSON payload is encrypted under the owner's `umk`. The Worker reads the plaintext database column while creating a ticket, but `/v1/keys` never returns that column separately. The browser obtains the handle only from the credential store it decrypts locally.
 
-Every account also has one active request-signing suite in `key_store`. Version `1` is `ECDSA-P521-SHA512`: `sign_pubkey` is an SPKI DER public key, while `sign_privkey` is a PKCS#8 DER private key protected by the standard authenticated blob encryption in docs/crypto.md using the account's unwrapped `umk`. The Worker reads only the public key and wrapped private key. The browser unwraps the private key locally and uses it only to prove possession when requesting R2 credentials. The stored `sign_version` is authoritative: the client cannot negotiate an older suite, and an unknown or mismatched version is rejected. A future version can replace the opaque key and signature encodings with a P-521 + post-quantum hybrid while preserving the endpoint envelope (docs/crypto.md).
+`db_path` and `db_prefix` are independent 32-byte random values rendered as 52 lowercase base32-Crockford characters. `db_master_key` is 256 random bytes encoded as base64. Their plaintext forms live inside encrypted `cred_store.content`:
 
-How the Worker reaches `ctl`, and where each half comes from:
-
-| secret | how the administrator produces it | value |
-|---|---|---|
-| `CTL_DB_URL` | generated when the control database is created, recorded as `turso_ctl_db_url` in the administrator's own backend config | `libsql://{turso_ctl_db_name}-{account_name}.aws-us-east-1.turso.io` |
-| `CTL_DB_TOKEN` | minted once with the Platform API token: `POST /v1/organizations/{org}/databases/{turso_ctl_db_name}/auth/tokens?authorization=read-only` (no `expiration`, so it does not expire) | the returned `jwt` |
-
-The token is `read-only` because the Worker only ever reads `users`, `key_store`, and `cred_store`. That is the whole reason this is a separate secret rather than a reuse of the Platform API token: a Worker bug or injection cannot write or drop any of the three tables.
-
-Both secrets are set on the Worker at deploy time and rotated by minting a replacement and redeploying.
-
-The Worker queries `ctl` over the libsql HTTP API, so no driver and no connection pool is involved:
-
-```
-POST {CTL_DB_URL over https}/v2/pipeline
-Authorization: Bearer {CTL_DB_TOKEN}
-
-{ "requests": [
-    { "type": "execute",
-      "stmt": { "sql": "SELECT u.type, u.db_binding_hash, k.umk, k.pubkey, k.privkey, k.sign_version, k.sign_algorithm, k.sign_pubkey, k.sign_privkey, c.content FROM users u JOIN key_store k ON k.user_id = u.id JOIN cred_store c ON c.owner_id = u.id AND c.for_user_id = u.id WHERE u.id = ?",
-                "args": [ { "type": "text", "value": "{uid}" } ] } },
-    { "type": "close" } ] }
+```json
+{
+  "user_handle": "<base64 32 bytes>",
+  "display_name": "...",
+  "db_master_key": "<base64 256 bytes>",
+  "db_path": "<52-character token>",
+  "db_prefix": "<52-character token>"
+}
 ```
 
-Nothing else lives in `users` beyond identity, account type, and the opaque path-pair binding. No email, no display name, no Firebase claims — Firebase owns identity, `ctl` owns only the mapping, authorization hash, and wrapped key material.
+`users.db_binding_hash` stores `SHA-512(UTF-8(db_path) || UTF-8(db_prefix))`. Both inputs have fixed validated lengths, so the concatenation is unambiguous. The ticket carries this digest rather than either raw path.
+
+Signing-suite version 1 is `ECDSA-P521-SHA512`. `sign_pubkey` is SPKI DER. `sign_privkey` is PKCS#8 DER wrapped with the account's `umk` using docs/crypto.md. The signing-suite version is separate from the R2 proof protocol version.
+
+The Worker's `/v1/keys` lookup is by Firebase uid:
+
+```sql
+SELECT u.type, u.user_handle, u.db_binding_hash,
+       k.umk, k.sign_version, k.sign_algorithm,
+       k.sign_pubkey, k.sign_privkey, c.content
+FROM users u
+JOIN key_store k ON k.user_id = u.id
+JOIN cred_store c ON c.owner_id = u.id AND c.for_user_id = u.id
+WHERE u.id = ?;
+```
+
+`/v1/r2-token` does not query `ctl`; all fields it needs are authenticated by the signed ticket.
 
 ---
 
 ## 3. Provisioning
 
-### 3.1 Where the uid comes from
+Firebase assigns the uid before provisioning. An administrator obtains that uid and runs `--init-admin` or `--init-user`. A valid Firebase account without a `users` row is authenticated but not provisioned, so `/v1/keys` returns 403.
 
-`uid` is Firebase's user identifier: the `sub` claim of an ID token, and the primary key of `users`. Nothing in this system generates it, and it does not exist until the user has signed in to Firebase at least once.
+Provisioning performs these idempotent operations:
 
-So provisioning is necessarily second. The order is:
+1. Generate one 32-byte `user_handle`.
+2. Generate `db_path` and `db_prefix` as independent 32-byte random values encoded as base32-Crockford.
+3. Generate the 128-byte `umk` and 256-byte `db_master_key`.
+4. Insert `users` with the Firebase uid, raw `user_handle`, and `db_binding_hash`.
+5. Generate the version-1 P-521 key pair. Store its public key and wrap its private key with `umk`.
+6. Encrypt the credential payload, including the same base64-encoded `user_handle`, into the account's self-owned `cred_store` row.
+7. For an ordinary user, wrap the same complete payload into the administrator-owned backup row.
 
-1. The user signs up and signs in through Firebase. Firebase assigns the uid.
-2. The administrator reads that uid from Firebase — the Authentication tab in the Firebase console, or the Admin SDK (`getUserByEmail`, `listUsers`) — keyed by whatever the user identified themselves with.
-3. The administrator provisions (§3.2).
-
-Between steps 1 and 3 the user is authenticated but not provisioned: the endpoint returns 403 and the client shows a pending state. That window is however long the administrator takes, so the client must treat 403 as "not yet", not as an error to retry tightly — back off to minutes, and stop after a bounded number of attempts.
-
-An administrator who wants provisioning to feel immediate needs the uid earlier, which means a signup hook rather than a console lookup. That is out of scope here: this design has no automatic path from a Firebase account to a database.
-
-### 3.2 Steps
-
-Done by an administrator, never by the Worker, in one step — unlike a database, an R2 prefix needs no separate creation phase, so there is nothing left to do lazily on first use:
-
-1. Generate `db_path` and `db_prefix`: 32 random bytes each, base32-Crockford.
-2. Generate `umk`: 128 random bytes.
-3. Compute `db_binding_hash = SHA-512(UTF-8(db_path) || UTF-8(db_prefix))`, then `INSERT INTO users (id, type, db_binding_hash, created_at) VALUES (?, 'user', ?, ?)` in `ctl`, with the uid from §3.1.
-4. Generate the version-1 P-521 signing key pair. Export the public key as SPKI DER and the private key as PKCS#8 DER, wrap the private key with `umk`, then insert `key_store` with `sign_version = 1`, `sign_algorithm = 'ECDSA-P521-SHA512'`, and both signing-key fields. `umk` itself is wrapped by a `user_root_key` generated for this account. The administrator's row additionally carries the existing composite KEM `pubkey`/`privkey` fields.
-5. `INSERT INTO cred_store (owner_id, for_user_id, content) VALUES (?, ?, ?)` with `owner_id = for_user_id` = the uid, `content` wrapped by `umk` and holding `{ display_name, db_master_key, db_path, db_prefix }`.
-6. A second `cred_store` row for the administrator's own backup: `owner_id` = the administrator's own uid, `for_user_id` = the new user's uid, the same `{ display_name, db_master_key, db_path, db_prefix }` payload re-wrapped under the administrator's own `umk` this time. Every user has this row, which lets `--update-db` (docs/data_model.md) reach every user's database from just the administrator's own creds.json.
-
-The administrator runs this with their own `ctl`/Turso credentials (§1) plus the new user's own Firebase identity (only needed to sign in and discover the uid from §3.1) — the CLI's `--init-user --admin-creds ADMIN_CREDS_JSON --user-creds USER_CREDS_JSON`. `user_root_key` is generated and packaged, along with `firebase_email`/`firebase_password`/`firebase_api_key`, into that user's own reduced creds.json (`--user-creds`'s file) — the same shape the browser itself reads (`ui/src/data/creds.ts`'s `BrowserCreds`), since an ordinary user never holds `ctl`/Turso or R2 credentials of their own. Nor a Worker URL: the browser always reaches `/v1/*` at its own origin, since `wrangler.jsonc`'s `assets` block serves it from the same Worker.
-
-A Firebase account with no `users` row is authenticated but not provisioned, and the endpoint returns 403. The Worker never creates the row, so a valid Firebase signup grants no access on its own.
+Re-running provisioning migrates missing control-plane columns and fills missing handle values. `--update-db` remains responsible only for schemas inside users' encrypted SQLCipher databases in R2; it does not migrate the Turso control schema.
 
 ---
 
@@ -124,7 +115,7 @@ A Firebase account with no `users` row is authenticated but not provisioned, and
 
 ### 4.1 `POST /v1/keys`
 
-```
+```http
 POST /v1/keys
 Authorization: Bearer <Firebase ID token>
 ```
@@ -132,45 +123,81 @@ Authorization: Bearer <Firebase ID token>
 ```json
 {
   "type": "user",
-  "uid": "<uid derived from the verified Firebase ID token>",
+  "uid": "<verified Firebase uid>",
   "umk": "<base64 ciphertext>",
   "signing": {
     "version": 1,
     "algorithm": "ECDSA-P521-SHA512",
     "private_key": "<base64 ciphertext>"
   },
-  "cred_store": "<base64 ciphertext>"
+  "cred_store": "<base64 ciphertext>",
+  "r2_ticket": "<compact Worker-signed JWS>"
 }
 ```
 
-`uid` is informational output derived from the already verified Firebase `sub` claim; it is never accepted from a request body. `signing.private_key` is the stored `sign_privkey` blob, still wrapped by `umk`. The browser rejects an unknown signing version or an algorithm that does not match that version before attempting to unwrap or import it.
+The Worker verifies the Firebase ID token, loads the account by the verified `sub`, and signs a ticket with `R2_TICKET_SECRET`. The compact JWS uses `HS256`, header `typ = JWT`, and these claims:
+
+```json
+{
+  "v": 1,
+  "aud": "r2-token",
+  "sub": "<Firebase uid>",
+  "jti": "<base64url 32 random bytes>",
+  "user_handle_hash": "<base64url SHA-256(raw user_handle)>",
+  "sign_version": 1,
+  "sign_algorithm": "ECDSA-P521-SHA512",
+  "sign_public_key": "<base64url SPKI DER>",
+  "db_binding_hash": "<base64url SHA-512(path pair)>",
+  "iat": 0,
+  "exp": 0
+}
+```
+
+`exp` is exactly 24 hours after `iat`. The ticket is returned outside `cred_store` because it does not contain plaintext handles, paths, or private keys. The client keeps it only in memory and discards it when the vault locks.
 
 | status | condition |
 |---|---|
-| 200 | key material returned |
-| 401 | ID token missing, malformed, expired, or wrong issuer or audience |
-| 403 | no `users` row for this uid — the account is not provisioned |
+| 200 | wrapped key material and ticket returned |
+| 401 | Firebase token missing or invalid |
+| 403 | account not provisioned |
 | 429 | per-uid rate limit exceeded |
 | 503 | `ctl` unavailable |
 
 ### 4.2 `POST /v1/r2-token`
 
-```
+This endpoint has no Firebase Authorization header:
+
+```http
 POST /v1/r2-token
-Authorization: Bearer <Firebase ID token>
 Content-Type: application/json
 
 {
-  "db_path": "<the path the client just decrypted from cred_store>",
-  "db_prefix": "<the prefix the client just decrypted from cred_store>",
+  "ticket": "<the exact compact JWS returned by /v1/keys>",
+  "user_handle": "<base64 32 bytes decrypted from cred_store>",
+  "db_path": "<decrypted path>",
+  "db_prefix": "<decrypted prefix>",
   "proof": {
-    "version": 1,
+    "version": 2,
     "expires_at": 0,
     "request_id": "<base64 32 random bytes>",
     "signature": "<base64 P-521 signature>"
   }
 }
 ```
+
+The Worker:
+
+1. Verifies the ticket signature, `v`, `aud`, `iat`, and `exp` using `R2_TICKET_SECRET`.
+2. Requires `user_handle` to decode to exactly 32 bytes and compares its SHA-256 digest with `ticket.user_handle_hash`.
+3. Validates both paths and compares their SHA-512 binding with `ticket.db_binding_hash`.
+4. Requires proof protocol version 2 and a proof expiry no more than 60 seconds in the future.
+5. Rebuilds the canonical proof from the exact ticket bytes, raw handle, expiry, request id, and path binding (docs/crypto.md).
+6. Verifies the 132-byte raw P-521 signature using the signing suite and public key authenticated by the ticket.
+7. Mints the two 15-minute R2 credentials.
+
+Hashing the exact compact ticket into the proof prevents moving a proof between tickets. The handle comparison binds the client's decrypted credential store to the ticket. The P-521 signature proves possession of the matching decrypted private key. The path-pair digest authorizes only the provisioned storage paths.
+
+The response contains exactly one credential of each type:
 
 ```json
 {
@@ -196,85 +223,114 @@ Content-Type: application/json
 }
 ```
 
-The `credentials` array contains exactly one item of each `type`; order has no meaning, and the client rejects missing, duplicate, or unknown types. `endpoint`/`bucket`/`region` are common to both credentials. The client carries no R2 connection details of its own, so this response is its only source of R2 configuration.
-
-Before minting, the Worker validates both paths as 52-character lowercase base32-Crockford values, computes `SHA-512(UTF-8(db_path) || UTF-8(db_prefix))`, and compares the 64-byte result with the authenticated user's `users.db_binding_hash`. It also requires `proof.version` to equal the user's stored `sign_version`, reconstructs the canonical proof described in docs/crypto.md, and verifies `proof.signature` with that user's `sign_pubkey`. Version 1 signatures use P-521 with SHA-512. Web Crypto encodes the signature as a 66-byte big-endian `r` integer followed by a 66-byte big-endian `s` integer, for exactly 132 bytes; this is raw IEEE P1363 encoding rather than ASN.1 DER. `expires_at` must be in the future and no more than 60 seconds after Worker time; binding the proof to the current Firebase ID token limits a captured proof to that bearer token and short window. Any mismatch returns 403.
-
-Both checks are required. The P-521 signature proves that the caller decrypted the account's signing private key, but a user-held key can sign arbitrary text and therefore cannot authorize storage paths by itself. The SHA-512 binding performs that authorization. The `db_path` credential has `object-read-write` scope limited to the one exact database object; the `db_prefix` credential has `object-read-only` scope limited to `{db_prefix}/*`. The split is deliberate: reading progress and bookmarks require replacing the encrypted database, but document objects are immutable to the browser.
-
-Administrators receive the same two least-privilege credentials for their own browser session. Holding backup `cred_store` rows does not authorize an administrator's browser to request other users' paths. Out-of-band Python administration commands use the administrator's separately held static R2 configuration and do not call this endpoint.
+`db_path` receives exact-object read-write scope. `{db_prefix}/*` receives prefix read-only scope. Administrators receive the same scopes for their own browser sessions; an administrator's backup rows do not authorize other users' paths in the browser.
 
 | status | condition |
 |---|---|
 | 200 | credential pair minted |
-| 400 | a path or proof field is missing, malformed, incorrectly sized, or outside the allowed time window |
-| 401 | ID token missing, malformed, expired, or wrong issuer or audience |
-| 403 | no row for this uid, path binding mismatch, signing-version mismatch, or invalid signature |
-| 429 | per-uid rate limit exceeded |
-| 503 | `ctl`, or the R2 signing step, unavailable |
+| 400 | malformed handle, path, ticket envelope, or proof |
+| 401 | ticket invalid, expired, or for another audience |
+| 403 | handle, path binding, signing suite, or signature mismatch |
+| 429 | per-account R2-token rate limit exceeded |
+| 503 | R2 signing unavailable |
 
 ---
 
-## 5. Flow
+## 5. End-to-end flow
 
-**1. Verify the Firebase ID token.** RS256 signature against Google's published keys for `securetoken@system.gserviceaccount.com`, fetched with WebCrypto and cached in the Worker for the lifetime given by the response's `Cache-Control`. Assert `iss = https://securetoken.google.com/{FIREBASE_PROJECT_ID}`, `aud = {FIREBASE_PROJECT_ID}`, `exp` in the future, `iat` and `auth_time` not in the future, and `sub` non-empty. `uid = sub`.
+1. The browser signs in to Firebase and sends the ID token only to `/v1/keys`.
+2. The Worker verifies Firebase, loads the uid's account through its KV cache or `ctl`, creates a 24-hour signed ticket, and returns the ticket with wrapped key material.
+3. The browser unwraps `umk`, `cred_store.content`, and the P-521 private key. It obtains the raw `user_handle`, paths, and database key locally.
+4. The browser signs a version-2 proof bound to the exact ticket, handle, paths, short expiry, and random request id.
+5. `/v1/r2-token` verifies the ticket and proof without Firebase, Turso, or an account-cache read, then locally signs two 15-minute R2 credentials.
+6. The client renews R2 credentials with the same ticket until the ticket expires. It calls Firebase-authenticated `/v1/keys` again only when a new ticket is required.
 
-**2. Look up the user.** The join in §2 against `ctl`, including the path-pair binding and versioned signing-key fields. No row → 403, and nothing is created.
-
-**3. Return `uid`, `type`, `umk`, `sign_version`, `sign_algorithm`, `sign_privkey`, and `cred_store.content`.** Both private blobs remain wrapped — the Worker never sees plaintext key material. The client unwraps `umk` with its own `user_root_key`, then uses `umk` to unwrap the P-521 PKCS#8 private key and `cred_store.content`. It recovers `display_name`, `db_master_key`, `db_path`, and `db_prefix` from the latter.
-
-**4. Sign the request, verify possession and paths, then mint two R2 credentials.** The client builds the versioned canonical proof from the uid, current Firebase ID token, short expiry, random request id, and the SHA-512 path-pair binding, then signs it with its unwrapped P-521 private key (docs/crypto.md). The Worker derives the uid from the same verified Firebase token, reconstructs and verifies the proof, computes and compares `db_binding_hash`, then signs the exact-object read-write and prefix read-only credentials (§4.2). The client tracks both expirations and refreshes the pair before either lapses, and immediately after an authentication rejection from R2. Worker re-authentication and R2 transfers time out after 10 seconds and retry network failures three times, including failures while consuming a response body. A generic browser fetch failure after those attempts renews the R2 credentials once because CORS can mask an R2 authentication response. Exhausting that recovery path does not poison the in-memory session, so a later request can obtain a new pair after connectivity returns.
+Proofs and tickets use fixed expirations, not sliding renewal. `/v1/r2-token` never extends a ticket.
 
 ---
 
-## 6. Caching and rate limits
+## 6. Expiration, KV caching, and rate limits
 
-The `ctl` join is a round trip, so the Worker does not repeat it per request; minting the R2 credentials is a local signing operation, not a round trip, and is not cached.
+### 6.1 Ticket expiration
 
-| key | contents | TTL |
+The signed ticket is stateless and is not stored in KV. Its JWS `exp` claim is set in code when it is issued:
+
+```ts
+const TICKET_TTL_SECONDS = 24 * 60 * 60;
+
+const ticket = await new SignJWT(claims)
+  .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+  .setIssuedAt()
+  .setExpirationTime(`${TICKET_TTL_SECONDS}s`)
+  .sign(ticketSecret);
+```
+
+Verification rejects the ticket after `exp`. There is no per-ticket denylist, active-revocation KV entry, or sliding expiration.
+
+An outstanding ticket can mint R2 credentials until its final second. Because a minted credential lasts 15 minutes, the maximum passive deprovisioning/key-rotation delay is approximately 24 hours and 15 minutes from ticket issuance.
+
+### 6.2 KV expiration
+
+KV caches only the account record used by `/v1/keys` and the rate counters. The account cache expires 24 hours after each write:
+
+```ts
+const KEYS_TTL_SECONDS = 24 * 60 * 60;
+
+await kv.put(`keys:v3:${uid}`, JSON.stringify(account), {
+  expirationTtl: KEYS_TTL_SECONDS,
+});
+```
+
+Cloudflare KV's `expirationTtl` is a relative number of seconds from the `put`. It is storage expiration, not a value interpreted by application code. A later `put` resets the countdown. Rate-limit counters use the same option with `expirationTtl: 60 * 60`.
+
+| KV key | contents | TTL |
 |---|---|---|
-| `keys:v2:{uid}` | `type`, `db_binding_hash`, signing version/algorithm/public/wrapped-private key, `umk`, and `cred_store.content` as returned by the §2 join | 24 hours |
+| `keys:v3:{uid}` | account type, raw handle, path binding, signing suite/public and wrapped-private key, wrapped `umk`, and `cred_store.content` | 24 hours |
+| `ratelimit:v3:keys:{uid}:{window}` | `/v1/keys` count | 1 hour |
+| `ratelimit:v3:r2-token:{sub}:{window}` | valid `/v1/r2-token` count | 1 hour |
 
-Steady state is one KV read for `/v1/keys`. A cache miss is one `ctl` query. The explicit cache-format version prevents a deployment from parsing a pre-signing legacy entry; per-user purge removes both `keys:v2:{uid}` and the old unversioned `keys:{uid}` during the transition.
+The R2 endpoint derives its account identity from the verified ticket. It applies the per-account R2 limit only after validating the ticket and proof so someone holding only public ticket metadata cannot spend another user's quota with invalid signatures. Coarse platform protections can reject abusive unauthenticated traffic before cryptographic verification.
 
-`keys:v2:{uid}` is cached rather than read every time because the underlying rows change only when an administrator changes them; the 24-hour TTL bounds how long a deprovisioned user keeps being served, and revocation (§7) purges the key explicitly.
-
-Rate-limit per `uid` with independent endpoint budgets: 60 `/v1/keys` requests and 30 `/v1/r2-token` requests per hour. Keeping the counters separate prevents routine credential renewal or a reconnect retry from locking the user out of unlock, while still stopping a looping client from exhausting Worker capacity. Rate-limit 403s per uid too: an unprovisioned client retrying in a loop otherwise hits `ctl` on every request.
+Suggested budgets remain 60 `/v1/keys` calls and 30 valid `/v1/r2-token` calls per account per hour.
 
 ---
 
-## 7. Revocation
+## 7. Expiration and operational response
 
-| event | action |
+There is no active per-user ticket revocation. Normal changes take effect as follows:
+
+| event | action and remaining exposure |
 |---|---|
-| a user's `umk` or `cred_store` content leaks | purge `keys:v2:{uid}` (and any legacy `keys:{uid}`) from KV so the next `/v1/keys` call re-reads `ctl`; rotate that account's `user_root_key`/`umk` and signing key if the leak exposed plaintext `umk` |
-| a user's signing private key leaks | generate a replacement key pair, atomically replace the active signing version/key blobs, and purge the user's current and legacy cache keys; the path binding remains unchanged |
-| a temporary R2 credential leaks | nothing to revoke early — it is bounded by its own short expiration (§4.2) |
-| the Worker's R2 signing credential leaks | mint a replacement parent key pair, redeploy; credentials already issued keep working until they expire |
-| the administrator's Platform API token leaks | `DELETE /v1/auth/api-tokens/{name}`, mint a replacement — used only for out-of-band provisioning, never held by the Worker |
-| a user is deprovisioned | delete the `users`, `key_store`, and `cred_store` rows, purge the user's current and legacy cache keys, then delete the user's R2 objects (`db_path` and everything under `db_prefix`) |
+| wrapped `umk` or credential store changed | update `ctl` and purge `keys:v3:{uid}` so the next `/v1/keys` sees it; existing tickets expire naturally |
+| signing key rotated | update the key row and purge the account cache; existing tickets retain the old public key for at most their remaining 24-hour lifetime |
+| user deprovisioned | delete their rows, purge the account cache, and delete their R2 objects; an existing ticket can still mint credentials until expiry |
+| temporary R2 credential leaked | no early revocation; it expires after 15 minutes |
+| ticket and P-521 private key leaked together | rotate the signing key and accept the remaining ticket lifetime, or rotate `R2_TICKET_SECRET` to invalidate all tickets in an emergency |
+| Worker ticket secret leaked | replace `R2_TICKET_SECRET` and redeploy; all tickets stop verifying |
+| parent R2 signing credential leaked | replace the parent key and redeploy; already-issued credentials expire naturally |
 
-Individual R2 credentials cannot be revoked — only left to expire. The short TTL in §4.2 is what bounds exposure in the ordinary case.
+Purging the account cache affects only future `/v1/keys` calls. It cannot revoke a stateless ticket already held by a client.
 
 ---
 
 ## 8. Trust boundary
 
-The Worker holds `ctl` credentials and the parent R2 signing credential, and can therefore read every user's wrapped key material and mint child R2 credentials. It holds no encryption key: `umk` and `cred_store.content` decrypt only client-side, so the Worker — and Turso, and R2 — cannot decrypt anything a user stores.
+The client and Worker are trusted; Turso and R2 are not trusted with plaintext user data. The Worker holds the Turso token, ticket secret, and parent R2 signing credential, but no `user_root_key` or plaintext `umk`. Turso and R2 store encrypted user material.
 
-`/v1/r2-token` does not trust Firebase authentication alone. Its versioned P-521 proof requires possession of the private key that was delivered only as an `umk`-wrapped blob. This protects the endpoint when a Firebase bearer token is stolen without the user's root/decryption material. It is not path authorization: because the user owns the signing key, it can sign any requested text. `users.db_binding_hash` independently binds the requested `db_path || db_prefix` pair to the authenticated uid before any credential is minted. A compromised client holding both decrypted keys can read, overwrite, or delete its own encrypted database and read its own encrypted documents, but cannot obtain a credential scoped to another account. A compromised Worker or leaked parent R2 signing key remains more powerful and requires the rotation response in §7.
+The signed ticket moves the R2 authorization record out of Turso for the ticket's lifetime. Turso can corrupt the account fields returned during a Firebase-authenticated `/v1/keys` call, but the resulting ticket is delivered only to that authenticated browser. Substituting a public key, handle, ciphertext, or path binding causes the legitimate client's decrypted handle or private key proof to fail. Without the Firebase token, Turso cannot obtain the replacement signed ticket for itself. This reduces active Turso tampering to denial of service for that account rather than R2 impersonation.
 
-`db_path` and `db_prefix` are not secrets in the sense of being load-bearing for access control. Their randomness protects metadata privacy, while authorization comes from Firebase identity, the server-side SHA-512 pair binding, the per-user proof of possession, and the short-lived scoped credential. The version field provides algorithm agility, not downgrade negotiation: the Worker's stored version always wins. P-521 provides approximately 256-bit classical security but no post-quantum security; a future hybrid version must require both its classical and PQ signatures rather than accepting either one.
+A stolen ticket is insufficient by itself. A caller also needs the raw handle and the P-521 private key. A compromised client holding all decrypted material can access its own provisioned paths, while a compromised Worker can sign arbitrary tickets and R2 credentials and is therefore inside the trusted computing base.
+
+The ticket's `sign_version` selects the signing key suite. The proof's `version` selects the canonical request protocol. Neither is client-negotiated downward. P-521 provides approximately 256-bit classical security but no post-quantum security; a future hybrid suite must require both its classical and post-quantum signatures.
 
 ---
 
-## 9. Build order
+## 9. Implementation order
 
-1. Firebase ID token verification with cached signing keys, including the negative cases: expired, wrong audience, wrong issuer, tampered signature.
-2. The `ctl` schema and provisioning for the SHA-512 path-pair binding and version-1 P-521 key pair. Rows without all required signing fields are rejected rather than served through a legacy fallback.
-3. The `ctl` join and `/v1/keys`, including uid derived from Firebase plus the versioned wrapped signing private key.
-4. The unprovisioned path: valid Firebase token, no `users` row, 403, and nothing written anywhere.
-5. Canonical proof encoding and P-521 verification in `/v1/r2-token`, followed by SHA-512 path-pair verification and the separate exact-object read-write and prefix read-only credentials.
-6. KV caching, credential refresh, and per-uid rate limits on both endpoints.
-7. Negative tests for wrong signing version, altered proof fields, expired proofs, wrong Firebase-token binding, malformed P-521 encodings, path-pair mismatch, and signature replay outside the allowed window.
-8. Revocation, signing-key rotation, and deprovisioning runbooks.
+1. Add `users.user_handle`, generate one 32-byte value per account, and place its base64 representation in every corresponding encrypted credential payload and administrator backup.
+2. Extend the `/v1/keys` account lookup/cache and response with a 24-hour Worker-signed ticket.
+3. Separate signing-suite version 1 from proof-protocol version 2.
+4. Change the client proof to bind the exact ticket, raw handle, expiry, request id, and path pair.
+5. Remove Firebase and Turso lookup from `/v1/r2-token`; verify only the signed ticket and P-521 proof.
+6. Version the KV formats and apply account rate limiting only after successful ticket/proof verification.
+7. Add negative tests for expired or altered tickets, wrong handle, wrong ticket audience, ticket/proof substitution, malformed signatures, and path mismatch.
