@@ -142,7 +142,7 @@ The Worker verifies the Firebase ID token, loads the account by the verified `su
   "v": 1,
   "aud": "r2-token",
   "sub": "<Firebase uid>",
-  "jti": "<base64url 32 random bytes>",
+  "jti": "<base64 32 random bytes>",
   "user_handle_hash": "<base64url SHA-256(raw user_handle)>",
   "sign_version": 1,
   "sign_algorithm": "ECDSA-P521-SHA512",
