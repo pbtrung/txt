@@ -77,13 +77,24 @@ class BucketCleaner:
         return bucket_keys
 
     def _stale_keys(self, accounts, allowlist, bucket_keys) -> list[str]:
-        retained = bucket_keys & allowlist
+        shared = self._shared_keys(accounts, bucket_keys)
+        retained = (bucket_keys & allowlist) | shared
         stale = sorted(bucket_keys - retained)
         self.logger.info(
             f"{len(accounts)} account(s), {len(bucket_keys)} bucket object(s), "
-            f"{len(retained)} retained, {len(stale)} stale."
+            f"{len(retained)} retained ({len(shared)} shared), {len(stale)} stale."
         )
         return stale
+
+    def _shared_keys(
+        self, accounts: list[StorageAccount], bucket_keys: set[str]
+    ) -> set[str]:
+        # Public-share deletion is authorized by D1 and performed by the
+        # trusted Worker. The generic R2 cleaner cannot prove that an object
+        # is unregistered (and an R2 database rollback could hide its local
+        # txt_shares row), so it must never garbage-collect this namespace.
+        prefixes = tuple(f"{account.db_prefix}/shared/" for account in accounts)
+        return {key for key in bucket_keys if key.startswith(prefixes)}
 
     def _report_stale(self, stale: list[str]) -> None:
         for key in stale:

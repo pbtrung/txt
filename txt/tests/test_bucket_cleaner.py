@@ -209,6 +209,38 @@ def test_dry_run_reports_stale_objects_without_deleting(monkeypatch):
     assert cleaner.logger.info_messages[-1] == "Dry run: would delete 1 object(s)."
 
 
+def test_preserves_every_shared_object_for_reachable_accounts(monkeypatch):
+    active_share = f"{ADMIN_DB_PREFIX}/shared/{'e' * 52}/{'f' * 52}"
+    orphaned_share = f"{USER_DB_PREFIX}/shared/{'g' * 52}/{'h' * 52}"
+    stale = f"{ADMIN_DB_PREFIX}/stale"
+    cleaner = build_cleaner(
+        monkeypatch,
+        [
+            account("admin", ADMIN_DB_PATH, ADMIN_DB_PREFIX),
+            account("user", USER_DB_PATH, USER_DB_PREFIX),
+        ],
+        {
+            ADMIN_DB_PATH: b"admin-database",
+            USER_DB_PATH: b"user-database",
+            active_share: b"active share",
+            orphaned_share: b"unknown to the rolled-back database",
+            stale: b"stale",
+        },
+        rows_by_database={
+            b"admin-database": [],
+            b"user-database": [],
+        },
+    )
+
+    cleaner.run()
+
+    assert cleaner.r2.deleted == [stale]
+    assert any(
+        "4 retained (2 shared), 1 stale" in message
+        for message in cleaner.logger.info_messages
+    )
+
+
 def test_reports_listing_and_deletion_progress_per_thousand_objects(monkeypatch):
     objects = {f"orphan-{index:04d}": b"stale" for index in range(2501)}
     cleaner = build_cleaner(
