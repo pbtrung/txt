@@ -50,7 +50,7 @@ export function LibraryContent({
     [query, search, view],
   );
   return (
-    <div className="d-flex flex-column flex-grow-1 overflow-hidden min-w-0">
+    <div className="library-content-pane d-flex flex-column flex-grow-1 overflow-hidden min-w-0">
       <ContentHeader view={view} onNavigate={onNavigate} />
       {view.kind === "recent" ? (
         <RecentBooks {...{ books, onClearAccess, onClearBookmarks }} />

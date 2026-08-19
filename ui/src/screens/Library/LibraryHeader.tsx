@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Button, Input, SearchField } from "react-aria-components";
 import type { LibraryBook } from "../../data/libraryDb";
+import { classNames } from "../../util/classNames";
 
 export function LibraryHeader({
   query,
@@ -21,14 +22,22 @@ export function LibraryHeader({
   onRead: () => void;
   onShare: () => void;
 }) {
+  const showFullBrand = menu === null;
   return (
     <div className="d-flex align-items-center border-bottom flex-shrink-0">
-      <div className="d-flex align-items-center gap-2 px-2 px-md-3 py-2 library-brand-col library-pane-col">
+      <div
+        className={classNames(
+          "d-flex align-items-center gap-2 px-2 py-2 library-brand-col",
+          showFullBrand && "px-md-3 library-pane-col",
+        )}
+      >
         {menu}
-        <div className="d-none d-md-flex align-items-center gap-2">
-          <i className="bi bi-book fs-5" aria-hidden="true" />
-          <span className="fw-semibold fs-5">Skypiea</span>
-        </div>
+        {showFullBrand && (
+          <div className="d-flex align-items-center gap-2">
+            <i className="bi bi-book fs-5" aria-hidden="true" />
+            <span className="fw-semibold fs-5">Skypiea</span>
+          </div>
+        )}
       </div>
       <div className="d-flex flex-grow-1 px-2 px-md-3 py-2 min-w-0 library-search-col">
         <div className="library-search-group d-flex min-w-0">

@@ -210,6 +210,7 @@
    the same navigation component opens below the icon as a compact popup. */
 :root {
   --library-sidebar-width: 16rem;
+  --library-right-pane-min-width: 400px;
 }
 
 .library-brand-col {
@@ -230,18 +231,22 @@
   max-height: calc(100dvh - 4rem);
 }
 
+.library-pane-col {
+  width: var(--library-sidebar-width);
+  flex: 0 0 var(--library-sidebar-width);
+}
+
+.library-brand-col.library-pane-col {
+  border-right: var(--bs-border-width) solid var(--bs-border-color);
+}
+
+.library-sidebar-layout .library-content-pane {
+  min-width: var(--library-right-pane-min-width);
+}
+
 @media (min-width: 768px) {
   .library-search-group {
     width: max(350px, 50%);
-  }
-
-  .library-pane-col {
-    width: min(var(--library-sidebar-width), 40%);
-    flex: 0 0 min(var(--library-sidebar-width), 40%);
-  }
-
-  .library-brand-col {
-    border-right: var(--bs-border-width) solid var(--bs-border-color);
   }
 }
 
@@ -431,6 +436,27 @@
 
 .reader-bookmark-menu .dropdown-divider {
   margin: 0.25rem 0;
+}
+
+/* Buttons in the reading surfaces use the same warm, light selection color
+   as a selected Library book. Include portalled menus/drawers explicitly,
+   since they are not always descendants of the screen root. */
+:is(
+    .library-screen,
+    .library-dropdown,
+    .reader-width,
+    .reader-font-menu,
+    .reader-bookmark-menu,
+    .reader-offcanvas-overlay
+  )
+  :is(button, .btn, .list-group-item-action, .dropdown-item):not(
+    :disabled,
+    [data-disabled],
+    [aria-disabled="true"]
+  ):is(:hover, [data-hovered]) {
+  border-color: var(--bs-primary-border-subtle);
+  background-color: var(--bs-primary-bg-subtle);
+  color: var(--bs-emphasis-color);
 }
 
 .bookmark-menu-row .dropdown-item {

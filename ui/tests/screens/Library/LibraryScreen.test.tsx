@@ -10,7 +10,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { useState, type ReactNode } from "react";
 import { MemoryRouter, useLocation } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../../src/state/VaultContext", () => ({ useVault: vi.fn() }));
 vi.mock("../../../src/screens/Library/useLibraryBooks", () => ({
@@ -154,6 +154,8 @@ describe("LibraryScreen", () => {
     vi.mocked(deleteBookShare).mockReset();
     vi.mocked(shareUrl).mockReset();
   });
+
+  afterEach(() => vi.unstubAllGlobals());
 
   it("shows a loading message before books resolve", () => {
     renderScreen(null);
@@ -456,13 +458,54 @@ describe("LibraryScreen", () => {
     );
     expect(document.querySelector(".library-sidebar")).toHaveClass("library-pane-col");
     expect(document.querySelector(".library-search-col")).toHaveClass("min-w-0");
-    expect(screen.getByRole("button", { name: /^Recent/ })).toHaveTextContent("2");
+    const recent = screen.getByRole("button", { name: /^Recent/ });
+    expect(recent).toHaveTextContent("2");
+    expect(recent).toHaveClass("active", "rounded-3");
     expect(screen.getByRole("button", { name: /^All Books/ })).toHaveTextContent("2");
     expect(screen.getByRole("button", { name: /^Authors/ })).toHaveTextContent("2");
     expect(screen.getByRole("button", { name: /^Subjects/ })).toHaveTextContent("2");
     expect(screen.getByRole("button", { name: /^Publishers/ })).toHaveTextContent("1");
     expect(screen.getByText("Browse")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Open menu" })).toBeNull();
+  });
+
+  it("switches to the dropdown before the right pane becomes narrower than 400px", () => {
+    let resize!: ResizeObserverCallback;
+    const observer = {
+      observe: vi.fn(),
+      unobserve: vi.fn(),
+      disconnect: vi.fn(),
+    };
+    class ResizeObserverMock {
+      observe = observer.observe;
+      unobserve = observer.unobserve;
+      disconnect = observer.disconnect;
+
+      constructor(callback: ResizeObserverCallback) {
+        resize = callback;
+      }
+    }
+    vi.stubGlobal("ResizeObserver", ResizeObserverMock);
+    renderScreen(LIBRARY);
+    expect(document.querySelector(".library-sidebar")).not.toBeNull();
+
+    act(() => {
+      resize(
+        [{ contentRect: { width: 655 } } as ResizeObserverEntry],
+        observer as unknown as ResizeObserver,
+      );
+    });
+    expect(document.querySelector(".library-sidebar")).toBeNull();
+    expect(screen.getByRole("button", { name: "Open menu" })).toBeInTheDocument();
+
+    act(() => {
+      resize(
+        [{ contentRect: { width: 656 } } as ResizeObserverEntry],
+        observer as unknown as ResizeObserver,
+      );
+    });
+    expect(document.querySelector(".library-sidebar")).not.toBeNull();
+    expect(document.querySelector(".library-sidebar-layout")).not.toBeNull();
   });
 
   it("shows recent access and bookmarked books in the Recent view", async () => {
@@ -594,6 +637,7 @@ describe("LibraryScreen", () => {
     const trigger = screen.getByRole("button", { name: "Open menu" });
     expect(trigger).not.toHaveClass("dropdown-toggle");
     expect(trigger).toHaveTextContent("");
+    expect(screen.queryByText("Skypiea")).not.toBeInTheDocument();
 
     await userEvent.click(trigger);
 
@@ -603,6 +647,7 @@ describe("LibraryScreen", () => {
     expect(within(menu).getByRole("button", { name: /^Recent/ })).toHaveClass(
       "list-group-item",
       "active",
+      "rounded-3",
     );
     const lock = within(menu).getByRole("button", { name: "Lock" });
     expect(lock.parentElement).toHaveTextContent("Trung");

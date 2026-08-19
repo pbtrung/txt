@@ -1,6 +1,6 @@
 // Library shell: coordinates search/navigation state while focused child
 // components own the header, responsive navigation, and browsable content.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import {
   Button,
   Text,
@@ -34,6 +34,10 @@ import { useShares } from "./useShares";
 const INITIAL_VIEW: LibraryView = { kind: "recent" };
 const ALL_BOOKS_VIEW: LibraryView = { kind: "books", filter: null };
 const DESKTOP_MEDIA_QUERY = "(min-width: 768px)";
+const LIBRARY_SIDEBAR_WIDTH_PX = 16 * 16;
+const LIBRARY_RIGHT_PANE_MIN_PX = 400;
+const LIBRARY_SIDEBAR_LAYOUT_MIN_PX =
+  LIBRARY_SIDEBAR_WIDTH_PX + LIBRARY_RIGHT_PANE_MIN_PX;
 const SUCCESS_TOAST_MS = 2500;
 
 type ShareNotice =
@@ -59,7 +63,8 @@ export function LibraryScreen() {
   const [selectedTxtId, setSelectedTxtId] = useState<number | null>(null);
   const [shareBusy, setShareBusy] = useState(false);
   const shareOperation = useRef(false);
-  const desktop = useMediaQuery(DESKTOP_MEDIA_QUERY);
+  const libraryRoot = useRef<HTMLDivElement>(null);
+  const showSidebar = useLibrarySidebar(libraryRoot);
   const routerNavigate = useNavigate();
 
   useEffect(() => () => shareToastQueue.clear(), []);
@@ -168,7 +173,10 @@ export function LibraryScreen() {
     }
   };
   return (
-    <div className="position-relative vh-100 mx-auto max-w-md-60 px-2 px-md-0 overflow-hidden">
+    <div
+      ref={libraryRoot}
+      className="library-screen position-relative vh-100 mx-auto max-w-md-60 px-2 px-md-0 overflow-hidden"
+    >
       <div
         className="d-flex flex-column h-100"
         data-testid="library-operation-surface"
@@ -179,7 +187,7 @@ export function LibraryScreen() {
           query={query}
           onQuery={search}
           menu={
-            desktop ? null : (
+            showSidebar ? null : (
               <LibraryMenu
                 books={library.books}
                 view={view}
@@ -201,8 +209,10 @@ export function LibraryScreen() {
             if (selectedBook) void createShare(selectedBook.txtId);
           }}
         />
-        <div className="d-flex flex-grow-1 overflow-hidden min-w-0">
-          {desktop && (
+        <div
+          className={`d-flex flex-grow-1 overflow-hidden min-w-0 ${showSidebar ? "library-sidebar-layout" : ""}`}
+        >
+          {showSidebar && (
             <aside className="h-100 border-end library-sidebar library-pane-col">
               <LibrarySidebar
                 books={library.books}
@@ -295,14 +305,30 @@ function ShareToast({ toast }: { toast: QueuedToast<ShareNotice> }) {
   );
 }
 
-function useMediaQuery(query: string): boolean {
-  const [matches, setMatches] = useState(() => window.matchMedia(query).matches);
-  useEffect(() => {
-    const media = window.matchMedia(query);
-    const update = () => setMatches(media.matches);
-    update();
-    media.addEventListener?.("change", update);
-    return () => media.removeEventListener?.("change", update);
-  }, [query]);
-  return matches;
+function useLibrarySidebar(root: RefObject<HTMLDivElement | null>): boolean {
+  const [visible, setVisible] = useState(
+    () => window.matchMedia(DESKTOP_MEDIA_QUERY).matches,
+  );
+  useLayoutEffect(() => {
+    const element = root.current;
+    if (!element) return;
+    const media = window.matchMedia(DESKTOP_MEDIA_QUERY);
+    const update = (width: number) => {
+      if (width > 0) {
+        setVisible(media.matches && width >= LIBRARY_SIDEBAR_LAYOUT_MIN_PX);
+      }
+    };
+    const measure = () => update(element.getBoundingClientRect().width);
+    const observer = new ResizeObserver(([entry]) =>
+      update(entry?.contentRect.width ?? 0),
+    );
+    measure();
+    observer.observe(element);
+    media.addEventListener?.("change", measure);
+    return () => {
+      observer.disconnect();
+      media.removeEventListener?.("change", measure);
+    };
+  }, [root]);
+  return visible;
 }

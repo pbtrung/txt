@@ -122,7 +122,7 @@ function NavRow({
   return (
     <Button
       className={classNames(
-        "list-group-item list-group-item-action d-flex justify-content-between align-items-center",
+        "list-group-item list-group-item-action rounded-3 d-flex justify-content-between align-items-center",
         active && "active",
       )}
       onPress={onPress}
