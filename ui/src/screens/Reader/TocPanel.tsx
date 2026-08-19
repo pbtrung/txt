@@ -2,6 +2,7 @@
 // entry jump straight to that section.
 import type { NavItem } from "@likecoin/epub-ts";
 import { useEffect, useState } from "react";
+import { Button } from "react-aria-components";
 import { OffcanvasPanel } from "../../components/OffcanvasPanel";
 import type { EpubRenderer } from "../../data/epubRenderer";
 
@@ -76,13 +77,12 @@ function TocList({
     <ul className="list-unstyled ps-0">
       {items.map((item) => (
         <li key={item.id} className="mb-1">
-          <button
-            type="button"
+          <Button
             className="btn btn-link p-0 text-start text-decoration-none"
-            onClick={() => onSelect(item.href)}
+            onPress={() => onSelect(item.href)}
           >
             {item.label.trim()}
-          </button>
+          </Button>
           {item.subitems && item.subitems.length > 0 && (
             <div className="ps-3">
               <TocList items={item.subitems} onSelect={onSelect} />

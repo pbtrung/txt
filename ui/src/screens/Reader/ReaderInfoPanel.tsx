@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Button } from "react-aria-components";
 import { OffcanvasPanel } from "../../components/OffcanvasPanel";
 import type { ReaderDocument } from "../../data/readerDocument";
 import { sanitizeHtml, stripHtmlToText } from "../../data/sanitizeHtml";
@@ -99,12 +100,8 @@ function ToggleDescription({
   onClick: () => void;
 }) {
   return (
-    <button
-      type="button"
-      className="btn btn-link btn-sm p-0 align-baseline"
-      onClick={onClick}
-    >
+    <Button className="btn btn-link btn-sm p-0 align-baseline" onPress={onClick}>
       {expanded ? "Show less" : "Show more"}
-    </button>
+    </Button>
   );
 }

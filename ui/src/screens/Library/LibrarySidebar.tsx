@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { Button } from "react-aria-components";
 import { IconButton } from "../../components/IconButton";
 import type { LibraryBook } from "../../data/libraryDb";
 import { classNames } from "../../util/classNames";
@@ -113,13 +114,12 @@ function NavRow({
   onClick: () => void;
 }) {
   return (
-    <button
-      type="button"
+    <Button
       className={classNames(
         "list-group-item list-group-item-action d-flex justify-content-between align-items-center",
         active && "active",
       )}
-      onClick={onClick}
+      onPress={onClick}
     >
       {label}
       <span
@@ -130,7 +130,7 @@ function NavRow({
       >
         {count}
       </span>
-    </button>
+    </Button>
   );
 }
 

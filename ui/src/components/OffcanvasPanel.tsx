@@ -1,5 +1,5 @@
 import { useEffect, useId, useState, type CSSProperties, type ReactNode } from "react";
-import { Dialog, Heading, Modal, ModalOverlay } from "react-aria-components";
+import { Button, Dialog, Heading, Modal, ModalOverlay } from "react-aria-components";
 import { classNames } from "../util/classNames";
 
 const MD_MEDIA_QUERY = "(min-width: 768px)";
@@ -86,12 +86,7 @@ function PanelContents({
         <Heading slot="title" level={2} className="h5 offcanvas-title" id={titleId}>
           {title}
         </Heading>
-        <button
-          type="button"
-          className="btn-close"
-          aria-label="Close"
-          onClick={onClose}
-        />
+        <Button className="btn-close" aria-label="Close" onPress={onClose} />
       </div>
       <div className="offcanvas-body">{children}</div>
     </>

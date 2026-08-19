@@ -3,6 +3,7 @@ import {
   Button,
   Dialog,
   DialogTrigger,
+  Input,
   Menu,
   MenuItem,
   MenuTrigger,
@@ -172,18 +173,17 @@ function BookmarkOptions({
 }) {
   return (
     <div>
-      <button
-        type="button"
+      <Button
         className="dropdown-item d-flex align-items-center gap-2"
-        disabled={!renderer || bookmarkBusy}
-        onClick={onBookmark}
+        isDisabled={!renderer || bookmarkBusy}
+        onPress={onBookmark}
       >
         <i
           className={`bi bi-${bookmarkSaved ? "bookmark-dash" : "bookmark-plus"}`}
           aria-hidden="true"
         />
         {bookmarkSaved ? "Remove current bookmark" : "Add current bookmark"}
-      </button>
+      </Button>
       <div className="dropdown-divider" />
       <BookmarkStatus {...{ status, error, onRetry }} />
       {bookmarks.length ? (
@@ -213,14 +213,13 @@ function BookmarkStatus({
     return (
       <div className="alert alert-danger py-2 mx-2 small" role="alert">
         <span className="d-block mb-1">Unsaved changes: {error}</span>
-        <button
-          type="button"
+        <Button
           className="btn btn-sm btn-outline-danger"
-          disabled={status.pending}
-          onClick={onRetry}
+          isDisabled={status.pending}
+          onPress={onRetry}
         >
           Retry
-        </button>
+        </Button>
       </div>
     );
   }
@@ -309,7 +308,7 @@ function PageInput({
     }
   };
   return (
-    <input
+    <Input
       type="text"
       inputMode="numeric"
       className="form-control form-control-sm text-end"

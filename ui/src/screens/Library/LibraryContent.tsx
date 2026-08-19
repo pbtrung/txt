@@ -1,5 +1,6 @@
 import { IconButton } from "../../components/IconButton";
 import { useMemo } from "react";
+import { Button } from "react-aria-components";
 import type { LibraryBook } from "../../data/libraryDb";
 import { BookList, BookRow, EmptyState } from "./BookList";
 import {
@@ -199,13 +200,12 @@ function EntryRow({
   onNavigate: (view: LibraryView) => void;
 }) {
   return (
-    <button
-      type="button"
+    <Button
       className="list-group-item list-group-item-action d-flex justify-content-between align-items-center"
-      onClick={() => onNavigate({ kind: "books", filter: { dimension, value } })}
+      onPress={() => onNavigate({ kind: "books", filter: { dimension, value } })}
     >
       <span className="text-truncate min-w-0">{value}</span>
       <span className="badge rounded-pill text-bg-dark flex-shrink-0">{count}</span>
-    </button>
+    </Button>
   );
 }

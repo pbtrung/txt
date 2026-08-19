@@ -2,14 +2,14 @@
 // explanatory copy -- a single button carrying both the action and its
 // effect, matching the historical Unlock screen's UX. The file is this
 // client's own reduced creds.json shape (ui/src/data/creds.ts).
-import { useEffect, useRef, type ChangeEvent } from "react";
+import { useEffect } from "react";
+import { Button, FileTrigger } from "react-aria-components";
 import { useNavigate } from "react-router-dom";
 import { useVault } from "../../state/VaultContext";
 
 export function UnlockScreen() {
   const { status, error, progress, unlock } = useVault();
   const navigate = useNavigate();
-  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (status === "unlocked") {
@@ -17,12 +17,9 @@ export function UnlockScreen() {
     }
   }, [status, navigate]);
 
-  async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (file) {
-      await unlock(file);
-    }
+  async function handleFileSelect(files: FileList | null) {
+    const file = files?.[0];
+    if (file) await unlock(file);
   }
 
   const unlocking = status === "unlocking";
@@ -33,24 +30,20 @@ export function UnlockScreen() {
         <i className="bi bi-book me-2" />
         Skypiea
       </h1>
-      <button
-        type="button"
-        className="btn btn-primary px-4"
-        onClick={() => inputRef.current?.click()}
-        disabled={unlocking}
+      <FileTrigger
+        acceptedFileTypes={["application/json"]}
+        onSelect={(files) => void handleFileSelect(files)}
       >
-        {unlocking && (
-          <span className="spinner-border spinner-border-sm me-2" aria-hidden="true" />
-        )}
-        {unlocking ? "Unlocking…" : "Choose File"}
-      </button>
-      <input
-        ref={inputRef}
-        type="file"
-        accept="application/json"
-        onChange={handleFileChange}
-        hidden
-      />
+        <Button className="btn btn-primary px-4" isDisabled={unlocking}>
+          {unlocking && (
+            <span
+              className="spinner-border spinner-border-sm me-2"
+              aria-hidden="true"
+            />
+          )}
+          {unlocking ? "Unlocking…" : "Choose File"}
+        </Button>
+      </FileTrigger>
       {progress && (
         <p role="status" className="text-muted mt-3 mb-0">
           {progress.label} (step {progress.step} of {progress.total})

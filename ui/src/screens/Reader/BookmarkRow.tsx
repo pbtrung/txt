@@ -1,4 +1,5 @@
 import { IconButton } from "../../components/IconButton";
+import { Button } from "react-aria-components";
 import type { BookmarkRecord } from "../../data/readingState";
 
 export function BookmarkRow({
@@ -14,10 +15,9 @@ export function BookmarkRow({
 }) {
   return (
     <div className="d-flex align-items-center px-2 bookmark-menu-row">
-      <button
-        type="button"
+      <Button
         className="dropdown-item d-flex flex-column align-items-start min-w-0"
-        onClick={() => onNavigate(bookmark.cfi)}
+        onPress={() => onNavigate(bookmark.cfi)}
       >
         <span className="text-truncate w-100">
           {bookmark.preview || "Saved location"}
@@ -25,7 +25,7 @@ export function BookmarkRow({
         <span className="small text-muted">
           Page {bookmark.pageNumber ?? "unknown"}
         </span>
-      </button>
+      </Button>
       <IconButton
         label="Delete bookmark"
         icon="x-lg"

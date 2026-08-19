@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { Button } from "react-aria-components";
 
 interface Props {
   children: ReactNode;
@@ -27,9 +28,9 @@ export class AppErrorBoundary extends Component<Props, State> {
       <main className="container py-5 text-center" role="alert">
         <h1 className="h4">Something went wrong</h1>
         <p className="text-muted">Reload the app to start a fresh session.</p>
-        <button type="button" className="btn btn-primary" onClick={this.reload}>
+        <Button className="btn btn-primary" onPress={this.reload}>
           Reload
-        </button>
+        </Button>
       </main>
     );
   }
