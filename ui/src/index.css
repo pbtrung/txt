@@ -203,7 +203,7 @@
   appearance: none;
   background-color: var(--color-base-100);
   background-clip: padding-box;
-  border: 0.5px solid var(--search-border-color);
+  border: var(--border) solid var(--search-border-color);
   border-radius: 0.5rem;
   outline: 0;
   box-shadow: none;
