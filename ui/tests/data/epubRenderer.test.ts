@@ -79,6 +79,12 @@ describe("EpubRenderer", () => {
     expect(READER_THEME_CSS).not.toContain("pre, code, kbd, samp");
   });
 
+  it("applies claude.ai's own palette so every book reads the same regardless of its publisher CSS", () => {
+    expect(READER_THEME_CSS).toContain("background-color: #faf9f5 !important");
+    expect(READER_THEME_CSS).toMatch(/html, body \{[^}]*color: #3d3929 !important/);
+    expect(READER_THEME_CSS).toMatch(/a, a:link, a:visited \{\s*color: #d97757/);
+  });
+
   it("opens the book from the given bytes", () => {
     const bytes = new Uint8Array([1, 2, 3]);
     new EpubRenderer(bytes);
@@ -147,6 +153,25 @@ describe("EpubRenderer", () => {
       section: { href?: string; url?: string },
     ) => Promise<void>;
   }
+
+  function styleStripHook() {
+    return bookMock.spine.hooks.content.register.mock.calls[0][0] as (
+      document: Document,
+    ) => void;
+  }
+
+  it("strips every publisher stylesheet from a section before it renders", () => {
+    new EpubRenderer(new Uint8Array([1]));
+    const section = document.implementation.createHTMLDocument();
+    section.head.innerHTML =
+      '<link rel="stylesheet" href="chapter.css"><style>body { color: red; }</style>';
+    section.body.innerHTML = "<p>Chapter text</p>";
+
+    styleStripHook()(section);
+
+    expect(section.head.querySelector("link, style")).toBeNull();
+    expect(section.body.textContent).toBe("Chapter text");
+  });
 
   it("replaces the declared cover image with the title and authors before render", async () => {
     bookMock.loaded.cover = Promise.resolve("https://reader.test/OEBPS/cover.jpg");

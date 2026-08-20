@@ -135,9 +135,24 @@ export class EpubRenderer {
     private readonly authors: string[],
   ) {
     this.book = ePub(toArrayBuffer(epubBytes));
+    this.book.spine.hooks.content.register((document) =>
+      this.stripPublisherStyles(document as Document),
+    );
     this.book.spine.hooks.content.register((document, section) =>
       this.replaceCover(document as Document, section as Section),
     );
+  }
+
+  // Every publisher ships its own <link rel="stylesheet">/<style> -- fonts,
+  // background/text colors, margins -- so two EPUBs render nothing alike
+  // even with the same reader theme layered on top (a book's own !important
+  // rule can still win the cascade). Stripping them here, in the same
+  // pre-render content hook replaceCover uses, means the reader's theme CSS
+  // is the only stylesheet a section ever has, so every book looks the same.
+  private stripPublisherStyles(document: Document): void {
+    document
+      .querySelectorAll("link[rel~='stylesheet'], style")
+      .forEach((node) => node.remove());
   }
 
   private async replaceCover(document: Document, section: Section): Promise<void> {

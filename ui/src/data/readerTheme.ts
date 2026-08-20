@@ -136,16 +136,28 @@ const fontFaceRules = SUBSETS.flatMap((subset) =>
 
 export const READER_FONT_FAMILY = "'Txt Literata', serif";
 
+// Mirrors theme.scss's cream/ink/terracotta palette. Can't share those Sass
+// variables directly -- this string is injected into each section's own
+// iframe document via Rendition.themes.registerCss(), a separate build/style
+// pipeline from the outer app shell -- so the literal hex values are
+// duplicated here instead.
 export const READER_THEME_CSS = `
 ${fontFaceRules}
 html, body {
   margin-inline: 0 !important;
+  background-color: #faf9f5 !important;
+  color: #3d3929 !important;
 }
 html {
   padding-inline: 0 !important;
 }
 body, body * {
   font-family: 'Txt Literata', serif !important;
+  background-color: transparent !important;
+  color: inherit !important;
+}
+a, a:link, a:visited {
+  color: #d97757 !important;
 }
 body {
   font-kerning: normal !important;
