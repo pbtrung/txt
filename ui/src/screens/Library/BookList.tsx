@@ -196,7 +196,7 @@ function BookMetadata({
   bookmark?: LibraryBookmark;
 }) {
   return (
-    <span className="mt-1 flex min-w-0 items-center gap-1 overflow-hidden pl-0 book-row-meta">
+    <span className="mt-1 flex min-w-0 items-center gap-1 overflow-hidden pl-1 book-row-meta">
       {bookmark ? (
         <BookmarkPageBadge pageNumber={bookmark.pageNumber} />
       ) : (
