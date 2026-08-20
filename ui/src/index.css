@@ -127,8 +127,9 @@
 .book-row-badge-text {
   display: inline-flex;
   align-items: center;
+  position: relative;
+  top: 1px;
   line-height: 1;
-  transform: translateY(0.03rem);
 }
 
 /* Library search box: the icon sits inside the input itself so the field
