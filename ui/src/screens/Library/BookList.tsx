@@ -226,7 +226,7 @@ function BookmarkPageBadge({ pageNumber }: { pageNumber: number | null }) {
       aria-label={pageNumber === null ? "Page unavailable" : `Page ${pageNumber}`}
     >
       <FileText className="size-3" aria-hidden="true" />
-      Page {page}
+      <span className="book-row-badge-text">Page {page}</span>
     </span>
   );
 }
@@ -245,7 +245,7 @@ function ActivityTimeBadge({
       aria-label={`${label} ${formatted}`}
     >
       <Clock3 className="size-3" aria-hidden="true" />
-      {formatted}
+      <span className="book-row-badge-text">{formatted}</span>
     </span>
   );
 }
@@ -257,7 +257,7 @@ function BookmarkBadge({ count }: { count: number }) {
       aria-label={`${count} bookmark${count === 1 ? "" : "s"}`}
     >
       <Bookmark className="size-3" fill="currentColor" aria-hidden="true" />
-      {count}
+      <span className="book-row-badge-text">{count}</span>
     </span>
   );
 }

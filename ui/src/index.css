@@ -124,6 +124,13 @@
   font-size: 0.67rem;
 }
 
+.book-row-badge-text {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+  transform: translateY(0.03rem);
+}
+
 /* Library search box: the icon sits inside the input itself so the field
    reads as one control with no seam. */
 .search-box-icon {
