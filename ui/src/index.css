@@ -173,7 +173,15 @@
   border: var(--bs-border-width) var(--bs-border-style) var(--bs-border-color);
 }
 
-.search-box-input:focus,
+/* Same focus-ring width as the adjacent .btn-outline-secondary book/share
+   actions (Bootstrap's own $focus-ring-width, --bs-focus-ring-width) so the
+   search box and its buttons read as one consistent control group in both
+   states -- the unfocused border is already the same var(--bs-border-width)
+   both places. */
+.search-box-input:focus {
+  box-shadow: 0 0 0 var(--bs-focus-ring-width) rgba(var(--bs-primary-rgb), 0.25);
+}
+
 .reader-page-input:focus {
   box-shadow: 0 0 0 0.1rem rgba(var(--bs-primary-rgb), 0.25);
 }
