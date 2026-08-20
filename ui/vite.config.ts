@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
@@ -25,7 +26,7 @@ export default defineConfig({
   // so root scripts invoke vite/vitest with `--config ui/vite.config.ts`
   // from the repo root, not from inside ui/ itself.
   root: UI_DIR,
-  plugins: [react()],
+  plugins: [tailwindcss(), react()],
   css: {
     preprocessorOptions: {
       // Bootstrap's own SCSS still calls Sass's legacy red()/green()/blue()

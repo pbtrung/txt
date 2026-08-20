@@ -1,0 +1,56 @@
+@import "tailwindcss";
+
+@plugin "daisyui" {
+  themes: false;
+}
+
+/*
+ * The Skypiea theme is a direct semantic mapping of the Claude-inspired
+ * cream-and-terracotta palette in theme.scss. Keeping it as a named daisyUI
+ * theme makes component colors deterministic instead of inheriting a built-in
+ * light theme that only approximates the existing design.
+ */
+@plugin "daisyui/theme" {
+  name: "skypiea";
+  default: true;
+  prefersdark: false;
+  color-scheme: light;
+
+  --color-base-100: #faf9f5;
+  --color-base-200: #f0eee6;
+  --color-base-300: #e5e3dc;
+  --color-base-content: #3d3929;
+  --color-primary: #d97757;
+  --color-primary-content: #faf9f5;
+  --color-secondary: #83827d;
+  --color-secondary-content: #faf9f5;
+  --color-accent: #c2673f;
+  --color-accent-content: #faf9f5;
+  --color-neutral: #3d3929;
+  --color-neutral-content: #faf9f5;
+  --color-info: #4a90a4;
+  --color-info-content: #faf9f5;
+  --color-success: #6a8a5e;
+  --color-success-content: #faf9f5;
+  --color-warning: #c99a2e;
+  --color-warning-content: #3d3929;
+  --color-error: #c0392b;
+  --color-error-content: #faf9f5;
+
+  --radius-selector: 50rem;
+  --radius-field: 0.625rem;
+  --radius-box: 0.875rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+  --depth: 1;
+  --noise: 0;
+}
+
+@theme {
+  --font-sans:
+    "Inter", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
+    "Noto Sans", "Liberation Sans", Arial, sans-serif, "Apple Color Emoji",
+    "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  --font-reader: "Literata", serif;
+}
