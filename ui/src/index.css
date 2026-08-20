@@ -1,10 +1,6 @@
-/* Full width with the surrounding chrome's own padding on small screens;
-   capped and centered on larger ones. Bootstrap's own utilities don't cover
-   a responsive max-width (only min-width-gated display/spacing), so this is
-   a small hand-written class rather than an inline style that couldn't
-   vary per breakpoint. Uses the same `md` breakpoint (768px) the rest of
-   the app's mobile/desktop split already keys off of (Library's browse
-   drawer, Reader's default font size). */
+/* Full width with the surrounding chrome's own padding on small screens,
+   capped and centered on larger ones. The `md` breakpoint (768px) also
+   governs the Library navigation and Reader typography. */
 .max-w-md-60 {
   max-width: 100%;
 }
@@ -15,12 +11,11 @@
   }
 }
 
-/* Library book rows: the whole row is the click target (not just the
-   title), so a subtle hover/focus background is what shows a row is
-   interactive -- Bootstrap has no ready-made "clickable list row" utility. */
+/* Library book rows: the whole row is the click target (not just the title),
+   so a subtle hover/focus background shows that the row is interactive. */
 .book-row:hover,
 .book-row:focus-visible {
-  background-color: var(--bs-tertiary-bg);
+  background-color: var(--color-base-200);
 }
 
 .book-row {
@@ -34,12 +29,12 @@
 
 .book-select-row {
   overflow: hidden;
-  border-radius: var(--bs-border-radius-lg);
+  border-radius: var(--radius-box);
 }
 
 .book-select-row[data-selected] {
-  background-color: var(--bs-primary-bg-subtle);
-  box-shadow: inset 0 0 0 var(--bs-border-width) var(--bs-primary-border-subtle);
+  background-color: color-mix(in srgb, var(--color-primary) 14%, var(--color-base-100));
+  box-shadow: inset 0 0 0 var(--border) var(--color-primary);
 }
 
 .book-select-row[data-selected] .book-row {
@@ -55,7 +50,7 @@
 }
 
 /* React Aria's Virtualizer applies `padding: 0` directly to its scroll view,
-   so Bootstrap padding utilities on the All Books grid cannot keep rows away
+   so layout padding on the All Books grid cannot keep rows away
    from an overlaid vertical scrollbar. Inset the virtualized row itself to
    preserve the intended gutter on both sides. */
 .book-list-grid .book-row-container {
@@ -106,8 +101,8 @@
 .book-row-icon {
   width: 1.5rem;
   height: 1.5rem;
-  background-color: var(--bs-tertiary-bg);
-  color: var(--bs-secondary-color);
+  background-color: var(--color-base-200);
+  color: var(--color-secondary);
   font-size: 0.8rem;
 }
 
@@ -126,18 +121,16 @@
   font-size: 0.67rem;
 }
 
-/* Library search box: the icon sits inside the input itself (not a
-   separate input-group-text segment) so the two read as one field with
-   no seam. Otherwise a plain bordered Bootstrap form-control -- just a
-   slimmer focus ring, since Bootstrap's own (.25rem spread) reads as
-   thick against a field this size. */
+/* Library search box: the icon sits inside the input itself so the field
+   reads as one control with no seam. */
 .search-box-icon {
   position: absolute;
   left: 0.7rem;
   top: 50%;
   transform: translateY(-50%);
-  color: var(--bs-secondary-color);
-  font-size: 0.8rem;
+  width: 0.875rem;
+  height: 0.875rem;
+  color: var(--color-secondary);
   pointer-events: none;
 }
 
@@ -159,7 +152,7 @@
 
 .library-book-actions {
   flex: 0 0 auto;
-  margin-left: calc(-1 * var(--bs-border-width));
+  margin-left: calc(-1 * var(--border));
 }
 
 .library-book-actions > .btn:first-child {
@@ -167,17 +160,12 @@
   border-bottom-left-radius: 0;
 }
 
-/* border-color matches --bs-secondary, the same color
-   .btn-outline-secondary (the book/share action buttons attached to this
-   field) uses for its own resting border -- var(--bs-border-color) is a
-   much lighter neutral, which reads as a visibly thinner/weaker border
-   than the buttons' even though both are the same var(--bs-border-width).
-   Applies whether or not a button group is actually attached, so the
-   search box always reads at the same weight as an unfocused button. */
+/* Match the attached secondary outline buttons so the field and actions read
+   as one daisyUI join. */
 .search-box-input {
   padding-left: 2rem;
   padding-right: 2rem;
-  border: var(--bs-border-width) var(--bs-border-style) var(--bs-secondary);
+  border: var(--border) solid var(--color-secondary);
 }
 
 .search-box-input:focus,
@@ -191,7 +179,7 @@
    on the search box too, instead of the box looking unfocused while its
    own button group is the part actually active. */
 .library-search-group:has(.library-book-actions :focus) .search-box-input {
-  box-shadow: 0 0 0 0.1rem rgba(var(--bs-primary-rgb), 0.25);
+  box-shadow: 0 0 0 0.1rem color-mix(in srgb, var(--color-primary) 25%, transparent);
 }
 
 /* Chromium and Safari add their own cancel glyph to search inputs. The
@@ -215,7 +203,7 @@
   border: 0;
   border-radius: 50%;
   background: transparent;
-  color: var(--bs-secondary-color);
+  color: var(--color-secondary);
 }
 
 .search-box[data-empty]:not(:focus-within) .search-box-clear {
@@ -224,15 +212,14 @@
 }
 
 .search-box-clear-icon {
-  font-size: 1.25rem;
-  font-weight: 700;
-  line-height: 1;
+  width: 1rem;
+  height: 1rem;
 }
 
 .search-box-clear:hover,
 .search-box-clear:focus-visible {
-  background: var(--bs-tertiary-bg);
-  color: var(--bs-emphasis-color);
+  background: var(--color-base-200);
+  color: var(--color-base-content);
   outline: none;
 }
 
@@ -267,7 +254,7 @@
 }
 
 .library-brand-col.library-pane-col {
-  border-right: var(--bs-border-width) solid var(--bs-border-color);
+  border-right: var(--border) solid var(--color-base-300);
 }
 
 .library-sidebar-layout .library-content-pane {
@@ -291,9 +278,9 @@
 .library-operation-blocker {
   position: absolute;
   inset: 0;
-  z-index: 1070;
+  z-index: 70;
   cursor: wait;
-  background: rgba(var(--bs-body-bg-rgb), 0.28);
+  background: color-mix(in srgb, var(--color-base-100) 28%, transparent);
   backdrop-filter: blur(2px);
 }
 
@@ -302,7 +289,7 @@
   right: 1rem;
   bottom: 1rem;
   left: 1rem;
-  z-index: 1080;
+  z-index: 80;
   display: flex;
   justify-content: center;
   outline: none;
@@ -314,11 +301,8 @@
   outline: none;
 }
 
-/* A flex child needs an explicit min-width: 0 to shrink below its text's
-   natural width -- text-truncate's own overflow:hidden isn't sufficient
-   on its own inside a flex row, so a long entry name (a real book's
-   subject/author/publisher, unlike this app's own short fixed labels)
-   would otherwise force the row wider instead of eliding with "…". */
+/* React Aria's virtualized elements also consume this utility outside the
+   normal Tailwind content scan, so keep the explicit fallback. */
 .min-w-0 {
   min-width: 0;
 }
@@ -465,11 +449,12 @@
   font-size: 14px;
 }
 
-/* Buttons in the reading surfaces use the same warm, light selection color
-   as a selected Library book. Include portalled menus/drawers explicitly,
-   since they are not always descendants of the screen root. */
+/* Interactive chrome uses the same warm, light hover color as selected books.
+   Include portalled menus and drawers because they are not always descendants
+   of the screen root. */
 :is(
     .library-screen,
+    .library-dropdown,
     .reader-width,
     .reader-font-menu,
     .reader-bookmark-menu,
@@ -485,12 +470,11 @@
   color: var(--color-base-content);
 }
 
-/* Keep the left navigation's selected row identical to the original
-   Bootstrap active state, including while the pointer is over it. */
-.library-sidebar-content .list-group-item.active:is(:hover, [data-hovered]) {
-  border-color: var(--bs-list-group-active-border-color);
-  background-color: var(--bs-list-group-active-bg);
-  color: var(--bs-list-group-active-color);
+/* Keep the selected navigation row primary while the pointer is over it. */
+.library-sidebar-content .btn-active:is(:hover, [data-hovered]) {
+  border-color: var(--color-primary);
+  background-color: var(--color-primary);
+  color: var(--color-primary-content);
 }
 
 .bookmark-menu-row > .btn:first-child {

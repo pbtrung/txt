@@ -1,4 +1,5 @@
 import { Button, Dialog, DialogTrigger, Popover } from "react-aria-components";
+import { BookOpen } from "lucide-react";
 import type { LibraryBook } from "../../data/libraryDb";
 import type { BookShare } from "../../data/shares";
 import type { LibraryView } from "./libraryView";
@@ -15,15 +16,18 @@ export function LibraryMenu(props: {
 }) {
   return (
     <DialogTrigger>
-      <Button className="btn btn-sm btn-outline-secondary" aria-label="Open menu">
-        <i className="bi bi-book" aria-hidden="true" />
+      <Button className="btn btn-sm btn-outline btn-secondary" aria-label="Open menu">
+        <BookOpen className="size-4" aria-hidden="true" />
       </Button>
       <Popover
         placement="bottom start"
         offset={4}
-        className="library-dropdown border rounded shadow bg-body"
+        className="menu rounded-box border border-base-300 bg-base-100 shadow-lg library-dropdown"
       >
-        <Dialog aria-label="Library menu" className="library-dropdown-dialog">
+        <Dialog
+          aria-label="Library menu"
+          className="library-dropdown-dialog outline-none"
+        >
           {({ close }) => (
             <LibrarySidebar
               {...props}

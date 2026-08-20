@@ -1,6 +1,7 @@
 // Library shell: coordinates search/navigation state while focused child
 // components own the header, responsive navigation, and browsable content.
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { X } from "lucide-react";
 import {
   Button,
   Text,
@@ -210,10 +211,10 @@ export function LibraryScreen() {
   return (
     <div
       ref={libraryRoot}
-      className="library-screen position-relative vh-100 mx-auto max-w-md-60 px-2 px-md-0 overflow-hidden"
+      className="library-screen relative mx-auto h-screen max-w-md-60 overflow-hidden px-2 md:px-0"
     >
       <div
-        className="d-flex flex-column h-100"
+        className="flex h-full flex-col"
         data-testid="library-operation-surface"
         aria-busy={operationBusy || undefined}
         inert={operationBusy || undefined}
@@ -253,12 +254,12 @@ export function LibraryScreen() {
           }}
         />
         <div
-          className={`d-flex flex-grow-1 overflow-hidden min-w-0 ${showSidebar ? "library-sidebar-layout" : ""}`}
+          className={`flex min-w-0 flex-1 overflow-hidden ${showSidebar ? "library-sidebar-layout" : ""}`}
         >
           {showSidebar && (
             <aside
               ref={librarySidebar}
-              className="h-100 border-end library-sidebar library-pane-col"
+              className="h-full border-r border-base-300 library-sidebar library-pane-col"
             >
               <LibrarySidebar
                 books={library.books}
@@ -336,27 +337,24 @@ function LibraryToast({ toast }: { toast: QueuedToast<LibraryNotice> }) {
   return (
     <UNSTABLE_Toast
       toast={toast}
-      className={`toast show library-toast ${notice.status === "error" ? "text-bg-danger" : ""}`}
+      className={`alert library-toast ${notice.status === "error" ? "alert-error" : notice.status === "success" ? "alert-success" : "border border-base-300 bg-base-100"}`}
     >
-      <UNSTABLE_ToastContent className="toast-body d-flex align-items-center gap-2">
+      <UNSTABLE_ToastContent className="flex w-full items-center gap-2">
         {notice.status === "busy" && (
-          <span
-            className="spinner-border spinner-border-sm flex-shrink-0"
-            aria-hidden
-          />
+          <span className="loading loading-spinner loading-sm shrink-0" aria-hidden />
         )}
-        <span className="flex-grow-1 min-w-0">
+        <span className="min-w-0 flex-1">
           {notice.status === "busy" ? (
             <>
-              <Text slot="title" className="d-block fw-semibold text-truncate">
+              <Text slot="title" className="block truncate font-semibold">
                 {notice.action}: {notice.title}
               </Text>
-              <Text slot="description" className="d-block small text-truncate">
+              <Text slot="description" className="block truncate text-sm">
                 {notice.step}…
               </Text>
             </>
           ) : (
-            <Text slot="title" className="d-block fw-semibold text-truncate">
+            <Text slot="title" className="block truncate font-semibold">
               {notice.message}
             </Text>
           )}
@@ -364,9 +362,11 @@ function LibraryToast({ toast }: { toast: QueuedToast<LibraryNotice> }) {
         {notice.status === "error" && (
           <Button
             slot="close"
-            className="btn-close btn-close-white flex-shrink-0"
+            className="btn btn-ghost btn-sm btn-square shrink-0"
             aria-label="Dismiss notification"
-          />
+          >
+            <X className="size-4" aria-hidden="true" />
+          </Button>
         )}
       </UNSTABLE_ToastContent>
     </UNSTABLE_Toast>

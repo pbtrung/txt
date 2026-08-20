@@ -1,4 +1,13 @@
 import type { ReactNode } from "react";
+import {
+  BookOpen,
+  Copy,
+  Search,
+  Share2,
+  Trash2,
+  X,
+  type LucideIcon,
+} from "lucide-react";
 import { Button, Input, SearchField } from "react-aria-components";
 import type { LibraryBook } from "../../data/libraryDb";
 import type { BookShare } from "../../data/shares";
@@ -33,57 +42,55 @@ export function LibraryHeader({
 }) {
   const showFullBrand = menu === null;
   return (
-    <div className="d-flex align-items-center border-bottom flex-shrink-0">
+    <div className="flex shrink-0 items-center border-b border-base-300">
       <div
         className={classNames(
-          "d-flex align-items-center gap-2 px-2 py-2 library-brand-col",
-          showFullBrand && "px-md-3 library-pane-col",
+          "flex items-center gap-2 px-2 py-2 library-brand-col",
+          showFullBrand && "md:px-3 library-pane-col",
         )}
       >
         {menu}
         {showFullBrand && (
-          <div className="d-flex align-items-center gap-2">
-            <i className="bi bi-book fs-5" aria-hidden="true" />
-            <span className="fw-semibold fs-5">Skypiea</span>
+          <div className="flex items-center gap-2">
+            <BookOpen className="size-5" aria-hidden="true" />
+            <span className="text-xl font-semibold">Skypiea</span>
           </div>
         )}
       </div>
-      <div className="d-flex flex-grow-1 px-2 px-md-3 py-2 min-w-0 library-search-col">
+      <div className="flex min-w-0 flex-1 px-2 py-2 md:px-3 library-search-col">
         <div
           className={classNames(
-            "library-search-group d-flex min-w-0",
+            "library-search-group join flex min-w-0",
             !showFullBrand && "library-search-group-single-pane",
           )}
         >
           <SearchField
-            className="search-box position-relative min-w-0"
+            className="search-box join-item relative min-w-0"
             aria-label="Search"
             value={query}
             onChange={onQuery}
           >
-            <i className="bi bi-search search-box-icon" aria-hidden="true" />
+            <Search className="search-box-icon" aria-hidden="true" />
             <Input
-              className="form-control form-control-sm search-box-input"
+              className="input input-sm w-full search-box-input"
               placeholder="Search…"
             />
             <Button className="search-box-clear" aria-label="Clear search">
-              <span className="search-box-clear-icon" aria-hidden="true">
-                ×
-              </span>
+              <X className="search-box-clear-icon" aria-hidden="true" />
             </Button>
           </SearchField>
           {showBookActions && (
-            <div className="btn-group library-book-actions" aria-label="Book actions">
+            <div className="join library-book-actions" aria-label="Book actions">
               <BookAction
                 label="Read"
-                icon="book-half"
+                icon={BookOpen}
                 isDisabled={!selectedBook}
                 onPress={onRead}
               />
               {canShare && (
                 <BookAction
                   label="Share"
-                  icon="share"
+                  icon={Share2}
                   isDisabled={!selectedBook}
                   onPress={onShare}
                 />
@@ -91,17 +98,17 @@ export function LibraryHeader({
             </div>
           )}
           {showShareActions && (
-            <div className="btn-group library-book-actions" aria-label="Share actions">
+            <div className="join library-book-actions" aria-label="Share actions">
               <BookAction
                 label="Copy"
-                icon="copy"
+                icon={Copy}
                 isDisabled={!selectedShare || selectedShare.state !== "active"}
                 onPress={onCopyShare}
               />
               <BookAction
                 label="Delete this share"
                 visibleLabel="Delete"
-                icon="trash"
+                icon={Trash2}
                 isDisabled={!selectedShare}
                 onPress={onDeleteShare}
               />
@@ -122,19 +129,20 @@ function BookAction({
 }: {
   label: string;
   visibleLabel?: string;
-  icon: string;
+  icon: LucideIcon;
   isDisabled: boolean;
   onPress: () => void;
 }) {
+  const Icon = icon;
   return (
     <Button
-      className="btn btn-sm btn-outline-secondary flex-shrink-0"
+      className="btn btn-sm btn-outline btn-secondary join-item shrink-0"
       aria-label={label}
       isDisabled={isDisabled}
       onPress={onPress}
     >
-      <i className={`bi bi-${icon} me-md-1`} aria-hidden="true" />
-      <span className="d-none d-md-inline">{visibleLabel}</span>
+      <Icon className="size-4 md:mr-1" aria-hidden="true" />
+      <span className="hidden md:inline">{visibleLabel}</span>
     </Button>
   );
 }

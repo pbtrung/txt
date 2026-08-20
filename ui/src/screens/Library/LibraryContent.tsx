@@ -50,7 +50,7 @@ export function LibraryContent({
     [query, search, view],
   );
   return (
-    <div className="library-content-pane d-flex flex-column flex-grow-1 overflow-hidden min-w-0">
+    <div className="library-content-pane flex min-w-0 flex-1 flex-col overflow-hidden">
       <ContentHeader view={view} onNavigate={onNavigate} />
       {view.kind === "recent" ? (
         <RecentBooks {...{ books, onClearAccess, onDeleteBookmark }} />
@@ -107,7 +107,7 @@ function SharesList({
       selectionBehavior="replace"
       selectedKeys={selectedShareId === null ? [] : [selectedShareId]}
       onSelectionChange={(selection) => onSelectShare(selectedId(selection))}
-      className="book-row-grid overflow-y-auto overflow-x-hidden px-2 px-md-3 min-w-0"
+      className="book-row-grid min-w-0 overflow-x-hidden overflow-y-auto px-2 md:px-3"
     >
       {visibleShares.map((share) => (
         <SelectableBookRow
@@ -150,7 +150,7 @@ function ContentHeader({
 }) {
   const filter = view.kind === "books" ? view.filter : null;
   return (
-    <div className="d-flex align-items-center gap-2 px-2 px-md-3 pt-2 pb-2 flex-shrink-0 min-w-0">
+    <div className="flex min-w-0 shrink-0 items-center gap-2 px-2 pt-2 pb-2 md:px-3">
       {filter && (
         <IconButton
           label={`Back to ${DIMENSION_LABEL[filter.dimension]}`}
@@ -158,7 +158,9 @@ function ContentHeader({
           onPress={() => onNavigate({ kind: "entries", dimension: filter.dimension })}
         />
       )}
-      <h2 className="h5 mb-0 text-truncate flex-grow-1 min-w-0">{viewTitle(view)}</h2>
+      <h2 className="mb-0 min-w-0 flex-1 truncate text-xl font-semibold">
+        {viewTitle(view)}
+      </h2>
     </div>
   );
 }
@@ -178,7 +180,7 @@ function RecentBooks({
     return <EmptyStateContainer message="No recent activity yet." />;
   }
   return (
-    <div className="flex-grow-1 overflow-y-auto overflow-x-hidden px-2 px-md-3 min-w-0">
+    <div className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-2 md:px-3">
       <RecentSection
         title="Recent access"
         books={accessed}
@@ -204,7 +206,9 @@ function RecentSection({
   if (!books.length) return null;
   return (
     <section className="mb-3" aria-label={title}>
-      <h3 className="h6 text-muted px-2 py-2 mb-0">{title}</h3>
+      <h3 className="mb-0 px-2 py-2 text-base font-semibold text-base-content/60">
+        {title}
+      </h3>
       <GridList aria-label={title} className="book-row-grid">
         {books.map((book) => (
           <BookRow
@@ -229,7 +233,9 @@ function RecentBookmarks({
   if (!items.length) return null;
   return (
     <section className="mb-3" aria-label="Bookmarks">
-      <h3 className="h6 text-muted px-2 py-2 mb-0">Bookmarks</h3>
+      <h3 className="mb-0 px-2 py-2 text-base font-semibold text-base-content/60">
+        Bookmarks
+      </h3>
       <GridList aria-label="Bookmarks" className="book-row-grid">
         {items.map(({ book, bookmark }) => (
           <BookRow
@@ -252,7 +258,7 @@ function bookmarkPageLabel(pageNumber: number | null): string {
 
 function EmptyStateContainer({ message }: { message: string }) {
   return (
-    <div className="flex-grow-1 overflow-y-auto overflow-x-hidden px-3 min-w-0">
+    <div className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-3">
       <EmptyState message={message} />
     </div>
   );
@@ -279,14 +285,14 @@ function EntriesList({
       ? "No matches."
       : `No ${DIMENSION_LABEL[dimension].toLowerCase()} yet.`;
     return (
-      <div className="flex-grow-1 overflow-y-auto overflow-x-hidden px-3 min-w-0">
+      <div className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-3">
         <EmptyState message={message} />
       </div>
     );
   }
   return (
-    <div className="flex-grow-1 overflow-y-auto overflow-x-hidden px-2 px-md-3 min-w-0">
-      <div className="list-group list-group-flush">
+    <div className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-2 md:px-3">
+      <div className="flex flex-col gap-1">
         {entries.map((entry) => (
           <EntryRow
             key={entry.value}
@@ -314,11 +320,11 @@ function EntryRow({
 }) {
   return (
     <Button
-      className="list-group-item list-group-item-action rounded-3 d-flex justify-content-between align-items-center"
+      className="btn btn-ghost h-auto min-h-0 w-full justify-between rounded-box px-3 py-2 font-normal"
       onPress={() => onNavigate({ kind: "books", filter: { dimension, value } })}
     >
-      <span className="text-truncate min-w-0">{value}</span>
-      <span className="badge rounded-pill text-bg-light border flex-shrink-0">
+      <span className="min-w-0 truncate">{value}</span>
+      <span className="badge badge-sm shrink-0 border border-base-300 bg-base-200">
         {count}
       </span>
     </Button>

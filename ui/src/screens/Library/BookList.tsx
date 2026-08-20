@@ -6,6 +6,7 @@ import {
   Virtualizer,
   type Selection,
 } from "react-aria-components";
+import { Bookmark, BookOpen, BookX, Clock3, FileText } from "lucide-react";
 import { IconButton } from "../../components/IconButton";
 import type { LibraryBook, LibraryBookmark } from "../../data/libraryDb";
 import { classNames } from "../../util/classNames";
@@ -25,7 +26,7 @@ export function BookList({
 }) {
   if (books.length === 0) return <EmptyBookList totalCount={totalCount} />;
   return (
-    <div className="d-flex flex-column flex-grow-1 overflow-hidden min-w-0">
+    <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
       <Virtualizer layout={ListLayout} layoutOptions={{ rowSize: ROW_HEIGHT_PX }}>
         <GridList
           aria-label="Books"
@@ -34,7 +35,7 @@ export function BookList({
           selectionBehavior="replace"
           selectedKeys={selectedTxtId === null ? [] : [selectedTxtId]}
           onSelectionChange={(selection) => onSelectBook(selectedId(selection))}
-          className="flex-grow-1 overflow-y-auto overflow-x-hidden book-list-grid min-w-0"
+          className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto book-list-grid"
         >
           {/* The collection builder reads identity from this direct child's id
               before SelectableBookRow renders; keeping it here prevents filtered
@@ -49,7 +50,7 @@ export function BookList({
 function EmptyBookList({ totalCount }: { totalCount: number }) {
   const message = totalCount === 0 ? "Your library is empty." : "No books match.";
   return (
-    <div className="flex-grow-1 overflow-y-auto overflow-x-hidden px-3 min-w-0">
+    <div className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-3">
       <EmptyState message={message} />
     </div>
   );
@@ -95,7 +96,7 @@ export function BookRow({
       id={rowId ?? `${book.txtId}-${initialCfi ?? "book"}`}
       textValue={book.title}
       focusMode="child"
-      className="position-relative book-row-container"
+      className="relative book-row-container"
       style={{ height: ROW_HEIGHT_PX }}
     >
       <BookLinkRow
@@ -107,7 +108,7 @@ export function BookRow({
       <IconButton
         label={removeLabel}
         icon="x-lg"
-        className="border-0 position-absolute top-50 end-0 translate-middle-y me-1 compact-delete-button book-row-remove"
+        className="btn-ghost absolute top-1/2 right-0 mr-1 -translate-y-1/2 border-0 compact-delete-button book-row-remove"
         onPress={onRemove}
       />
     </GridListItem>
@@ -130,8 +131,8 @@ function BookLinkRow({
     <Link
       href={readerPath(book.txtId, initialCfi)}
       className={classNames(
-        "d-block py-2 px-2 rounded-3 text-decoration-none text-body book-row h-100",
-        hasRemoveAction && "pe-5",
+        "block h-full rounded-box px-2 py-2 text-base-content no-underline book-row",
+        hasRemoveAction && "pr-12",
       )}
     >
       <BookRowDetails book={book} active={active} bookmark={bookmark} />
@@ -142,7 +143,7 @@ function BookLinkRow({
 function BookRowContent({ book }: { book: LibraryBook }) {
   const active = book.lastAccessed > 0 || book.bookmarkCount > 0;
   return (
-    <div className="d-block py-2 px-2 rounded-3 text-body book-row h-100">
+    <div className="block h-full rounded-box px-2 py-2 text-base-content book-row">
       <BookRowDetails book={book} active={active} />
     </div>
   );
@@ -158,19 +159,17 @@ function BookRowDetails({
   bookmark?: LibraryBookmark;
 }) {
   return (
-    <span className="d-block overflow-hidden min-w-0">
-      <span className="d-flex align-items-center gap-2">
+    <span className="block min-w-0 overflow-hidden">
+      <span className="flex items-center gap-2">
         <span
           className={classNames(
-            "book-row-icon flex-shrink-0 d-flex align-items-center justify-content-center rounded-circle",
+            "book-row-icon flex shrink-0 items-center justify-center rounded-full",
             active && "book-row-icon-active",
           )}
         >
-          <i className="bi bi-journal-bookmark" aria-hidden="true" />
+          <BookOpen className="size-4" aria-hidden="true" />
         </span>
-        <span className="text-truncate fw-medium min-w-0 flex-grow-1">
-          {book.title}
-        </span>
+        <span className="min-w-0 flex-1 truncate font-medium">{book.title}</span>
       </span>
       <BookMetadata book={book} bookmark={bookmark} />
     </span>
@@ -197,7 +196,7 @@ function BookMetadata({
   bookmark?: LibraryBookmark;
 }) {
   return (
-    <span className="d-flex align-items-center gap-1 min-w-0 overflow-hidden book-row-meta mt-1">
+    <span className="mt-1 flex min-w-0 items-center gap-1 overflow-hidden book-row-meta">
       {bookmark ? (
         <BookmarkPageBadge pageNumber={bookmark.pageNumber} />
       ) : (
@@ -211,7 +210,7 @@ function BookMetadata({
         )
       )}
       {book.authors.length > 0 && (
-        <span className="text-truncate small text-muted min-w-0">
+        <span className="min-w-0 truncate text-sm text-base-content/60">
           {book.authors.join(", ")}
         </span>
       )}
@@ -223,10 +222,10 @@ function BookmarkPageBadge({ pageNumber }: { pageNumber: number | null }) {
   const page = pageNumber ?? "—";
   return (
     <span
-      className="badge rounded-pill text-bg-light border fw-normal flex-shrink-0"
+      className="badge badge-sm shrink-0 border border-base-300 bg-base-200 font-normal"
       aria-label={pageNumber === null ? "Page unavailable" : `Page ${pageNumber}`}
     >
-      <i className="bi bi-file-earmark-text me-1" aria-hidden="true" />
+      <FileText className="mr-1 size-3" aria-hidden="true" />
       Page {page}
     </span>
   );
@@ -242,10 +241,10 @@ function ActivityTimeBadge({
   const formatted = formatLastAccessed(timestamp);
   return (
     <span
-      className="badge rounded-pill text-bg-light border fw-normal flex-shrink-0"
+      className="badge badge-sm shrink-0 border border-base-300 bg-base-200 font-normal"
       aria-label={`${label} ${formatted}`}
     >
-      <i className="bi bi-clock-history me-1" aria-hidden="true" />
+      <Clock3 className="mr-1 size-3" aria-hidden="true" />
       {formatted}
     </span>
   );
@@ -254,10 +253,10 @@ function ActivityTimeBadge({
 function BookmarkBadge({ count }: { count: number }) {
   return (
     <span
-      className="badge rounded-pill text-bg-light border fw-normal flex-shrink-0"
+      className="badge badge-sm shrink-0 border border-base-300 bg-base-200 font-normal"
       aria-label={`${count} bookmark${count === 1 ? "" : "s"}`}
     >
-      <i className="bi bi-bookmark-fill me-1" aria-hidden="true" />
+      <Bookmark className="mr-1 size-3" fill="currentColor" aria-hidden="true" />
       {count}
     </span>
   );
@@ -277,8 +276,8 @@ function pad(value: number): string {
 
 export function EmptyState({ message }: { message: string }) {
   return (
-    <div className="text-center text-muted py-5">
-      <i className="bi bi-journal-x fs-1 d-block mb-2" aria-hidden="true" />
+    <div className="py-12 text-center text-base-content/60">
+      <BookX className="mx-auto mb-2 size-10" aria-hidden="true" />
       {message}
     </div>
   );

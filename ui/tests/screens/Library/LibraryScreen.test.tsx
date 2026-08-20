@@ -228,7 +228,7 @@ describe("LibraryScreen", () => {
     const searchbox = screen.getByRole("searchbox");
     const searchField = searchbox.closest(".search-box");
     const clear = screen.getByRole("button", { name: "Clear search" });
-    expect(clear).toHaveTextContent("×");
+    expect(clear).toHaveAccessibleName("Clear search");
     expect(clear.firstElementChild).toHaveClass("search-box-clear-icon");
     expect(searchField).toHaveAttribute("data-empty", "true");
 
@@ -330,8 +330,8 @@ describe("LibraryScreen", () => {
     expect(search.closest(".library-search-group")).toContainElement(actions);
     expect(read).toBeDisabled();
     expect(share).toBeDisabled();
-    expect(read.querySelector("span")).toHaveClass("d-none", "d-md-inline");
-    expect(share.querySelector("span")).toHaveClass("d-none", "d-md-inline");
+    expect(read.querySelector("span")).toHaveClass("hidden", "md:inline");
+    expect(share.querySelector("span")).toHaveClass("hidden", "md:inline");
 
     const shareRow = screen.getByRole("row", { name: "Dune" });
     await userEvent.click(shareRow);
@@ -502,7 +502,7 @@ describe("LibraryScreen", () => {
     expect(row.querySelector(".book-row-icon")).toHaveClass("book-row-icon-active");
     expect(screen.getByLabelText("2 bookmarks")).toHaveTextContent("2");
     expect(screen.getByLabelText("Last accessed 14:05:09 17/08/26")).toBeVisible();
-    expect(screen.getByText("A very long author name")).toHaveClass("text-truncate");
+    expect(screen.getByText("A very long author name")).toHaveClass("truncate");
   });
 
   it("keeps desktop navigation in the left pane with browse counts", () => {
@@ -514,8 +514,8 @@ describe("LibraryScreen", () => {
     expect(document.querySelector(".library-search-col")).toHaveClass("min-w-0");
     const recent = screen.getByRole("button", { name: /^Recent/ });
     expect(recent).toHaveTextContent("2");
-    expect(recent).toHaveClass("active");
-    expect(recent).not.toHaveClass("rounded-3");
+    expect(recent).toHaveClass("btn-active");
+    expect(recent).toHaveClass("rounded-none");
     expect(screen.getByRole("button", { name: /^All Books/ })).toHaveTextContent("2");
     expect(screen.getByRole("button", { name: /^Authors/ })).toHaveTextContent("2");
     expect(screen.getByRole("button", { name: /^Subjects/ })).toHaveTextContent("2");
@@ -709,8 +709,8 @@ describe("LibraryScreen", () => {
       "clear last access",
       "delete bookmark",
     ]);
-    expect(accessDelete.querySelector(".bi-x-lg")).not.toBeNull();
-    expect(bookmarkDelete.querySelector(".bi-x-lg")).not.toBeNull();
+    expect(accessDelete.querySelector("svg")).not.toBeNull();
+    expect(bookmarkDelete.querySelector("svg")).not.toBeNull();
     await waitFor(() => expect(reload).toHaveBeenCalledTimes(2));
   });
 
@@ -744,8 +744,8 @@ describe("LibraryScreen", () => {
     expect(screen.getByRole("heading", { name: "Subjects" })).toBeInTheDocument();
     const fantasyRow = screen.getByRole("button", { name: /^Fantasy/ });
     expect(fantasyRow).toHaveTextContent("1");
-    expect(fantasyRow).toHaveClass("rounded-3");
-    expect(fantasyRow.querySelector(".badge")).toHaveClass("text-bg-light");
+    expect(fantasyRow).toHaveClass("rounded-box");
+    expect(fantasyRow.querySelector(".badge")).toHaveClass("bg-base-200");
     expect(screen.getByRole("button", { name: /^Science Fiction/ })).toHaveTextContent(
       "1",
     );
@@ -802,11 +802,11 @@ describe("LibraryScreen", () => {
     expect(menu).toHaveClass("library-dropdown-dialog");
     expect(menu.parentElement).toHaveClass("library-dropdown");
     expect(within(menu).getByRole("button", { name: /^Recent/ })).toHaveClass(
-      "list-group-item",
-      "active",
+      "btn",
+      "btn-active",
     );
     expect(within(menu).getByRole("button", { name: /^Recent/ })).not.toHaveClass(
-      "rounded-3",
+      "rounded-box",
     );
     const lock = within(menu).getByRole("button", { name: "Lock" });
     expect(lock.parentElement).toHaveTextContent("Trung");
