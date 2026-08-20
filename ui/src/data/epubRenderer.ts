@@ -20,6 +20,7 @@ const INITIAL_FONT_WAIT_MS = 1_000;
 const BOOK_PAGE_CHARS = 1000;
 const COVER_MEDIA_SELECTOR = "img, image, object";
 const XLINK_NAMESPACE = "http://www.w3.org/1999/xlink";
+const EPUB_RESOLUTION_ORIGIN = "https://epub.invalid";
 
 interface SectionLike {
   href?: string;
@@ -35,10 +36,15 @@ function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
 
 function resourcePath(reference: string, base: string): string {
   try {
-    return decodedPath(new URL(reference, base).pathname);
+    const absoluteBase = new URL(base, EPUB_RESOLUTION_ORIGIN);
+    return decodedPath(new URL(reference, absoluteBase).pathname);
   } catch {
     return decodedPath(reference.split(/[?#]/)[0]);
   }
+}
+
+function resourceBase(document: Document): string {
+  return document.querySelector("base[href]")?.getAttribute("href") ?? document.baseURI;
 }
 
 function decodedPath(path: string): string {
@@ -148,18 +154,14 @@ export class EpubRenderer {
     section: Section,
     coverHref: string,
   ): boolean {
-    const coverPath = resourcePath(coverHref, document.baseURI);
-    if (
-      section.href &&
-      resourcePath(section.url ?? section.href, document.baseURI) === coverPath
-    )
+    const base = resourceBase(document);
+    const coverPath = resourcePath(coverHref, base);
+    if (section.href && resourcePath(section.url ?? section.href, base) === coverPath)
       return true;
     return Array.from(document.querySelectorAll(COVER_MEDIA_SELECTOR)).some(
       (element) => {
         const reference = mediaReference(element);
-        return (
-          reference !== null && resourcePath(reference, document.baseURI) === coverPath
-        );
+        return reference !== null && resourcePath(reference, base) === coverPath;
       },
     );
   }

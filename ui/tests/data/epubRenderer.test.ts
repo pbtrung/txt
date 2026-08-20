@@ -166,6 +166,24 @@ describe("EpubRenderer", () => {
     expect(cover.body.querySelector("p")?.style.width).toBe("100%");
   });
 
+  it("resolves a root-relative EPUB base when identifying the cover", async () => {
+    bookMock.loaded.cover = Promise.resolve("/OEBPS/images/9780765389206.jpg");
+    new EpubRenderer(new Uint8Array([1]), "The Shattering Peace", ["John Scalzi"]);
+    const cover = document.implementation.createHTMLDocument();
+    cover.head.innerHTML = '<base href="/OEBPS/xhtml/cover.xhtml">';
+    cover.body.innerHTML =
+      '<img src="../images/9780765389206.jpg" alt="" width="24" height="12">';
+
+    await coverHook()(cover, {
+      href: "xhtml/cover.xhtml",
+      url: "/OEBPS/xhtml/cover.xhtml",
+    });
+
+    expect(cover.body.querySelector("img")).toBeNull();
+    expect(cover.body.querySelector("h1")?.textContent).toBe("The Shattering Peace");
+    expect(cover.body.querySelector("p")?.textContent).toBe("John Scalzi");
+  });
+
   it("does not replace a section that does not contain the cover", async () => {
     bookMock.loaded.cover = Promise.resolve("https://reader.test/OEBPS/cover.jpg");
     new EpubRenderer(new Uint8Array([1]), "Dune", ["Frank Herbert"]);
