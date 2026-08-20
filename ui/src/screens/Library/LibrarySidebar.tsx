@@ -129,7 +129,7 @@ function NavRow({
       onPress={onPress}
     >
       {label}
-      <span className="badge badge-sm border border-base-300 bg-base-200 text-base-content">
+      <span className="badge badge-sm border border-base-300 bg-base-200 font-bold text-base-content">
         {count}
       </span>
     </Button>

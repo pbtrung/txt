@@ -530,6 +530,7 @@ describe("LibraryScreen", () => {
     expect(document.querySelector(".library-search-col")).toHaveClass("min-w-0");
     const recent = screen.getByRole("button", { name: /^Recent/ });
     expect(recent).toHaveTextContent("2");
+    expect(recent.querySelector(".badge")).toHaveClass("font-bold");
     expect(recent).toHaveClass("btn-active");
     expect(recent).toHaveClass("border-b", "border-base-300");
     expect(recent).toHaveClass("rounded-none");
