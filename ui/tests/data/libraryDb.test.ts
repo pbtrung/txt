@@ -5,8 +5,21 @@ import {
   clearBookmarksMutation,
   clearLastAccessMutation,
   loadLibraryBooks,
+  type CatalogCache,
 } from "../../src/data/libraryDb";
 import { SqliteDatabase } from "../../src/data/sqlite";
+
+const decodeCatalogSpy = vi.hoisted(() => vi.fn());
+vi.mock("../../src/data/catalog", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/data/catalog")>();
+  return {
+    ...actual,
+    decodeCatalog: (blob: Uint8Array) => {
+      decodeCatalogSpy(blob);
+      return actual.decodeCatalog(blob);
+    },
+  };
+});
 
 async function catalogBlob(catalog: Record<string, unknown>): Promise<Uint8Array> {
   return brotliCompress(new TextEncoder().encode(JSON.stringify(catalog)));
@@ -122,6 +135,26 @@ describe("loadLibraryBooks (real sqlcipher.wasm)", () => {
 
     expect(await loadLibraryBooks(db)).toEqual([]);
     db.close();
+  });
+
+  it("reuses a cached decoded catalog across calls instead of re-decoding", async () => {
+    const db = await SqliteDatabase.openUnkeyed();
+    ensureSchema(db);
+    await insertTxt(db, 1, {
+      name: "dune.epub",
+      title: "Dune",
+      authors: [],
+      subjects: [],
+      publisher: null,
+    });
+    const cache: CatalogCache = new Map();
+    decodeCatalogSpy.mockClear();
+
+    await loadLibraryBooks(db, cache);
+    await loadLibraryBooks(db, cache);
+    db.close();
+
+    expect(decodeCatalogSpy).toHaveBeenCalledTimes(1);
   });
 });
 

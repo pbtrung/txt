@@ -1,7 +1,7 @@
 import { brotliDecompress } from "../crypto/brotli";
 import { objectRecord, stringArrayField, stringField } from "../util/validation";
 
-interface Catalog {
+export interface Catalog {
   title: string;
   authors: string[];
   subjects: string[];

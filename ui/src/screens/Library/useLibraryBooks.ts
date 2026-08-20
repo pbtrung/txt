@@ -25,7 +25,7 @@ export function useLibraryBooks(database: LibraryDatabaseStore | null): LibraryS
     const source = database;
     let cancelled = false;
     source
-      .read(loadLibraryBooks)
+      .read((db) => loadLibraryBooks(db, source.catalogCache))
       .then((books) => setLoadedUnlessCancelled({ status: "ready", books, reload }))
       .catch((error: unknown) =>
         setLoadedUnlessCancelled({ status: "error", error: errorMessage(error) }),

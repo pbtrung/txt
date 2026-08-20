@@ -1,3 +1,4 @@
+import type { CatalogCache } from "./libraryDb";
 import { R2ConflictError } from "./r2";
 import { R2Session } from "./r2Session";
 import { ensureSchema } from "./schema";
@@ -17,6 +18,12 @@ export interface DatabaseStoreStatus {
 }
 
 export class LibraryDatabaseStore {
+  // Lives for the store's whole session, surviving the internal db swaps
+  // reload() below does on conflict resolution -- txt.catalog is write-once
+  // and txt.id is never reused (docs/data_model.md §2.1), so a decoded
+  // catalog is valid for as long as this store is, letting
+  // useLibraryBooks skip re-decoding a book's catalog on every reload().
+  readonly catalogCache: CatalogCache = new Map();
   private tail: Promise<void> = Promise.resolve();
   private failedMutations: DatabaseMutation[] = [];
   private listeners = new Set<() => void>();

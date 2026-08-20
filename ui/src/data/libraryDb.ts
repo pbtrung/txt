@@ -2,9 +2,17 @@
 // {name, title, authors, subjects, publisher} object, brotli-compressed
 // JSON) into plain LibraryBook records for the Library screen's
 // search/browse-by-author/subject/publisher.
-import { decodeCatalog } from "./catalog";
+import { decodeCatalog, type Catalog } from "./catalog";
 import type { DatabaseMutation } from "./databaseStore";
 import type { SqliteDatabase } from "./sqlite";
+
+// txt.catalog is written once at ingest time and never edited afterward by
+// anything the browser can trigger, and txt.id is AUTOINCREMENT (SQLite
+// never reuses an id, and this app has no client-side delete-book feature),
+// so a decoded catalog can be cached by txtId for the lifetime of a session
+// with no invalidation logic at all -- a book only ever needs decoding once,
+// no matter how many times library.reload() re-runs this query.
+export type CatalogCache = Map<number, Catalog>;
 
 export interface LibraryBookmark {
   cfi: string;
@@ -25,9 +33,18 @@ export interface LibraryBook {
   bookmarks: LibraryBookmark[];
 }
 
+async function catalogFor(txtId: number, blob: Uint8Array, cache: CatalogCache) {
+  const cached = cache.get(txtId);
+  if (cached) return cached;
+  const catalog = await decodeCatalog(blob);
+  cache.set(txtId, catalog);
+  return catalog;
+}
+
 async function toBook(
   row: unknown[],
   bookmarks: LibraryBookmark[],
+  cache: CatalogCache,
 ): Promise<LibraryBook> {
   const [
     txtId,
@@ -37,7 +54,7 @@ async function toBook(
     lastBookmarked,
     latestBookmarkCfi,
   ] = row;
-  const catalog = await decodeCatalog(catalogBlob as Uint8Array);
+  const catalog = await catalogFor(txtId as number, catalogBlob as Uint8Array, cache);
   return {
     txtId: txtId as number,
     title: catalog.title,
@@ -52,7 +69,10 @@ async function toBook(
   };
 }
 
-export async function loadLibraryBooks(db: SqliteDatabase): Promise<LibraryBook[]> {
+export async function loadLibraryBooks(
+  db: SqliteDatabase,
+  cache: CatalogCache = new Map(),
+): Promise<LibraryBook[]> {
   const bookmarks = bookmarksByBook(db);
   const rows = db.query(
     "SELECT t.id, t.catalog, t.last_accessed, COUNT(b.id), MAX(b.created_at), " +
@@ -62,7 +82,7 @@ export async function loadLibraryBooks(db: SqliteDatabase): Promise<LibraryBook[
       "GROUP BY t.id ORDER BY t.id",
   );
   return Promise.all(
-    rows.map((row) => toBook(row, bookmarks.get(row[0] as number) ?? [])),
+    rows.map((row) => toBook(row, bookmarks.get(row[0] as number) ?? [], cache)),
   );
 }
 
