@@ -329,10 +329,21 @@ describe("LibraryScreen", () => {
     const share = screen.getByRole("button", { name: "Share" });
 
     expect(search.closest(".library-search-group")).toContainElement(actions);
+    expect(search).toHaveClass("library-search-control");
     expect(read).toBeDisabled();
     expect(share).toBeDisabled();
-    expect(read).toHaveClass("gap-1", "md:px-2", "library-book-action");
-    expect(share).toHaveClass("gap-1", "md:px-2", "library-book-action");
+    expect(read).toHaveClass(
+      "gap-1",
+      "md:px-2",
+      "library-book-action",
+      "library-search-control",
+    );
+    expect(share).toHaveClass(
+      "gap-1",
+      "md:px-2",
+      "library-book-action",
+      "library-search-control",
+    );
     expect(read.querySelector("span")).toHaveClass(
       "hidden",
       "leading-none",

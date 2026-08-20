@@ -71,7 +71,10 @@ export function LibraryHeader({
             onChange={onQuery}
           >
             <Search className="search-box-icon" aria-hidden="true" />
-            <Input className="search-box-input" placeholder="Search…" />
+            <Input
+              className="search-box-input library-search-control"
+              placeholder="Search…"
+            />
             <Button
               className="search-box-clear compact-x-button"
               aria-label="Clear search"
@@ -136,7 +139,7 @@ function BookAction({
   const Icon = icon;
   return (
     <Button
-      className="btn btn-sm btn-square btn-outline btn-secondary join-item shrink-0 gap-1 md:w-auto md:px-2 library-book-action"
+      className="btn btn-sm btn-square btn-outline btn-secondary join-item shrink-0 gap-1 md:w-auto md:px-2 library-book-action library-search-control"
       aria-label={label}
       isDisabled={isDisabled}
       onPress={onPress}
