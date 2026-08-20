@@ -183,8 +183,8 @@
   --search-border-color: var(--color-secondary);
   --search-focus-border-color: color-mix(
     in srgb,
-    var(--color-primary) 20%,
-    var(--color-base-300)
+    var(--color-primary) 40%,
+    var(--color-secondary)
   );
 
   display: block;
@@ -216,15 +216,13 @@
 .search-box-input:focus,
 .reader-page-input:focus {
   outline: none;
-  box-shadow: 0 0 0 0.1rem color-mix(in srgb, var(--color-primary) 25%, transparent);
+  box-shadow: 0 0 0 0.125rem color-mix(in srgb, var(--color-primary) 30%, transparent);
 }
 
 .search-box-input:focus {
   color: var(--color-base-content);
   background-color: var(--color-base-100);
   border-color: var(--search-focus-border-color);
-  box-shadow: 0 0 0 0.0625rem
-    color-mix(in srgb, var(--color-primary) 14%, transparent);
 }
 
 /* The attached book/share action buttons read as part of the same control
@@ -234,8 +232,7 @@
    own button group is the part actually active. */
 .library-search-group:has(.library-book-actions :focus) .search-box-input {
   border-color: var(--search-border-color);
-  box-shadow: 0 0 0 0.0625rem
-    color-mix(in srgb, var(--color-primary) 14%, transparent);
+  box-shadow: 0 0 0 0.125rem color-mix(in srgb, var(--color-primary) 30%, transparent);
 }
 
 /* Chromium and Safari add their own cancel glyph to search inputs. The
