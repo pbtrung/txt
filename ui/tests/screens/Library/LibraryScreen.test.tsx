@@ -538,7 +538,7 @@ describe("LibraryScreen", () => {
     const row = screen.getByRole("row", { name: /Active book/ });
     expect(screen.getByRole("grid", { name: "Books" })).toContainElement(row);
     expect(row.querySelector(".book-row-icon")).toHaveClass("book-row-icon-active");
-    expect(row.querySelector(".book-row-meta")).toHaveClass("pl-1");
+    expect(row.querySelector(".book-row-meta")).toHaveClass("pl-0");
     expect(screen.getByLabelText("2 bookmarks")).toHaveClass("gap-1", "font-semibold");
     expect(within(screen.getByLabelText("2 bookmarks")).getByText("2")).toHaveClass(
       "book-row-badge-text",
@@ -548,6 +548,19 @@ describe("LibraryScreen", () => {
       "font-semibold",
     );
     expect(screen.getByText("A very long author name")).toHaveClass("truncate");
+  });
+
+  it("adds one space after the icon only for author-only metadata", async () => {
+    renderScreen([
+      book({
+        title: "Author-only book",
+        authors: ["Solo author"],
+      }),
+    ]);
+    await userEvent.click(screen.getByRole("button", { name: /^All Books/ }));
+
+    const row = screen.getByRole("row", { name: /Author-only book/ });
+    expect(row.querySelector(".book-row-meta")).toHaveClass("pl-1");
   });
 
   it("keeps desktop navigation in the left pane with browse counts", () => {

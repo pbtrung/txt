@@ -195,8 +195,16 @@ function BookMetadata({
   book: LibraryBook;
   bookmark?: LibraryBookmark;
 }) {
+  const hasBadges =
+    Boolean(bookmark) || book.bookmarkCount > 0 || book.lastAccessed > 0;
+  const authorOnly = book.authors.length > 0 && !hasBadges;
   return (
-    <span className="mt-1 flex min-w-0 items-center gap-1 overflow-hidden pl-1 book-row-meta">
+    <span
+      className={classNames(
+        "mt-1 flex min-w-0 items-center gap-1 overflow-hidden book-row-meta",
+        authorOnly ? "pl-1" : "pl-0",
+      )}
+    >
       {bookmark ? (
         <BookmarkPageBadge pageNumber={bookmark.pageNumber} />
       ) : (
