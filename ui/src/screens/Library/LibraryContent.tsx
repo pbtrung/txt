@@ -324,7 +324,7 @@ function EntryRow({
       onPress={() => onNavigate({ kind: "books", filter: { dimension, value } })}
     >
       <span className="min-w-0 truncate">{value}</span>
-      <span className="badge badge-sm shrink-0 border border-base-300 bg-base-200">
+      <span className="badge badge-sm shrink-0 border border-base-300 bg-base-200 font-bold">
         {count}
       </span>
     </Button>
