@@ -338,7 +338,7 @@
   left: 0;
   z-index: 80;
   display: flex;
-  justify-content: center;
+  min-width: 0;
   outline: none;
 }
 
@@ -347,11 +347,18 @@
 }
 
 .library-toast {
-  width: 70%;
+  width: 100%;
   min-width: 0;
-  max-width: none;
+  max-width: 100%;
   overflow: hidden;
+  grid-template-columns: minmax(0, 1fr);
   outline: none;
+}
+
+.library-toast-content > span {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 /* React Aria's virtualized elements also consume this utility outside the

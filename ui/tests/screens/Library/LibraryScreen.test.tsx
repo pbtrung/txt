@@ -382,8 +382,17 @@ describe("LibraryScreen", () => {
     );
     expect(libraryToast()).toHaveTextContent("Creating share: Dune");
     expect(libraryToast()).toHaveTextContent("Encrypting shared copy");
-    expect(document.querySelector(".library-toast-region")).toHaveClass(
+    const toastRegion = document.querySelector(".library-toast-region");
+    expect(toastRegion).toHaveClass(
+      "box-border",
+      "px-[15%]",
       "library-toast-region-with-sidebar",
+    );
+    expect(libraryToast()).toHaveClass(
+      "w-full",
+      "min-w-0",
+      "max-w-full",
+      "overflow-hidden",
     );
     expect(libraryToast().querySelector(".library-toast-content")).toHaveClass(
       "min-w-0",

@@ -324,7 +324,7 @@ function LibraryToastRegion({ hasSidebar }: { hasSidebar: boolean }) {
   return (
     <UNSTABLE_ToastRegion
       queue={libraryToastQueue}
-      className={`library-toast-region ${hasSidebar ? "library-toast-region-with-sidebar" : ""}`}
+      className={`library-toast-region box-border px-[15%] ${hasSidebar ? "library-toast-region-with-sidebar" : ""}`}
       aria-label="Library notifications"
     >
       {({ toast }) => <LibraryToast toast={toast} />}
@@ -337,7 +337,7 @@ function LibraryToast({ toast }: { toast: QueuedToast<LibraryNotice> }) {
   return (
     <UNSTABLE_Toast
       toast={toast}
-      className={`alert library-toast ${notice.status === "error" ? "alert-error" : notice.status === "success" ? "alert-success" : "border border-base-300 bg-base-100"}`}
+      className={`alert w-full min-w-0 max-w-full overflow-hidden library-toast ${notice.status === "error" ? "alert-error" : notice.status === "success" ? "alert-success" : "border border-base-300 bg-base-100"}`}
     >
       <UNSTABLE_ToastContent className="flex w-full min-w-0 max-w-full items-center gap-2 overflow-hidden library-toast-content">
         {notice.status === "busy" && (
