@@ -165,6 +165,6 @@ The command reaches the administrator through its self-owned `cred_store` row an
 
 1. Bring the control plane to the current encrypted-handle, path-binding, and P-521 signing schema using docs/auth.md §3 and §9.
 2. Run `--update-db` against every reachable R2 database before deploying UI code that creates bookmarks or shares.
-3. Configure R2 CORS for `GET`, `PUT`, conditional-write headers, range reads, and exposed `ETag` as shown in `docs/r2-cors.example.json`.
+3. Configure R2 CORS for the UI origin, allowing `GET`, `PUT`, conditional-write headers, range reads, and exposing `ETag`.
 4. Create and migrate the D1 `SHARE_REGISTRY` binding before enabling public share links.
 5. Deploy the Worker and UI together, then test credential renewal, conditional database conflicts, bookmark persistence, and the complete share copy/read/delete flow.

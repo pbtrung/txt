@@ -103,7 +103,7 @@ openssl rand -base64 32  # R2_TICKET_SECRET
 openssl rand -base64 32  # SHARE_GRANT_KEY
 ```
 
-Apply [the R2 CORS example](docs/r2-cors.example.json) for the exact UI origin, then deploy the Worker and UI together:
+Configure R2 CORS for the exact UI origin, then deploy the Worker and UI together:
 
 ```sh
 WORKER_NAME=existing-worker npm run deploy
