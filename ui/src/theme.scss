@@ -1,14 +1,11 @@
-// claude.ai's own warm cream-and-terracotta look, mapped onto Bootstrap's
-// Sass variables so every component -- buttons, badges, list-group,
-// offcanvas, forms, alerts -- is recolored consistently at build time
-// rather than only the handful of things a runtime CSS-variable override
-// would reach (most of Bootstrap 5's compiled classes bake their colors
-// into component-local custom properties, not the root `--bs-*` ones).
+// claude.ai's own warm cream-and-terracotta look. These source values remain
+// the palette's canonical definition; tailwind.css maps daisyUI's semantic
+// component tokens back to the custom properties emitted here.
 $cream: #faf9f5; // page background
-$cream-dark: #f0eee6; // secondary surfaces (sidebars, drawers, muted fills)
+$cream-dark: #f0eee6; // sidebars, drawers, muted fills
 $border-warm: #e5e3dc;
 $ink: #3d3929; // body text
-$ink-muted: #83827d; // secondary/muted text
+$ink-muted: #83827d; // secondary text
 $terracotta: #d97757; // primary accent
 $terracotta-hover: #c2673f;
 $red: #c0392b;
@@ -16,35 +13,38 @@ $green: #6a8a5e;
 $yellow: #c99a2e;
 $cyan: #4a90a4;
 
-// `@use ... with (...)` (not the legacy `@import` + pre-declared-variable
-// pattern) is Bootstrap 5.2+'s own recommended theming entry point --
-// `with` only accepts the module's own `!default` variables, so the
-// palette above stays as plain locals and get passed in by name.
-@use "bootstrap/scss/bootstrap" with (
-  $font-family-sans-serif: (
+:root {
+  --skypiea-cream: #{$cream};
+  --skypiea-cream-dark: #{$cream-dark};
+  --skypiea-border: #{$border-warm};
+  --skypiea-ink: #{$ink};
+  --skypiea-ink-muted: #{$ink-muted};
+  --skypiea-terracotta: #{$terracotta};
+  --skypiea-terracotta-hover: #{$terracotta-hover};
+  --skypiea-error: #{$red};
+  --skypiea-success: #{$green};
+  --skypiea-warning: #{$yellow};
+  --skypiea-info: #{$cyan};
+
+  color: $ink;
+  background: $cream;
+  font-family:
     "Inter", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
     "Noto Sans", "Liberation Sans", Arial, sans-serif, "Apple Color Emoji",
-    "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji"
-  ),
-  $primary: $terracotta,
-  $secondary: $ink-muted,
-  $success: $green,
-  $info: $cyan,
-  $warning: $yellow,
-  $danger: $red,
-  $light: $cream-dark,
-  $dark: $ink,
-  $body-bg: $cream,
-  $body-color: $ink,
-  $headings-color: $ink,
-  $border-color: $border-warm,
-  $link-color: $terracotta,
-  $link-hover-color: $terracotta-hover,
-  $component-active-bg: $terracotta,
-  // claude.ai's UI leans on soft, generously rounded corners rather than
-  // Bootstrap's sharper defaults -- buttons, cards, inputs, offcanvas.
-  $border-radius: 0.625rem,
-  $border-radius-sm: 0.5rem,
-  $border-radius-lg: 0.875rem,
-  $border-radius-pill: 50rem
-);
+    "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  color: $ink;
+  background: $cream;
+  font-family: inherit;
+}

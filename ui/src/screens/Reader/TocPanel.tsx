@@ -4,7 +4,7 @@ import type { NavItem } from "@likecoin/epub-ts";
 import { useEffect, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { Button, Tree, TreeItem, TreeItemContent } from "react-aria-components";
-import { OffcanvasPanel } from "../../components/OffcanvasPanel";
+import { DrawerPanel } from "../../components/DrawerPanel";
 import type { EpubRenderer } from "../../data/epubRenderer";
 
 interface LoadedToc {
@@ -41,13 +41,13 @@ export function TocPanel({
   }, [renderer]);
   const toc = loaded?.renderer === renderer ? loaded.items : undefined;
   return (
-    <OffcanvasPanel
+    <DrawerPanel
       open={open}
       onClose={onClose}
       title="Content"
       placement="start"
       className="reader-side-panel"
-      overlayClassName="reader-offcanvas-overlay"
+      overlayClassName="reader-drawer-overlay"
       portalContainer={portalContainer}
     >
       {toc === undefined ? (
@@ -67,7 +67,7 @@ export function TocPanel({
           }}
         />
       )}
-    </OffcanvasPanel>
+    </DrawerPanel>
   );
 }
 

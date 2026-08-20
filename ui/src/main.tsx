@@ -3,7 +3,6 @@ import { createRoot } from "react-dom/client";
 
 import "./theme.scss";
 import "./tailwind.css";
-import "bootstrap-icons/font/bootstrap-icons.css";
 import "@fontsource/inter/400.css";
 import "@fontsource/inter/500.css";
 import "@fontsource/inter/600.css";

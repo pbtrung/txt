@@ -27,15 +27,6 @@ export default defineConfig({
   // from the repo root, not from inside ui/ itself.
   root: UI_DIR,
   plugins: [tailwindcss(), react()],
-  css: {
-    preprocessorOptions: {
-      // Bootstrap's own SCSS still calls Sass's legacy red()/green()/blue()
-      // color functions internally -- harmless upstream deprecation noise
-      // this app's own code doesn't trigger, not worth drowning real
-      // warnings in.
-      scss: { quietDeps: true },
-    },
-  },
   // sqlcipher/ is served as-is at the site root (/sqlcipher.js,
   // /sqlcipher.wasm) so the browser loader can fetch it directly. The other
   // files living there (test scripts, the .symbols list) get copied along
@@ -47,7 +38,7 @@ export default defineConfig({
   build: {
     outDir: DIST_DIR,
     emptyOutDir: true,
-    // Single chunk (below) now bundles epub.js/brotli-wasm/bootstrap too,
+    // Single chunk (below) bundles epub.js, brotli-wasm, and the UI runtime,
     // comfortably past Vite's 500 kB default warning -- that default is
     // tuned for apps that code-split, which this one deliberately doesn't.
     chunkSizeWarningLimit: 1500,

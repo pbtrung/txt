@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Button } from "react-aria-components";
-import { OffcanvasPanel } from "../../components/OffcanvasPanel";
+import { DrawerPanel } from "../../components/DrawerPanel";
 import type { ReaderDocument } from "../../data/readerDocument";
 import { sanitizeHtml, stripHtmlToText } from "../../data/sanitizeHtml";
 
@@ -18,12 +18,12 @@ export function ReaderInfoPanel({
   portalContainer?: Element;
 }) {
   return (
-    <OffcanvasPanel
+    <DrawerPanel
       open={open}
       onClose={onClose}
       title="Info"
       className="reader-side-panel"
-      overlayClassName="reader-offcanvas-overlay"
+      overlayClassName="reader-drawer-overlay"
       portalContainer={portalContainer}
     >
       <h2 className="mb-1 text-lg font-semibold">{document.title}</h2>
@@ -31,7 +31,7 @@ export function ReaderInfoPanel({
         <p className="mb-3 text-base-content/60">{document.authors.join(", ")}</p>
       )}
       <MetadataList document={document} />
-    </OffcanvasPanel>
+    </DrawerPanel>
   );
 }
 

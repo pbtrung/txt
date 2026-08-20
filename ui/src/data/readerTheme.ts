@@ -1,6 +1,5 @@
 // The reader's fixed visual defaults: Literata (self-hosted via
-// @fontsource, not a Google Fonts CDN link -- consistent with this app's
-// Bootstrap Icons being bundled too) for body text. The outer reader frame
+// @fontsource, not a Google Fonts CDN link) for body text. The outer reader frame
 // stays sized for 24px text while the renderer keeps a smaller pagination
 // gutter on mobile and its full inter-column gutter on desktop.
 // epub.js renders each section in its own iframe document, so this can't

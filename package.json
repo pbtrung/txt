@@ -23,8 +23,6 @@
     "@likecoin/epub-ts": "^0.7.1",
     "@sentry/react": "^10.70.0",
     "aws4fetch": "^1.0.20",
-    "bootstrap": "^5.3.8",
-    "bootstrap-icons": "^1.13.1",
     "brotli-wasm": "^3.0.1",
     "dompurify": "^3.4.13",
     "fuse.js": "^7.5.0",

@@ -3,7 +3,7 @@ import { X } from "lucide-react";
 import { Button, Dialog, Heading, Modal, ModalOverlay } from "react-aria-components";
 import { classNames } from "../util/classNames";
 
-export function OffcanvasPanel({
+export function DrawerPanel({
   open,
   onClose,
   title,
@@ -36,10 +36,10 @@ export function OffcanvasPanel({
       isOpen={open}
       onOpenChange={(isOpen) => !isOpen && onClose()}
       isDismissable
-      className={classNames("aria-offcanvas-overlay", overlayClassName)}
+      className={classNames("aria-drawer-overlay", overlayClassName)}
       UNSTABLE_portalContainer={portalContainer}
     >
-      <Modal className="aria-offcanvas-modal">
+      <Modal className="aria-drawer-modal">
         <Dialog
           aria-labelledby={titleId}
           className={classNames(panelClassName, "flex flex-col")}

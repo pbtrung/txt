@@ -2,14 +2,14 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { OffcanvasPanel } from "../../src/components/OffcanvasPanel";
+import { DrawerPanel } from "../../src/components/DrawerPanel";
 
-describe("OffcanvasPanel", () => {
+describe("DrawerPanel", () => {
   it("does not render a closed drawer", () => {
     render(
-      <OffcanvasPanel open={false} onClose={vi.fn()} title="Info">
+      <DrawerPanel open={false} onClose={vi.fn()} title="Info">
         content
-      </OffcanvasPanel>,
+      </DrawerPanel>,
     );
     expect(screen.queryByRole("dialog", { name: "Info" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
@@ -17,9 +17,9 @@ describe("OffcanvasPanel", () => {
 
   it("renders a drawer and backdrop when open", () => {
     render(
-      <OffcanvasPanel open onClose={vi.fn()} title="Info">
+      <DrawerPanel open onClose={vi.fn()} title="Info">
         content
-      </OffcanvasPanel>,
+      </DrawerPanel>,
     );
     expect(screen.getByRole("dialog", { name: "Info" })).toHaveClass(
       "aria-drawer-panel",
@@ -33,9 +33,9 @@ describe("OffcanvasPanel", () => {
   it("calls onClose from the close button", async () => {
     const onClose = vi.fn();
     render(
-      <OffcanvasPanel open onClose={onClose} title="Info">
+      <DrawerPanel open onClose={onClose} title="Info">
         content
-      </OffcanvasPanel>,
+      </DrawerPanel>,
     );
 
     await userEvent.click(screen.getByRole("button", { name: "Close" }));
@@ -46,12 +46,12 @@ describe("OffcanvasPanel", () => {
   it("calls onClose from the backdrop", async () => {
     const onClose = vi.fn();
     render(
-      <OffcanvasPanel open onClose={onClose} title="Info">
+      <DrawerPanel open onClose={onClose} title="Info">
         content
-      </OffcanvasPanel>,
+      </DrawerPanel>,
     );
 
-    await userEvent.click(document.querySelector(".aria-offcanvas-overlay")!);
+    await userEvent.click(document.querySelector(".aria-drawer-overlay")!);
 
     expect(onClose).toHaveBeenCalled();
   });
@@ -59,9 +59,9 @@ describe("OffcanvasPanel", () => {
   it("calls onClose when Escape is pressed", async () => {
     const onClose = vi.fn();
     render(
-      <OffcanvasPanel open onClose={onClose} title="Info">
+      <DrawerPanel open onClose={onClose} title="Info">
         content
-      </OffcanvasPanel>,
+      </DrawerPanel>,
     );
 
     await userEvent.keyboard("{Escape}");
@@ -71,7 +71,7 @@ describe("OffcanvasPanel", () => {
 
   it("passes through className and style", () => {
     render(
-      <OffcanvasPanel
+      <DrawerPanel
         open
         onClose={vi.fn()}
         title="Info"
@@ -79,7 +79,7 @@ describe("OffcanvasPanel", () => {
         style={{ width: "18rem" }}
       >
         content
-      </OffcanvasPanel>,
+      </DrawerPanel>,
     );
 
     const panel = screen.getByRole("dialog", { name: "Info" });
@@ -91,19 +91,19 @@ describe("OffcanvasPanel", () => {
     const portalContainer = document.createElement("div");
     document.body.append(portalContainer);
     const { unmount } = render(
-      <OffcanvasPanel
+      <DrawerPanel
         open
         onClose={vi.fn()}
         title="Info"
-        overlayClassName="reader-offcanvas-overlay"
+        overlayClassName="reader-drawer-overlay"
         portalContainer={portalContainer}
       >
         content
-      </OffcanvasPanel>,
+      </DrawerPanel>,
     );
 
-    const overlay = portalContainer.querySelector(".aria-offcanvas-overlay");
-    expect(overlay).toHaveClass("reader-offcanvas-overlay");
+    const overlay = portalContainer.querySelector(".aria-drawer-overlay");
+    expect(overlay).toHaveClass("reader-drawer-overlay");
     expect(overlay).toContainElement(screen.getByRole("dialog", { name: "Info" }));
     unmount();
     portalContainer.remove();
