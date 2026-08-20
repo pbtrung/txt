@@ -65,7 +65,7 @@ export function LibraryHeader({
           )}
         >
           <SearchField
-            className="search-box join-item relative min-w-0"
+            className="search-box relative min-w-0"
             aria-label="Search"
             value={query}
             onChange={onQuery}

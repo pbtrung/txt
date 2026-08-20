@@ -329,6 +329,7 @@ describe("LibraryScreen", () => {
     const share = screen.getByRole("button", { name: "Share" });
 
     expect(search.closest(".library-search-group")).toContainElement(actions);
+    expect(search.closest(".search-box")).not.toHaveClass("join-item");
     expect(search).toHaveClass("library-search-control");
     expect(read).toBeDisabled();
     expect(share).toBeDisabled();
