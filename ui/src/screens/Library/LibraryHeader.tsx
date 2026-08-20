@@ -136,13 +136,13 @@ function BookAction({
   const Icon = icon;
   return (
     <Button
-      className="btn btn-sm btn-square btn-outline btn-secondary join-item shrink-0 md:w-auto md:px-3"
+      className="btn btn-sm btn-square btn-outline btn-secondary join-item shrink-0 gap-1 md:w-auto md:px-2 library-book-action"
       aria-label={label}
       isDisabled={isDisabled}
       onPress={onPress}
     >
-      <Icon className="size-4 md:mr-1" aria-hidden="true" />
-      <span className="hidden md:inline">{visibleLabel}</span>
+      <Icon className="size-4" aria-hidden="true" />
+      <span className="hidden leading-none md:inline">{visibleLabel}</span>
     </Button>
   );
 }

@@ -331,8 +331,18 @@ describe("LibraryScreen", () => {
     expect(search.closest(".library-search-group")).toContainElement(actions);
     expect(read).toBeDisabled();
     expect(share).toBeDisabled();
-    expect(read.querySelector("span")).toHaveClass("hidden", "md:inline");
-    expect(share.querySelector("span")).toHaveClass("hidden", "md:inline");
+    expect(read).toHaveClass("gap-1", "md:px-2", "library-book-action");
+    expect(share).toHaveClass("gap-1", "md:px-2", "library-book-action");
+    expect(read.querySelector("span")).toHaveClass(
+      "hidden",
+      "leading-none",
+      "md:inline",
+    );
+    expect(share.querySelector("span")).toHaveClass(
+      "hidden",
+      "leading-none",
+      "md:inline",
+    );
 
     const shareRow = screen.getByRole("row", { name: "Dune" });
     await userEvent.click(shareRow);
