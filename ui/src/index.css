@@ -326,18 +326,24 @@
 
 .library-toast-region {
   position: absolute;
-  right: 1rem;
+  right: 0;
   bottom: 1rem;
-  left: 1rem;
+  left: 0;
   z-index: 80;
   display: flex;
   justify-content: center;
   outline: none;
 }
 
+.library-toast-region-with-sidebar {
+  left: var(--library-sidebar-width);
+}
+
 .library-toast {
-  width: 100%;
-  max-width: 26rem;
+  width: 70%;
+  min-width: 0;
+  max-width: none;
+  overflow: hidden;
   outline: none;
 }
 

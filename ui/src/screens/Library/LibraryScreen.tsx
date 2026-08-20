@@ -310,7 +310,7 @@ export function LibraryScreen() {
       {operationBusy && (
         <div className="library-operation-blocker" aria-hidden="true" />
       )}
-      <LibraryToastRegion />
+      <LibraryToastRegion hasSidebar={showSidebar} />
     </div>
   );
 }
@@ -320,11 +320,11 @@ function showLibraryToast(notice: LibraryNotice, timeout?: number): void {
   libraryToastQueue.add(notice, { timeout });
 }
 
-function LibraryToastRegion() {
+function LibraryToastRegion({ hasSidebar }: { hasSidebar: boolean }) {
   return (
     <UNSTABLE_ToastRegion
       queue={libraryToastQueue}
-      className="library-toast-region"
+      className={`library-toast-region ${hasSidebar ? "library-toast-region-with-sidebar" : ""}`}
       aria-label="Library notifications"
     >
       {({ toast }) => <LibraryToast toast={toast} />}
@@ -339,22 +339,22 @@ function LibraryToast({ toast }: { toast: QueuedToast<LibraryNotice> }) {
       toast={toast}
       className={`alert library-toast ${notice.status === "error" ? "alert-error" : notice.status === "success" ? "alert-success" : "border border-base-300 bg-base-100"}`}
     >
-      <UNSTABLE_ToastContent className="flex w-full items-center gap-2">
+      <UNSTABLE_ToastContent className="flex w-full min-w-0 max-w-full items-center gap-2 overflow-hidden library-toast-content">
         {notice.status === "busy" && (
           <span className="loading loading-spinner loading-sm shrink-0" aria-hidden />
         )}
-        <span className="min-w-0 flex-1">
+        <span className="min-w-0 max-w-full flex-1 overflow-hidden">
           {notice.status === "busy" ? (
             <>
-              <Text slot="title" className="block truncate font-semibold">
+              <Text slot="title" className="block w-full truncate font-semibold">
                 {notice.action}: {notice.title}
               </Text>
-              <Text slot="description" className="block truncate text-sm">
+              <Text slot="description" className="block w-full truncate text-sm">
                 {notice.step}…
               </Text>
             </>
           ) : (
-            <Text slot="title" className="block truncate font-semibold">
+            <Text slot="title" className="block w-full truncate font-semibold">
               {notice.message}
             </Text>
           )}
