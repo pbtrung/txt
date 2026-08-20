@@ -33,7 +33,7 @@ export function BookmarkRow({
       <IconButton
         label="Delete bookmark"
         icon="x-lg"
-        className="btn-ghost relative z-10 border-0 compact-delete-button"
+        className="btn-ghost relative z-10 border-0 compact-x-button compact-delete-button"
         isDisabled={bookmarkBusy}
         onPress={() => onRemove(bookmark.cfi)}
       />

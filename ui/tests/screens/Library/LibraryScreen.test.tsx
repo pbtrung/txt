@@ -229,6 +229,7 @@ describe("LibraryScreen", () => {
     const searchField = searchbox.closest(".search-box");
     const clear = screen.getByRole("button", { name: "Clear search" });
     expect(clear).toHaveAccessibleName("Clear search");
+    expect(clear).toHaveClass("compact-x-button");
     expect(clear.firstElementChild).toHaveClass("search-box-clear-icon");
     expect(searchField).toHaveAttribute("data-empty", "true");
 
@@ -737,6 +738,7 @@ describe("LibraryScreen", () => {
     );
     expect(remove).toHaveClass(
       "btn-circle",
+      "compact-x-button",
       "compact-delete-button",
       "book-row-remove",
     );

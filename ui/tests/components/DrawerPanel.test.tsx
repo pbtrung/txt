@@ -38,7 +38,9 @@ describe("DrawerPanel", () => {
       </DrawerPanel>,
     );
 
-    await userEvent.click(screen.getByRole("button", { name: "Close" }));
+    const close = screen.getByRole("button", { name: "Close" });
+    expect(close).toHaveClass("compact-x-button");
+    await userEvent.click(close);
 
     expect(onClose).toHaveBeenCalled();
   });

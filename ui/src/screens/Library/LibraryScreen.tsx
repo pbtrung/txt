@@ -362,7 +362,7 @@ function LibraryToast({ toast }: { toast: QueuedToast<LibraryNotice> }) {
         {notice.status === "error" && (
           <Button
             slot="close"
-            className="btn btn-ghost btn-sm btn-square shrink-0"
+            className="btn btn-ghost btn-sm btn-square shrink-0 compact-x-button"
             aria-label="Dismiss notification"
           >
             <X className="size-4" aria-hidden="true" />

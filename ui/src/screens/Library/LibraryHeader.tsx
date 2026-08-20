@@ -72,7 +72,10 @@ export function LibraryHeader({
           >
             <Search className="search-box-icon" aria-hidden="true" />
             <Input className="search-box-input" placeholder="Search…" />
-            <Button className="search-box-clear" aria-label="Clear search">
+            <Button
+              className="search-box-clear compact-x-button"
+              aria-label="Clear search"
+            >
               <X className="search-box-clear-icon" aria-hidden="true" />
             </Button>
           </SearchField>

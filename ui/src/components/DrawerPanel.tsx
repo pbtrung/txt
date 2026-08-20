@@ -72,7 +72,7 @@ function PanelContents({
           {title}
         </Heading>
         <Button
-          className="btn btn-ghost btn-sm btn-square"
+          className="btn btn-ghost btn-sm btn-square compact-x-button"
           aria-label="Close"
           onPress={onClose}
         >

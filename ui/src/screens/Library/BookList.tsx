@@ -108,7 +108,7 @@ export function BookRow({
       <IconButton
         label={removeLabel}
         icon="x-lg"
-        className="btn-circle btn-ghost absolute top-1/2 right-0 mr-1 -translate-y-1/2 border-0 compact-delete-button book-row-remove"
+        className="btn-circle btn-ghost absolute top-1/2 right-0 mr-1 -translate-y-1/2 border-0 compact-x-button compact-delete-button book-row-remove"
         onPress={onRemove}
       />
     </GridListItem>

@@ -79,7 +79,10 @@
   min-height: 1.25rem;
 }
 
-.compact-delete-button {
+.compact-x-button {
+  width: 1.5rem;
+  height: 1.5rem;
+  min-height: 1.5rem;
   padding: 0.25rem;
   font-size: 0.75rem;
   line-height: 1;
@@ -232,8 +235,8 @@
   top: 50%;
   z-index: 1;
   display: grid;
-  width: 1.75rem;
-  height: 1.75rem;
+  width: 1.5rem;
+  height: 1.5rem;
   padding: 0;
   transform: translateY(-50%);
   place-items: center;
