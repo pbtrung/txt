@@ -167,22 +167,30 @@
   border-bottom-left-radius: 0;
 }
 
+/* border-color matches --bs-secondary, the same color
+   .btn-outline-secondary (the book/share action buttons attached to this
+   field) uses for its own resting border -- var(--bs-border-color) is a
+   much lighter neutral, which reads as a visibly thinner/weaker border
+   than the buttons' even though both are the same var(--bs-border-width).
+   Applies whether or not a button group is actually attached, so the
+   search box always reads at the same weight as an unfocused button. */
 .search-box-input {
   padding-left: 2rem;
   padding-right: 2rem;
-  border: var(--bs-border-width) var(--bs-border-style) var(--bs-border-color);
+  border: var(--bs-border-width) var(--bs-border-style) var(--bs-secondary);
 }
 
-/* Same focus-ring width as the adjacent .btn-outline-secondary book/share
-   actions (Bootstrap's own $focus-ring-width, --bs-focus-ring-width) so the
-   search box and its buttons read as one consistent control group in both
-   states -- the unfocused border is already the same var(--bs-border-width)
-   both places. */
-.search-box-input:focus {
-  box-shadow: 0 0 0 var(--bs-focus-ring-width) rgba(var(--bs-primary-rgb), 0.25);
-}
-
+.search-box-input:focus,
 .reader-page-input:focus {
+  box-shadow: 0 0 0 0.1rem rgba(var(--bs-primary-rgb), 0.25);
+}
+
+/* The attached book/share action buttons read as part of the same control
+   as the search box (shared border, overlapping seam), so focusing one of
+   them -- tabbing from the field into "Read"/"Share" -- puts the same ring
+   on the search box too, instead of the box looking unfocused while its
+   own button group is the part actually active. */
+.library-search-group:has(.library-book-actions :focus) .search-box-input {
   box-shadow: 0 0 0 0.1rem rgba(var(--bs-primary-rgb), 0.25);
 }
 
