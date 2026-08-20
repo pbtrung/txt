@@ -222,7 +222,7 @@ function BookmarkPageBadge({ pageNumber }: { pageNumber: number | null }) {
   const page = pageNumber ?? "—";
   return (
     <span
-      className="badge badge-sm shrink-0 gap-0 border border-base-300 bg-base-200 font-semibold"
+      className="badge badge-sm shrink-0 gap-1 border border-base-300 bg-base-200 font-semibold"
       aria-label={pageNumber === null ? "Page unavailable" : `Page ${pageNumber}`}
     >
       <FileText className="size-3" aria-hidden="true" />
@@ -241,7 +241,7 @@ function ActivityTimeBadge({
   const formatted = formatLastAccessed(timestamp);
   return (
     <span
-      className="badge badge-sm shrink-0 gap-0 border border-base-300 bg-base-200 font-semibold"
+      className="badge badge-sm shrink-0 gap-1 border border-base-300 bg-base-200 font-semibold"
       aria-label={`${label} ${formatted}`}
     >
       <Clock3 className="size-3" aria-hidden="true" />
@@ -253,7 +253,7 @@ function ActivityTimeBadge({
 function BookmarkBadge({ count }: { count: number }) {
   return (
     <span
-      className="badge badge-sm shrink-0 gap-0 border border-base-300 bg-base-200 font-semibold"
+      className="badge badge-sm shrink-0 gap-1 border border-base-300 bg-base-200 font-semibold"
       aria-label={`${count} bookmark${count === 1 ? "" : "s"}`}
     >
       <Bookmark className="size-3" fill="currentColor" aria-hidden="true" />

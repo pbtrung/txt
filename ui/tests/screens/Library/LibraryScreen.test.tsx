@@ -526,12 +526,12 @@ describe("LibraryScreen", () => {
     const row = screen.getByRole("row", { name: /Active book/ });
     expect(screen.getByRole("grid", { name: "Books" })).toContainElement(row);
     expect(row.querySelector(".book-row-icon")).toHaveClass("book-row-icon-active");
-    expect(screen.getByLabelText("2 bookmarks")).toHaveClass("gap-0", "font-semibold");
+    expect(screen.getByLabelText("2 bookmarks")).toHaveClass("gap-1", "font-semibold");
     expect(within(screen.getByLabelText("2 bookmarks")).getByText("2")).toHaveClass(
       "book-row-badge-text",
     );
     expect(screen.getByLabelText("Last accessed 14:05:09 17/08/26")).toHaveClass(
-      "gap-0",
+      "gap-1",
       "font-semibold",
     );
     expect(screen.getByText("A very long author name")).toHaveClass("truncate");
