@@ -3,10 +3,10 @@ import { createRoot } from "react-dom/client";
 
 import "./theme.scss";
 import "bootstrap-icons/font/bootstrap-icons.css";
-import "@fontsource/public-sans/400.css";
-import "@fontsource/public-sans/500.css";
-import "@fontsource/public-sans/600.css";
-import "@fontsource/public-sans/700.css";
+import "@fontsource/inter/400.css";
+import "@fontsource/inter/500.css";
+import "@fontsource/inter/600.css";
+import "@fontsource/inter/700.css";
 import "@fontsource/literata/400.css";
 import "./index.css";
 

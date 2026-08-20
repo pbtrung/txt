@@ -22,9 +22,9 @@ $cyan: #4a90a4;
 // palette above stays as plain locals and get passed in by name.
 @use "bootstrap/scss/bootstrap" with (
   $font-family-sans-serif: (
-    "Public Sans", system-ui, -apple-system, "Segoe UI", Roboto,
-    "Helvetica Neue", "Noto Sans", "Liberation Sans", Arial, sans-serif,
-    "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji"
+    "Inter", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
+    "Noto Sans", "Liberation Sans", Arial, sans-serif, "Apple Color Emoji",
+    "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji"
   ),
   $primary: $terracotta,
   $secondary: $ink-muted,
