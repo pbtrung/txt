@@ -258,6 +258,48 @@ describe("EpubRenderer", () => {
     expect(renditionMock.spread).toHaveBeenLastCalledWith("auto", 900);
   });
 
+  it("removes a publisher's own color/background but keeps font-size, font-style, and alignment", async () => {
+    // A document created via document.implementation.createHTMLDocument()
+    // has no associated CSSOM engine in either jsdom or real browsers -- an
+    // attached iframe's contentDocument is what a rendered section actually
+    // is, and the only way to get a live, populated styleSheets/sheet here.
+    const iframe = document.createElement("iframe");
+    document.body.appendChild(iframe);
+    try {
+      const renderer = new EpubRenderer(new Uint8Array([1]));
+      await renderer.renderTo(document.createElement("div"));
+      const rendered = renditionMock.on.mock.calls.find(
+        ([event]) => event === "rendered",
+      )![1];
+
+      const section = iframe.contentDocument!;
+      const style = section.createElement("style");
+      style.textContent =
+        "body { color: red !important; background: black; } " +
+        "p { font-size: 20px; font-style: italic; text-align: right; }";
+      section.head.appendChild(style);
+      const paragraph = section.createElement("p");
+      paragraph.setAttribute("style", "color: blue; font-weight: bold;");
+      paragraph.textContent = "Chapter text";
+      section.body.appendChild(paragraph);
+
+      rendered({ href: "chapter.xhtml", index: 0 }, { document: section });
+
+      const [bodyRule, paragraphRule] = Array.from(
+        style.sheet!.cssRules,
+      ) as CSSStyleRule[];
+      expect(bodyRule.style.color).toBe("");
+      expect(bodyRule.style.background).toBe("");
+      expect(paragraphRule.style.fontSize).toBe("20px");
+      expect(paragraphRule.style.fontStyle).toBe("italic");
+      expect(paragraphRule.style.textAlign).toBe("right");
+      expect(paragraph.style.color).toBe("");
+      expect(paragraph.style.fontWeight).toBe("bold");
+    } finally {
+      iframe.remove();
+    }
+  });
+
   it("destroys both the rendition and the book", () => {
     const renderer = new EpubRenderer(new Uint8Array([1]));
     renderer.renderTo(document.createElement("div"));

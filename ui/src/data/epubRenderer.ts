@@ -21,10 +21,25 @@ const BOOK_PAGE_CHARS = 1000;
 const COVER_MEDIA_SELECTOR = "img, image, object";
 const XLINK_NAMESPACE = "http://www.w3.org/1999/xlink";
 const EPUB_RESOLUTION_ORIGIN = "https://epub.invalid";
+// Removed rather than fought over in the cascade: a publisher's own
+// selector specificity/insertion order relative to the reader theme isn't
+// something this code controls, so a color/background declaration left in
+// place could still win in some book. font-size/font-weight/font-style/
+// text-align are deliberately untouched -- those are the book's to keep.
+const NEUTRALIZED_CSS_PROPERTIES = [
+  "color",
+  "background",
+  "background-color",
+  "background-image",
+];
 
 interface SectionLike {
   href?: string;
   index?: number;
+}
+
+interface RuleContainer {
+  cssRules: CSSRuleList;
 }
 
 function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
@@ -140,6 +155,42 @@ export class EpubRenderer {
     );
   }
 
+  // Deletes color/background declarations wherever a book sets them --
+  // every stylesheet rule (recursing into @media/@supports blocks) and every
+  // element's inline style attribute -- so nothing is left to compete with
+  // the reader theme's own cream/ink palette. Runs once the section is a
+  // live document (styleSheets/cssRules aren't reliably populated on the
+  // detached document the pre-render content hook sees).
+  private neutralizePublisherColors(document: Document): void {
+    for (const sheet of Array.from(document.styleSheets)) this.neutralizeRules(sheet);
+    document.querySelectorAll<HTMLElement>("[style]").forEach((element) => {
+      for (const property of NEUTRALIZED_CSS_PROPERTIES) {
+        element.style.removeProperty(property);
+      }
+    });
+  }
+
+  private neutralizeRules(container: RuleContainer): void {
+    let rules: CSSRuleList;
+    try {
+      rules = container.cssRules;
+    } catch {
+      return; // Cross-origin stylesheet; nothing here needs neutralizing.
+    }
+    for (const rule of Array.from(rules)) {
+      // `instanceof CSSStyleRule` would compare against the outer page's
+      // constructor, not this iframe realm's -- duck-type instead.
+      const styleRule = rule as Partial<CSSStyleRule>;
+      if (styleRule.style) {
+        for (const property of NEUTRALIZED_CSS_PROPERTIES) {
+          styleRule.style.removeProperty(property);
+        }
+      }
+      const groupingRule = rule as Partial<RuleContainer>;
+      if (groupingRule.cssRules) this.neutralizeRules(groupingRule as RuleContainer);
+    }
+  }
+
   private async replaceCover(document: Document, section: Section): Promise<void> {
     const coverHref = await this.book.loaded.cover;
     if (!coverHref || !this.containsCover(document, section, coverHref)) return;
@@ -184,6 +235,7 @@ export class EpubRenderer {
     // rule so both inherited and element-level book fonts are replaced.
     rendition.themes.font(READER_FONT_FAMILY);
     rendition.on("rendered", (section, view) => {
+      this.neutralizePublisherColors(view.document);
       this.applyLayoutFor(section);
       this.reflowAfterFontsLoad(section, view.document);
     });
