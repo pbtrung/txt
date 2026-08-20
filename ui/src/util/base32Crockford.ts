@@ -1,6 +1,6 @@
 // Ports txt/random_token.py's to_base32_crockford exactly: 32 random bytes
 // render as 52 lowercase base32-Crockford characters for db_path, db_prefix,
-// and every other R2 object-key component (docs/data_model.md §1).
+// and every other R2 object-key component (docs/storage_layout.md §1).
 const ALPHABET = "0123456789abcdefghjkmnpqrstvwxyz";
 
 export function toBase32Crockford(data: Uint8Array): string {

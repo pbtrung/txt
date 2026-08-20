@@ -21,15 +21,12 @@ There is one Turso control database, `ctl` (§2). User data lives as encrypted o
 | `R2_TICKET_SECRET` | standard padded base64 encoding of at least 32 random bytes, used only to sign and verify R2 binding tickets |
 | `R2_ENDPOINT`, `R2_BUCKET`, `R2_REGION` | R2 destination returned with temporary credentials |
 | `R2_READ_WRITE_ACCESS_KEY_ID` / `R2_READ_WRITE_SECRET_ACCESS_KEY` | parent credential used to sign path-limited temporary R2 credentials and to fetch/delete exact shared objects inside the Worker |
-| `SHARE_GRANT_KEY` | standard padded base64 encoding of exactly 32 random bytes; AES-256-GCM key for opaque shared-object grants |
-| `SHARE_REGISTRY` | D1 binding containing 32-byte capability/path hash BLOBs for live shares; it never stores a raw capability or object path |
-| `SHARE_RATE_LIMITER` | native Workers rate-limit binding for anonymous shared-content requests; configured in `wrangler.jsonc` at 120 requests per source address per minute per Cloudflare location |
 
 `R2_TICKET_SECRET` must not reuse the R2 secret access key. All Worker instances use the same ticket secret. Rotating it invalidates every outstanding ticket and is an emergency global response, not routine per-user revocation.
 
-`SHARE_GRANT_KEY` is independent from `R2_TICKET_SECRET`, R2 credentials, and all user keys. Grants do not carry a key identifier, so replacing this secret immediately invalidates every existing share URL. After rotation, copy and distribute new URLs; uninterrupted rotation would require multi-key verification, which is not implemented. D1 is trusted for authorization integrity and deletion ordering, but receives no plaintext object paths or content keys. Apply `worker/migrations/0001_share_registry.sql` to the configured `SHARE_REGISTRY` binding before enabling shares.
-
 The Worker Turso token is read-only. A leaked Worker database token can expose ciphertext and control metadata, but cannot alter or delete rows.
+
+The public-sharing feature has its own Worker configuration (`SHARE_GRANT_KEY`, `SHARE_REGISTRY`, `SHARE_RATE_LIMITER`): docs/sharing.md §1.
 
 ---
 
@@ -257,27 +254,7 @@ The response contains exactly one credential of each type:
 | 429 | per-account R2-token rate limit exceeded |
 | 503 | R2 signing unavailable |
 
-### 4.3 Public-share endpoints
-
-The administrator endpoints use a Firebase bearer token and accept the same path-bound body:
-
-```json
-{
-  "db_path": "<administrator database path>",
-  "db_prefix": "<administrator content prefix>",
-  "share_prefix": "<52-character shared-object segment>",
-  "share_path": "<52-character shared-object segment>",
-  "share_id": "<standard-base64 32 random bytes>"
-}
-```
-
-`POST /v1/share-grant` validates the Firebase uid against `ADMIN_UID`, verifies the `db_path`/`db_prefix` binding through the administrator's control record, inserts the capability/path hashes into D1 when absent, and returns `{ "grant": "<base64url envelope>" }`. Re-registering the same id and path is idempotent; reusing an id for a different path returns 409.
-
-`DELETE /v1/share` performs the same identity and path checks, rejects a registered id/path mismatch, deletes the exact R2 object with the Worker's parent credential, and then deletes the D1 row. A missing R2 object is treated as already deleted. The success response is 204.
-
-`POST /v1/shared-content` is anonymous. It accepts `{ "share_id": "<base64url id>", "grant": "<base64url envelope>" }`, requires a matching live D1 row, authenticates and decrypts the object path, fetches the ciphertext with the Worker's parent credential, and streams it without caching. It never receives the fragment's content key.
-
-The endpoint accepts at most 1 KiB of JSON, requires canonical base64url with exactly 32 decoded capability bytes and 226 decoded grant bytes, and applies the `SHARE_RATE_LIMITER` budget before its D1 lookup. Cloudflare's native counter is a permissive abuse control local to each edge location, not an accounting or authorization mechanism.
+The public-sharing endpoints (`POST /v1/share-grant`, `DELETE /v1/share`, `POST /v1/shared-content`) are docs/sharing.md §3.
 
 ---
 
@@ -292,15 +269,7 @@ The endpoint accepts at most 1 KiB of JSON, requires canonical base64url with ex
 
 Proofs and tickets use fixed expirations, not sliding renewal. `/v1/r2-token` never extends a ticket.
 
-### 5.1 Public-share authorization
-
-Only a Firebase identity equal to `ADMIN_UID` may call `POST /v1/share-grant` or `DELETE /v1/share`. Grant creation validates the administrator's `db_path`/`db_prefix` binding, computes `SHA-256(share_id)` and `SHA-256(object_path)`, stores both 32-byte hashes as BLOBs in D1, and returns an encrypted-path grant. Registering an existing share id is idempotent only when its path hash matches. The browser generates a grant when it copies a share URL; the complete URL is never stored in SQLCipher, D1, Turso, or R2.
-
-The returned grant derives a per-grant AES-256-GCM key from `SHARE_GRANT_KEY`, a random 32-byte salt, and the capability hash using HKDF-SHA-256, then encrypts the exact object path with an independent random 12-byte nonce. Associated data is `UTF8("txt:share-grant:v1") || SHA-256(share_id)`, preventing a grant from being moved to another capability. The URL fragment carries the raw 32-byte share id, opaque grant, and content key, so none appears in the initial navigation request.
-
-An anonymous reader posts the id and grant to `POST /v1/shared-content`. The Worker requires the corresponding D1 row, decrypts and validates the path, compares its SHA-256 hash with the registered BLOB, fetches the encrypted object using the server-held R2 credential, and streams it with `Cache-Control: no-store`. Anonymous clients never receive R2 credentials. The Worker never receives the fragment's content key; decryption remains in the browser.
-
-Deletion sends the bound object path to the trusted Worker, which validates the administrator and path binding, deletes the R2 object with its server-held credential, and only then removes the D1 row. The browser removes the owner's SQLCipher row only after the Worker succeeds. A failed object deletion therefore remains visible and retryable, while a stale or rolled-back R2 object cannot be read after the registry row is gone. A request authorized before deletion may finish, just as a viewer may retain plaintext already downloaded. Because deletion leaves no tombstone, the same random share id can be registered again; clients generate a fresh 32-byte id for every new share.
+Public-share authorization is a separate flow with its own trust model: docs/sharing.md §5.
 
 ---
 
@@ -379,14 +348,4 @@ A stolen ticket is insufficient by itself. A caller also needs the raw handle an
 
 The ticket's `sign_version` selects the signing key suite. The proof's `version` selects the canonical request protocol. Neither is client-negotiated downward. The only accepted signing suite is P-521, which provides approximately 256-bit classical security but no post-quantum security.
 
----
-
-## 9. Rollout order
-
-1. Back up `ctl` and R2. Re-run `--init-admin`, then re-run `--init-user` for every ordinary account so path bindings, signing keys, and administrator backups are current.
-2. Run `txt --update-ctl admin_creds.json --verbose --dry-run`; resolve every reported backup or handle problem before running it without `--dry-run`.
-3. Run `--update-db` for every reachable encrypted database.
-4. Configure `KEYS_CACHE` and `SHARE_REGISTRY`, then apply the registry schema with `npx wrangler d1 execute SHARE_REGISTRY --remote --file worker/migrations/0001_share_registry.sql`.
-5. Generate separate values with `openssl rand -base64 32` and install them as `R2_TICKET_SECRET` and `SHARE_GRANT_KEY`; also configure the remaining §1 values, especially `ADMIN_UID`.
-6. Apply the R2 CORS policy and deploy the Worker and browser together.
-7. Confirm `/v1/keys`, automatic ticket renewal after a 401, exact-path read/write, ordinary/admin prefix scope, share copy/read/delete, and negative handle/path/signature/grant cases.
+Deployment and rollout order for this Worker is docs/deployment.md.

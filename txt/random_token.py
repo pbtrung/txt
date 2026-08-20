@@ -17,6 +17,6 @@ def to_base32_crockford(data: bytes) -> str:
 
 
 # 32 random bytes rendered as base32-Crockford — the recipe docs/auth.md and
-# docs/data_model.md use for db_path, db_prefix, and every object key.
+# docs/storage_layout.md use for db_path, db_prefix, and every object key.
 def generate_random_prefix() -> str:
     return to_base32_crockford(secrets.token_bytes(32))

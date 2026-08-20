@@ -1,4 +1,4 @@
-// Reads the txt table's catalog (docs/data_model.md §3.1: a flat
+// Reads the txt table's catalog (docs/data_model.md §2.1: a flat
 // {name, title, authors, subjects, publisher} object, brotli-compressed
 // JSON) into plain LibraryBook records for the Library screen's
 // search/browse-by-author/subject/publisher.

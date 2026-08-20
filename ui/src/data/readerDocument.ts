@@ -1,11 +1,11 @@
 // Looks up one txt row and fetches+decrypts its content object
-// (docs/data_model.md §1: {db_prefix}/{txt_prefix}/{path}), keyed by that
+// (docs/storage_layout.md §1: {db_prefix}/{txt_prefix}/{path}), keyed by that
 // row's own txt_key -- unrelated to db_master_key, so leaking one
 // document's key exposes nothing about any other document or the database
 // file itself. Title comes from the txt row's own catalog (cheap, already
 // fetched); everything else the Info panel shows comes from parsing the
 // EPUB's own internal package document once its bytes are in hand, since
-// catalog only keeps a fixed subset (docs/data_model.md §3.1).
+// catalog only keeps a fixed subset (docs/data_model.md §2.1).
 import { decrypt } from "../crypto/cryptoBlob";
 import { toBase32Crockford } from "../util/base32Crockford";
 import { decodeCatalog } from "./catalog";

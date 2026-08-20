@@ -1,4 +1,4 @@
-// docs/data_model.md §3, ported from txt/ingest.py's own SQL constants --
+// docs/data_model.md §2, ported from txt/ingest.py's own SQL constants --
 // the schema a client applies to a freshly created database, and reapplies
 // (idempotently, IF NOT EXISTS) on every open regardless.
 export const PAGE_SIZE = 16384; // 16 KiB

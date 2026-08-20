@@ -5,8 +5,11 @@ This repo holds the txt document-storage system's design docs, the Cloudflare Wo
 ## Design docs (read these before touching auth/storage code)
 
 - `docs/auth.md` — Firebase-to-Turso/R2 auth flow: the `ctl` control database (`users`/`key_store`/`cred_store`), `/v1/keys`, `/v1/r2-token`.
-- `docs/data_model.md` — the per-user SQLCipher database (`txt`/`txt_bookmarks`) and the R2 storage layout it and per-document content live under.
+- `docs/data_model.md` — the per-user SQLCipher database (`txt`/`txt_bookmarks`) schema and its conditional read-write round trip against R2.
+- `docs/storage_layout.md` — the R2 object-key layout the per-user database and per-document content live under.
+- `docs/sharing.md` — the public document-sharing feature: the D1 share registry, `/v1/share-grant`/`/v1/share`/`/v1/shared-content`, and the share-grant crypto envelope.
 - `docs/crypto.md` — the AEAD/HKDF/KEM primitives (Ascon-Keccak, HKDF-SHA3-512, ML-KEM-1024+X448) and the blob format every wrapped value (`umk`, `cred_store.content`, `key_store.privkey`) uses.
+- `docs/deployment.md` — R2 CORS configuration and the rollout order for shipping control-plane, schema, or Worker-secret changes.
 
 ## Code layout
 
@@ -24,7 +27,7 @@ This repo holds the txt document-storage system's design docs, the Cloudflare Wo
   - `account_init.py` — `AccountInitializer`, shared by `--init-admin`/`--init-user` (parameterized by `account_type`). Takes `admin_creds` (`ctl`/Turso access) and `target_creds` (whichever account is being provisioned — the same object as `admin_creds` for `--init-admin`, a separate `UserCreds` for `--init-user`) separately, since only the target's own Firebase identity is needed to discover its uid.
   - `account_session.py` — `AccountSession`: signs in, runs `ctl`'s `users`/`key_store`/`cred_store` join, and decrypts down to an `Account` (`db_path`/`db_prefix`/`db_master_key`/`display_name`). Used by `--ingest`.
   - `r2_client.py` — `R2Client`, a thin boto3/S3-compatible wrapper for R2 (get/put object, list keys, list common prefixes, delete keys).
-  - `opf.py` — Calibre `.opf` sidecar detection and `<metadata>` parsing; `ingest.py` extracts just `title`/`authors`/`subjects`/`publisher` from it into `txt.catalog` (docs/data_model.md §3.1).
+  - `opf.py` — Calibre `.opf` sidecar detection and `<metadata>` parsing; `ingest.py` extracts just `title`/`authors`/`subjects`/`publisher` from it into `txt.catalog` (docs/data_model.md §2.1).
   - `ingest.py` — `TxtIngester`, the `--ingest` command: uploads each EPUB in a directory as one R2 object, keeps a resumable local SQLCipher working copy, and dedups against already-recorded filenames.
   - `ctl_updater.py` — `CtlUpdater`, the `--update-ctl` command: validates every self-owned/admin-backup credential payload reachable with the administrator credentials, installs encrypted user handles and their Turso hashes, and supports a full `--dry-run` preview.
   - `db_updater.py` — `DbUpdater`, the `--update-db` command: migrates and validates the complete catalog, CFI reading-state, bookmark, share, and named-migration schema for every account an administrator's creds.json can reach. R2 is always the input; local files are inspection checkpoints only.
@@ -34,7 +37,7 @@ This repo holds the txt document-storage system's design docs, the Cloudflare Wo
 - `txt/tests/` — pytest. Crypto and SQLCipher tests run against the real wasm engine (`txt/tests/conftest.py`'s session-scoped `engine` fixture); everything else fakes only the network boundary (Firebase, the Turso Platform API, libsql HTTP, R2) — never the crypto itself.
 - `sqlcipher/` — the prebuilt SQLCipher+leancrypto wasm module `leancrypto_wasm.py`/`sqlite_engine.py` load. Not built from source in this repo.
 - `creds/` — local, gitignored credential files. Never commit these. Never run a command against a real one yourself — hand it to the user to run.
-- `worker/` — the Cloudflare Worker implementing docs/auth.md, one module per concern:
+- `worker/` — the Cloudflare Worker implementing docs/auth.md and docs/sharing.md, one module per concern:
   - `firebaseAuth.ts` — RS256/JWKS verification of a Firebase ID token, cached per the response's own `Cache-Control`.
   - `auth.ts` — bearer-token extraction + `verifiedUid` for `/v1/keys` and the administrator-only share-management endpoints.
   - `ctl.ts` — the `ctl` join (docs/auth.md §2) over the libsql HTTP `/v2/pipeline` protocol.

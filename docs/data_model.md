@@ -4,25 +4,11 @@ Each user, as provisioned in docs/auth.md, has exactly one SQLCipher database: a
 
 A document's own content is not in that file. Each document is a separate encrypted object in R2, referenced by a row in the `txt` table.
 
----
-
-## 1. Where things live
-
-`user_handle`, `db_path`, `db_prefix`, and `db_master_key` (256 random bytes, base64-encoded — the SQLCipher key for the file in §1) all come from encrypted `cred_store.content` after `/v1/keys` (docs/auth.md §2 and §5). That endpoint also returns a 24-hour Worker-signed binding ticket. The client submits the ticket, decrypted handle, two paths, and a fresh versioned P-521 proof to `/v1/r2-token` for handle binding, possession checking, pair-binding authorization, and scoped R2 credentials. Renewing R2 credentials requires neither another Firebase token nor a Turso lookup while the ticket remains valid.
-
-```
-s3://{bucket}/{db_path}
-s3://{bucket}/{db_prefix}/{txt.txt_prefix}/{txt.path}
-s3://{bucket}/{db_prefix}/shared/{txt_shares.share_prefix}/{txt_shares.share_path}
-```
-
-The first is the user's whole SQLCipher database. The second is one immutable owner document per `txt` row. The third is an independently encrypted copy created only by the administrator for one public share. Every random path component is stored as 32 raw bytes and rendered as 52 lowercase base32-Crockford characters. A shared copy never reuses the owner's `txt_key`, `txt_prefix`, or `path`.
-
-`{bucket}` is not a secret, but the client carries no R2 connection details of its own — `bucket`, along with the endpoint and region, travels in the `/v1/r2-token` response itself (docs/auth.md §4.2), the client's only source of R2 configuration.
+R2 object-key layout for both files is docs/storage_layout.md. The public-sharing feature built on top of this schema is docs/sharing.md. Rollout order for schema changes is docs/deployment.md.
 
 ---
 
-## 2. The read-write round trip
+## 1. The read-write round trip
 
 1. The client authenticates and obtains `db_path`, `db_prefix`, `db_master_key`, an exact-`db_path` read-write credential, and a `{db_prefix}/*` credential (read-only for ordinary accounts, read-write for the configured administrator; docs/auth.md).
 2. It downloads `s3://{bucket}/{db_path}` without HTTP caching and retains the response `ETag` alongside the bytes. If no object exists yet at that key, it creates a fresh database from the schema below and records that the next upload is a create.
@@ -36,9 +22,9 @@ R2 is the durable source of truth; the browser's open database is only a working
 
 ---
 
-## 3. Schema
+## 2. Schema
 
-The database's persisted page size is fixed at 16 KiB when a fresh database is created (§2 step 2). Because SQLCipher encrypts page 1, every connection must still issue `PRAGMA page_size = 16384` immediately after applying the key and before its first schema read; on an existing database this configures the connection rather than rewriting the file:
+The database's persisted page size is fixed at 16 KiB when a fresh database is created (§1 step 2). Because SQLCipher encrypts page 1, every connection must still issue `PRAGMA page_size = 16384` immediately after applying the key and before its first schema read; on an existing database this configures the connection rather than rewriting the file:
 
 ```sql
 PRAGMA page_size = 16384;
@@ -46,9 +32,9 @@ PRAGMA page_size = 16384;
 CREATE TABLE txt (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     txt_key       BLOB    NOT NULL,   -- 128 random bytes; the AEAD key for this document's content object
-    txt_prefix    BLOB    NOT NULL,   -- 32 random bytes; first key segment of the content object (§1)
-    path          BLOB    NOT NULL,   -- 32 random bytes; second key segment of the content object (§1)
-    catalog       BLOB    NOT NULL,   -- brotli(JSON): {name, title, authors, subjects, publisher} (§3.1)
+    txt_prefix    BLOB    NOT NULL,   -- 32 random bytes; first key segment of the content object (docs/storage_layout.md)
+    path          BLOB    NOT NULL,   -- 32 random bytes; second key segment of the content object (docs/storage_layout.md)
+    catalog       BLOB    NOT NULL,   -- brotli(JSON): {name, title, authors, subjects, publisher} (§2.1)
     last_accessed INTEGER NOT NULL,   -- unix ms; initially 0, set after the Reader's six-second grace period
     last_cfi      TEXT,               -- last stable EPUB CFI reported by the rendition, null until first location
     created_at    INTEGER NOT NULL    -- unix ms
@@ -99,7 +85,9 @@ BEGIN
 END;
 ```
 
-### 3.1 `catalog`
+`txt_shares` and its lookup index support the sharing feature; its design and the client behavior around it are docs/sharing.md.
+
+### 2.1 `catalog`
 
 A fixed, flat shape — just what the Library screen needs to search and browse without opening every document:
 
@@ -117,7 +105,7 @@ A fixed, flat shape — just what the Library screen needs to search and browse 
 
 The whole file is already encrypted by SQLCipher under `db_master_key`, so `catalog` is only brotli-compressed, not separately encrypted — there is no second key for it to be wrapped under.
 
-### 3.2 Reading state and bookmarks
+### 2.2 Reading state and bookmarks
 
 An open becomes a qualifying reading session only after the Reader has successfully loaded the document and remained visible for six seconds. The timer pauses while the page is hidden. Until the grace period completes, rendition relocation events update only an in-memory CFI candidate; closing the Reader or switching books discards that candidate without changing `last_accessed` or `last_cfi`. The initial relocation event establishes the candidate position but never marks the database dirty by itself.
 
@@ -131,17 +119,7 @@ A manual bookmark stores the current page-start CFI, the current display page nu
 
 The EPUB content object referenced by a `txt` row is immutable. That makes a structural CFI sufficient even when the renderer does not emit optional text-location assertions. Replacing a book creates a new content object/row rather than silently changing the document underneath saved CFIs.
 
-### 3.3 Administrator shares
-
-Only the account whose Firebase uid equals the Worker's trusted `ADMIN_UID` can create or delete shares. Creation generates a 32-byte `share_id`, a fresh 128-byte `share_content_key`, and independent 32-byte `share_prefix` and `share_path` values. The browser decrypts the owner object locally, re-encrypts the EPUB under `share_content_key`, and uploads it immutably with `If-None-Match: *` to `{db_prefix}/shared/{share_prefix}/{share_path}`.
-
-The `creating` state is committed before upload and a completed upload becomes `active`. Copying the URL registers the share in D1. Deletion changes the local row to `deleting`; the Worker validates the bound path, deletes the R2 object, removes the D1 row, and then the browser removes the local row. Share registration, deletion, and anonymous content transfer use bounded request timeouts and retry only network failures; content transfer remains covered until the response body has been consumed. A failed Worker deletion leaves the local entry retryable. There is no revoked state, registry tombstone, or `object_etag`: share paths are immutable, never reused, and deletion is unconditional. `ON DELETE RESTRICT` prevents deleting the source book before its shares are removed.
-
-`--clean-bucket` never deletes objects below a reachable account's `{db_prefix}/shared/` namespace. Only the authenticated Worker deletion flow may remove them: the generic cleaner cannot establish that a shared object is absent from D1, and an R2 rollback could hide an otherwise-live `txt_shares` row from its allowlist scan.
-
-The Library exposes Shares below Recent only for the administrator. Shares shows the source book's normal row metadata with Copy and Delete actions. Browse/All Books adds a Share action beside search; selecting books creates independent shares. Copy asks the Worker to register the live D1 row and creates a fresh opaque grant; the resulting URL is returned to the clipboard and is not stored. Its fragment contains the random share capability, opaque encrypted-path grant, and client-side decryption key. D1 stores only 32-byte SHA-256 capability and object-path BLOBs plus the creation timestamp; deleting a share removes that row. Anonymous reading state and bookmarks remain browser-local under a local-storage key containing the base64url share id and never mutate the owner's `db_path`. EPUB scripts are disabled, and the sandboxed section frames inherit a CSP that permits only same-origin, `blob:`, and `data:` styles, images, fonts, media, and nested frames, preventing remote resource beacons embedded in a book.
-
-### 3.4 Migration
+### 2.3 Migration
 
 Migration is driven by inspecting the tables, columns, indexes, and triggers that are actually present. Fresh databases are created directly from the complete schema above; existing databases receive only the missing changes.
 
@@ -158,13 +136,3 @@ Migration is driven by inspecting the tables, columns, indexes, and triggers tha
 The command reaches the administrator through its self-owned `cred_store` row and every ordinary account through the administrator-owned backup guaranteed by docs/auth.md. Each ordinary-user backup includes that user's `user_root_key`, encrypted under the administrator's `umk`; self-owned payloads and the administrator's own payload do not. It verifies that every required row is present and decryptable before making changes. R2 is always its input source; `--local-db-dir` contains checkpoints for inspection only, never a later upload base. A changed database is uploaded with `If-Match` against the downloaded ETag, so a concurrent browser commit aborts without data loss and the operator reruns from the new remote object. An already-migrated database is not uploaded. Idempotent account provisioning installs path bindings and signing keys; `--update-ctl` installs encrypted handles, `users.user_handle_hash`, and its unique index. Neither operation belongs to `--update-db`, and there is no `users.user_handle` column.
 
 `txt_key` is unrelated to `db_master_key`: it is the AEAD key for one document's content object, generated fresh per document, so leaking one document's key exposes nothing about any other document or about the database file itself.
-
----
-
-## 4. Deployment order
-
-1. Bring the control plane to the current encrypted-handle, path-binding, and P-521 signing schema using docs/auth.md §3 and §9.
-2. Run `--update-db` against every reachable R2 database before deploying UI code that creates bookmarks or shares.
-3. Configure R2 CORS for the UI origin, allowing `GET`, `PUT`, conditional-write headers, range reads, and exposing `ETag`.
-4. Create and migrate the D1 `SHARE_REGISTRY` binding before enabling public share links.
-5. Deploy the Worker and UI together, then test credential renewal, conditional database conflicts, bookmark persistence, and the complete share copy/read/delete flow.

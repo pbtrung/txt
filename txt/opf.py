@@ -112,7 +112,7 @@ def field_strings(value) -> list:
 
 def catalog_fields(opf_metadata: dict, fallback_name: str) -> dict:
     """Extracts just {title, authors, subjects, publisher} -- the whole
-    catalog (docs/data_model.md §3.1) -- from a parse_opf_metadata()-shaped
+    catalog (docs/data_model.md §2.1) -- from a parse_opf_metadata()-shaped
     dict (or {} if there was none)."""
     titles = field_strings(opf_metadata.get("title"))
     publishers = field_strings(opf_metadata.get("publisher"))

@@ -1,7 +1,7 @@
 // Parses an EPUB's own internal package document (its content.opf, part of
 // the EPUB spec) once the Reader already has the book's bytes in hand --
 // this is what feeds the Info panel with full metadata, since txt.catalog
-// (docs/data_model.md §3.1) only keeps a fixed subset. Mirrors
+// (docs/data_model.md §2.1) only keeps a fixed subset. Mirrors
 // txt/opf.py's parse_opf_metadata field-by-field, but reads the EPUB's own
 // package document via JSZip + DOMParser instead of a Calibre sidecar
 // .opf via ElementTree.

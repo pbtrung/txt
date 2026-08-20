@@ -119,7 +119,7 @@ class TxtIngester:
 
     def _catalog_payload(self, epub_path: Path) -> dict:
         """{name, title, authors, subjects, publisher} -- just what the
-        Library screen needs to search/browse (docs/data_model.md §3.1).
+        Library screen needs to search/browse (docs/data_model.md §2.1).
         Full metadata for display comes from the EPUB's own internal OPF
         instead, parsed client-side when a book is actually opened.
         """

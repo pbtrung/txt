@@ -206,7 +206,7 @@ export class SqliteDatabase {
 
   /** Opens a SQLCipher database keyed with a raw 256-8192 byte key. `bytes`
    * is omitted to create a fresh database instead of opening an existing
-   * one (docs/data_model.md §2 step 2). */
+   * one (docs/data_model.md §1 step 2). */
   static async openKeyed(key: Uint8Array, bytes?: Uint8Array): Promise<SqliteDatabase> {
     if (key.length < 256 || key.length > 8192) {
       throw new Error("SQLCipher key must be between 256 and 8192 bytes");

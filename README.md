@@ -2,7 +2,7 @@
 
 `txt` is an encrypted document library with a React reader, a Cloudflare Worker API, and a Python administration CLI. User databases and document content live encrypted in R2; Turso stores identity, hashes, and wrapped key material only.
 
-See [authentication](docs/auth.md), [data model](docs/data_model.md), and [cryptography](docs/crypto.md) for the detailed design.
+See [authentication](docs/auth.md), [data model](docs/data_model.md), [storage layout](docs/storage_layout.md), [sharing](docs/sharing.md), [cryptography](docs/crypto.md), and [deployment](docs/deployment.md) for the detailed design.
 
 ## Main features
 
@@ -103,7 +103,7 @@ openssl rand -base64 32  # R2_TICKET_SECRET
 openssl rand -base64 32  # SHARE_GRANT_KEY
 ```
 
-Configure R2 CORS for the exact UI origin, then deploy the Worker and UI together:
+Configure R2 CORS for the exact UI origin (docs/deployment.md), then deploy the Worker and UI together:
 
 ```sh
 WORKER_NAME=existing-worker npm run deploy
