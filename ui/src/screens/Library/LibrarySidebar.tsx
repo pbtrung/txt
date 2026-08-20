@@ -128,14 +128,7 @@ function NavRow({
       onPress={onPress}
     >
       {label}
-      <span
-        className={classNames(
-          "badge rounded-pill",
-          active ? "text-bg-light" : "text-bg-dark",
-        )}
-      >
-        {count}
-      </span>
+      <span className="badge rounded-pill text-bg-light border">{count}</span>
     </Button>
   );
 }
