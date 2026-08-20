@@ -80,9 +80,22 @@ describe("EpubRenderer", () => {
   });
 
   it("applies claude.ai's own palette so every book reads the same regardless of its publisher CSS", () => {
-    expect(READER_THEME_CSS).toContain("background-color: #faf9f5 !important");
-    expect(READER_THEME_CSS).toMatch(/html, body \{[^}]*color: #3d3929 !important/);
-    expect(READER_THEME_CSS).toMatch(/a, a:link, a:visited \{\s*color: #d97757/);
+    expect(READER_THEME_CSS).toMatch(
+      /html:not\(#txt-reader-theme-shield\), body:not\(#txt-reader-theme-shield\) \{[^}]*background-color: #faf9f5 !important[^}]*color: #3d3929 !important/,
+    );
+    expect(READER_THEME_CSS).toMatch(
+      /a:not\(#txt-reader-theme-shield\), a:not\(#txt-reader-theme-shield\):link, a:not\(#txt-reader-theme-shield\):visited \{\s*color: #d97757/,
+    );
+  });
+
+  it("does not override a publisher's own font-size, font-weight, or font-style on content", () => {
+    // Exclude the @font-face blocks themselves, which legitimately declare
+    // font-weight/font-style per Literata face -- the assertion is about
+    // whether the theme forces those properties onto book content.
+    const contentRules = READER_THEME_CSS.replace(/@font-face\s*\{[^}]*\}/g, "");
+    expect(contentRules).not.toMatch(/font-size\s*:/);
+    expect(contentRules).not.toMatch(/font-weight\s*:/);
+    expect(contentRules).not.toMatch(/font-style\s*:/);
   });
 
   it("opens the book from the given bytes", () => {
@@ -153,25 +166,6 @@ describe("EpubRenderer", () => {
       section: { href?: string; url?: string },
     ) => Promise<void>;
   }
-
-  function styleStripHook() {
-    return bookMock.spine.hooks.content.register.mock.calls[0][0] as (
-      document: Document,
-    ) => void;
-  }
-
-  it("strips every publisher stylesheet from a section before it renders", () => {
-    new EpubRenderer(new Uint8Array([1]));
-    const section = document.implementation.createHTMLDocument();
-    section.head.innerHTML =
-      '<link rel="stylesheet" href="chapter.css"><style>body { color: red; }</style>';
-    section.body.innerHTML = "<p>Chapter text</p>";
-
-    styleStripHook()(section);
-
-    expect(section.head.querySelector("link, style")).toBeNull();
-    expect(section.body.textContent).toBe("Chapter text");
-  });
 
   it("replaces the declared cover image with the title and authors before render", async () => {
     bookMock.loaded.cover = Promise.resolve("https://reader.test/OEBPS/cover.jpg");

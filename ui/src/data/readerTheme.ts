@@ -141,22 +141,36 @@ export const READER_FONT_FAMILY = "'Txt Literata', serif";
 // iframe document via Rendition.themes.registerCss(), a separate build/style
 // pipeline from the outer app shell -- so the literal hex values are
 // duplicated here instead.
+// ":not(#txt-reader-theme-shield)" matches every element (no real element
+// carries that id) but adds ID-level selector specificity, which beats any
+// number of a publisher's own class/attribute selectors -- even
+// !important ones -- without a stylesheet-stripping approach that would
+// also discard the font-size/font-style/text-align declarations a book
+// legitimately needs (a smaller image caption, an italic class instead of
+// <em>, a right-aligned byline). Only color/background is boosted this
+// way; every other property is left for the book's own CSS to set.
+const SHIELD = ":not(#txt-reader-theme-shield)";
+
 export const READER_THEME_CSS = `
 ${fontFaceRules}
 html, body {
   margin-inline: 0 !important;
-  background-color: #faf9f5 !important;
-  color: #3d3929 !important;
 }
 html {
   padding-inline: 0 !important;
 }
+html${SHIELD}, body${SHIELD} {
+  background-color: #faf9f5 !important;
+  color: #3d3929 !important;
+}
 body, body * {
   font-family: 'Txt Literata', serif !important;
+}
+body ${SHIELD} {
   background-color: transparent !important;
   color: inherit !important;
 }
-a, a:link, a:visited {
+a${SHIELD}, a${SHIELD}:link, a${SHIELD}:visited {
   color: #d97757 !important;
 }
 body {
