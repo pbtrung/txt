@@ -8,6 +8,11 @@ const policy = headers
   .find((line) => line.trimStart().startsWith("Content-Security-Policy:"));
 
 describe("static security headers", () => {
+  it("allows both Firebase sign-in and token-refresh endpoints", () => {
+    expect(policy).toContain("https://identitytoolkit.googleapis.com");
+    expect(policy).toContain("https://securetoken.googleapis.com");
+  });
+
   it("blocks external resources from inherited EPUB frame policies", () => {
     expect(policy).toBeDefined();
     for (const directive of [
