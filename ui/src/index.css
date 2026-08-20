@@ -174,10 +174,11 @@
 /* Preserve the Bootstrap-era form-control-sm treatment while allowing the
    attached daisyUI actions to read as one control. */
 .search-box-input {
-  --search-border-color: color-mix(
+  --search-border-color: var(--color-base-300);
+  --search-focus-border-color: color-mix(
     in srgb,
-    var(--color-secondary) 65%,
-    var(--color-base-100)
+    var(--color-primary) 40%,
+    var(--color-base-300)
   );
 
   box-sizing: border-box;
@@ -217,7 +218,7 @@
 .search-box-input:focus {
   color: var(--color-base-content);
   background-color: var(--color-base-100);
-  border-color: color-mix(in srgb, var(--color-primary) 50%, white);
+  border-color: var(--search-focus-border-color);
 }
 
 /* The attached book/share action buttons read as part of the same control
