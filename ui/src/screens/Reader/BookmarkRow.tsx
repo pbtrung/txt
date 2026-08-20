@@ -19,21 +19,21 @@ export function BookmarkRow({
       id={bookmark.id}
       textValue={label}
       focusMode="child"
-      className="d-flex align-items-center px-2 bookmark-menu-row"
+      className="bookmark-menu-row flex items-center px-2"
     >
       <Button
-        className="dropdown-item d-flex flex-column align-items-start min-w-0"
+        className="btn btn-ghost h-auto min-h-0 min-w-0 flex-1 flex-col items-start gap-0 px-2 py-1 font-normal"
         onPress={() => onNavigate(bookmark.cfi)}
       >
-        <span className="text-truncate w-100">{label}</span>
-        <span className="small text-muted">
+        <span className="w-full truncate text-left">{label}</span>
+        <span className="text-sm text-base-content/60">
           Page {bookmark.pageNumber ?? "unknown"}
         </span>
       </Button>
       <IconButton
         label="Delete bookmark"
         icon="x-lg"
-        className="border-0 flex-shrink-0 compact-delete-button"
+        className="btn-ghost shrink-0 border-0 compact-delete-button"
         isDisabled={bookmarkBusy}
         onPress={() => onRemove(bookmark.cfi)}
       />

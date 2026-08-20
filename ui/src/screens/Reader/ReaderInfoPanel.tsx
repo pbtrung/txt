@@ -26,9 +26,9 @@ export function ReaderInfoPanel({
       overlayClassName="reader-offcanvas-overlay"
       portalContainer={portalContainer}
     >
-      <h2 className="h5 mb-1">{document.title}</h2>
+      <h2 className="mb-1 text-lg font-semibold">{document.title}</h2>
       {document.authors.length > 0 && (
-        <p className="text-muted mb-3">{document.authors.join(", ")}</p>
+        <p className="mb-3 text-base-content/60">{document.authors.join(", ")}</p>
       )}
       <MetadataList document={document} />
     </OffcanvasPanel>
@@ -37,7 +37,7 @@ export function ReaderInfoPanel({
 
 function MetadataList({ document }: { document: ReaderDocument }) {
   return (
-    <dl className="small mb-0">
+    <dl className="mb-0 text-sm">
       {document.publisher && (
         <MetadataGroup label="Publisher" value={document.publisher} />
       )}
@@ -67,7 +67,7 @@ function MetadataGroup({
 }) {
   return (
     <div className="mb-3">
-      <dt className="text-muted fw-normal">{label}</dt>
+      <dt className="font-normal text-base-content/60">{label}</dt>
       <dd className="mb-0">{html ? <TruncatedHtml html={value} /> : value}</dd>
     </div>
   );
@@ -104,7 +104,10 @@ function ToggleDescription({
   onClick: () => void;
 }) {
   return (
-    <Button className="btn btn-link btn-sm p-0 align-baseline" onPress={onClick}>
+    <Button
+      className="btn btn-link btn-sm h-auto min-h-0 p-0 align-baseline"
+      onPress={onClick}
+    >
       {expanded ? "Show less" : "Show more"}
     </Button>
   );

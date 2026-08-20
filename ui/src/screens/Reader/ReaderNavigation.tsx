@@ -10,6 +10,7 @@ import {
   NumberField,
   Popover,
 } from "react-aria-components";
+import { Bookmark, BookmarkMinus, BookmarkPlus } from "lucide-react";
 import { IconButton } from "../../components/IconButton";
 import type { DatabaseStoreStatus } from "../../data/databaseStore";
 import type { EpubRenderer, PagePosition } from "../../data/epubRenderer";
@@ -47,9 +48,12 @@ export function ReaderNavigation({
   onRetry: () => void;
 }) {
   return (
-    <div className="d-flex align-items-center justify-content-start border-top py-1 gap-2">
+    <div className="flex items-center justify-start gap-2 border-t border-base-300 py-1">
       <FontSizeMenu value={fontPx} onChange={onFontSize} />
-      <span className="vr" aria-hidden="true" />
+      <span
+        className="h-5 border-l border-base-300 reader-nav-divider"
+        aria-hidden="true"
+      />
       <IconButton
         label="Previous page"
         icon="chevron-left"
@@ -57,7 +61,10 @@ export function ReaderNavigation({
         onPress={() => void renderer?.prev()}
       />
       <PageInput renderer={renderer} page={page} />
-      <span className="small text-muted" aria-label={`Total pages ${page.total}`}>
+      <span
+        className="text-sm text-base-content/60"
+        aria-label={`Total pages ${page.total}`}
+      >
         / {page.total}
       </span>
       <IconButton
@@ -107,20 +114,21 @@ export function BookmarkMenu({
   return (
     <DialogTrigger>
       <Button
-        className="btn btn-sm btn-outline-secondary ms-auto"
+        className="btn btn-sm btn-outline btn-secondary ml-auto"
         aria-label="Bookmarks"
       >
-        <i
-          className={`bi bi-${bookmarkSaved ? "bookmark-fill" : "bookmark"}`}
+        <Bookmark
+          className="size-4"
+          fill={bookmarkSaved ? "currentColor" : "none"}
           aria-hidden="true"
         />
       </Button>
       <Popover
         placement="top end"
         offset={0}
-        className="dropdown-menu show reader-bookmark-menu"
+        className="menu rounded-box border border-base-300 bg-base-100 shadow-lg reader-bookmark-menu"
       >
-        <Dialog aria-label="Bookmark options" className="border-0">
+        <Dialog aria-label="Bookmark options" className="border-0 outline-none">
           {({ close }) => (
             <BookmarkOptions
               {...{
@@ -175,17 +183,18 @@ function BookmarkOptions({
   return (
     <div>
       <Button
-        className="dropdown-item d-flex align-items-center gap-2"
+        className="btn btn-ghost btn-sm h-auto min-h-0 w-full justify-start gap-2 font-normal"
         isDisabled={!renderer || bookmarkBusy}
         onPress={onBookmark}
       >
-        <i
-          className={`bi bi-${bookmarkSaved ? "bookmark-dash" : "bookmark-plus"}`}
-          aria-hidden="true"
-        />
+        {bookmarkSaved ? (
+          <BookmarkMinus className="size-4" aria-hidden="true" />
+        ) : (
+          <BookmarkPlus className="size-4" aria-hidden="true" />
+        )}
         {bookmarkSaved ? "Remove current bookmark" : "Add current bookmark"}
       </Button>
-      <div className="dropdown-divider" />
+      <div className="my-1 border-t border-base-300" />
       <BookmarkStatus {...{ status, error, onRetry }} />
       {bookmarks.length ? (
         <GridList aria-label="Saved bookmarks" className="bookmark-grid">
@@ -197,7 +206,7 @@ function BookmarkOptions({
           ))}
         </GridList>
       ) : (
-        <span className="dropdown-item-text text-muted">No bookmarks yet.</span>
+        <span className="block px-2 py-1 text-base-content/60">No bookmarks yet.</span>
       )}
     </div>
   );
@@ -214,10 +223,10 @@ function BookmarkStatus({
 }) {
   if (error) {
     return (
-      <div className="alert alert-danger py-2 mx-2 small" role="alert">
-        <span className="d-block mb-1">Unsaved changes: {error}</span>
+      <div className="alert alert-error mx-2 block py-2 text-sm" role="alert">
+        <span className="mb-1 block">Unsaved changes: {error}</span>
         <Button
-          className="btn btn-sm btn-outline-danger"
+          className="btn btn-sm btn-outline btn-error"
           isDisabled={status.pending}
           onPress={onRetry}
         >
@@ -227,7 +236,7 @@ function BookmarkStatus({
     );
   }
   return status.pending ? (
-    <span role="status" className="dropdown-item-text small text-muted">
+    <span role="status" className="block px-2 py-1 text-sm text-base-content/60">
       Saving…
     </span>
   ) : null;
@@ -242,16 +251,13 @@ function FontSizeMenu({
 }) {
   return (
     <MenuTrigger>
-      <Button
-        className="btn btn-sm btn-outline-secondary dropdown-toggle"
-        aria-label="Font size"
-      >
+      <Button className="btn btn-sm btn-outline btn-secondary" aria-label="Font size">
         {value}px
       </Button>
       <Popover
         placement="top start"
         offset={0}
-        className="dropdown-menu show reader-font-menu p-0"
+        className="menu rounded-box border border-base-300 bg-base-100 p-0 shadow-lg reader-font-menu"
       >
         <FontSizeOptions value={value} onSelect={onChange} />
       </Popover>
@@ -271,7 +277,7 @@ function FontSizeOptions({
       aria-label="Font size options"
       selectionMode="single"
       selectedKeys={new Set([String(value)])}
-      className="py-1"
+      className="p-1 outline-none"
       onAction={(key) => onSelect(Number(key))}
     >
       {FONT_SIZES_PX.map((size) => (
@@ -280,7 +286,10 @@ function FontSizeOptions({
           id={String(size)}
           textValue={`${size}px`}
           className={({ isSelected }) =>
-            classNames("dropdown-item", isSelected && "active")
+            classNames(
+              "cursor-pointer rounded-field px-3 py-2 text-sm outline-none hover:bg-base-200 focus:bg-base-200",
+              isSelected && "bg-primary text-primary-content hover:bg-primary",
+            )
           }
         >
           {size}px
@@ -308,7 +317,7 @@ function PageInput({
       style={{ width: `calc(${String(page.total).length}ch + 1.5rem)` }}
       onChange={(target) => void renderer?.displayPage(target)}
     >
-      <Input className="form-control form-control-sm text-end w-100 reader-page-input" />
+      <Input className="input input-sm w-full text-right reader-page-input" />
     </NumberField>
   );
 }

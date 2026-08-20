@@ -1,4 +1,5 @@
 import { Link, Toolbar } from "react-aria-components";
+import { ArrowLeft } from "lucide-react";
 import { IconButton } from "../../components/IconButton";
 
 export function ReaderToolbar({
@@ -17,18 +18,18 @@ export function ReaderToolbar({
   return (
     <Toolbar
       aria-label="Reader actions"
-      className="reader-toolbar d-flex align-items-center border-bottom py-1 gap-1"
+      className="reader-toolbar flex items-center gap-1 border-b border-base-300 py-1"
     >
       {backHref && (
         <Link
           href={backHref}
-          className="btn btn-sm btn-outline-secondary"
+          className="btn btn-sm btn-outline btn-secondary"
           aria-label="Back to library"
         >
-          <i className="bi bi-arrow-left" aria-hidden="true" />
+          <ArrowLeft className="size-4" aria-hidden="true" />
         </Link>
       )}
-      <h1 className="h6 mb-0 mx-2 text-truncate flex-grow-1">
+      <h1 className="mx-2 mb-0 flex-1 truncate text-base font-semibold">
         {readerTitle(title, authors)}
       </h1>
       <IconButton label="Menu" icon="list" onPress={onMenu} />

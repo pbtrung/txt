@@ -2,6 +2,7 @@
 // entry jump straight to that section.
 import type { NavItem } from "@likecoin/epub-ts";
 import { useEffect, useState } from "react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { Button, Tree, TreeItem, TreeItemContent } from "react-aria-components";
 import { OffcanvasPanel } from "../../components/OffcanvasPanel";
 import type { EpubRenderer } from "../../data/epubRenderer";
@@ -50,13 +51,13 @@ export function TocPanel({
       portalContainer={portalContainer}
     >
       {toc === undefined ? (
-        <p className="text-muted">Loading…</p>
+        <p className="text-base-content/60">Loading…</p>
       ) : toc === null ? (
-        <p role="alert" className="text-danger">
+        <p role="alert" className="text-error">
           Unable to load contents.
         </p>
       ) : toc.length === 0 ? (
-        <p className="text-muted">No contents available.</p>
+        <p className="text-base-content/60">No contents available.</p>
       ) : (
         <TocList
           items={toc}
@@ -110,23 +111,24 @@ function TocTreeItem({
       <TreeItemContent>
         {({ hasChildItems, isExpanded, level }) => (
           <span
-            className="d-flex align-items-start gap-1 toc-tree-row"
+            className="toc-tree-row flex items-start gap-1"
             style={{ paddingInlineStart: `${level - 1}rem` }}
           >
             {hasChildItems ? (
               <Button
                 slot="chevron"
-                className="btn btn-link btn-sm border-0 p-0 flex-shrink-0 toc-tree-chevron"
+                className="btn btn-ghost btn-sm min-h-0 shrink-0 border-0 p-0 toc-tree-chevron"
               >
-                <i
-                  className={`bi bi-chevron-${isExpanded ? "down" : "right"}`}
-                  aria-hidden="true"
-                />
+                {isExpanded ? (
+                  <ChevronDown className="size-4" aria-hidden="true" />
+                ) : (
+                  <ChevronRight className="size-4" aria-hidden="true" />
+                )}
               </Button>
             ) : (
               <span className="toc-tree-chevron" aria-hidden="true" />
             )}
-            <span className="btn btn-link p-0 text-start text-decoration-none">
+            <span className="cursor-pointer text-left text-primary hover:underline">
               {label}
             </span>
           </span>

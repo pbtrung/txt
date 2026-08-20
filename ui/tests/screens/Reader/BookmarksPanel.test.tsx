@@ -35,7 +35,7 @@ describe("BookmarkMenu", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Bookmarks" }));
     const dialog = screen.getByRole("dialog", { name: "Bookmark options" });
-    expect(dialog.parentElement).toHaveClass("reader-bookmark-menu", "show");
+    expect(dialog.parentElement).toHaveClass("reader-bookmark-menu");
     expect(screen.getByText("Page 12")).toBeInTheDocument();
     expect(screen.getByRole("grid", { name: "Saved bookmarks" })).toContainElement(
       screen.getByRole("row", { name: /Fear is the mind-killer/ }),

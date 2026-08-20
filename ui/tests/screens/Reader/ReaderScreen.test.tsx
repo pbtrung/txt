@@ -130,12 +130,12 @@ describe("ReaderScreen", () => {
     renderScreen();
     const alert = screen.getByRole("alert");
     expect(alert).toHaveTextContent("boom");
-    expect(alert).toHaveClass("small", "my-2", "py-2", "px-3");
+    expect(alert).toHaveClass("text-sm", "my-2", "py-2", "px-3");
     expect(alert.parentElement).toHaveClass(
       "reader-width",
       "reader-column",
       "px-2",
-      "px-md-0",
+      "md:px-0",
     );
   });
 
@@ -280,19 +280,19 @@ describe("ReaderScreen", () => {
     const epubHost = container.querySelector<HTMLElement>(".reader-epub-host")!;
 
     expect(viewport).toHaveStyle({ fontSize: "18px" });
-    expect(viewport).not.toHaveClass("px-2", "px-md-0");
-    expect(epubHost).toHaveClass("h-100");
+    expect(viewport).not.toHaveClass("px-2", "md:px-0");
+    expect(epubHost).toHaveClass("h-full");
 
     expect(
       fontSize.compareDocumentPosition(
         screen.getByRole("button", { name: "Previous page" }),
       ),
     ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-    expect(container.querySelector(".vr")).toBeInTheDocument();
+    expect(container.querySelector(".reader-nav-divider")).toBeInTheDocument();
 
     await userEvent.click(fontSize);
     const menu = screen.getByRole("menu", { name: "Font size" });
-    expect(menu.parentElement).toHaveClass("show", "reader-font-menu");
+    expect(menu.parentElement).toHaveClass("reader-font-menu");
     expect(
       screen.getAllByRole("menuitemradio").map((option) => option.textContent),
     ).toEqual(["16px", "18px", "20px", "22px"]);
@@ -389,11 +389,11 @@ describe("ReaderScreen", () => {
 
     await userEvent.click(bookmark);
 
-    expect(bookmark).toHaveClass("ms-auto");
+    expect(bookmark).toHaveClass("ml-auto");
     expect(screen.queryByRole("button", { name: "View bookmarks" })).toBeNull();
     expect(
       screen.getByRole("dialog", { name: "Bookmark options" }).parentElement,
-    ).toHaveClass("show", "reader-bookmark-menu");
+    ).toHaveClass("reader-bookmark-menu");
     expect(screen.getByText("No bookmarks yet.")).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Add current bookmark" }));
@@ -509,6 +509,6 @@ describe("ReaderScreen", () => {
     await userEvent.click(screen.getByRole("button", { name: "Menu" }));
 
     const menu = screen.getByRole("dialog", { name: "Content" });
-    expect(menu).toHaveClass("show", "offcanvas-start", "reader-side-panel");
+    expect(menu).toHaveClass("aria-drawer-start", "reader-side-panel");
   });
 });

@@ -25,10 +25,12 @@ export class AppErrorBoundary extends Component<Props, State> {
   render() {
     if (!this.state.failed) return this.props.children;
     return (
-      <main className="container py-5 text-center" role="alert">
-        <h1 className="h4">Something went wrong</h1>
-        <p className="text-muted">Reload the app to start a fresh session.</p>
-        <Button className="btn btn-primary" onPress={this.reload}>
+      <main className="mx-auto w-full px-4 py-12 text-center" role="alert">
+        <h1 className="text-xl font-semibold">Something went wrong</h1>
+        <p className="mt-2 text-base-content/60">
+          Reload the app to start a fresh session.
+        </p>
+        <Button className="btn btn-primary mt-4" onPress={this.reload}>
           Reload
         </Button>
       </main>

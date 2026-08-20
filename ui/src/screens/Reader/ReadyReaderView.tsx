@@ -55,11 +55,8 @@ export function ReadyReaderView({
   const [readerContainer, setReaderContainer] = useState<HTMLDivElement | null>(null);
   if (error) return <ReaderError>{error}</ReaderError>;
   return (
-    <div
-      ref={setReaderContainer}
-      className="reader-width vh-100 mx-auto position-relative"
-    >
-      <div className="reader-column d-flex flex-column h-100 px-2 px-md-0">
+    <div ref={setReaderContainer} className="reader-width relative mx-auto h-screen">
+      <div className="reader-column flex h-full flex-col px-2 md:px-0">
         <ReaderToolbar
           title={document.title}
           authors={document.authors}
@@ -68,12 +65,12 @@ export function ReadyReaderView({
           backHref={backHref}
         />
         <div
-          className="reader-viewport flex-grow-1 align-self-center position-relative"
+          className="reader-viewport relative flex-1 self-center"
           style={{ fontSize: `${fontPx}px` }}
         >
           <div
             ref={setHost}
-            className={classNames("reader-epub-host h-100", !ready && "invisible")}
+            className={classNames("reader-epub-host h-full", !ready && "invisible")}
           />
           {!ready && (
             <LoadingMessage
@@ -121,7 +118,7 @@ export function ReadyReaderView({
 
 export function ReaderError({ children }: { children: ReactNode }) {
   return (
-    <div className="reader-width reader-column mx-auto px-2 px-md-0">
+    <div className="reader-width reader-column mx-auto px-2 md:px-0">
       <ScreenMessage error compact>
         {children}
       </ScreenMessage>

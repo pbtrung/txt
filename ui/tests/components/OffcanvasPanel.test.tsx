@@ -15,13 +15,15 @@ describe("OffcanvasPanel", () => {
     expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
   });
 
-  it("carries the show class and renders a backdrop when open", () => {
+  it("renders a drawer and backdrop when open", () => {
     render(
       <OffcanvasPanel open onClose={vi.fn()} title="Info">
         content
       </OffcanvasPanel>,
     );
-    expect(screen.getByRole("dialog", { name: "Info" })).toHaveClass("show");
+    expect(screen.getByRole("dialog", { name: "Info" })).toHaveClass(
+      "aria-drawer-panel",
+    );
     expect(screen.getByText("content")).toBeInTheDocument();
     expect(screen.getByRole("dialog", { name: "Info" })).toContainElement(
       document.activeElement as HTMLElement,

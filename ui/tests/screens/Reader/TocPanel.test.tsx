@@ -22,7 +22,7 @@ describe("TocPanel", () => {
   it("opens from the left and is constrained to the viewport", () => {
     render(<TocPanel open onClose={vi.fn()} renderer={null} />);
     const panel = screen.getByRole("dialog", { name: "Content" });
-    expect(panel).toHaveClass("offcanvas-start", "reader-side-panel");
+    expect(panel).toHaveClass("aria-drawer-start", "reader-side-panel");
   });
 
   it("shows a loading state before the toc resolves", () => {

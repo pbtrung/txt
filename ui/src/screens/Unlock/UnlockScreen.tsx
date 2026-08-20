@@ -3,6 +3,7 @@
 // effect, matching the historical Unlock screen's UX. The file is this
 // client's own reduced creds.json shape (ui/src/data/creds.ts).
 import { useEffect } from "react";
+import { BookOpen } from "lucide-react";
 import { Button, FileTrigger } from "react-aria-components";
 import { useNavigate } from "react-router-dom";
 import { useVault } from "../../state/VaultContext";
@@ -25,32 +26,29 @@ export function UnlockScreen() {
   const unlocking = status === "unlocking";
 
   return (
-    <div className="container py-5 text-center unlock-panel">
-      <h1 className="h3 mb-4">
-        <i className="bi bi-book me-2" />
+    <div className="mx-auto w-full px-4 py-12 text-center unlock-panel">
+      <h1 className="mb-6 flex items-center justify-center gap-2 text-3xl font-semibold">
+        <BookOpen className="size-7" aria-hidden="true" />
         Skypiea
       </h1>
       <FileTrigger
         acceptedFileTypes={["application/json"]}
         onSelect={(files) => void handleFileSelect(files)}
       >
-        <Button className="btn btn-primary px-4" isDisabled={unlocking}>
+        <Button className="btn btn-primary px-6" isDisabled={unlocking}>
           {unlocking && (
-            <span
-              className="spinner-border spinner-border-sm me-2"
-              aria-hidden="true"
-            />
+            <span className="loading loading-spinner loading-sm" aria-hidden="true" />
           )}
           {unlocking ? "Unlocking…" : "Choose File"}
         </Button>
       </FileTrigger>
       {progress && (
-        <p role="status" className="text-muted mt-3 mb-0">
+        <p role="status" className="mt-3 mb-0 text-base-content/60">
           {progress.label} (step {progress.step} of {progress.total})
         </p>
       )}
       {error && (
-        <p role="alert" className="alert alert-danger mt-3 mb-0">
+        <p role="alert" className="alert alert-error mt-3 mb-0">
           {error}
         </p>
       )}

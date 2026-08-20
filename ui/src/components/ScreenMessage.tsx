@@ -19,18 +19,18 @@ export function LoadingMessage({
   return (
     <div
       className={classNames(
-        "text-center text-muted",
+        "text-center text-base-content/60",
         compact
-          ? "position-absolute top-50 start-50 translate-middle w-100"
-          : "container py-5",
+          ? "absolute top-1/2 left-1/2 w-full -translate-x-1/2 -translate-y-1/2"
+          : "mx-auto w-full px-4 py-12",
       )}
     >
       <div>
-        <span className="spinner-border spinner-border-sm me-2" aria-hidden="true" />
+        <span className="loading loading-spinner loading-sm mr-2" aria-hidden="true" />
         {children}
       </div>
       {progress && (
-        <div role="status" className="small mt-2">
+        <div role="status" className="mt-2 text-sm">
           {progress.label} (step {progress.step} of {progress.total})
         </div>
       )}
@@ -52,8 +52,8 @@ export function ScreenMessage({
       role={error ? "alert" : undefined}
       className={classNames(
         "text-center",
-        compact ? "small my-2 py-2 px-3" : "container py-5",
-        error ? "alert alert-danger" : "text-muted",
+        compact ? "my-2 px-3 py-2 text-sm" : "mx-auto w-full px-4 py-12",
+        error ? "alert alert-error" : "text-base-content/60",
       )}
     >
       {children}
