@@ -19,10 +19,10 @@ export function BookmarkRow({
       id={bookmark.id}
       textValue={label}
       focusMode="child"
-      className="bookmark-menu-row flex w-full max-w-full items-center overflow-hidden px-2"
+      className="bookmark-menu-row grid w-full min-w-0 max-w-full grid-cols-[minmax(0,1fr)_auto] items-center overflow-hidden px-2"
     >
       <Button
-        className="btn btn-ghost h-auto min-h-0 min-w-0 max-w-full flex-1 flex-col items-start gap-0 overflow-hidden px-2 py-1 font-normal"
+        className="btn btn-ghost h-auto min-h-0 w-full min-w-0 max-w-none flex-col items-start gap-0 overflow-hidden px-2 py-1 font-normal"
         onPress={() => onNavigate(bookmark.cfi)}
       >
         <span className="w-full truncate text-left">{label}</span>
@@ -33,7 +33,7 @@ export function BookmarkRow({
       <IconButton
         label="Delete bookmark"
         icon="x-lg"
-        className="btn-ghost shrink-0 border-0 compact-delete-button"
+        className="btn-ghost relative z-10 border-0 compact-delete-button"
         isDisabled={bookmarkBusy}
         onPress={() => onRemove(bookmark.cfi)}
       />

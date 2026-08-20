@@ -128,7 +128,10 @@ export function BookmarkMenu({
         offset={0}
         className="menu rounded-box border border-base-300 bg-base-100 shadow-lg reader-bookmark-menu"
       >
-        <Dialog aria-label="Bookmark options" className="border-0 outline-none">
+        <Dialog
+          aria-label="Bookmark options"
+          className="w-full max-w-full overflow-hidden border-0 outline-none"
+        >
           {({ close }) => (
             <BookmarkOptions
               {...{
@@ -181,7 +184,7 @@ function BookmarkOptions({
   onRetry: () => void;
 }) {
   return (
-    <div>
+    <div className="w-full min-w-0 max-w-full overflow-hidden">
       <Button
         className="btn btn-ghost btn-sm h-auto min-h-0 w-full justify-start gap-2 font-normal"
         isDisabled={!renderer || bookmarkBusy}
@@ -197,7 +200,10 @@ function BookmarkOptions({
       <div className="my-1 border-t border-base-300" />
       <BookmarkStatus {...{ status, error, onRetry }} />
       {bookmarks.length ? (
-        <GridList aria-label="Saved bookmarks" className="bookmark-grid">
+        <GridList
+          aria-label="Saved bookmarks"
+          className="bookmark-grid w-full min-w-0 max-w-full overflow-x-hidden"
+        >
           {bookmarks.map((bookmark) => (
             <BookmarkRow
               key={bookmark.id}
@@ -287,7 +293,7 @@ function FontSizeOptions({
           textValue={`${size}px`}
           className={({ isSelected }) =>
             classNames(
-              "cursor-pointer rounded-field px-3 py-2 text-sm outline-none hover:bg-base-200 focus:bg-base-200",
+              "cursor-pointer rounded-field px-3 py-2 text-sm outline-none hover:bg-base-200 focus:bg-base-200 reader-font-option",
               isSelected && "bg-primary text-primary-content hover:bg-primary",
             )
           }

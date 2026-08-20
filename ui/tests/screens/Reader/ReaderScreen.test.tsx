@@ -296,6 +296,15 @@ describe("ReaderScreen", () => {
     expect(
       screen.getAllByRole("menuitemradio").map((option) => option.textContent),
     ).toEqual(["16px", "18px", "20px", "22px"]);
+    expect(screen.getByRole("menuitemradio", { name: "18px" })).toHaveClass(
+      "reader-font-option",
+      "bg-primary",
+      "text-primary-content",
+    );
+    expect(screen.getByRole("menuitemradio", { name: "18px" })).toHaveAttribute(
+      "data-selected",
+      "true",
+    );
 
     await userEvent.click(screen.getByRole("menuitemradio", { name: "20px" }));
 

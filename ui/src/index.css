@@ -160,16 +160,35 @@
   border-bottom-left-radius: 0;
 }
 
-/* Match the attached secondary outline buttons so the field and actions read
-   as one daisyUI join. */
+/* Preserve the Bootstrap-era form-control-sm treatment while allowing the
+   attached daisyUI actions to read as one control. */
 .search-box-input {
-  --input-color: var(--color-secondary);
-
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  min-height: calc(1.5em + 0.5rem + 2px);
   padding-left: 2rem;
   padding-right: 2rem;
-  border: var(--border) solid var(--color-secondary);
-  outline: none;
+  font-family: inherit;
+  font-size: 0.875rem;
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--color-base-content);
+  appearance: none;
+  background-color: var(--color-base-100);
+  background-clip: padding-box;
+  border: 1px solid var(--color-secondary);
+  border-radius: 0.5rem;
+  outline: 0;
   box-shadow: none;
+  transition:
+    border-color 0.15s ease-in-out,
+    box-shadow 0.15s ease-in-out;
+}
+
+.search-box-input::placeholder {
+  color: var(--color-secondary);
+  opacity: 1;
 }
 
 .search-box-input:focus,
@@ -179,8 +198,8 @@
 }
 
 .search-box-input:focus {
-  --input-color: var(--color-secondary);
-
+  color: var(--color-base-content);
+  background-color: var(--color-base-100);
   border-color: color-mix(in srgb, var(--color-primary) 50%, white);
 }
 
@@ -451,6 +470,17 @@
 
 .reader-font-menu {
   min-width: 4.5rem;
+}
+
+.reader-font-option[data-selected] {
+  background-color: var(--color-primary);
+  color: var(--color-primary-content);
+  font-weight: 600;
+}
+
+.reader-font-option[data-selected]:is(:hover, [data-hovered], [data-focused]) {
+  background-color: var(--color-primary);
+  color: var(--color-primary-content);
 }
 
 .reader-bookmark-menu {

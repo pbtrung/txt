@@ -43,7 +43,12 @@ describe("BookmarkMenu", () => {
     );
     expect(
       screen.getByText("Fear is the mind-killer.").closest('[role="row"]'),
-    ).toHaveClass("max-w-full", "overflow-hidden");
+    ).toHaveClass(
+      "grid",
+      "max-w-full",
+      "grid-cols-[minmax(0,1fr)_auto]",
+      "overflow-hidden",
+    );
     expect(screen.getByRole("grid", { name: "Saved bookmarks" })).toContainElement(
       screen.getByRole("row", { name: /Fear is the mind-killer/ }),
     );
@@ -53,7 +58,7 @@ describe("BookmarkMenu", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Bookmarks" }));
     const removeButton = screen.getByRole("button", { name: "Delete bookmark" });
-    expect(removeButton).toHaveClass("compact-delete-button");
+    expect(removeButton).toHaveClass("btn-square", "compact-delete-button");
     await userEvent.click(removeButton);
     expect(remove).toHaveBeenCalledWith("epubcfi(/6/4)");
   });

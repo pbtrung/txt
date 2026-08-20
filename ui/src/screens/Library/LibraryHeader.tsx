@@ -71,10 +71,7 @@ export function LibraryHeader({
             onChange={onQuery}
           >
             <Search className="search-box-icon" aria-hidden="true" />
-            <Input
-              className="input input-sm w-full search-box-input"
-              placeholder="Search…"
-            />
+            <Input className="search-box-input" placeholder="Search…" />
             <Button className="search-box-clear" aria-label="Clear search">
               <X className="search-box-clear-icon" aria-hidden="true" />
             </Button>
