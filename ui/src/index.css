@@ -335,17 +335,14 @@
 
 .library-toast-region {
   position: absolute;
-  right: 0;
+  right: auto;
   bottom: 1rem;
-  left: 0;
+  left: 15%;
   z-index: 80;
   display: flex;
+  width: 70%;
   min-width: 0;
   outline: none;
-}
-
-.library-toast-region-with-sidebar {
-  left: var(--library-sidebar-width);
 }
 
 .library-toast {

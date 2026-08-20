@@ -2,6 +2,7 @@
 // components own the header, responsive navigation, and browsable content.
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { X } from "lucide-react";
+import { UNSAFE_PortalProvider } from "react-aria";
 import {
   Button,
   Text,
@@ -74,6 +75,7 @@ export function LibraryScreen() {
   const operation = useRef(false);
   const libraryRoot = useRef<HTMLDivElement>(null);
   const librarySidebar = useRef<HTMLElement>(null);
+  const libraryRightPane = useRef<HTMLDivElement>(null);
   const showSidebar = useLibrarySidebar(
     libraryRoot,
     librarySidebar,
@@ -272,45 +274,56 @@ export function LibraryScreen() {
               />
             </aside>
           )}
-          <LibraryContent
-            books={library.books}
-            view={view}
-            query={query}
-            selectedTxtId={selectedTxtId}
-            onSelectBook={setSelectedTxtId}
-            selectedShareId={selectedShareId}
-            onSelectShare={setSelectedShareId}
-            onNavigate={navigate}
-            onClearAccess={(txtId) => {
-              const book = library.books.find((candidate) => candidate.txtId === txtId);
-              if (book) {
-                void updateActivity(
-                  "Deleting recent access",
-                  book.title,
-                  clearLastAccessMutation(txtId),
-                  "Recent access deleted",
+          <div
+            ref={libraryRightPane}
+            className="relative flex min-w-0 flex-1 overflow-hidden library-right-pane"
+          >
+            <LibraryContent
+              books={library.books}
+              view={view}
+              query={query}
+              selectedTxtId={selectedTxtId}
+              onSelectBook={setSelectedTxtId}
+              selectedShareId={selectedShareId}
+              onSelectShare={setSelectedShareId}
+              onNavigate={navigate}
+              onClearAccess={(txtId) => {
+                const book = library.books.find(
+                  (candidate) => candidate.txtId === txtId,
                 );
-              }
-            }}
-            onDeleteBookmark={(txtId, cfi) => {
-              const book = library.books.find((candidate) => candidate.txtId === txtId);
-              if (book) {
-                void updateActivity(
-                  "Deleting bookmark",
-                  book.title,
-                  deleteBookmarkMutation(txtId, cfi),
-                  "Bookmark deleted",
+                if (book) {
+                  void updateActivity(
+                    "Deleting recent access",
+                    book.title,
+                    clearLastAccessMutation(txtId),
+                    "Recent access deleted",
+                  );
+                }
+              }}
+              onDeleteBookmark={(txtId, cfi) => {
+                const book = library.books.find(
+                  (candidate) => candidate.txtId === txtId,
                 );
-              }
-            }}
-            shares={shared.shares}
-          />
+                if (book) {
+                  void updateActivity(
+                    "Deleting bookmark",
+                    book.title,
+                    deleteBookmarkMutation(txtId, cfi),
+                    "Bookmark deleted",
+                  );
+                }
+              }}
+              shares={shared.shares}
+            />
+            <UNSAFE_PortalProvider getContainer={() => libraryRightPane.current}>
+              <LibraryToastRegion />
+            </UNSAFE_PortalProvider>
+          </div>
         </div>
       </div>
       {operationBusy && (
         <div className="library-operation-blocker" aria-hidden="true" />
       )}
-      <LibraryToastRegion hasSidebar={showSidebar} />
     </div>
   );
 }
@@ -320,11 +333,11 @@ function showLibraryToast(notice: LibraryNotice, timeout?: number): void {
   libraryToastQueue.add(notice, { timeout });
 }
 
-function LibraryToastRegion({ hasSidebar }: { hasSidebar: boolean }) {
+function LibraryToastRegion() {
   return (
     <UNSTABLE_ToastRegion
       queue={libraryToastQueue}
-      className={`library-toast-region box-border px-[15%] ${hasSidebar ? "library-toast-region-with-sidebar" : ""}`}
+      className="library-toast-region"
       aria-label="Library notifications"
     >
       {({ toast }) => <LibraryToast toast={toast} />}

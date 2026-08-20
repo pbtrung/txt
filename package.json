@@ -30,6 +30,7 @@
     "jszip": "^3.10.1",
     "lucide-react": "^1.33.0",
     "react": "^19.2.8",
+    "react-aria": "^3.51.0",
     "react-aria-components": "^1.20.0",
     "react-dom": "^19.2.8",
     "react-router-dom": "^7.18.2"
