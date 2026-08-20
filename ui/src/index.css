@@ -163,14 +163,25 @@
 /* Match the attached secondary outline buttons so the field and actions read
    as one daisyUI join. */
 .search-box-input {
+  --input-color: var(--color-secondary);
+
   padding-left: 2rem;
   padding-right: 2rem;
   border: var(--border) solid var(--color-secondary);
+  outline: none;
+  box-shadow: none;
 }
 
 .search-box-input:focus,
 .reader-page-input:focus {
+  outline: none;
   box-shadow: 0 0 0 0.1rem color-mix(in srgb, var(--color-primary) 25%, transparent);
+}
+
+.search-box-input:focus {
+  --input-color: var(--color-secondary);
+
+  border-color: color-mix(in srgb, var(--color-primary) 50%, white);
 }
 
 /* The attached book/share action buttons read as part of the same control
@@ -179,6 +190,7 @@
    on the search box too, instead of the box looking unfocused while its
    own button group is the part actually active. */
 .library-search-group:has(.library-book-actions :focus) .search-box-input {
+  border-color: var(--color-secondary);
   box-shadow: 0 0 0 0.1rem color-mix(in srgb, var(--color-primary) 25%, transparent);
 }
 
@@ -285,7 +297,7 @@
 }
 
 .library-toast-region {
-  position: fixed;
+  position: absolute;
   right: 1rem;
   bottom: 1rem;
   left: 1rem;
@@ -444,6 +456,7 @@
 .reader-bookmark-menu {
   width: min(22rem, calc(100vw - 1rem));
   max-height: calc(100dvh - 4rem);
+  overflow-x: hidden;
   overflow-y: auto;
   padding: 0.25rem;
   font-size: 14px;

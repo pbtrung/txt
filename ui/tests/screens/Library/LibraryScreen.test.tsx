@@ -500,8 +500,12 @@ describe("LibraryScreen", () => {
     const row = screen.getByRole("row", { name: /Active book/ });
     expect(screen.getByRole("grid", { name: "Books" })).toContainElement(row);
     expect(row.querySelector(".book-row-icon")).toHaveClass("book-row-icon-active");
+    expect(screen.getByLabelText("2 bookmarks")).toHaveClass("gap-0", "font-semibold");
     expect(screen.getByLabelText("2 bookmarks")).toHaveTextContent("2");
-    expect(screen.getByLabelText("Last accessed 14:05:09 17/08/26")).toBeVisible();
+    expect(screen.getByLabelText("Last accessed 14:05:09 17/08/26")).toHaveClass(
+      "gap-0",
+      "font-semibold",
+    );
     expect(screen.getByText("A very long author name")).toHaveClass("truncate");
   });
 
@@ -515,6 +519,7 @@ describe("LibraryScreen", () => {
     const recent = screen.getByRole("button", { name: /^Recent/ });
     expect(recent).toHaveTextContent("2");
     expect(recent).toHaveClass("btn-active");
+    expect(recent).toHaveClass("border-b", "border-base-300");
     expect(recent).toHaveClass("rounded-none");
     expect(screen.getByRole("button", { name: /^All Books/ })).toHaveTextContent("2");
     expect(screen.getByRole("button", { name: /^Authors/ })).toHaveTextContent("2");
@@ -730,7 +735,11 @@ describe("LibraryScreen", () => {
     expect(await screen.findByRole("tooltip")).toHaveTextContent(
       "Delete bookmark for Marked book on page 6",
     );
-    expect(remove).toHaveClass("compact-delete-button", "book-row-remove");
+    expect(remove).toHaveClass(
+      "btn-circle",
+      "compact-delete-button",
+      "book-row-remove",
+    );
     const row = remove.closest('[role="row"]');
     expect(row).toHaveClass("book-row-container");
     expect(screen.getByRole("grid", { name: "Bookmarks" })).toContainElement(row);
@@ -775,7 +784,9 @@ describe("LibraryScreen", () => {
     renderScreen(LIBRARY, lock);
     expect(screen.getByText("Trung")).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "Lock" }));
+    const lockButton = screen.getByRole("button", { name: "Lock" });
+    expect(lockButton).toHaveClass("btn-square");
+    await userEvent.click(lockButton);
 
     expect(lock).toHaveBeenCalledTimes(1);
   });
@@ -792,6 +803,7 @@ describe("LibraryScreen", () => {
     );
     renderScreen(LIBRARY);
     const trigger = screen.getByRole("button", { name: "Open menu" });
+    expect(trigger).toHaveClass("btn-square");
     expect(trigger).not.toHaveClass("dropdown-toggle");
     expect(trigger).toHaveTextContent("");
     expect(screen.queryByText("Skypiea")).not.toBeInTheDocument();

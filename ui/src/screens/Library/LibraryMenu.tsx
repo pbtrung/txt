@@ -16,7 +16,10 @@ export function LibraryMenu(props: {
 }) {
   return (
     <DialogTrigger>
-      <Button className="btn btn-sm btn-outline btn-secondary" aria-label="Open menu">
+      <Button
+        className="btn btn-sm btn-square btn-outline btn-secondary"
+        aria-label="Open menu"
+      >
         <BookOpen className="size-4" aria-hidden="true" />
       </Button>
       <Popover

@@ -19,10 +19,10 @@ export function BookmarkRow({
       id={bookmark.id}
       textValue={label}
       focusMode="child"
-      className="bookmark-menu-row flex items-center px-2"
+      className="bookmark-menu-row flex w-full max-w-full items-center overflow-hidden px-2"
     >
       <Button
-        className="btn btn-ghost h-auto min-h-0 min-w-0 flex-1 flex-col items-start gap-0 px-2 py-1 font-normal"
+        className="btn btn-ghost h-auto min-h-0 min-w-0 max-w-full flex-1 flex-col items-start gap-0 overflow-hidden px-2 py-1 font-normal"
         onPress={() => onNavigate(bookmark.cfi)}
       >
         <span className="w-full truncate text-left">{label}</span>

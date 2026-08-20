@@ -108,7 +108,7 @@ export function BookRow({
       <IconButton
         label={removeLabel}
         icon="x-lg"
-        className="btn-ghost absolute top-1/2 right-0 mr-1 -translate-y-1/2 border-0 compact-delete-button book-row-remove"
+        className="btn-circle btn-ghost absolute top-1/2 right-0 mr-1 -translate-y-1/2 border-0 compact-delete-button book-row-remove"
         onPress={onRemove}
       />
     </GridListItem>
@@ -222,10 +222,10 @@ function BookmarkPageBadge({ pageNumber }: { pageNumber: number | null }) {
   const page = pageNumber ?? "—";
   return (
     <span
-      className="badge badge-sm shrink-0 border border-base-300 bg-base-200 font-normal"
+      className="badge badge-sm shrink-0 gap-0 border border-base-300 bg-base-200 font-semibold"
       aria-label={pageNumber === null ? "Page unavailable" : `Page ${pageNumber}`}
     >
-      <FileText className="mr-1 size-3" aria-hidden="true" />
+      <FileText className="size-3" aria-hidden="true" />
       Page {page}
     </span>
   );
@@ -241,10 +241,10 @@ function ActivityTimeBadge({
   const formatted = formatLastAccessed(timestamp);
   return (
     <span
-      className="badge badge-sm shrink-0 border border-base-300 bg-base-200 font-normal"
+      className="badge badge-sm shrink-0 gap-0 border border-base-300 bg-base-200 font-semibold"
       aria-label={`${label} ${formatted}`}
     >
-      <Clock3 className="mr-1 size-3" aria-hidden="true" />
+      <Clock3 className="size-3" aria-hidden="true" />
       {formatted}
     </span>
   );
@@ -253,10 +253,10 @@ function ActivityTimeBadge({
 function BookmarkBadge({ count }: { count: number }) {
   return (
     <span
-      className="badge badge-sm shrink-0 border border-base-300 bg-base-200 font-normal"
+      className="badge badge-sm shrink-0 gap-0 border border-base-300 bg-base-200 font-semibold"
       aria-label={`${count} bookmark${count === 1 ? "" : "s"}`}
     >
-      <Bookmark className="mr-1 size-3" fill="currentColor" aria-hidden="true" />
+      <Bookmark className="size-3" fill="currentColor" aria-hidden="true" />
       {count}
     </span>
   );

@@ -123,7 +123,7 @@ function NavRow({
   return (
     <Button
       className={classNames(
-        "btn btn-ghost h-auto min-h-0 w-full justify-between rounded-none px-3 py-2 font-normal",
+        "btn btn-ghost h-auto min-h-0 w-full justify-between rounded-none border-x-0 border-t-0 border-b border-base-300 px-3 py-2 font-normal",
         active && "btn-active bg-primary text-primary-content",
       )}
       onPress={onPress}

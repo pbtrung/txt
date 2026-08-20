@@ -23,7 +23,7 @@ export function ReaderToolbar({
       {backHref && (
         <Link
           href={backHref}
-          className="btn btn-sm btn-outline btn-secondary"
+          className="btn btn-sm btn-square btn-outline btn-secondary"
           aria-label="Back to library"
         >
           <ArrowLeft className="size-4" aria-hidden="true" />

@@ -136,7 +136,7 @@ function BookAction({
   const Icon = icon;
   return (
     <Button
-      className="btn btn-sm btn-outline btn-secondary join-item shrink-0"
+      className="btn btn-sm btn-square btn-outline btn-secondary join-item shrink-0 md:w-auto md:px-3"
       aria-label={label}
       isDisabled={isDisabled}
       onPress={onPress}

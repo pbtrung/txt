@@ -51,7 +51,10 @@ export function IconButton({
       <Button
         {...props}
         type={type}
-        className={classNames("btn btn-sm btn-outline btn-secondary", className)}
+        className={classNames(
+          "btn btn-sm btn-square btn-outline btn-secondary",
+          className,
+        )}
         aria-label={label}
       >
         <Icon className="size-4" aria-hidden="true" />

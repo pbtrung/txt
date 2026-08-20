@@ -114,7 +114,7 @@ export function BookmarkMenu({
   return (
     <DialogTrigger>
       <Button
-        className="btn btn-sm btn-outline btn-secondary ml-auto"
+        className="btn btn-sm btn-square btn-outline btn-secondary ml-auto"
         aria-label="Bookmarks"
       >
         <Bookmark
