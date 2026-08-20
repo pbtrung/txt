@@ -180,11 +180,7 @@
 /* Preserve the Bootstrap-era form-control-sm treatment while allowing the
    attached daisyUI actions to read as one control. */
 .search-box-input {
-  --search-border-color: color-mix(
-    in srgb,
-    var(--color-base-300) 55%,
-    var(--color-base-100)
-  );
+  --search-border-color: var(--color-secondary);
   --search-focus-border-color: color-mix(
     in srgb,
     var(--color-primary) 20%,
