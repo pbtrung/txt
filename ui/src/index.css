@@ -163,10 +163,16 @@
 /* Preserve the Bootstrap-era form-control-sm treatment while allowing the
    attached daisyUI actions to read as one control. */
 .search-box-input {
+  --search-border-color: color-mix(
+    in srgb,
+    var(--color-secondary) 65%,
+    var(--color-base-100)
+  );
+
   box-sizing: border-box;
   display: block;
   width: 100%;
-  min-height: calc(1.5em + 0.5rem + 2px);
+  height: calc(var(--size-field) * 8);
   padding-left: 2rem;
   padding-right: 2rem;
   font-family: inherit;
@@ -177,7 +183,7 @@
   appearance: none;
   background-color: var(--color-base-100);
   background-clip: padding-box;
-  border: 1px solid var(--color-secondary);
+  border: var(--border) solid var(--search-border-color);
   border-radius: 0.5rem;
   outline: 0;
   box-shadow: none;
@@ -209,7 +215,7 @@
    on the search box too, instead of the box looking unfocused while its
    own button group is the part actually active. */
 .library-search-group:has(.library-book-actions :focus) .search-box-input {
-  border-color: var(--color-secondary);
+  border-color: var(--search-border-color);
   box-shadow: 0 0 0 0.1rem color-mix(in srgb, var(--color-primary) 25%, transparent);
 }
 
