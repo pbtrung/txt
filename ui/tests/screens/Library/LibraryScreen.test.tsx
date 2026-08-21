@@ -729,10 +729,10 @@ describe("LibraryScreen", () => {
       mutate,
     );
     const accessDelete = screen.getByRole("button", {
-      name: "Delete recent access for Active book",
+      name: "Delete recent access",
     });
     const bookmarkDelete = screen.getByRole("button", {
-      name: "Delete bookmark for Active book on page 12",
+      name: "Delete bookmark",
     });
 
     await userEvent.click(accessDelete);
@@ -779,12 +779,10 @@ describe("LibraryScreen", () => {
       }),
     ]);
     const remove = screen.getByRole("button", {
-      name: "Delete bookmark for Marked book on page 6",
+      name: "Delete bookmark",
     });
     await userEvent.hover(remove);
-    expect(await screen.findByRole("tooltip")).toHaveTextContent(
-      "Delete bookmark for Marked book on page 6",
-    );
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Delete bookmark");
     expect(remove).toHaveClass(
       "btn-circle",
       "compact-x-button",

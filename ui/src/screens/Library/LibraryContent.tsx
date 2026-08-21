@@ -184,7 +184,7 @@ function RecentBooks({
       <RecentSection
         title="Recent access"
         books={accessed}
-        removeLabel={(book) => `Delete recent access for ${book.title}`}
+        removeLabel={() => "Delete recent access"}
         onRemove={onClearAccess}
       />
       <RecentBookmarks items={bookmarked} onDeleteBookmark={onDeleteBookmark} />
@@ -243,17 +243,13 @@ function RecentBookmarks({
             rowId={`bookmark-${book.txtId}-${bookmark.cfi}`}
             book={book}
             bookmark={bookmark}
-            removeLabel={`Delete bookmark for ${book.title} on ${bookmarkPageLabel(bookmark.pageNumber)}`}
+            removeLabel="Delete bookmark"
             onRemove={() => onDeleteBookmark(book.txtId, bookmark.cfi)}
           />
         ))}
       </GridList>
     </section>
   );
-}
-
-function bookmarkPageLabel(pageNumber: number | null): string {
-  return pageNumber === null ? "an unknown page" : `page ${pageNumber}`;
 }
 
 function EmptyStateContainer({ message }: { message: string }) {
