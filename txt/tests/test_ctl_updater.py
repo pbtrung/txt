@@ -208,7 +208,7 @@ def test_requires_user_root_key_in_admin_backup(creds, engine):
         backup, admin_umk
     )
 
-    with pytest.raises(ValueError, match="re-run --init-user"):
+    with pytest.raises(ValueError, match="backup has no user_root_key"):
         CtlUpdater(creds, CaptureLogger()).run()
 
     assert FakeLibsqlClient.calls == []

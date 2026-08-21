@@ -7,28 +7,40 @@ from txt.cli import cli
 def test_no_args_shows_help():
     result = CliRunner().invoke(cli, [])
     assert result.exit_code == 0
-    assert "--init-admin" in result.output
+    assert "--init-owner" in result.output
+    assert "--init-admin" not in result.output
+    assert "--init-user" not in result.output
 
 
-def test_init_admin_without_a_value_is_a_usage_error():
-    result = CliRunner().invoke(cli, ["--init-admin"])
+def test_init_owner_without_a_value_is_a_usage_error():
+    result = CliRunner().invoke(cli, ["--init-owner"])
     assert result.exit_code != 0
-    assert "--init-admin" in result.output
+    assert "--init-owner" in result.output
 
 
-def test_init_user_without_admin_or_user_creds_is_a_usage_error():
-    result = CliRunner().invoke(cli, ["--init-user"])
-    assert result.exit_code != 0
-    assert "--admin-creds" in result.output
-    assert "--user-creds" in result.output
+def test_init_owner_loads_creds_and_runs_initializer(monkeypatch, tmp_path):
+    captured = {}
+    creds = object()
 
+    class FakeInitializer:
+        def __init__(self, loaded, path, logger):
+            captured.update(creds=loaded, path=path, logger=logger)
 
-def test_init_user_without_user_creds_is_a_usage_error(tmp_path):
-    admin_path = tmp_path / "admin.json"
-    admin_path.write_text("{}")
-    result = CliRunner().invoke(cli, ["--init-user", "--admin-creds", str(admin_path)])
-    assert result.exit_code != 0
-    assert "--user-creds" in result.output
+        def run(self):
+            captured["ran"] = True
+
+    path = tmp_path / "owner.json"
+    path.write_text("{}")
+    monkeypatch.setattr(cli_module, "load_owner_creds", lambda value: creds)
+    monkeypatch.setattr(cli_module, "OwnerInitializer", FakeInitializer)
+
+    result = CliRunner().invoke(cli, ["--init-owner", str(path), "--verbose"])
+
+    assert result.exit_code == 0
+    assert captured["creds"] is creds
+    assert captured["path"] == str(path)
+    assert captured["logger"].verbose_enabled is True
+    assert captured["ran"] is True
 
 
 def test_replace_images_processes_a_directory(tmp_path):
@@ -134,9 +146,11 @@ def test_dry_run_without_clean_bucket_is_a_usage_error():
 def test_rejects_multiple_primary_commands(tmp_path):
     src, dst = tmp_path / "src", tmp_path / "dst"
     src.mkdir()
+    creds = tmp_path / "owner.json"
+    creds.write_text("{}")
     result = CliRunner().invoke(
         cli,
-        ["--replace-images", str(src), str(dst), "--init-user"],
+        ["--replace-images", str(src), str(dst), "--init-owner", str(creds)],
     )
 
     assert result.exit_code != 0

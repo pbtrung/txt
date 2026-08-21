@@ -3,41 +3,23 @@ from pathlib import Path
 
 import click
 
-from .account_init import AccountInitializer
 from .bucket_cleaner import BucketCleaner
-from .creds import load_creds, load_user_creds
+from .creds import load_creds, load_owner_creds
 from .ctl_updater import CtlUpdater
 from .db_updater import DbUpdater
 from .edit_epub import EpubEditor
 from .ingest import TxtIngester
 from .logger import Logger
+from .owner_init import OwnerInitializer
 from .replace_images import ImageReplacer
 
 
 @click.command()
 @click.option(
-    "--init-admin",
-    "admin_creds_path",
+    "--init-owner",
+    "owner_creds_path",
     metavar="CREDS_JSON",
-    help="Provision the administrator's row in ctl (users/key_store/cred_store)",
-)
-@click.option(
-    "--init-user",
-    is_flag=True,
-    help="Provision an ordinary user's row in ctl (needs --admin-creds and "
-    "--user-creds)",
-)
-@click.option(
-    "--admin-creds",
-    "admin_creds_path_for_user",
-    metavar="CREDS_JSON",
-    help="The administrator's own creds.json, for --init-user",
-)
-@click.option(
-    "--user-creds",
-    "user_creds_path",
-    metavar="CREDS_JSON",
-    help="The new user's own reduced creds.json, for --init-user",
+    help="Provision and validate the singleton owner row in rqlite",
 )
 @click.option(
     "--replace-images",
@@ -151,12 +133,8 @@ def _selected_commands(opts: dict) -> list[Callable]:
     return [handler for option, handler in COMMAND_HANDLERS if opts[option]]
 
 
-def _dispatch_init_admin(opts: dict, logger: Logger) -> None:
-    _run_init_admin(opts["admin_creds_path"], logger)
-
-
-def _dispatch_init_user(opts: dict, logger: Logger) -> None:
-    _run_init_user(opts["admin_creds_path_for_user"], opts["user_creds_path"], logger)
+def _dispatch_init_owner(opts: dict, logger: Logger) -> None:
+    _run_init_owner(opts["owner_creds_path"], logger)
 
 
 def _dispatch_replace_images(opts: dict, logger: Logger) -> None:
@@ -189,8 +167,7 @@ def _dispatch_clean_bucket(opts: dict, logger: Logger) -> None:
 
 
 COMMAND_HANDLERS = (
-    ("admin_creds_path", _dispatch_init_admin),
-    ("init_user", _dispatch_init_user),
+    ("owner_creds_path", _dispatch_init_owner),
     ("replace_images_dirs", _dispatch_replace_images),
     ("edit_epub_dirs", _dispatch_edit_epub),
     ("ingest_src_dir", _dispatch_ingest),
@@ -200,21 +177,9 @@ COMMAND_HANDLERS = (
 )
 
 
-def _run_init_admin(creds_path: str, logger: Logger) -> None:
-    admin_creds = load_creds(creds_path)
-    AccountInitializer(admin_creds, admin_creds, creds_path, logger, "admin").run()
-
-
-def _run_init_user(
-    admin_creds_path: str | None, user_creds_path: str | None, logger: Logger
-) -> None:
-    if not admin_creds_path or not user_creds_path:
-        raise click.UsageError(
-            "--init-user requires --admin-creds CREDS_JSON and --user-creds CREDS_JSON"
-        )
-    admin_creds = load_creds(admin_creds_path)
-    user_creds = load_user_creds(user_creds_path)
-    AccountInitializer(admin_creds, user_creds, user_creds_path, logger, "user").run()
+def _run_init_owner(creds_path: str, logger: Logger) -> None:
+    creds = load_owner_creds(creds_path)
+    OwnerInitializer(creds, creds_path, logger).run()
 
 
 def _run_replace_images(dirs: tuple[str, str], logger: Logger) -> None:

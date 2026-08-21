@@ -3,7 +3,7 @@ import binascii
 from dataclasses import dataclass
 
 from .account_data import StorageAccount, parse_storage_account
-from .creds import Creds, UserCreds
+from .creds import Creds
 from .crypto_blob import CryptoBlob
 from .firebase_auth import FirebaseAuth
 from .leancrypto_wasm import LeancryptoEngine
@@ -38,7 +38,7 @@ class ControlSession:
         account = extract_account_name(creds.turso_ctl_db_url, creds.turso_ctl_db_name)
         self.turso = factories.turso(creds.turso_org_token, account)
 
-    def sign_in(self, creds: Creds | UserCreds | None = None) -> str:
+    def sign_in(self, creds: Creds | None = None) -> str:
         target = creds or self.creds
         self.logger.verbose(f"Signing in to Firebase as {target.firebase_email}...")
         auth = self.auth_factory(target.firebase_api_key)

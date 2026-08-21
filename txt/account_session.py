@@ -71,9 +71,7 @@ class AccountSession:
     def _lookup(self, ctl: LibsqlClient, uid: str) -> tuple[str, bytes, bytes]:
         rows = ctl.query(CTL_LOOKUP_SQL, [uid])
         if not rows:
-            raise ValueError(
-                f"uid={uid} has no users row in ctl; run --init-admin/--init-user first"
-            )
+            raise ValueError(f"uid={uid} has no control row; run --init-owner first")
         account_type, wrapped_umk, wrapped_content = rows[0]
         self.logger.verbose(f"Found ctl row for {uid} (type={account_type}).")
         return account_type, wrapped_umk, wrapped_content

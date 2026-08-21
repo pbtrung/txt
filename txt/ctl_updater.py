@@ -108,9 +108,7 @@ class CtlUpdater:
     def _root_key(self, backup: dict, uid: str) -> str:
         value = backup.get("user_root_key")
         if not isinstance(value, str) or not value:
-            raise ValueError(
-                f"uid={uid} backup has no user_root_key; re-run --init-user"
-            )
+            raise ValueError(f"uid={uid} backup has no user_root_key")
         return value
 
     def _self_payload(self, ctl, uid: str, root_key: str) -> tuple[bytes, dict]:

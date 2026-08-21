@@ -14,19 +14,19 @@ REQUIRED_FIELDS = [
 
 OPTIONAL_FIELDS = ["display_name", "user_root_key"]
 
-# Browser credentials use this reduced shape rather than the maintenance
-# CLI's full Creds, matching ui/src/data/creds.ts's BrowserCreds exactly.
-USER_REQUIRED_FIELDS = [
+OWNER_REQUIRED_FIELDS = [
+    "rqlite_admin_username",
+    "rqlite_admin_password",
+    "rqlite_operator_url",
     "firebase_email",
     "firebase_password",
     "firebase_api_key",
+    "display_name",
+    "r2_config",
+    "slhdsa_256f_priv_key",
+    "asset_base_url",
+    "user_root_key",
 ]
-
-# display_name is set here at provisioning time (by whoever creates this
-# file for the new user) purely so --init-user has somewhere to read it
-# from; the browser itself never reads it back out of its own creds.json
-# -- it gets display_name from the decrypted cred_store payload instead.
-USER_OPTIONAL_FIELDS = ["display_name", "user_root_key"]
 
 
 @dataclass
@@ -54,12 +54,18 @@ class Creds:
 
 
 @dataclass
-class UserCreds:
+class OwnerCreds:
+    rqlite_admin_username: str
+    rqlite_admin_password: str
+    rqlite_operator_url: str
     firebase_email: str
     firebase_password: str
     firebase_api_key: str
-    display_name: str = ""
-    user_root_key: str = ""
+    display_name: str
+    r2_config: R2Config
+    slhdsa_256f_priv_key: str
+    asset_base_url: str
+    user_root_key: str
 
 
 def load_creds(path: str) -> Creds:
@@ -73,20 +79,31 @@ def load_creds(path: str) -> Creds:
     return creds
 
 
-def load_user_creds(path: str) -> UserCreds:
+def load_owner_creds(path: str) -> OwnerCreds:
     data = _read_json(path)
-    missing = [k for k in USER_REQUIRED_FIELDS if k not in data]
+    missing = [key for key in OWNER_REQUIRED_FIELDS if key not in data]
     if missing:
         raise ValueError(f"Missing fields in creds.json: {', '.join(missing)}")
-    fields = USER_REQUIRED_FIELDS + USER_OPTIONAL_FIELDS
-    return UserCreds(**{k: data.get(k, "") for k in fields})
+    values = {key: data[key] for key in OWNER_REQUIRED_FIELDS if key != "r2_config"}
+    return OwnerCreds(**values, r2_config=_require_r2_config(data["r2_config"]))
 
 
 def _parse_r2_config(value: dict | None) -> R2Config | None:
     return R2Config(**value) if value else None
 
 
-def ensure_user_root_key(path: str, creds: Creds | UserCreds) -> Creds | UserCreds:
+def _require_r2_config(value: object) -> R2Config:
+    if not isinstance(value, dict):
+        raise ValueError("r2_config must be an object")
+    missing = [name for name in R2Config.__annotations__ if name not in value]
+    if missing:
+        raise ValueError(f"Missing r2_config fields: {', '.join(missing)}")
+    return R2Config(**{name: value[name] for name in R2Config.__annotations__})
+
+
+def ensure_user_root_key[RootKeyCreds: (Creds, OwnerCreds)](
+    path: str, creds: RootKeyCreds
+) -> RootKeyCreds:
     if creds.user_root_key:
         return creds
     creds.user_root_key = base64.b64encode(secrets.token_bytes(256)).decode()
