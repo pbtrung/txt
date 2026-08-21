@@ -2,7 +2,6 @@ import base64
 import binascii
 from dataclasses import dataclass
 
-from .account_data import StorageAccount, parse_storage_account
 from .creds import Creds
 from .crypto_blob import CryptoBlob
 from .firebase_auth import FirebaseAuth
@@ -52,25 +51,6 @@ class ControlSession:
         token = self.turso.mint_db_token(name)
         return self.ctl_factory(self.creds.turso_ctl_db_url, token)
 
-    def admin_context(self) -> tuple[str, LibsqlClient, bytes]:
-        uid = self.sign_in()
-        ctl = self.connect()
-        return uid, ctl, unwrap_umk(ctl, uid, self.creds.user_root_key, self.blob)
-
-    def reachable_accounts(
-        self, ctl: LibsqlClient, owner_uid: str, owner_umk: bytes, *, complete=False
-    ) -> list[StorageAccount]:
-        return load_reachable_accounts(
-            ctl, owner_uid, owner_umk, self.blob, require_all=complete
-        )
-
-
-def unwrap_umk(ctl: LibsqlClient, uid: str, root_key: str, blob: CryptoBlob) -> bytes:
-    rows = ctl.query("SELECT umk FROM key_store WHERE user_id = ?", [uid])
-    if not rows:
-        raise ValueError(f"uid={uid} has no key_store row")
-    return decrypt_umk(rows[0][0], root_key, blob, uid)
-
 
 def decrypt_umk(wrapped: bytes, root_key: str, blob: CryptoBlob, uid: str) -> bytes:
     return blob.decrypt(wrapped, decode_user_root_key(root_key, uid))
@@ -84,33 +64,3 @@ def decode_user_root_key(root_key: str, uid: str) -> bytes:
     if len(key) != 256:
         raise ValueError(f"uid={uid} has an invalid user_root_key")
     return key
-
-
-def load_reachable_accounts(
-    ctl: LibsqlClient,
-    owner_uid: str,
-    owner_umk: bytes,
-    blob: CryptoBlob,
-    *,
-    require_all: bool = False,
-) -> list[StorageAccount]:
-    rows = _reachable_rows(ctl, owner_uid)
-    if require_all:
-        _require_all_backups(ctl, rows)
-    return [
-        parse_storage_account(uid, blob.decrypt_json(content, owner_umk))
-        for uid, content in rows
-    ]
-
-
-def _reachable_rows(ctl: LibsqlClient, owner_uid: str) -> list:
-    return ctl.query(
-        "SELECT for_user_id, content FROM cred_store WHERE owner_id = ?", [owner_uid]
-    )
-
-
-def _require_all_backups(ctl: LibsqlClient, rows: list) -> None:
-    user_ids = {row[0] for row in ctl.query("SELECT id FROM users")}
-    missing = sorted(user_ids - {row[0] for row in rows})
-    if missing:
-        raise ValueError("No admin cred_store backup for uid(s): " + ", ".join(missing))

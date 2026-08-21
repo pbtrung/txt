@@ -5,35 +5,45 @@ from pathlib import Path
 
 import brotli
 
-from .account_session import Account, AccountSession
-from .creds import Creds
+from .account_data import StorageAccount, parse_storage_account
+from .creds import OwnerCreds
 from .crypto_blob import CryptoBlob
 from .database_schema import ensure_database_schema
 from .logger import Logger
 from .opf import catalog_fields, find_opf_sidecar, parse_opf_metadata
+from .owner_init import OwnerInitializer
 from .r2_client import R2Client
 from .random_token import to_base32_crockford
 from .sqlite_engine import SqliteEngine
 
 
 class TxtIngester:
-    def __init__(self, src_dir: Path, local_db_dir: Path, creds: Creds, logger: Logger):
-        self.src_dir = src_dir
-        self.local_db_dir = local_db_dir
-        self.creds = creds
+    def __init__(
+        self,
+        src_dir: Path,
+        local_db_dir: Path,
+        creds: OwnerCreds,
+        creds_path: str,
+        logger: Logger,
+    ):
+        self.src_dir, self.local_db_dir = src_dir, local_db_dir
         self.logger = logger
-        self.session = AccountSession(creds, logger)
+        self.owner = OwnerInitializer(creds, creds_path, logger)
         self.r2 = R2Client(creds.r2_config)
         self.engine = SqliteEngine()
         self.blob = CryptoBlob(self.engine)
-        self.account: Account | None = None
+        self._reset_run_state()
+
+    def _reset_run_state(self) -> None:
+        self.account: StorageAccount | None = None
         self.local_path: Path | None = None
         self.db_etag: str | None = None
         self.db_exists = False
         self.dirty = False
 
     def run(self) -> None:
-        self.account = self.session.connect()
+        uid, _umk, payload = self.owner.load_current_owner()
+        self.account = parse_storage_account(uid, payload)
         self.local_db_dir.mkdir(parents=True, exist_ok=True)
         self.local_path = self.local_db_dir / self.account.db_path
         self.logger.info(

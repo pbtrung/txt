@@ -5,7 +5,6 @@ import click
 
 from .bucket_cleaner import BucketCleaner
 from .creds import load_creds, load_owner_creds
-from .ctl_updater import CtlUpdater
 from .db_updater import DbUpdater
 from .edit_epub import EpubEditor
 from .ingest import TxtIngester
@@ -70,26 +69,20 @@ from .turso_migration import OwnerMigrator
     "update_db_creds_path",
     metavar="CREDS_JSON",
     help=(
-        "Migrate and validate the complete catalog/CFI schema for every account "
-        "this admin's creds.json can reach (needs --local-db-dir)"
+        "Migrate and validate the complete catalog/CFI schema for the singleton "
+        "owner's database (needs --local-db-dir)"
     ),
-)
-@click.option(
-    "--update-ctl",
-    "update_ctl_creds_path",
-    metavar="CREDS_JSON",
-    help="Migrate the Turso control-plane schema and encrypted account payloads",
 )
 @click.option(
     "--clean-bucket",
     "clean_bucket_creds_path",
     metavar="CREDS_JSON",
-    help="Delete R2 objects not referenced by accounts reachable from this admin",
+    help="Delete R2 objects not referenced by the singleton owner's database",
 )
 @click.option(
     "--dry-run",
     is_flag=True,
-    help="Report migration, bucket, or control changes without writing them",
+    help="Report migration or bucket changes without writing them",
 )
 @click.option(
     "--log-file",
@@ -128,13 +121,9 @@ def _cleanup_log(opts: dict) -> Path | None:
 
 def _validate_options(opts: dict) -> None:
     if opts["dry_run"] and not (
-        opts["clean_bucket_creds_path"]
-        or opts["update_ctl_creds_path"]
-        or opts["migration_creds_paths"]
+        opts["clean_bucket_creds_path"] or opts["migration_creds_paths"]
     ):
-        raise click.UsageError(
-            "--dry-run requires --migrate, --clean-bucket, or --update-ctl"
-        )
+        raise click.UsageError("--dry-run requires --migrate or --clean-bucket")
     if len(_selected_commands(opts)) > 1:
         raise click.UsageError("choose only one primary command")
 
@@ -172,10 +161,6 @@ def _dispatch_update_db(opts: dict, logger: Logger) -> None:
     _run_update_db(opts["update_db_creds_path"], opts["local_db_dir"], logger)
 
 
-def _dispatch_update_ctl(opts: dict, logger: Logger) -> None:
-    _run_update_ctl(opts["update_ctl_creds_path"], opts["dry_run"], logger)
-
-
 def _dispatch_clean_bucket(opts: dict, logger: Logger) -> None:
     _run_clean_bucket(opts["clean_bucket_creds_path"], opts["dry_run"], logger)
 
@@ -187,7 +172,6 @@ COMMAND_HANDLERS = (
     ("edit_epub_dirs", _dispatch_edit_epub),
     ("ingest_src_dir", _dispatch_ingest),
     ("update_db_creds_path", _dispatch_update_db),
-    ("update_ctl_creds_path", _dispatch_update_ctl),
     ("clean_bucket_creds_path", _dispatch_clean_bucket),
 )
 
@@ -226,21 +210,20 @@ def _run_ingest(
         raise click.UsageError(
             "--ingest requires --local-db-dir DIR and --creds CREDS_JSON"
         )
-    TxtIngester(Path(src_dir), Path(local_db_dir), load_creds(creds_path), logger).run()
+    creds = load_owner_creds(creds_path)
+    TxtIngester(Path(src_dir), Path(local_db_dir), creds, creds_path, logger).run()
 
 
 def _run_update_db(creds_path: str, local_db_dir: str | None, logger: Logger) -> None:
     if not local_db_dir:
         raise click.UsageError("--update-db requires --local-db-dir DIR")
-    DbUpdater(load_creds(creds_path), Path(local_db_dir), logger).run()
-
-
-def _run_update_ctl(creds_path: str, dry_run: bool, logger: Logger) -> None:
-    CtlUpdater(load_creds(creds_path), logger, dry_run=dry_run).run()
+    creds = load_owner_creds(creds_path)
+    DbUpdater(creds, creds_path, Path(local_db_dir), logger).run()
 
 
 def _run_clean_bucket(creds_path: str, dry_run: bool, logger: Logger) -> None:
-    BucketCleaner(load_creds(creds_path), logger, dry_run=dry_run).run()
+    creds = load_owner_creds(creds_path)
+    BucketCleaner(creds, creds_path, logger, dry_run=dry_run).run()
 
 
 def run(argv: list | None = None) -> None:

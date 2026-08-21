@@ -3,17 +3,14 @@ import base64
 import pytest
 
 import txt.bucket_cleaner as bucket_cleaner_module
-from txt.account_data import parse_storage_account
 from txt.bucket_cleaner import BucketCleaner
 from txt.random_token import to_base32_crockford
 from txt.sqlite_engine import SqliteEngine
 
 DB_MASTER_KEY = b"k" * 256
 ENCODED_DB_MASTER_KEY = base64.b64encode(DB_MASTER_KEY).decode()
-ADMIN_DB_PATH = "a" * 52
-ADMIN_DB_PREFIX = "b" * 52
-USER_DB_PATH = "d" * 52
-USER_DB_PREFIX = "c" * 52
+OWNER_DB_PATH = "a" * 52
+OWNER_DB_PREFIX = "b" * 52
 
 
 class CapturingLogger:
@@ -89,15 +86,17 @@ class FakeSqliteEngine:
         self.closed = True
 
 
-class FakeCtl:
-    def __init__(self, user_ids, account_rows):
-        self.user_ids = user_ids
-        self.account_rows = account_rows
+class FakeOwnerInitializer:
+    def __init__(self, uid, payload):
+        self._current = (uid, b"u" * 128, payload)
 
-    def query(self, sql, args=None):
-        if sql == "SELECT id FROM users":
-            return [[uid] for uid in self.user_ids]
-        return self.account_rows
+    def load_current_owner(self):
+        return self._current
+
+
+class FailingOwnerInitializer:
+    def load_current_owner(self):
+        raise ValueError("owner is not provisioned in rqlite")
 
 
 def account(uid, db_path, db_prefix):
@@ -117,7 +116,7 @@ def content_key(prefix, txt_prefix, path):
 
 def build_cleaner(
     monkeypatch,
-    accounts,
+    account,
     objects,
     *,
     rows_by_database=None,
@@ -135,68 +134,54 @@ def build_cleaner(
     cleaner.logger = CapturingLogger()
     cleaner.dry_run = dry_run
     cleaner.r2 = FakeR2Client(objects)
-    cleaner._sign_in = lambda: "admin"
-    cleaner._connect_ctl = lambda: object()
-    cleaner._admin_umk = lambda ctl, uid: b"umk"
-    cleaner._reachable_accounts = lambda ctl, uid, umk: [
-        parse_storage_account(account_uid, payload) for account_uid, payload in accounts
-    ]
+    if account is None:
+        cleaner.owner = FailingOwnerInitializer()
+    else:
+        uid, payload = account
+        cleaner.owner = FakeOwnerInitializer(uid, payload)
     return cleaner
 
 
-def test_deletes_unreferenced_objects_inside_valid_account_prefixes(monkeypatch):
-    admin_txt_prefix, admin_path = b"a" * 32, b"b" * 32
-    user_txt_prefix, user_path = b"c" * 32, b"d" * 32
-    admin_content = content_key(ADMIN_DB_PREFIX, admin_txt_prefix, admin_path)
-    user_content = content_key(USER_DB_PREFIX, user_txt_prefix, user_path)
-    accounts = [
-        account("admin", ADMIN_DB_PATH, ADMIN_DB_PREFIX),
-        account("user", USER_DB_PATH, USER_DB_PREFIX),
-    ]
+def test_deletes_unreferenced_objects_inside_valid_account_prefix(monkeypatch):
+    txt_prefix, path = b"a" * 32, b"b" * 32
+    referenced = content_key(OWNER_DB_PREFIX, txt_prefix, path)
     objects = {
-        ADMIN_DB_PATH: b"admin-database",
-        admin_content: b"book",
-        f"{ADMIN_DB_PREFIX}/stale/from-failed-commit": b"stale",
-        USER_DB_PATH: b"user-database",
-        user_content: b"book",
-        f"{USER_DB_PREFIX}/": b"stale folder marker",
-        f"{USER_DB_PREFIX}ish/not-owned": b"orphan",
+        OWNER_DB_PATH: b"owner-database",
+        referenced: b"book",
+        f"{OWNER_DB_PREFIX}/stale/from-failed-commit": b"stale",
+        f"{OWNER_DB_PREFIX}ish/not-owned": b"orphan",
         "orphan": b"orphan",
     }
     cleaner = build_cleaner(
         monkeypatch,
-        accounts,
+        account("owner", OWNER_DB_PATH, OWNER_DB_PREFIX),
         objects,
-        rows_by_database={
-            b"admin-database": [(admin_txt_prefix, admin_path)],
-            b"user-database": [(user_txt_prefix, user_path)],
-        },
+        rows_by_database={b"owner-database": [(txt_prefix, path)]},
     )
 
     cleaner.run()
 
-    assert cleaner.r2.get_calls == [ADMIN_DB_PATH, USER_DB_PATH]
+    assert cleaner.r2.get_calls == [OWNER_DB_PATH]
     assert cleaner.r2.list_prefixes == [""]
     assert cleaner.r2.deleted == [
-        f"{ADMIN_DB_PREFIX}/stale/from-failed-commit",
-        f"{USER_DB_PREFIX}/",
-        f"{USER_DB_PREFIX}ish/not-owned",
+        f"{OWNER_DB_PREFIX}/stale/from-failed-commit",
+        f"{OWNER_DB_PREFIX}ish/not-owned",
         "orphan",
     ]
-    assert cleaner.logger.info_messages[-1] == "Deleted 4 object(s)."
+    assert cleaner.logger.info_messages[-1] == "Deleted 3 object(s)."
     assert all(engine.closed for engine in FakeSqliteEngine.instances)
 
 
 def test_dry_run_reports_stale_objects_without_deleting(monkeypatch):
     txt_prefix, path = b"a" * 32, b"b" * 32
-    referenced = content_key(ADMIN_DB_PREFIX, txt_prefix, path)
+    referenced = content_key(OWNER_DB_PREFIX, txt_prefix, path)
     cleaner = build_cleaner(
         monkeypatch,
-        [account("admin", ADMIN_DB_PATH, ADMIN_DB_PREFIX)],
+        account("owner", OWNER_DB_PATH, OWNER_DB_PREFIX),
         {
-            ADMIN_DB_PATH: b"database",
+            OWNER_DB_PATH: b"database",
             referenced: b"book",
-            f"{ADMIN_DB_PREFIX}/stale": b"stale",
+            f"{OWNER_DB_PREFIX}/stale": b"stale",
         },
         rows_by_database={b"database": [(txt_prefix, path)]},
         dry_run=True,
@@ -205,38 +190,29 @@ def test_dry_run_reports_stale_objects_without_deleting(monkeypatch):
     cleaner.run()
 
     assert cleaner.r2.deleted == []
-    assert f"Would delete {ADMIN_DB_PREFIX}/stale" in cleaner.logger.verbose_messages
+    assert f"Would delete {OWNER_DB_PREFIX}/stale" in cleaner.logger.verbose_messages
     assert cleaner.logger.info_messages[-1] == "Dry run: would delete 1 object(s)."
 
 
-def test_preserves_every_shared_object_for_reachable_accounts(monkeypatch):
-    active_share = f"{ADMIN_DB_PREFIX}/shared/{'e' * 52}/{'f' * 52}"
-    orphaned_share = f"{USER_DB_PREFIX}/shared/{'g' * 52}/{'h' * 52}"
-    stale = f"{ADMIN_DB_PREFIX}/stale"
+def test_preserves_every_shared_object_for_the_owner(monkeypatch):
+    active_share = f"{OWNER_DB_PREFIX}/shared/{'e' * 52}/{'f' * 52}"
+    stale = f"{OWNER_DB_PREFIX}/stale"
     cleaner = build_cleaner(
         monkeypatch,
-        [
-            account("admin", ADMIN_DB_PATH, ADMIN_DB_PREFIX),
-            account("user", USER_DB_PATH, USER_DB_PREFIX),
-        ],
+        account("owner", OWNER_DB_PATH, OWNER_DB_PREFIX),
         {
-            ADMIN_DB_PATH: b"admin-database",
-            USER_DB_PATH: b"user-database",
+            OWNER_DB_PATH: b"owner-database",
             active_share: b"active share",
-            orphaned_share: b"unknown to the rolled-back database",
             stale: b"stale",
         },
-        rows_by_database={
-            b"admin-database": [],
-            b"user-database": [],
-        },
+        rows_by_database={b"owner-database": []},
     )
 
     cleaner.run()
 
     assert cleaner.r2.deleted == [stale]
     assert any(
-        "4 retained (2 shared), 1 stale" in message
+        "3 bucket object(s), 2 retained (1 shared), 1 stale" in message
         for message in cleaner.logger.info_messages
     )
 
@@ -244,9 +220,7 @@ def test_preserves_every_shared_object_for_reachable_accounts(monkeypatch):
 def test_reports_listing_and_deletion_progress_per_thousand_objects(monkeypatch):
     objects = {f"orphan-{index:04d}": b"stale" for index in range(2501)}
     cleaner = build_cleaner(
-        monkeypatch,
-        [account("admin", ADMIN_DB_PATH, ADMIN_DB_PREFIX)],
-        objects,
+        monkeypatch, account("owner", OWNER_DB_PATH, OWNER_DB_PREFIX), objects
     )
 
     cleaner.run()
@@ -261,14 +235,14 @@ def test_reports_listing_and_deletion_progress_per_thousand_objects(monkeypatch)
 def test_missing_database_means_prefix_has_no_referenced_content(monkeypatch):
     cleaner = build_cleaner(
         monkeypatch,
-        [account("admin", ADMIN_DB_PATH, ADMIN_DB_PREFIX)],
-        {f"{ADMIN_DB_PREFIX}/stale": b"stale", "orphan": b"orphan"},
+        account("owner", OWNER_DB_PATH, OWNER_DB_PREFIX),
+        {f"{OWNER_DB_PREFIX}/stale": b"stale", "orphan": b"orphan"},
     )
 
     cleaner.run()
 
-    assert cleaner.r2.get_calls == [ADMIN_DB_PATH]
-    assert cleaner.r2.deleted == [f"{ADMIN_DB_PREFIX}/stale", "orphan"]
+    assert cleaner.r2.get_calls == [OWNER_DB_PATH]
+    assert cleaner.r2.deleted == [f"{OWNER_DB_PREFIX}/stale", "orphan"]
     assert FakeSqliteEngine.instances == []
     assert any(
         "no content objects are referenced yet" in message
@@ -279,17 +253,17 @@ def test_missing_database_means_prefix_has_no_referenced_content(monkeypatch):
 def test_database_without_txt_table_references_no_content(monkeypatch):
     cleaner = build_cleaner(
         monkeypatch,
-        [account("admin", ADMIN_DB_PATH, ADMIN_DB_PREFIX)],
+        account("owner", OWNER_DB_PATH, OWNER_DB_PREFIX),
         {
-            ADMIN_DB_PATH: b"empty-database",
-            f"{ADMIN_DB_PREFIX}/stale": b"stale",
+            OWNER_DB_PATH: b"empty-database",
+            f"{OWNER_DB_PREFIX}/stale": b"stale",
         },
         tableless_databases={b"empty-database"},
     )
 
     cleaner.run()
 
-    assert cleaner.r2.deleted == [f"{ADMIN_DB_PREFIX}/stale"]
+    assert cleaner.r2.deleted == [f"{OWNER_DB_PREFIX}/stale"]
     assert FakeSqliteEngine.instances[0].closed
 
 
@@ -307,20 +281,20 @@ def test_reads_real_encrypted_database_with_16k_pages():
 
     cleaner = object.__new__(BucketCleaner)
     cleaner.logger = CapturingLogger()
-    cleaner.r2 = FakeR2Client({ADMIN_DB_PATH: database})
+    cleaner.r2 = FakeR2Client({OWNER_DB_PATH: database})
 
     assert cleaner._content_keys(
-        "admin", ADMIN_DB_PATH, ADMIN_DB_PREFIX, DB_MASTER_KEY
-    ) == {content_key(ADMIN_DB_PREFIX, txt_prefix, path)}
+        "owner", OWNER_DB_PATH, OWNER_DB_PREFIX, DB_MASTER_KEY
+    ) == {content_key(OWNER_DB_PREFIX, txt_prefix, path)}
 
 
 def test_database_error_aborts_before_bucket_is_listed_or_deleted(monkeypatch):
     cleaner = build_cleaner(
         monkeypatch,
-        [account("admin", ADMIN_DB_PATH, ADMIN_DB_PREFIX)],
+        account("owner", OWNER_DB_PATH, OWNER_DB_PREFIX),
         {
-            ADMIN_DB_PATH: b"broken-database",
-            f"{ADMIN_DB_PREFIX}/stale": b"stale",
+            OWNER_DB_PATH: b"broken-database",
+            f"{OWNER_DB_PREFIX}/stale": b"stale",
         },
         failing_databases={b"broken-database"},
     )
@@ -336,8 +310,8 @@ def test_database_error_aborts_before_bucket_is_listed_or_deleted(monkeypatch):
 def test_empty_database_object_aborts_before_bucket_is_listed(monkeypatch):
     cleaner = build_cleaner(
         monkeypatch,
-        [account("admin", ADMIN_DB_PATH, ADMIN_DB_PREFIX)],
-        {ADMIN_DB_PATH: b"", f"{ADMIN_DB_PREFIX}/stale": b"stale"},
+        account("owner", OWNER_DB_PATH, OWNER_DB_PREFIX),
+        {OWNER_DB_PATH: b"", f"{OWNER_DB_PREFIX}/stale": b"stale"},
     )
 
     with pytest.raises(ValueError, match="empty database"):
@@ -348,30 +322,21 @@ def test_empty_database_object_aborts_before_bucket_is_listed(monkeypatch):
     assert FakeSqliteEngine.instances == []
 
 
-def test_refuses_to_clean_when_no_accounts_are_reachable(monkeypatch):
-    cleaner = build_cleaner(monkeypatch, [], {"orphan": b"orphan"})
+def test_refuses_to_clean_when_owner_is_not_provisioned(monkeypatch):
+    cleaner = build_cleaner(monkeypatch, None, {"orphan": b"orphan"})
 
-    with pytest.raises(ValueError, match="No accounts are reachable"):
+    with pytest.raises(ValueError, match="owner is not provisioned"):
         cleaner.run()
 
     assert cleaner.r2.list_prefixes == []
     assert cleaner.r2.deleted == []
 
 
-def test_refuses_to_clean_when_any_user_lacks_an_admin_backup():
-    cleaner = object.__new__(BucketCleaner)
-    cleaner.blob = object()
-    ctl = FakeCtl(["admin", "old-user"], [["admin", b"content"]])
-
-    with pytest.raises(ValueError, match="old-user"):
-        cleaner._reachable_accounts(ctl, "admin", b"umk")
-
-
 @pytest.mark.parametrize("field", ["db_path", "db_prefix", "db_master_key"])
 def test_refuses_to_clean_when_account_storage_reference_is_invalid(monkeypatch, field):
-    uid, payload = account("user", USER_DB_PATH, USER_DB_PREFIX)
+    uid, payload = account("owner", OWNER_DB_PATH, OWNER_DB_PREFIX)
     payload[field] = ""
-    cleaner = build_cleaner(monkeypatch, [(uid, payload)], {"orphan": b"orphan"})
+    cleaner = build_cleaner(monkeypatch, (uid, payload), {"orphan": b"orphan"})
 
     with pytest.raises(ValueError, match=field):
         cleaner.run()
@@ -381,9 +346,9 @@ def test_refuses_to_clean_when_account_storage_reference_is_invalid(monkeypatch,
 
 
 def test_refuses_to_clean_when_database_key_is_not_valid_base64(monkeypatch):
-    uid, payload = account("user", USER_DB_PATH, USER_DB_PREFIX)
+    uid, payload = account("owner", OWNER_DB_PATH, OWNER_DB_PREFIX)
     payload["db_master_key"] = "not base64!"
-    cleaner = build_cleaner(monkeypatch, [(uid, payload)], {"orphan": b"orphan"})
+    cleaner = build_cleaner(monkeypatch, (uid, payload), {"orphan": b"orphan"})
 
     with pytest.raises(ValueError, match="db_master_key"):
         cleaner.run()

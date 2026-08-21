@@ -1,67 +1,45 @@
-"""Remove R2 objects not referenced by any account reachable by an admin."""
+"""Remove R2 objects not referenced by the singleton owner's database."""
 
-from .account_data import StorageAccount
-from .control_session import (
-    ControlFactories,
-    ControlSession,
-    load_reachable_accounts,
-    unwrap_umk,
-)
-from .creds import Creds
+from .account_data import StorageAccount, parse_storage_account
+from .creds import OwnerCreds
 from .database_schema import configure_page_size, open_database, table_exists
-from .firebase_auth import FirebaseAuth
-from .leancrypto_wasm import LeancryptoEngine
-from .libsql_client import LibsqlClient
 from .logger import Logger
+from .owner_init import OwnerInitializer
 from .r2_client import R2Client
 from .random_token import to_base32_crockford
 from .sqlite_engine import SqliteEngine
-from .turso_api import TursoClient
 
 
 class BucketCleaner:
-    def __init__(self, creds: Creds, logger: Logger, dry_run: bool = False):
-        if creds.r2_config is None:
-            raise ValueError("--clean-bucket requires r2_config in creds.json")
-        self.creds = creds
+    def __init__(
+        self, creds: OwnerCreds, creds_path: str, logger: Logger, dry_run: bool = False
+    ):
         self.logger = logger
         self.dry_run = dry_run
-        self.control = ControlSession(
-            creds,
-            logger,
-            factories=ControlFactories(FirebaseAuth, TursoClient, LibsqlClient),
-            engine=LeancryptoEngine(),
-        )
+        self.owner = OwnerInitializer(creds, creds_path, logger)
         self.r2 = R2Client(creds.r2_config)
-        self.blob = self.control.blob
 
     def run(self) -> None:
         self.logger.info(
             f"Starting bucket cleanup ({'dry run' if self.dry_run else 'delete mode'})."
         )
-        accounts = self._load_accounts()
-        allowlist = self._build_allowlist(accounts)
+        account = self._load_account()
+        allowlist = self._build_allowlist(account)
         bucket_keys = self._bucket_keys()
-        stale = self._stale_keys(accounts, allowlist, bucket_keys)
+        stale = self._stale_keys(account, allowlist, bucket_keys)
         self._report_stale(stale)
         self._delete_stale(stale)
 
-    def _load_accounts(self) -> list[StorageAccount]:
-        admin_uid = self._sign_in()
-        ctl = self._connect_ctl()
-        admin_umk = self._admin_umk(ctl, admin_uid)
-        accounts = self._reachable_accounts(ctl, admin_uid, admin_umk)
-        if not accounts:
-            raise ValueError(
-                "No accounts are reachable from this admin; refusing to clean bucket"
-            )
-        return accounts
+    def _load_account(self) -> StorageAccount:
+        uid, _umk, payload = self.owner.load_current_owner()
+        return parse_storage_account(uid, payload)
 
-    def _build_allowlist(self, accounts: list[StorageAccount]) -> set[str]:
-        self.logger.info(
-            f"Building allowlist from {len(accounts)} account database(s)..."
+    def _build_allowlist(self, account: StorageAccount) -> set[str]:
+        self.logger.info(f"Reading database references for uid={account.uid}...")
+        keys = self._content_keys(
+            account.uid, account.db_path, account.db_prefix, account.db_master_key
         )
-        allowlist = self._storage_allowlist(accounts)
+        allowlist = {account.db_path, *keys}
         self.logger.info(f"Allowlist contains {len(allowlist)} exact R2 object key(s).")
         return allowlist
 
@@ -76,25 +54,25 @@ class BucketCleaner:
         self.logger.info(f"Finished listing {len(bucket_keys):,} bucket object(s).")
         return bucket_keys
 
-    def _stale_keys(self, accounts, allowlist, bucket_keys) -> list[str]:
-        shared = self._shared_keys(accounts, bucket_keys)
+    def _stale_keys(
+        self, account: StorageAccount, allowlist: set[str], bucket_keys: set[str]
+    ) -> list[str]:
+        shared = self._shared_keys(account, bucket_keys)
         retained = (bucket_keys & allowlist) | shared
         stale = sorted(bucket_keys - retained)
         self.logger.info(
-            f"{len(accounts)} account(s), {len(bucket_keys)} bucket object(s), "
-            f"{len(retained)} retained ({len(shared)} shared), {len(stale)} stale."
+            f"{len(bucket_keys)} bucket object(s), {len(retained)} retained "
+            f"({len(shared)} shared), {len(stale)} stale."
         )
         return stale
 
-    def _shared_keys(
-        self, accounts: list[StorageAccount], bucket_keys: set[str]
-    ) -> set[str]:
+    def _shared_keys(self, account: StorageAccount, bucket_keys: set[str]) -> set[str]:
         # Public-share deletion is authorized by rqlite and performed by the
         # trusted gateway. The generic R2 cleaner cannot prove that an object
         # is unregistered (and an R2 database rollback could hide its local
         # txt_shares row), so it must never garbage-collect this namespace.
-        prefixes = tuple(f"{account.db_prefix}/shared/" for account in accounts)
-        return {key for key in bucket_keys if key.startswith(prefixes)}
+        prefix = f"{account.db_prefix}/shared/"
+        return {key for key in bucket_keys if key.startswith(prefix)}
 
     def _report_stale(self, stale: list[str]) -> None:
         for key in stale:
@@ -114,43 +92,6 @@ class BucketCleaner:
             ),
         )
         self.logger.info(f"Deleted {len(stale)} object(s).")
-
-    def _sign_in(self) -> str:
-        return self.control.sign_in()
-
-    def _connect_ctl(self) -> LibsqlClient:
-        return self.control.connect()
-
-    def _admin_umk(self, ctl: LibsqlClient, admin_uid: str) -> bytes:
-        return unwrap_umk(ctl, admin_uid, self.creds.user_root_key, self.blob)
-
-    def _reachable_accounts(
-        self, ctl: LibsqlClient, admin_uid: str, admin_umk: bytes
-    ) -> list[StorageAccount]:
-        return load_reachable_accounts(
-            ctl, admin_uid, admin_umk, self.blob, require_all=True
-        )
-
-    def _storage_allowlist(self, accounts: list[StorageAccount]) -> set[str]:
-        allowlist: set[str] = set()
-        for index, account in enumerate(accounts, start=1):
-            allowlist.update(self._account_allowlist(account, index, len(accounts)))
-        return allowlist
-
-    def _account_allowlist(
-        self, account: StorageAccount, index: int, total: int
-    ) -> set[str]:
-        self.logger.info(
-            f"[{index}/{total}] Reading database references for uid={account.uid}..."
-        )
-        keys = self._content_keys(
-            account.uid, account.db_path, account.db_prefix, account.db_master_key
-        )
-        self.logger.info(
-            f"[{index}/{total}] uid={account.uid}, db_path={account.db_path}, "
-            f"db_prefix={account.db_prefix}/, {len(keys)} referenced content object(s)"
-        )
-        return {account.db_path, *keys}
 
     def _content_keys(
         self, uid: str, db_path: str, db_prefix: str, db_master_key: bytes

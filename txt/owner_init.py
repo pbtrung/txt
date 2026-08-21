@@ -88,6 +88,16 @@ class OwnerInitializer:
         self.logger.info(f"Owner {uid} is ready in rqlite.")
         return owner
 
+    def load_current_owner(self) -> tuple[str, bytes, dict]:
+        uid = self.sign_in()
+        row = self.load_owner(initialize_schema=False)
+        if not row:
+            raise ValueError(
+                "owner is not provisioned in rqlite; run --init-owner first"
+            )
+        umk, payload = self.validate_owner(row, uid)
+        return uid, umk, payload
+
     def sign_in(self) -> str:
         self.logger.verbose(f"Signing in to Firebase as {self.creds.firebase_email}...")
         auth = self.auth_factory(self.creds.firebase_api_key)
@@ -162,7 +172,7 @@ class OwnerInitializer:
             "db_prefix": generate_random_prefix(),
         }
 
-    def validate_owner(self, row: dict, uid: str) -> None:
+    def validate_owner(self, row: dict, uid: str) -> tuple[bytes, dict]:
         if row.get("firebase_uid") != uid:
             raise ValueError("rqlite is already provisioned for another Firebase UID")
         root_key = _root_key(self.creds.user_root_key, uid)
@@ -171,6 +181,7 @@ class OwnerInitializer:
         self._validate_bindings(row, uid, payload)
         self._validate_kem(row, umk)
         self._validate_signing(row, uid, umk)
+        return umk, payload
 
     def _validate_bindings(self, row: dict, uid: str, payload: dict) -> None:
         account = parse_storage_account(uid, payload)

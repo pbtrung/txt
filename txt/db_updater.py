@@ -13,9 +13,8 @@ from pathlib import Path
 
 import brotli
 
-from .account_data import StorageAccount
-from .control_session import ControlFactories, ControlSession
-from .creds import Creds
+from .account_data import StorageAccount, parse_storage_account
+from .creds import OwnerCreds
 from .database_schema import (
     ACCESS_RESET_MIGRATION,
     PAGE_SIZE,
@@ -29,14 +28,11 @@ from .database_schema import (
     table_exists,
     validate_schema,
 )
-from .firebase_auth import FirebaseAuth
-from .leancrypto_wasm import LeancryptoEngine
-from .libsql_client import LibsqlClient
 from .logger import Logger
 from .opf import catalog_fields
+from .owner_init import OwnerInitializer
 from .r2_client import R2Client, R2Object
 from .sqlite_engine import SqliteEngine
-from .turso_api import TursoClient
 
 
 @dataclass(frozen=True)
@@ -48,27 +44,19 @@ class MigrationTarget:
 
 
 class DbUpdater:
-    def __init__(self, creds: Creds, local_db_dir: Path, logger: Logger):
-        self.creds = creds
+    def __init__(
+        self, creds: OwnerCreds, creds_path: str, local_db_dir: Path, logger: Logger
+    ):
         self.local_db_dir = local_db_dir
         self.logger = logger
-        self.control = ControlSession(
-            creds,
-            logger,
-            factories=ControlFactories(FirebaseAuth, TursoClient, LibsqlClient),
-            engine=LeancryptoEngine(),
-        )
+        self.owner = OwnerInitializer(creds, creds_path, logger)
         self.r2 = R2Client(creds.r2_config)
 
     def run(self) -> None:
-        admin_uid, ctl, admin_umk = self.control.admin_context()
-        accounts = self.control.reachable_accounts(
-            ctl, admin_uid, admin_umk, complete=True
-        )
-        self.logger.info(f"{len(accounts)} account(s) reachable from this admin.")
+        uid, _umk, payload = self.owner.load_current_owner()
+        account = parse_storage_account(uid, payload)
         self.local_db_dir.mkdir(parents=True, exist_ok=True)
-        for account in accounts:
-            self._migrate_account(account)
+        self._migrate_account(account)
 
     def _migrate_account(self, account: StorageAccount) -> None:
         uid, db_path = account.uid, account.db_path

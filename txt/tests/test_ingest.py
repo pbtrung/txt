@@ -1,3 +1,4 @@
+import base64
 import json
 import secrets
 import zipfile
@@ -7,8 +8,8 @@ import pytest
 
 import txt.database_schema as schema_module
 import txt.ingest as ingest_module
-from txt.account_session import Account
-from txt.creds import Creds
+from txt.account_data import StorageAccount
+from txt.creds import OwnerCreds, R2Config
 from txt.ingest import TxtIngester
 from txt.r2_client import R2Object, R2PreconditionFailed
 from txt.sqlite_engine import SqliteEngine
@@ -22,22 +23,28 @@ class NullLogger:
         pass
 
 
-ACCOUNT = Account(
+ACCOUNT = StorageAccount(
     uid="uid-123",
-    account_type="user",
-    display_name="Trung",
     db_master_key=secrets.token_bytes(256),
     db_path="d" * 52,
     db_prefix="p" * 52,
 )
 
+ACCOUNT_PAYLOAD = {
+    "user_handle": base64.b64encode(secrets.token_bytes(32)).decode(),
+    "display_name": "Trung",
+    "db_master_key": base64.b64encode(ACCOUNT.db_master_key).decode(),
+    "db_path": ACCOUNT.db_path,
+    "db_prefix": ACCOUNT.db_prefix,
+}
 
-class FakeAccountSession:
-    def __init__(self, creds, logger):
+
+class FakeOwnerInitializer:
+    def __init__(self, creds, creds_path, logger):
         pass
 
-    def connect(self):
-        return ACCOUNT
+    def load_current_owner(self):
+        return ACCOUNT.uid, b"u" * 128, ACCOUNT_PAYLOAD
 
 
 class FakeR2Client:
@@ -78,22 +85,35 @@ class FakeR2Client:
 
 @pytest.fixture(autouse=True)
 def patch_clients(monkeypatch):
-    monkeypatch.setattr(ingest_module, "AccountSession", FakeAccountSession)
+    monkeypatch.setattr(ingest_module, "OwnerInitializer", FakeOwnerInitializer)
     monkeypatch.setattr(ingest_module, "R2Client", FakeR2Client)
     FakeR2Client.objects = {}
     FakeR2Client.versions = {}
     FakeR2Client.conflict_keys = set()
 
 
-CREDS = Creds(
-    turso_org_token="tok",
-    turso_ctl_db_name="ctlname",
-    turso_ctl_db_url="libsql://ctlname-x.aws-us-east-1.turso.io",
+CREDS = OwnerCreds(
+    rqlite_admin_username="operator",
+    rqlite_admin_password="secret",
+    rqlite_operator_url="https://api.example.com/operator/rqlite",
     firebase_email="a@b.com",
     firebase_password="pw",
     firebase_api_key="key",
-    user_root_key="ignored-by-fake-session",
+    display_name="Trung",
+    r2_config=R2Config(
+        endpoint="https://account.r2.cloudflarestorage.com",
+        read_only_access_key_id="ro-id",
+        read_only_secret_access_key="ro-secret",
+        read_write_access_key_id="rw-id",
+        read_write_secret_access_key="rw-secret",
+        region="auto",
+        bucket="books",
+    ),
+    slhdsa_256f_priv_key="",
+    asset_base_url="https://reader.example.com",
+    user_root_key="ignored-by-fake-initializer",
 )
+CREDS_PATH = "unused-creds-path.json"
 
 
 def _write_epub(path, content=b"epub bytes"):
@@ -131,7 +151,7 @@ def test_fresh_database_gets_16kib_page_size(tmp_path):
     src.mkdir()
     _write_epub(src / "a.epub")
 
-    ingester = TxtIngester(src, local, CREDS, NullLogger())
+    ingester = TxtIngester(src, local, CREDS, CREDS_PATH, NullLogger())
     ingester.run()
 
     engine = _reopen(local / ACCOUNT.db_path)
@@ -168,7 +188,7 @@ def test_ingest_fresh_directory(tmp_path):
     _write_epub(src / "a.epub", b"one")
     _write_epub(src / "b.epub", b"two")
 
-    ingester = TxtIngester(src, local, CREDS, NullLogger())
+    ingester = TxtIngester(src, local, CREDS, CREDS_PATH, NullLogger())
     ingester.run()
 
     local_path = local / ACCOUNT.db_path
@@ -190,7 +210,7 @@ def test_ingest_records_opf_sidecar_catalog_fields(tmp_path):
         "</metadata></package>"
     )
 
-    ingester = TxtIngester(src, local, CREDS, NullLogger())
+    ingester = TxtIngester(src, local, CREDS, CREDS_PATH, NullLogger())
     ingester.run()
 
     payloads = _txt_rows_from_disk(local / ACCOUNT.db_path)
@@ -218,7 +238,7 @@ def test_ingest_collects_repeated_authors_and_subjects(tmp_path):
         "</metadata></package>"
     )
 
-    ingester = TxtIngester(src, local, CREDS, NullLogger())
+    ingester = TxtIngester(src, local, CREDS, CREDS_PATH, NullLogger())
     ingester.run()
 
     [payload] = _txt_rows_from_disk(local / ACCOUNT.db_path)
@@ -234,7 +254,7 @@ def test_ingest_uploads_one_object_per_epub_plus_final_db(tmp_path):
     _write_epub(src / "a.epub", b"one")
     _write_epub(src / "b.epub", b"two")
 
-    ingester = TxtIngester(src, local, CREDS, NullLogger())
+    ingester = TxtIngester(src, local, CREDS, CREDS_PATH, NullLogger())
     ingester.run()
 
     content_puts = [k for k, _ in ingester.r2.put_calls if k != ACCOUNT.db_path]
@@ -250,10 +270,10 @@ def test_second_run_skips_already_ingested_files(tmp_path):
     src.mkdir()
     _write_epub(src / "a.epub", b"one")
 
-    TxtIngester(src, local, CREDS, NullLogger()).run()
+    TxtIngester(src, local, CREDS, CREDS_PATH, NullLogger()).run()
 
     _write_epub(src / "b.epub", b"two")
-    second = TxtIngester(src, local, CREDS, NullLogger())
+    second = TxtIngester(src, local, CREDS, CREDS_PATH, NullLogger())
     second.run()
 
     names = {p["name"] for p in _txt_rows_from_disk(local / ACCOUNT.db_path)}
@@ -266,9 +286,9 @@ def test_downloads_r2_even_when_a_local_checkpoint_exists(tmp_path):
     src, local = tmp_path / "src", tmp_path / "local"
     src.mkdir()
     _write_epub(src / "a.epub", b"one")
-    TxtIngester(src, local, CREDS, NullLogger()).run()
+    TxtIngester(src, local, CREDS, CREDS_PATH, NullLogger()).run()
 
-    third = TxtIngester(src, local, CREDS, NullLogger())
+    third = TxtIngester(src, local, CREDS, CREDS_PATH, NullLogger())
     monkeypatch_calls = []
     real_get_object = FakeR2Client.get_object_with_etag
 
@@ -287,7 +307,7 @@ def test_vacuum_runs_before_final_upload(tmp_path):
     src.mkdir()
     _write_epub(src / "a.epub")
 
-    ingester = TxtIngester(src, local, CREDS, NullLogger())
+    ingester = TxtIngester(src, local, CREDS, CREDS_PATH, NullLogger())
     ingester.run()
 
     uploaded = dict(ingester.r2.put_calls)[ACCOUNT.db_path]
@@ -298,12 +318,12 @@ def test_conditional_db_upload_preserves_a_concurrent_browser_change(tmp_path):
     src, local = tmp_path / "src", tmp_path / "local"
     src.mkdir()
     _write_epub(src / "a.epub", b"one")
-    TxtIngester(src, local, CREDS, NullLogger()).run()
+    TxtIngester(src, local, CREDS, CREDS_PATH, NullLogger()).run()
     remote_before = FakeR2Client.objects[ACCOUNT.db_path]
 
     _write_epub(src / "b.epub", b"two")
     FakeR2Client.conflict_keys.add(ACCOUNT.db_path)
     with pytest.raises(R2PreconditionFailed, match="newer object"):
-        TxtIngester(src, local, CREDS, NullLogger()).run()
+        TxtIngester(src, local, CREDS, CREDS_PATH, NullLogger()).run()
 
     assert FakeR2Client.objects[ACCOUNT.db_path] == remote_before
