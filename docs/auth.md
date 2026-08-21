@@ -24,7 +24,10 @@ OpenResty and rqlite run in the same container. Lua connects only to
 `http://127.0.0.1:14001`, so there is no application-side `RQLITE_URL`,
 `RQLITE_USERNAME`, or `RQLITE_PASSWORD`. `RQLITE_ADMIN_USERNAME` and
 `RQLITE_ADMIN_PASSWORD` protect the separate operator passthrough used for
-migrations and recovery; they are never browser credentials.
+migrations and recovery; they are never browser credentials. The local Python
+CLI calls that passthrough through the credential file's
+`rqlite_operator_url`, normally
+`https://<public-service-domain>/operator/rqlite`.
 
 `R2_TICKET_SECRET`, `RATE_LIMIT_KEY`, and the R2 secret access key are independent
 secrets. The API service holds them; the browser never does. Secret rotation is
@@ -61,23 +64,41 @@ process or unlocked browser memory.
 
 ## 3. Provisioning
 
-`txt --init-owner owner_creds.json` is idempotent and performs these operations:
+`txt --init-owner rqlite_creds.json` is idempotent and performs these operations:
 
-1. Sign in to Firebase and require the resulting UID to equal
+1. Sign in to Firebase and use the resulting UID as the singleton owner's
+   identity. Deployment verification requires it to equal
    `OWNER_FIREBASE_UID`.
-2. Generate a 32-byte `user_handle`, independent `db_path` and `db_prefix`, a
+2. Query rqlite through `rqlite_operator_url`; if the database is empty, install
+   control schema version 1 in one transaction.
+3. Generate a 32-byte `user_handle`, independent `db_path` and `db_prefix`, a
    128-byte owner master key, and a 256-byte SQLCipher `db_master_key`.
-3. Generate the P-521 request-signing key pair and the composite KEM key pair
+4. Generate the P-521 request-signing key pair and the composite KEM key pair
    described in `docs/crypto.md`.
-4. Wrap the owner master key with `user_root_key`; wrap both private keys with
+5. Wrap the owner master key with `user_root_key`; wrap both private keys with
    the owner master key; encrypt the credential payload with that same key.
-5. Insert the singleton `owner_control` row through
+6. Insert the singleton `owner_control` row through
    `/db/execute?transaction` using parameterized statements.
 
-Re-running provisioning must verify every immutable field. It may repair a
-missing derived index or migration marker, but it must never replace the owner
-UID, storage paths, or keys silently. If `owner_control` already contains a
-different UID or incompatible material, provisioning aborts.
+Re-running provisioning verifies the UID, handle/path bindings, KEM sizes, and
+P-521 keypair without replacing any owner material. If `owner_control` already
+contains a different UID or incompatible material, provisioning aborts.
+
+To preserve an existing Turso library identity, run:
+
+```sh
+txt --migrate turso_creds.json rqlite_creds.json --verbose --dry-run
+txt --migrate turso_creds.json rqlite_creds.json --verbose
+```
+
+The source and destination Firebase logins must resolve to the same UID. The
+command validates and decrypts the source owner record, preserves the complete
+credential payload—including `db_master_key`, `db_path`, and `db_prefix`—and
+encrypts it under the rqlite owner's UMK. With no destination row it performs
+owner initialization and generates a fresh UMK, composite KEM keypair, and
+P-521 signing keypair. With an existing destination row it preserves that UMK
+and those keypairs. The dry run performs authentication and validation but
+writes neither rqlite nor the destination credential file.
 
 There is no owner list, invitation, deprovisioning workflow, delegated access,
 or recovery copy belonging to another account. Recovery requires the owner's

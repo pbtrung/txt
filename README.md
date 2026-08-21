@@ -2,9 +2,9 @@
 
 `txt` is a single-owner encrypted EPUB library. The React application keeps the
 library database and book contents encrypted in R2, while an OpenResty Lua API
-and a loopback-only rqlite database run in one container on Northflank. There is exactly one authenticated
-owner. There are no registrations, invitations, roles, or account-management
-screens.
+and a loopback-only rqlite database run in one container on Northflank. There is
+exactly one authenticated owner. There are no registrations, invitations,
+roles, or account-management screens.
 
 The owner can create public read-only links. A recipient does not become an
 account: the link is a bearer capability that lets the recipient request a
@@ -63,18 +63,33 @@ npm install
 
 ## Owner provisioning
 
-Provisioning is a one-time, idempotent operation. The owner credential file
-contains Firebase configuration, R2 configuration, the rqlite API endpoint and
-credentials, a display name, and `user_root_key`. Leave `user_root_key` empty on
-the first run; provisioning generates a 256-byte base64 key and writes it back
-to the file.
+Provisioning is a one-time, idempotent operation. The exact credential-file
+shape and field descriptions are in [the deployment guide](docs/deployment.md#3-owner-initialization-and-migration).
+`rqlite_operator_url` is the externally reachable Basic-auth operator route,
+for example `https://api.example.com/operator/rqlite`; it is not rqlite's
+loopback listener. Leave `user_root_key` empty on the first run. Provisioning
+generates a 256-byte base64 key and writes it back to the file.
 
 ```sh
-txt --init-owner owner_creds.json --verbose
+txt --init-owner rqlite_creds.json --verbose
 ```
 
 The command creates exactly one `owner_control` row. A second, different
 Firebase UID is rejected rather than added.
+
+To preserve an existing Turso owner's database paths, database key, display
+name, and private handle, preview and then run the one-time migration:
+
+```sh
+txt --migrate turso_creds.json rqlite_creds.json --verbose --dry-run
+txt --migrate turso_creds.json rqlite_creds.json --verbose
+```
+
+The migration validates and decrypts the Turso owner record, creates the rqlite
+owner automatically when absent, generates a fresh UMK and fresh KEM/signing
+keys, and re-encrypts the imported credential payload under the new UMK. Both
+credential files must sign in to the same Firebase UID. The command is
+idempotent.
 
 Migrate the owner's encrypted SQLCipher database when its local schema changes:
 

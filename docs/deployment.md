@@ -19,8 +19,9 @@ and protected rqlite backups.
 5. Create a public Northflank route only for OpenResty port `8080`. Do not route
    Raft port `4002`.
 6. Configure liveness at `/health/live` and readiness at `/health/ready`.
-7. Apply `docker/migrations/0001_control.sql` through the Basic-authenticated
-   `/operator/rqlite/` route.
+7. Run owner initialization or migration through the Basic-authenticated
+   `/operator/rqlite/` route. The CLI installs schema version 1 automatically
+   when rqlite is empty.
 
 The rqlite volume and its backups are required. A container filesystem without a
 persistent volume is not an acceptable database deployment.
@@ -29,6 +30,13 @@ OpenResty handles the API with Lua endpoint files under `docker/lua/endpoints/`.
 The service is always on, so there is no request cold start. Lua keeps only
 Firebase public certificates in shared memory; owner, share, and rate-limit
 state remains durable in rqlite.
+
+`/health/ready` checks that rqlite can answer a simple query; it intentionally
+does not require `schema_migrations` to exist, because Northflank must route the
+operator request that installs the first schema. Application endpoints remain
+unusable until `--init-owner` or `--migrate` completes.
+
+## 2. Runtime configuration
 
 Install these runtime secrets:
 
@@ -60,19 +68,77 @@ timeouts, and trusted-proxy handling before enabling the public route. Only
 Northflank's own forwarding header is accepted as the public client address used
 for rate limiting.
 
-## 3. Owner initialization
+## 3. Owner initialization and migration
 
-Create `owner_creds.json` with Firebase, rqlite, and R2 connection information.
+Create `rqlite_creds.json` with this exact shape:
+
+```json
+{
+  "rqlite_admin_username": "operator",
+  "rqlite_admin_password": "...",
+  "rqlite_operator_url": "https://api.example.com/operator/rqlite",
+  "firebase_email": "owner@example.com",
+  "firebase_password": "...",
+  "firebase_api_key": "...",
+  "display_name": "Owner",
+  "r2_config": {
+    "endpoint": "https://ACCOUNT_ID.r2.cloudflarestorage.com",
+    "read_only_access_key_id": "...",
+    "read_only_secret_access_key": "...",
+    "read_write_access_key_id": "...",
+    "read_write_secret_access_key": "...",
+    "region": "auto",
+    "bucket": "txt"
+  },
+  "slhdsa_256f_priv_key": "",
+  "asset_base_url": "https://reader.example.com",
+  "user_root_key": ""
+}
+```
+
+`rqlite_operator_url` is the public OpenResty operator route protected by
+`RQLITE_ADMIN_USERNAME` and `RQLITE_ADMIN_PASSWORD`. For Northflank it is
+`https://<public-service-domain>/operator/rqlite`, without a rqlite API suffix
+such as `/db/query`. The CLI removes a trailing slash. Do not use
+`http://127.0.0.1:14001` unless the CLI itself is running inside the container.
+OpenResty permits up to 128 KiB only on this Basic-authenticated operator route
+to accommodate JSON byte arrays for owner key material; public application
+routes retain the 16 KiB limit.
+
 Keep this file outside the repository and back it up securely. Leave
-`user_root_key` empty only for the first run:
+`user_root_key` empty only for the first write: initialization generates a
+256-byte standard-base64 key and writes it back. Empty
+`slhdsa_256f_priv_key` is reserved for the static-asset signing setup;
+`asset_base_url` is the deployed UI origin. Every `r2_config` property must be
+present.
+
+For a new library with no Turso control record, initialize the owner directly:
 
 ```sh
-txt --init-owner owner_creds.json --verbose
+txt --init-owner rqlite_creds.json --verbose
 ```
 
 Verify that rqlite contains one `owner_control` row with `singleton = 1` and that
 its Firebase UID equals `OWNER_FIREBASE_UID`. There is no additional account
 initialization.
+
+For an existing Turso-backed owner, do not initialize a placeholder owner
+first. Preview and then run the migration with the existing Turso credential
+file as the source and the new rqlite credential file as the destination:
+
+```sh
+txt --migrate turso_creds.json rqlite_creds.json --verbose --dry-run
+txt --migrate turso_creds.json rqlite_creds.json --verbose
+```
+
+Both files must authenticate the same Firebase UID. The command validates the
+source handle and path hashes, decrypts the self-owned `cred_store.content`, and
+preserves its `user_handle`, `display_name`, `db_master_key`, `db_path`, and
+`db_prefix`. If `owner_control` does not exist, migration performs owner
+initialization itself with a fresh UMK, composite KEM keypair, and P-521 signing
+keypair. If it already exists, migration preserves its UMK and keypairs and only
+rewraps the imported payload. Repeating the migration is safe; `--dry-run`
+neither writes rqlite nor fills `user_root_key`.
 
 Initialize or migrate the owner's encrypted R2 database before deploying a UI
 that depends on a new local schema:
@@ -85,7 +151,8 @@ txt --update-db owner_creds.json --local-db-dir ./data --verbose
 
 Create a parent R2 API token limited to the application bucket. The Northflank
 API uses it to mint temporary owner access, presign exact shared reads, delete
-revoked shared objects, and upload encrypted control backups.
+revoked shared objects. Native rqlite backups use the separate credentials in
+`RQLITE_BACKUP_CONF`.
 
 Configure bucket CORS for the exact UI origin:
 

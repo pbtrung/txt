@@ -9,7 +9,7 @@ binding, not the two owner paths themselves.
 s3://{bucket}/{db_path}
 s3://{bucket}/{db_prefix}/{txt.txt_prefix}/{txt.path}
 s3://{bucket}/{db_prefix}/shared/{txt_shares.share_prefix}/{txt_shares.share_path}
-s3://{bucket}/control-backups/{timestamp}-{digest}.sqlite
+s3://{bucket}/control-backups/{rqlite-managed-backup-object}
 ```
 
 ## Owner database
@@ -39,12 +39,11 @@ downloads directly from R2; Northflank does not proxy the object.
 ## Control backups
 
 `control-backups/` is server-only and excluded from owner temporary credentials.
-Each object is the complete SQLite backup returned by rqlite's
-`GET /db/backup?fmt=delete` endpoint, uploaded directly to private R2 storage. It
-is not a copied `db.sqlite` file from the live volume. R2 server-side encryption
-protects it at rest, and the bucket policy permits access only to the server-held
-parent credential. Backup object names contain only a timestamp and content
-digest, never the owner UID or a share capability.
+The rqlite `-auto-backup` process writes its supported hot-backup object directly
+to private R2 storage using `RQLITE_BACKUP_CONF`. It is not a copied `db.sqlite`
+file from the live volume. R2 server-side encryption protects it at rest, and
+the bucket policy permits access only to the backup credential. Backup object
+names never include the owner UID or a share capability.
 
 ## Path and access rules
 

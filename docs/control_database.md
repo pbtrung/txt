@@ -20,7 +20,8 @@ storage, health checks, and off-node backups are mandatory.
 - OpenResty Lua is the only application allowed to submit SQL. A separately
   Basic-authenticated `/operator/rqlite/` passthrough exists for migrations,
   diagnostics, and recovery. Browsers never receive that credential or the
-  loopback address.
+  loopback address. Operator tools set `rqlite_operator_url` to the full public
+  route, such as `https://api.example.com/operator/rqlite`.
 
 Lua uses `/db/query` for reads and `/db/execute?transaction` for writes. It
 uses `/db/request?transaction` only when an operation must atomically mix writes
@@ -89,11 +90,29 @@ constraint makes the one-owner invariant structural rather than conventional.
 share content key are never stored server-side. `object_path` is present because
 the API must sign that exact R2 GET request; it is not secret key material.
 
-## 3. Atomic operations
+## 3. Owner initialization and import
+
+`txt --init-owner rqlite_creds.json` creates the singleton record directly for
+a new library. `txt --migrate turso_creds.json rqlite_creds.json` is the
+one-time import path for an existing library. Migration reads only the source
+owner's self-owned control rows, validates their handle and path bindings, and
+decrypts the source credential payload.
+
+The destination always uses newly generated rqlite-era key material when it is
+created: a new UMK, composite KEM keypair, and P-521 signing keypair. The
+imported `user_handle`, `display_name`, `db_master_key`, `db_path`, and
+`db_prefix` are re-encrypted under that UMK, so existing R2 objects remain at
+their current paths and retain their database key. If the destination singleton
+already exists, migration preserves its UMK and keypairs. Source and destination
+Firebase UIDs must match. `--dry-run` performs all reads and validation without
+writing either rqlite or the destination credential file.
+
+## 4. Atomic operations
 
 Schema migrations are ordered, idempotent, and applied through one transactional
-request. Startup readiness fails if an unknown or incomplete schema version is
-present.
+request. Owner initialization installs schema version 1 automatically when the
+database is empty. Application queries reject an absent, unknown, or incomplete
+schema rather than treating it as empty state.
 
 Share registration inserts an `active` row. Repeating the same capability and
 path is idempotent; the same capability with a different path is rejected.
@@ -106,7 +125,7 @@ Rate-limit increments use one transactional request. The application must not
 implement a read-then-write counter using separate HTTP calls, because concurrent
 requests could lose increments.
 
-## 4. Availability and consistency
+## 5. Availability and consistency
 
 All writes go through rqlite's Raft log even in the one-node configuration. The
 API waits for committed writes and does not use queued writes. Regular reads use
@@ -116,22 +135,22 @@ tradeoff.
 The API exposes:
 
 - `/health/live`: process is running;
-- `/health/ready`: rqlite is reachable, authenticated, and at the expected schema
-  version.
+- `/health/ready`: rqlite can answer a query.
 
-Northflank sends traffic only after readiness succeeds. If rqlite is unavailable,
+Readiness deliberately works before the first schema exists so Northflank can
+route the operator call that installs it. The application endpoints remain
+unavailable until owner initialization completes. If rqlite is unavailable,
 authorization, share, and rate-limited endpoints return `503` rather than using
 stale local state.
 
-## 5. Backup and recovery
+## 6. Backup and recovery
 
-A daily Northflank cron job retrieves the complete hot SQLite backup through
-`GET /db/backup?fmt=delete` using the backup-only credential and uploads those
-exact bytes to the private, server-only R2 `control-backups/` prefix. The job
-does not read or copy the live rqlite volume. It records a SHA-256 digest in the
-object name and metadata, then downloads and verifies the uploaded object.
-R2 server-side encryption protects the backup at rest. Retain at least seven
-daily and four weekly copies, and test restoration periodically.
+rqlite's native `-auto-backup` process uses the secret-backed
+`RQLITE_BACKUP_CONF` configuration to upload supported hot backups directly to
+the private, server-only R2 `control-backups/` prefix. It does not read or copy
+the live volume's `db.sqlite` file. R2 server-side encryption protects the
+backup at rest. Use R2 retention or versioning for multiple restore points, and
+test restoration periodically.
 
 Recovery procedure:
 

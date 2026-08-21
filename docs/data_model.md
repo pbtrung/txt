@@ -127,6 +127,12 @@ The EPUB content object referenced by a `txt` row is immutable. That makes a str
 
 ### 2.3 Migration
 
+Moving the owner control record into rqlite does not move or rewrite the
+SQLCipher database. `txt --migrate turso_creds.json rqlite_creds.json` preserves
+`db_master_key`, `db_path`, and `db_prefix`, so the existing R2 database and EPUB
+objects remain authoritative at the same keys. That control migration must
+finish before using rqlite-backed maintenance or browser flows.
+
 Migration is driven by inspecting the tables, columns, indexes, and triggers that are actually present. Fresh databases are created directly from the complete schema above; existing databases receive only the missing changes.
 
 `txt --update-db owner_creds.json --local-db-dir DIR --verbose` migrates the

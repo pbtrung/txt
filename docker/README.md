@@ -35,6 +35,17 @@ probes.
 credentials in the browser. The route exists for controlled schema migration,
 backup, restore, and inspection.
 
+Set the Python owner's `rqlite_operator_url` to this route without an API
+method suffix. A local host-run CLI uses
+`http://127.0.0.1:8080/operator/rqlite`; a Northflank deployment uses
+`https://<public-service-domain>/operator/rqlite`. The credential file's
+`rqlite_admin_username` and `rqlite_admin_password` must match the two container
+variables above.
+
+The operator location accepts request bodies up to 128 KiB because owner
+bootstrap sends KEM and signing BLOBs as rqlite JSON byte arrays. The global
+16 KiB limit still applies to every application endpoint.
+
 ## Lua gateway
 
 OpenResty serves the application API directly. Endpoint entrypoints live in
@@ -45,7 +56,8 @@ OpenResty serves the application API directly. Endpoint entrypoints live in
 - `owner_r2_credentials.lua` verifies the owner ticket and P-521 proof;
 - `create_share.lua` and `delete_share.lua` mutate the share registry;
 - `shared_object_url.lua` returns an anonymous exact-object presigned URL;
-- `readiness.lua` verifies rqlite schema version 1.
+- `readiness.lua` verifies that rqlite can answer a query, including before the
+  first schema is installed.
 
 Reusable modules under `lua/txt/` own Firebase certificate verification,
 rqlite transport, durable rate limits, owner tickets and proofs, SigV4, and
@@ -74,8 +86,9 @@ RQLITE_ADMIN_PASSWORD
 `R2_TICKET_SECRET` and `RATE_LIMIT_KEY` must be independent canonical padded
 base64 values containing at least 32 random bytes. `DNS_RESOLVER` is optional
 and defaults to `1.1.1.1`. No application-side `RQLITE_URL` or rqlite password
-is needed because Lua reaches the loopback-only rqlite listener. The two
-`RQLITE_ADMIN_*` secrets protect only the operator route.
+is needed by Lua because it reaches the loopback-only rqlite listener. The two
+`RQLITE_ADMIN_*` secrets protect only the operator route used by the Python CLI
+and other operator tools.
 
 ## Backups
 

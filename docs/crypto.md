@@ -25,9 +25,9 @@ hand. Internally it combines an ML-KEM-1024 keypair with an X448 keypair:
 `owner_control.kem_public_key` stores the raw 1624-byte composite public key.
 `owner_control.wrapped_kem_private_key` wraps the raw 3224-byte composite private
 key using the standard Encrypt procedure below with the owner's 128-byte `umk`
-as IKM, so the stored blob is 3224 + 132 = 3356 bytes. The row's `umk` is
-separately wrapped by the owner's 256-byte `user_root_key`. Public book sharing
-does not use this KEM keypair.
+as IKM, so the stored blob is 3224 + 132 = 3356 bytes.
+`owner_control.wrapped_umk` contains that UMK wrapped by the owner's 256-byte
+`user_root_key`. Public book sharing does not use this KEM keypair.
 
 ### Versioned request signatures
 
