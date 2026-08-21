@@ -27,7 +27,7 @@ local function mint(credential_type, scope, paths)
     type = credential_type,
     access_key_id = settings.r2_access_key_id,
     secret_access_key = codec.hex(secret),
-    session_token = codec.base64url_encode("jwt/" .. token),
+    session_token = codec.base64_encode("jwt/" .. token),
     expiration = os.date("!%Y-%m-%dT%H:%M:%SZ", now + TTL),
   }
 end
