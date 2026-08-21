@@ -21,6 +21,7 @@ def test_entrypoint_renders_ui_origin_into_nginx_config():
 
 def test_nginx_rejects_wrong_origins_before_api_handlers():
     config = (ROOT / "docker/nginx.conf").read_text()
+    assert "map_hash_bucket_size 128;" in config
     assert '"${UI_ORIGIN}" 1;' in config
     guard = "if ($ui_origin_allowed = 0) { return 403; }"
     assert config.count(guard) == 4
