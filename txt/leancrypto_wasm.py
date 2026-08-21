@@ -10,8 +10,6 @@ WASM_PATH = (
 # Composite ML-KEM-1024 + X448 sizes (docs/crypto.md's Composite KEM Key Sizes).
 KEM_PK_SIZE = 1624
 KEM_SK_SIZE = 3224
-KEM_CT_SIZE = 1624
-KEM_SS_SIZE = 88
 
 # env.* imports this build needs beyond WASI, with stub behavior: our own
 # calls (lc_wasm_hkdf_sha3_512/lc_wasm_aead_encrypt/decrypt, malloc/free) do
