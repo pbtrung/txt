@@ -12,9 +12,38 @@ from .database_schema import ensure_database_schema
 from .logger import Logger
 from .opf import catalog_fields, find_opf_sidecar, parse_opf_metadata
 from .owner_init import OwnerInitializer
-from .r2_client import R2Client
+from .r2_client import R2Client, R2DownloadError
 from .random_token import to_base32_crockford
 from .sqlite_engine import SqliteEngine
+
+DOWNLOAD_ATTEMPTS = 3
+DOWNLOAD_RETRY_DELAYS = (1, 2)
+
+
+class DownloadProgressLogger:
+    def __init__(self, logger: Logger, attempt: int):
+        self.logger = logger
+        self.attempt = attempt
+        self.started = time.monotonic()
+
+    def __call__(self, downloaded: int, total: int | None) -> None:
+        elapsed = time.monotonic() - self.started
+        if downloaded == 0:
+            self.logger.verbose(self._response_message(total))
+            return
+        self.logger.verbose(self._progress_message(downloaded, total, elapsed))
+
+    def _response_message(self, total: int | None) -> str:
+        size = _format_bytes(total) if total is not None else "unknown size"
+        return f"Current db download attempt {self.attempt}: response received, {size}."
+
+    def _progress_message(self, downloaded: int, total: int | None, elapsed) -> str:
+        amount = _download_amount(downloaded, total)
+        rate = _format_bytes(downloaded / elapsed) if elapsed > 0 else "unknown"
+        return (
+            f"Current db download attempt {self.attempt}: {amount} in "
+            f"{elapsed:.1f}s ({rate}/s)."
+        )
 
 
 class TxtIngester:
@@ -70,17 +99,41 @@ class TxtIngester:
         self.engine.open(self.account.db_master_key, initial_bytes=initial_bytes)
 
     def _load_initial_bytes(self) -> bytes | None:
-        self.logger.verbose(f"Downloading current db {self.account.db_path} from R2...")
-        remote = self.r2.get_object_with_etag(self.account.db_path)
+        remote = self._download_current_db()
         self.db_exists = remote is not None
         self.db_etag = remote.etag if remote is not None else None
         self.dirty = remote is None
         self.logger.verbose(
-            "Found existing remote db, resuming from it."
+            f"Downloaded current db: {_format_bytes(len(remote.body))}, "
+            f"etag={remote.etag}."
             if remote
-            else "No remote db either, starting fresh."
+            else "No remote db, starting fresh."
         )
         return remote.body if remote is not None else None
+
+    def _download_current_db(self):
+        key = self.account.db_path
+        for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+            self.logger.verbose(
+                f"Downloading current db {key} from R2 "
+                f"(attempt {attempt}/{DOWNLOAD_ATTEMPTS})..."
+            )
+            try:
+                return self.r2.get_object_with_etag(
+                    key, on_progress=DownloadProgressLogger(self.logger, attempt)
+                )
+            except R2DownloadError as error:
+                self._retry_download(error, attempt)
+
+    def _retry_download(self, error: R2DownloadError, attempt: int) -> None:
+        if attempt == DOWNLOAD_ATTEMPTS:
+            raise RuntimeError(
+                f"Downloading current db failed after {DOWNLOAD_ATTEMPTS} attempts: "
+                f"{error}"
+            ) from error
+        delay = DOWNLOAD_RETRY_DELAYS[attempt - 1]
+        self.logger.info(f"{error}; retrying in {delay}s...")
+        time.sleep(delay)
 
     def _ensure_schema(self) -> None:
         self.dirty = ensure_database_schema(self.engine) or self.dirty
@@ -169,3 +222,18 @@ class TxtIngester:
             if_match=self.db_etag if self.db_exists else None,
             if_none_match=not self.db_exists,
         )
+
+
+def _download_amount(downloaded: int, total: int | None) -> str:
+    if total is None:
+        return f"{_format_bytes(downloaded)} downloaded"
+    percent = downloaded / total * 100 if total else 100
+    return f"{_format_bytes(downloaded)}/{_format_bytes(total)} ({percent:.1f}%)"
+
+
+def _format_bytes(value: int | float) -> str:
+    if value >= 1024 * 1024:
+        return f"{value / (1024 * 1024):.1f} MiB"
+    if value >= 1024:
+        return f"{value / 1024:.1f} KiB"
+    return f"{value:.0f} B"

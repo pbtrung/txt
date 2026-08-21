@@ -6,6 +6,13 @@ import botocore.exceptions
 
 from .creds import R2Config
 
+DOWNLOAD_CHUNK_SIZE = 1024 * 1024
+DOWNLOAD_ERRORS = (
+    botocore.exceptions.IncompleteReadError,
+    botocore.exceptions.ReadTimeoutError,
+    botocore.exceptions.ResponseStreamingError,
+)
+
 
 @dataclass(frozen=True)
 class R2Object:
@@ -15,6 +22,20 @@ class R2Object:
 
 class R2PreconditionFailed(RuntimeError):
     pass
+
+
+class R2DownloadError(RuntimeError):
+    def __init__(self, key: str, downloaded: int, total: int | None, error):
+        self.downloaded = downloaded
+        self.total = total
+        amount = (
+            f"{downloaded:,}/{total:,} bytes"
+            if total is not None
+            else f"{downloaded:,} bytes"
+        )
+        super().__init__(
+            f"R2 GET {key} failed after downloading {amount} ({type(error).__name__})"
+        )
 
 
 class R2Client:
@@ -32,18 +53,40 @@ class R2Client:
         resp = self._get_object_response(key)
         return resp["Body"].read() if resp is not None else None
 
-    def get_object_with_etag(self, key: str) -> R2Object | None:
+    def get_object_with_etag(
+        self,
+        key: str,
+        on_progress: Callable[[int, int | None], None] | None = None,
+    ) -> R2Object | None:
         resp = self._get_object_response(key)
         if resp is None:
             return None
         etag = resp.get("ETag")
         if not isinstance(etag, str) or not etag:
             raise ValueError(f"R2 GET {key} returned no ETag")
-        return R2Object(resp["Body"].read(), etag)
+        return R2Object(self._read_body(key, resp, on_progress), etag)
+
+    def _read_body(self, key: str, response: dict, on_progress) -> bytes:
+        body = response["Body"]
+        total = _content_length(response)
+        chunks, downloaded = [], 0
+        _report_progress(on_progress, downloaded, total)
+        try:
+            while chunk := body.read(DOWNLOAD_CHUNK_SIZE):
+                chunks.append(chunk)
+                downloaded += len(chunk)
+                _report_progress(on_progress, downloaded, total)
+        except DOWNLOAD_ERRORS as error:
+            raise R2DownloadError(key, downloaded, total, error) from error
+        finally:
+            body.close()
+        return b"".join(chunks)
 
     def _get_object_response(self, key: str) -> dict | None:
         try:
             return self._s3.get_object(Bucket=self.bucket, Key=key)
+        except botocore.exceptions.ReadTimeoutError as exc:
+            raise R2DownloadError(key, 0, None, exc) from exc
         except botocore.exceptions.ClientError as exc:
             if exc.response.get("Error", {}).get("Code") in ("NoSuchKey", "404"):
                 return None
@@ -115,6 +158,16 @@ def _is_precondition_failure(error: botocore.exceptions.ClientError) -> bool:
     code = error.response.get("Error", {}).get("Code")
     status = error.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
     return code in ("PreconditionFailed", "412") or status == 412
+
+
+def _content_length(response: dict) -> int | None:
+    value = response.get("ContentLength")
+    return value if isinstance(value, int) and value >= 0 else None
+
+
+def _report_progress(on_progress, downloaded: int, total: int | None) -> None:
+    if on_progress is not None:
+        on_progress(downloaded, total)
 
 
 def _raise_delete_errors(response: dict) -> None:

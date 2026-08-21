@@ -35,7 +35,12 @@ class FakeS3Client:
             raise botocore.exceptions.ClientError(
                 {"Error": {"Code": "NoSuchKey", "Message": "not found"}}, "GetObject"
             )
-        return {"Body": io.BytesIO(self._objects[Key]), "ETag": '"etag"'}
+        body = self._objects[Key]
+        return {
+            "Body": io.BytesIO(body),
+            "ContentLength": len(body),
+            "ETag": '"etag"',
+        }
 
     def list_objects_v2(
         self,
@@ -132,6 +137,37 @@ def test_get_object_with_etag_returns_both_values(monkeypatch):
     )
 
 
+def test_get_object_with_etag_reports_chunk_progress(monkeypatch):
+    fake = FakeS3Client(objects={"t/key": b"hello"})
+    monkeypatch.setattr(r2_client_module.boto3, "client", lambda *a, **k: fake)
+    monkeypatch.setattr(r2_client_module, "DOWNLOAD_CHUNK_SIZE", 2)
+    progress = []
+
+    R2Client(CONFIG).get_object_with_etag(
+        "t/key", lambda downloaded, total: progress.append((downloaded, total))
+    )
+
+    assert progress == [(0, 5), (2, 5), (4, 5), (5, 5)]
+
+
+def test_get_object_with_etag_reports_partial_read_timeout(monkeypatch):
+    body = TimeoutBody()
+    fake = FakeS3Client()
+    fake.get_object = lambda **kwargs: {
+        "Body": body,
+        "ContentLength": 6,
+        "ETag": '"etag"',
+    }
+    monkeypatch.setattr(r2_client_module.boto3, "client", lambda *a, **k: fake)
+
+    with pytest.raises(r2_client_module.R2DownloadError, match="3/6 bytes") as exc:
+        R2Client(CONFIG).get_object_with_etag("t/key")
+
+    assert exc.value.downloaded == 3
+    assert exc.value.total == 6
+    assert body.closed
+
+
 def test_etag_is_required_only_for_etag_reads(monkeypatch):
     fake = FakeS3Client(objects={"t/key": b"hello"})
     fake.get_object = lambda **kwargs: {"Body": io.BytesIO(b"hello")}
@@ -213,3 +249,20 @@ def test_delete_keys_reports_partial_s3_failures(monkeypatch):
 
     with pytest.raises(RuntimeError, match=r"locked \(AccessDenied\)"):
         R2Client(CONFIG).delete_keys(["locked"])
+
+
+class TimeoutBody:
+    def __init__(self):
+        self.reads = 0
+        self.closed = False
+
+    def read(self, _size):
+        self.reads += 1
+        if self.reads == 1:
+            return b"abc"
+        raise botocore.exceptions.ReadTimeoutError(
+            endpoint_url=None, error=TimeoutError("slow response")
+        )
+
+    def close(self):
+        self.closed = True

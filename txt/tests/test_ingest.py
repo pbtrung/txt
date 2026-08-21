@@ -12,7 +12,7 @@ import txt.ingest as ingest_module
 from txt.account_data import StorageAccount
 from txt.creds import OwnerCreds, R2Config
 from txt.ingest import TxtIngester
-from txt.r2_client import R2Object, R2PreconditionFailed
+from txt.r2_client import R2DownloadError, R2Object, R2PreconditionFailed
 from txt.sqlite_engine import SqliteEngine
 
 
@@ -22,6 +22,18 @@ class NullLogger:
 
     def info(self, message):
         pass
+
+
+class RecordingLogger:
+    def __init__(self):
+        self.verbose_messages = []
+        self.info_messages = []
+
+    def verbose(self, message):
+        self.verbose_messages.append(message)
+
+    def info(self, message):
+        self.info_messages.append(message)
 
 
 ACCOUNT = StorageAccount(
@@ -52,16 +64,25 @@ class FakeR2Client:
     objects = {}
     versions = {}
     conflict_keys = set()
+    download_failures = 0
 
     def __init__(self, config):
         self.put_calls = []
         self.put_conditions = []
 
-    def get_object_with_etag(self, key):
+    def get_object_with_etag(self, key, on_progress=None):
         if key not in self.objects:
             return None
+        body = self.objects[key]
+        if on_progress is not None:
+            on_progress(0, len(body))
+        if self.download_failures:
+            FakeR2Client.download_failures -= 1
+            raise R2DownloadError(key, 0, len(body), TimeoutError("slow response"))
         version = self.versions.setdefault(key, 1)
-        return R2Object(self.objects[key], f'"v{version}"')
+        if on_progress is not None:
+            on_progress(len(body), len(body))
+        return R2Object(body, f'"v{version}"')
 
     def get_object(self, key):
         return self.objects.get(key)
@@ -91,6 +112,7 @@ def patch_clients(monkeypatch):
     FakeR2Client.objects = {}
     FakeR2Client.versions = {}
     FakeR2Client.conflict_keys = set()
+    FakeR2Client.download_failures = 0
 
 
 CREDS = OwnerCreds(
@@ -290,14 +312,33 @@ def test_downloads_r2_even_when_a_local_checkpoint_exists(tmp_path):
     monkeypatch_calls = []
     real_get_object = FakeR2Client.get_object_with_etag
 
-    def spy_get_object(self, key):
+    def spy_get_object(self, key, on_progress=None):
         monkeypatch_calls.append(key)
-        return real_get_object(self, key)
+        return real_get_object(self, key, on_progress)
 
     third.r2.get_object_with_etag = spy_get_object.__get__(third.r2, FakeR2Client)
     third.run()
     assert monkeypatch_calls == [ACCOUNT.db_path]
     assert not [key for key, _ in third.r2.put_calls if key == ACCOUNT.db_path]
+
+
+def test_retries_interrupted_db_download_and_logs_progress(tmp_path, monkeypatch):
+    src, local = tmp_path / "src", tmp_path / "local"
+    src.mkdir()
+    _write_epub(src / "a.epub")
+    TxtIngester(src, local, CREDS, CREDS_PATH, NullLogger()).run()
+    FakeR2Client.download_failures = 1
+    delays = []
+    monkeypatch.setattr(ingest_module.time, "sleep", delays.append)
+    logger = RecordingLogger()
+
+    TxtIngester(src, local, CREDS, CREDS_PATH, logger).run()
+
+    assert delays == [1]
+    assert any("attempt 1/3" in message for message in logger.verbose_messages)
+    assert any("attempt 2/3" in message for message in logger.verbose_messages)
+    assert any("100.0%" in message for message in logger.verbose_messages)
+    assert any("retrying in 1s" in message for message in logger.info_messages)
 
 
 def test_vacuum_runs_before_final_upload(tmp_path):
