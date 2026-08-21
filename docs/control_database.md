@@ -164,7 +164,10 @@ Recovery procedure:
 3. Create an empty rqlite data volume.
 4. Download and verify the selected R2 object, then restore that SQLite backup
    using rqlite's supported restore or boot process; never overwrite the live
-   `db.sqlite` file directly.
+   `db.sqlite` file directly. If recovery follows a key-rotation incident
+   (`docs/auth.md` §7), the selected backup must postdate that rotation —
+   restoring an older backup reinstates the pre-rotation `owner_control` row,
+   including the signing key the incident response just replaced.
 5. Start rqlite and verify readiness, schema version, the singleton row, and live
    share counts.
 6. Start the API and test owner unlock plus one share redemption.

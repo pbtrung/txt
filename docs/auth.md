@@ -269,13 +269,15 @@ protected endpoints fail closed with `503`; they do not bypass the limit.
 | Parent R2 credential exposed    | Rotate it immediately and redeploy; already-issued temporary credentials expire naturally     |
 | `RATE_LIMIT_KEY` exposed        | Rotate it; existing counter rows become unreachable and may be deleted                        |
 | Owner root key lost             | Restore from the protected owner credential backup; the server cannot reconstruct it          |
+| `RQLITE_ADMIN_PASSWORD` exposed | Rotate `RQLITE_ADMIN_USERNAME`/`RQLITE_ADMIN_PASSWORD` and redeploy immediately; this credential can run arbitrary SQL against the control database through `/operator/rqlite/`, so treat exposure as a full control-plane compromise until rotated |
 
 ## 8. Trust boundary
 
 The unlocked browser and the Northflank API are trusted. rqlite is trusted for
 authorization state and durability, but it receives only wrapped or encrypted
-owner key material, hashes, object paths for active shares, and counters. R2 is
-trusted for object durability but not plaintext confidentiality.
+owner key material, hashes (including hashes of object paths for active
+shares), and counters — never a plaintext object path. R2 is trusted for
+object durability but not plaintext confidentiality.
 
 The API holds Firebase verification configuration, signing secrets, and the
 parent R2 key. Lua reaches rqlite only through its loopback listener and needs no
