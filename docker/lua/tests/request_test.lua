@@ -91,6 +91,18 @@ t.test("require_method reports an origin that doesn't match UI_ORIGIN", function
   end)
 end)
 
+t.test("require_method reports a missing origin", function()
+  local captured = {}
+  local ngx_stub = fake_ngx({ method = "POST" })
+  with_ngx(ngx_stub, function()
+    t.with_stubs("txt.request", stubs(captured), function(request)
+      request.require_method("POST")
+      t.equal(captured[1].status, 403)
+      t.equal(captured[1].code, "origin_not_allowed")
+    end)
+  end)
+end)
+
 t.test("require_method accepts a matching method and origin without error", function()
   local captured = {}
   local ngx_stub = fake_ngx({

@@ -13,7 +13,7 @@ function M.require_method(expected)
     response.error(405, "method_not_allowed")
   end
   local origin = ngx.req.get_headers()["Origin"]
-  if origin and origin ~= config.get().ui_origin then
+  if origin ~= config.get().ui_origin then
     response.error(403, "origin_not_allowed")
   end
   return true
