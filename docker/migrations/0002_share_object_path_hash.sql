@@ -5,10 +5,10 @@
 --
 -- Existing shares rows are ephemeral (a 60-second presigned-URL lifetime)
 -- and are not preserved by this migration: an owner can immediately
--- re-share anything that was live. Apply this manually against an
--- already-provisioned rqlite instance through the Basic-authenticated
--- /operator/rqlite route; a fresh install gets this shape directly from
--- txt/rqlite_schema.py.
+-- re-share anything that was live. Apply this against an
+-- already-provisioned rqlite instance with `txt --update-rql
+-- rqlite_creds.json --verbose`; a fresh install gets this shape directly
+-- from txt/rqlite_schema.py.
 
 DROP TABLE IF EXISTS shares;
 
@@ -21,3 +21,6 @@ CREATE TABLE shares (
 ) STRICT;
 
 CREATE INDEX shares_state_created_at ON shares(state, created_at);
+
+INSERT INTO schema_migrations (version, name, applied_at)
+VALUES (2, 'share_object_path_hash', CAST(unixepoch('subsec') * 1000 AS INTEGER));

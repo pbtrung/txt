@@ -11,6 +11,7 @@ from .ingest import TxtIngester
 from .logger import Logger
 from .owner_init import OwnerInitializer
 from .replace_images import ImageReplacer
+from .rqlite_updater import RqliteUpdater
 from .turso_migration import OwnerMigrator
 
 
@@ -78,6 +79,12 @@ from .turso_migration import OwnerMigrator
     "clean_bucket_creds_path",
     metavar="CREDS_JSON",
     help="Delete R2 objects not referenced by the singleton owner's database",
+)
+@click.option(
+    "--update-rql",
+    "update_rql_creds_path",
+    metavar="CREDS_JSON",
+    help="Apply pending rqlite schema migrations under docker/migrations/",
 )
 @click.option(
     "--dry-run",
@@ -165,6 +172,10 @@ def _dispatch_clean_bucket(opts: dict, logger: Logger) -> None:
     _run_clean_bucket(opts["clean_bucket_creds_path"], opts["dry_run"], logger)
 
 
+def _dispatch_update_rql(opts: dict, logger: Logger) -> None:
+    _run_update_rql(opts["update_rql_creds_path"], logger)
+
+
 COMMAND_HANDLERS = (
     ("owner_creds_path", _dispatch_init_owner),
     ("migration_creds_paths", _dispatch_migrate),
@@ -173,6 +184,7 @@ COMMAND_HANDLERS = (
     ("ingest_src_dir", _dispatch_ingest),
     ("update_db_creds_path", _dispatch_update_db),
     ("clean_bucket_creds_path", _dispatch_clean_bucket),
+    ("update_rql_creds_path", _dispatch_update_rql),
 )
 
 
@@ -224,6 +236,10 @@ def _run_update_db(creds_path: str, local_db_dir: str | None, logger: Logger) ->
 def _run_clean_bucket(creds_path: str, dry_run: bool, logger: Logger) -> None:
     creds = load_owner_creds(creds_path)
     BucketCleaner(creds, creds_path, logger, dry_run=dry_run).run()
+
+
+def _run_update_rql(creds_path: str, logger: Logger) -> None:
+    RqliteUpdater(load_owner_creds(creds_path), logger).run()
 
 
 def run(argv: list | None = None) -> None:

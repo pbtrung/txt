@@ -118,7 +118,10 @@ writing either rqlite or the destination credential file.
 
 Schema migrations are ordered, idempotent, and applied through one transactional
 request. Owner initialization installs schema version 1 automatically when the
-database is empty. Application queries reject an absent, unknown, or incomplete
+database is empty. Every later `docker/migrations/NNNN_*.sql` file is applied
+to an already-provisioned instance with `txt --update-rql rqlite_creds.json`,
+which reads `schema_migrations` to skip anything already applied and runs
+`VACUUM` afterward. Application queries reject an absent, unknown, or incomplete
 schema rather than treating it as empty state.
 
 Share registration inserts an `active` row. Repeating the same capability and

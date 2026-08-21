@@ -19,8 +19,9 @@ This repo holds the txt document-storage system's design docs, its single-owner 
   - `logger.py` — `--verbose` progress logging.
   - `firebase_auth.py` — Firebase email/password sign-in, returns the uid.
   - `turso_api.py` and `libsql_client.py` — source-control adapters used to read and validate the Turso owner during `--migrate`, its only remaining consumer.
-  - `rqlite_client.py` — Basic-auth client for the external OpenResty operator route, including named parameters, BLOB arrays, and transactional batches.
+  - `rqlite_client.py` — Basic-auth client for the external OpenResty operator route, including named parameters, BLOB arrays, transactional batches, and a dedicated non-transactional `vacuum()` (SQLite forbids `VACUUM` inside a transaction).
   - `rqlite_schema.py` — idempotent schema-v1 statements installed automatically when owner initialization reaches an empty rqlite database.
+  - `rqlite_updater.py` — `RqliteUpdater`, the `--update-rql` implementation: applies every `docker/migrations/NNNN_*.sql` file not yet recorded in `schema_migrations` to an already-provisioned instance, in order, then vacuums.
   - `random_token.py` — base32-Crockford encoding, used for `db_path`/`db_prefix`/per-document key segments.
   - `leancrypto_wasm.py` — wasmtime binding to `sqlcipher/sqlcipher.wasm`'s bundled leancrypto build (AEAD, HKDF, KEM).
   - `crypto_blob.py` — docs/crypto.md's wrap/unwrap blob format, built on `leancrypto_wasm`.

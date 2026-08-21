@@ -159,6 +159,20 @@ that depends on a new local schema:
 txt --update-db owner_creds.json --local-db-dir ./data --verbose
 ```
 
+When a release adds a new `docker/migrations/NNNN_*.sql` file, apply it to the
+already-provisioned rqlite instance after the new gateway container is live
+(new gateway code and old rqlite schema are briefly incompatible either way,
+so do this immediately rather than leaving it for later):
+
+```sh
+txt --update-rql rqlite_creds.json --verbose
+```
+
+This applies every migration not yet recorded in `schema_migrations`, in
+order, each as its own transaction, then runs `VACUUM`. A fresh
+`--init-owner` install never needs this — it gets the current schema
+directly from `txt/rqlite_schema.py`.
+
 ### Browser unlock credential file
 
 After initialization or migration has populated `user_root_key`, create a

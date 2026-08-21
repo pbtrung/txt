@@ -40,6 +40,11 @@ class RqliteClient:
         body = [[sql, {}] for sql in statements]
         return self._request("/db/execute?transaction", body)
 
+    def vacuum(self) -> dict:
+        # SQLite forbids VACUUM inside a transaction, so this deliberately
+        # omits the ?transaction query parameter execute()/execute_batch() use.
+        return self._request("/db/execute", [["VACUUM", {}]])[0]
+
     def _request(self, path: str, statements: list) -> list[dict]:
         response = self.session.post(
             self.base_url + path,

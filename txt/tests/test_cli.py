@@ -141,6 +141,30 @@ def test_clean_bucket_passes_dry_run_and_verbose_to_cleaner(monkeypatch, tmp_pat
     assert "Logging bucket cleanup to run.log" in (tmp_path / "run.log").read_text()
 
 
+def test_update_rql_loads_creds_and_runs_updater(monkeypatch, tmp_path):
+    captured = {}
+
+    class FakeUpdater:
+        def __init__(self, creds, logger):
+            captured.update(creds=creds, logger=logger)
+
+        def run(self):
+            captured["ran"] = True
+
+    creds_path = tmp_path / "creds.json"
+    creds_path.write_text("{}")
+    creds = object()
+    monkeypatch.setattr(cli_module, "load_owner_creds", lambda path: creds)
+    monkeypatch.setattr(cli_module, "RqliteUpdater", FakeUpdater)
+
+    result = CliRunner().invoke(cli, ["--update-rql", str(creds_path), "--verbose"])
+
+    assert result.exit_code == 0
+    assert captured["creds"] is creds
+    assert captured["logger"].verbose_enabled is True
+    assert captured["ran"] is True
+
+
 def test_dry_run_without_clean_bucket_is_a_usage_error():
     result = CliRunner().invoke(cli, ["--dry-run"])
 

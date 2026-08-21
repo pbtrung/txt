@@ -113,6 +113,13 @@ keys, and re-encrypts the imported credential payload under the new UMK. Both
 credential files must sign in to the same Firebase UID. The command is
 idempotent.
 
+Apply pending rqlite schema migrations (`docker/migrations/NNNN_*.sql` not yet
+recorded in `schema_migrations`) to an already-provisioned instance:
+
+```sh
+txt --update-rql rqlite_creds.json --verbose
+```
+
 Migrate the owner's encrypted SQLCipher database when its local schema changes:
 
 ```sh

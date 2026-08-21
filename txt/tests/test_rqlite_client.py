@@ -83,6 +83,20 @@ def test_execute_batch_sends_one_transactional_request():
     ]
 
 
+def test_vacuum_omits_the_transaction_flag_sqlite_forbids_it_under():
+    session = FakeSession({"results": [{}]})
+    client = RqliteClient(
+        "https://api.example.com/operator/rqlite", "u", "p", session=session
+    )
+
+    client.vacuum()
+
+    url, options = session.calls[0]
+    assert url.endswith("/operator/rqlite/db/execute")
+    assert "transaction" not in url
+    assert options["json"] == [["VACUUM", {}]]
+
+
 def test_rqlite_statement_error_is_raised():
     session = FakeSession({"results": [{"error": "no such table: owner_control"}]})
     client = RqliteClient(
