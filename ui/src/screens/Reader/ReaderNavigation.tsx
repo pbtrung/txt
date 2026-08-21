@@ -257,13 +257,16 @@ function FontSizeMenu({
 }) {
   return (
     <MenuTrigger>
-      <Button className="btn btn-sm btn-outline btn-secondary" aria-label="Font size">
+      <Button
+        className="btn btn-sm btn-outline btn-secondary text-sm reader-font-trigger"
+        aria-label="Font size"
+      >
         {value}px
       </Button>
       <Popover
         placement="top start"
         offset={0}
-        className="menu rounded-box border border-base-300 bg-base-100 p-0 shadow-lg reader-font-menu"
+        className="menu rounded-box border border-base-300 bg-base-100 p-0 text-sm shadow-lg reader-font-menu"
       >
         <FontSizeOptions value={value} onSelect={onChange} />
       </Popover>
@@ -323,7 +326,7 @@ function PageInput({
       style={{ width: `calc(${String(page.total).length}ch + 1.5rem)` }}
       onChange={(target) => void renderer?.displayPage(target)}
     >
-      <Input className="input input-sm w-full text-right reader-page-input" />
+      <Input className="input input-sm w-full text-right text-sm reader-page-input" />
     </NumberField>
   );
 }

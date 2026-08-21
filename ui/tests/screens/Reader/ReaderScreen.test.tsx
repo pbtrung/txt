@@ -280,6 +280,7 @@ describe("ReaderScreen", () => {
     const epubHost = container.querySelector<HTMLElement>(".reader-epub-host")!;
 
     expect(viewport).toHaveStyle({ fontSize: "18px" });
+    expect(fontSize).toHaveClass("text-sm", "reader-font-trigger");
     expect(viewport).not.toHaveClass("px-2", "md:px-0");
     expect(epubHost).toHaveClass("h-full");
 
@@ -293,11 +294,13 @@ describe("ReaderScreen", () => {
     await userEvent.click(fontSize);
     const menu = screen.getByRole("menu", { name: "Font size" });
     expect(menu.parentElement).toHaveClass("reader-font-menu");
+    expect(menu.parentElement).toHaveClass("text-sm");
     expect(
       screen.getAllByRole("menuitemradio").map((option) => option.textContent),
     ).toEqual(["16px", "18px", "20px", "22px"]);
     expect(screen.getByRole("menuitemradio", { name: "18px" })).toHaveClass(
       "reader-font-option",
+      "text-sm",
       "bg-primary",
       "text-primary-content",
     );
@@ -367,6 +370,10 @@ describe("ReaderScreen", () => {
     act(() => callback({ current: 4, total: 12 }));
 
     expect(screen.getByRole("textbox", { name: "Current page" })).toHaveValue("4");
+    expect(screen.getByRole("textbox", { name: "Current page" })).toHaveClass(
+      "text-sm",
+    );
+    expect(screen.getByLabelText("Total pages 12")).toHaveClass("text-sm");
     expect(screen.getByLabelText("Total pages 12")).toHaveTextContent("/ 12");
   });
 
