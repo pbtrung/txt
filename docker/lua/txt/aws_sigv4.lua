@@ -37,7 +37,6 @@ local function signature(method, uri, query, headers, signed_headers, payload_ha
     uri,
     query,
     headers,
-    "",
     signed_headers,
     payload_hash,
   }, "\n")
