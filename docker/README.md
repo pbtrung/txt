@@ -88,13 +88,14 @@ R2_READ_WRITE_ACCESS_KEY_ID
 R2_READ_WRITE_SECRET_ACCESS_KEY
 R2_TICKET_SECRET
 RATE_LIMIT_KEY
+SHARE_GRANT_KEY
 SHARE_URL_TTL_SECONDS=60
 RQLITE_ADMIN_USERNAME
 RQLITE_ADMIN_PASSWORD
 ```
 
-`R2_TICKET_SECRET` and `RATE_LIMIT_KEY` must be independent canonical padded
-base64 values containing at least 32 random bytes. `DNS_RESOLVER` is optional
+`R2_TICKET_SECRET`, `RATE_LIMIT_KEY`, and `SHARE_GRANT_KEY` must be independent
+canonical padded base64 values containing at least 32 random bytes. `DNS_RESOLVER` is optional
 and defaults to `1.1.1.1`. No application-side `RQLITE_URL` or rqlite password
 is needed by Lua because it reaches the loopback-only rqlite listener. The two
 `RQLITE_ADMIN_*` secrets protect only the operator route used by the Python CLI

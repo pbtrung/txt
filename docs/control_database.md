@@ -65,11 +65,11 @@ CREATE TABLE owner_control (
 ) STRICT;
 
 CREATE TABLE shares (
-    share_id_hash BLOB    PRIMARY KEY CHECK (length(share_id_hash) = 32),
-    object_path   TEXT    NOT NULL UNIQUE,
-    state         TEXT    NOT NULL CHECK (state IN ('active', 'deleting')),
-    created_at    INTEGER NOT NULL,
-    updated_at    INTEGER NOT NULL
+    share_id_hash    BLOB    PRIMARY KEY CHECK (length(share_id_hash) = 32),
+    object_path_hash BLOB    NOT NULL UNIQUE CHECK (length(object_path_hash) = 32),
+    state            TEXT    NOT NULL CHECK (state IN ('active', 'deleting')),
+    created_at       INTEGER NOT NULL,
+    updated_at       INTEGER NOT NULL
 ) STRICT;
 
 CREATE INDEX shares_state_created_at
@@ -90,9 +90,12 @@ ON rate_limits(window_start);
 `owner_control` has no role, type, or relationship tables. The `singleton`
 constraint makes the one-owner invariant structural rather than conventional.
 
-`shares.share_id_hash` is `SHA-256(raw_share_id)`. The raw capability and the
-share content key are never stored server-side. `object_path` is present because
-the API must sign that exact R2 GET request; it is not secret key material.
+`shares.share_id_hash` is `SHA-256(raw_share_id)`. `shares.object_path_hash` is
+`SHA-256(exact R2 object path)`. The raw capability, the share content key, and
+the plaintext object path are never stored server-side: the API needs the exact
+path only transiently, to sign a GET or issue a DELETE, and recovers it for
+that one request by decrypting the caller-supplied grant described in
+`docs/sharing.md` §4.4 rather than reading it back from this table.
 
 ## 3. Owner initialization and import
 

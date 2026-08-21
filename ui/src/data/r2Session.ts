@@ -46,7 +46,7 @@ export class R2Session {
     sharePrefix: string,
     sharePath: string,
     shareId: string,
-  ): Promise<void> {
+  ): Promise<string> {
     return this.api.registerShare({
       dbPath: this.dbPath,
       dbPrefix: this.dbPrefix,
@@ -56,8 +56,18 @@ export class R2Session {
     });
   }
 
-  deleteShareRegistration(shareId: string): Promise<void> {
-    return this.api.deleteShare(shareId);
+  deleteShareRegistration(
+    sharePrefix: string,
+    sharePath: string,
+    shareId: string,
+  ): Promise<void> {
+    return this.api.deleteShare({
+      dbPath: this.dbPath,
+      dbPrefix: this.dbPrefix,
+      sharePrefix,
+      sharePath,
+      shareId,
+    });
   }
 
   apiBaseUrl(): string {

@@ -12,10 +12,13 @@ const BASE64URL = /^[A-Za-z0-9_-]+$/;
 
 export const SHARED_READER_LOAD_TOTAL_STEPS = 4;
 
+const MAX_GRANT_LENGTH = 512;
+
 export interface SharedReference {
   id: string;
   contentKey: Uint8Array;
   apiBaseUrl: string;
+  grant: string;
 }
 
 export function parseSharedReference(hash: string): SharedReference | null {
@@ -23,7 +26,16 @@ export function parseSharedReference(hash: string): SharedReference | null {
   const id = params.get("id");
   const key = params.get("key");
   const api = params.get("api");
-  if (!id || !key || !api || !BASE64URL.test(id)) {
+  const grant = params.get("grant");
+  if (
+    !id ||
+    !key ||
+    !api ||
+    !grant ||
+    !BASE64URL.test(id) ||
+    !BASE64URL.test(grant) ||
+    grant.length > MAX_GRANT_LENGTH
+  ) {
     return null;
   }
   try {
@@ -32,7 +44,7 @@ export function parseSharedReference(hash: string): SharedReference | null {
     const apiBaseUrl = parseApiOrigin(api);
     return shareId.byteLength === SHARE_ID_BYTES &&
       contentKey.byteLength === CONTENT_KEY_BYTES
-      ? { id, contentKey, apiBaseUrl }
+      ? { id, contentKey, apiBaseUrl, grant }
       : null;
   } catch {
     return null;
@@ -48,7 +60,7 @@ export async function loadSharedReaderDocument(
     const response = await fetch(`${reference.apiBaseUrl}/v1/shared-url`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ share_id: reference.id }),
+      body: JSON.stringify({ share_id: reference.id, grant: reference.grant }),
       signal,
     });
     if (!response.ok) {

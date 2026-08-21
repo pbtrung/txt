@@ -18,6 +18,7 @@ share capability for a short-lived read URL as described in `docs/sharing.md`.
 | `R2_ENDPOINT`, `R2_BUCKET`, `R2_REGION`                          | S3-compatible R2 destination                                                                |
 | `R2_READ_WRITE_ACCESS_KEY_ID`, `R2_READ_WRITE_SECRET_ACCESS_KEY` | Server-held parent key used to mint owner credentials and presign exact shared-object reads |
 | `RATE_LIMIT_KEY`                                                 | Independent 32-byte secret used to hash rate-limit subjects such as client addresses        |
+| `SHARE_GRANT_KEY`                                                | Independent 32-byte secret used to encrypt/decrypt shared-object path grants (docs/sharing.md) |
 | `UI_ORIGIN`                                                      | Exact browser origin accepted by the API and operator-proxy CORS                            |
 
 OpenResty and rqlite run in the same container. Lua connects only to
@@ -35,9 +36,9 @@ the application. Exact-origin CORS prevents another browser origin from reading
 operator responses, but it does not replace Basic authentication for
 non-browser clients.
 
-`R2_TICKET_SECRET`, `RATE_LIMIT_KEY`, and the R2 secret access key are independent
-secrets. The API service holds them; the browser never does. Secret rotation is
-covered in §7.
+`R2_TICKET_SECRET`, `RATE_LIMIT_KEY`, `SHARE_GRANT_KEY`, and the R2 secret access
+key are independent secrets. The API service holds them; the browser never does.
+Secret rotation is covered in §7.
 
 The rqlite schema and access rules are in `docs/control_database.md`. The API
 never connects directly to rqlite's SQLite file.
@@ -279,6 +280,7 @@ job.
 | Firebase session revoked        | New `/v1/keys` calls fail; an existing binding ticket remains valid until its fixed expiry    |
 | Signing private key exposed     | Re-provision the signing key and rotate `R2_TICKET_SECRET` so existing tickets stop verifying |
 | `R2_TICKET_SECRET` exposed      | Rotate it and redeploy; every outstanding ticket becomes invalid                              |
+| `SHARE_GRANT_KEY` exposed       | Rotate it and redeploy; every outstanding share URL's grant stops decrypting and must be re-copied |
 | Temporary R2 credential exposed | It expires after at most 15 minutes                                                           |
 | Parent R2 credential exposed    | Rotate it immediately and redeploy; already-issued temporary credentials expire naturally     |
 | `RATE_LIMIT_KEY` exposed        | Rotate it; existing counter rows become unreachable and may be deleted                        |

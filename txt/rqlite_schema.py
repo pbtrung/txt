@@ -27,7 +27,7 @@ CONTROL_SCHEMA = (
     """
     CREATE TABLE IF NOT EXISTS shares (
         share_id_hash BLOB PRIMARY KEY CHECK (length(share_id_hash) = 32),
-        object_path TEXT NOT NULL UNIQUE,
+        object_path_hash BLOB NOT NULL UNIQUE CHECK (length(object_path_hash) = 32),
         state TEXT NOT NULL CHECK (state IN ('active', 'deleting')),
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL

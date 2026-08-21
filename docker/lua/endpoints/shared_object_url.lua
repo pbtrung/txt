@@ -9,7 +9,10 @@ if not request.require_method("POST") then
   return response.preflight("POST")
 end
 local body = request.json(512)
-local id = body and shares.parse_id(body)
+local id, object_path
+if body then
+  id, object_path = shares.parse_object_request(body)
+end
 if not id then
   return response.error(400, "malformed_share")
 end
@@ -24,12 +27,12 @@ if not allowed then
   return response.error(429, "rate_limit_exceeded")
 end
 
-local object_path, err = shares.active_object(id)
-if object_path == nil then
+local active, err = shares.active_object(id, object_path)
+if active == nil then
   ngx.log(ngx.ERR, "share lookup failed: ", err)
   return response.error(503, "share_registry_unavailable")
 end
-if object_path == false then
+if not active then
   return response.error(404, "share_not_found")
 end
 

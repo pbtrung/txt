@@ -80,17 +80,30 @@ export async function deleteBookShare(
   onProgress?.("Marking share for deletion");
   await session.database.mutate(setShareState(share.shareId, "deleting"));
   onProgress?.("Deleting shared copy");
-  await session.storage.deleteShareRegistration(base64Url(share.shareId));
+  await session.storage.deleteShareRegistration(
+    toBase32Crockford(share.prefix),
+    toBase32Crockford(share.path),
+    base64Url(share.shareId),
+  );
   onProgress?.("Removing share details");
   await session.database.mutate(deleteShare(share.shareId));
 }
 
-export function shareUrl(session: VaultSession, share: BookShare): string {
+export async function shareUrl(
+  session: VaultSession,
+  share: BookShare,
+): Promise<string> {
+  const grant = await session.storage.registerShare(
+    toBase32Crockford(share.prefix),
+    toBase32Crockford(share.path),
+    base64Url(share.shareId),
+  );
   const url = new URL("/shared", window.location.origin);
   url.hash = new URLSearchParams({
     id: base64Url(share.shareId),
     key: base64Url(share.contentKey),
     api: session.storage.apiBaseUrl(),
+    grant,
   }).toString();
   return url.toString();
 }

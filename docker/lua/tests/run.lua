@@ -7,6 +7,7 @@ require("tests.owner_r2_credentials_test")
 require("tests.aws_sigv4_test")
 require("tests.rate_limit_test")
 require("tests.shares_test")
+require("tests.share_grant_test")
 require("tests.firebase_id_token_test")
 require("tests.codec_test")
 

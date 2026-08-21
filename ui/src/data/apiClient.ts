@@ -86,8 +86,8 @@ export class ApiClient {
     return parseR2CredentialPair(await response.json());
   }
 
-  async registerShare(request: ShareRegistration): Promise<void> {
-    await withNetworkRetries(async (signal) => {
+  async registerShare(request: ShareRegistration): Promise<string> {
+    return withNetworkRetries(async (signal) => {
       const response = await this.authenticatedRequest(
         "/v1/shares",
         "POST",
@@ -97,15 +97,17 @@ export class ApiClient {
       if (!response.ok) {
         throw new Error(`could not register share: ${response.status}`);
       }
+      const data = objectRecord(await response.json(), "share registration response");
+      return stringField(data, "grant", "share registration response");
     });
   }
 
-  async deleteShare(shareId: string): Promise<void> {
+  async deleteShare(request: ShareRegistration): Promise<void> {
     await withNetworkRetries(async (signal) => {
       const response = await this.authenticatedRequest(
         "/v1/shares",
         "DELETE",
-        { share_id: shareId },
+        shareBody(request),
         signal,
       );
       if (!response.ok) throw new Error(`could not delete share: ${response.status}`);

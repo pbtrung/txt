@@ -183,7 +183,11 @@ describe("ApiClient shares", () => {
   it("registers paths and deletes by capability ID", async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce({ ok: true, status: 201 })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 201,
+        json: async () => ({ registered: true, grant: "grant-envelope" }),
+      })
       .mockResolvedValueOnce({ ok: true, status: 204 });
     vi.stubGlobal("fetch", fetchMock);
     const client = new ApiClient(tokenProvider(), API);
@@ -195,23 +199,22 @@ describe("ApiClient shares", () => {
       shareId: "A".repeat(43),
     };
 
-    await client.registerShare(request);
-    await client.deleteShare(request.shareId);
+    await expect(client.registerShare(request)).resolves.toBe("grant-envelope");
+    await client.deleteShare(request);
 
     expect(fetchMock.mock.calls.map(([url, init]) => [url, init.method])).toEqual([
       [`${API}/v1/shares`, "POST"],
       [`${API}/v1/shares`, "DELETE"],
     ]);
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+    const expectedBody = {
       db_path: DB_PATH,
       db_prefix: DB_PREFIX,
       share_prefix: request.sharePrefix,
       share_path: request.sharePath,
       share_id: request.shareId,
-    });
-    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({
-      share_id: request.shareId,
-    });
+    };
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual(expectedBody);
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual(expectedBody);
   });
 });
 

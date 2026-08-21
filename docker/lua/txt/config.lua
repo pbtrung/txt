@@ -14,6 +14,7 @@ local REQUIRED = {
   "R2_READ_WRITE_SECRET_ACCESS_KEY",
   "R2_TICKET_SECRET",
   "RATE_LIMIT_KEY",
+  "SHARE_GRANT_KEY",
 }
 
 local function required(name)
@@ -65,6 +66,7 @@ local function load()
     r2_secret_access_key = required("R2_READ_WRITE_SECRET_ACCESS_KEY"),
     r2_ticket_secret = secret("R2_TICKET_SECRET", 32),
     rate_limit_key = secret("RATE_LIMIT_KEY", 32),
+    share_grant_key = secret("SHARE_GRANT_KEY", 32),
     share_url_ttl = ttl,
   }
 end
