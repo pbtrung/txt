@@ -1,4 +1,4 @@
-// The UI and its shared TypeScript use this flat config.
+// The UI's TypeScript uses this flat config.
 // Formatting is Prettier's job (`npm run format`), not this config's --
 // only typescript-eslint's plain `recommended` (lint rules, not the
 // `stylistic` variant) is used, so the two tools don't fight each other.
@@ -18,7 +18,7 @@ export default tseslint.config(
     ],
   },
   {
-    files: ["shared/**/*.ts", "ui/**/*.{ts,tsx}"],
+    files: ["ui/**/*.{ts,tsx}"],
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     languageOptions: {
       globals: { ...globals.browser, ...globals.node },

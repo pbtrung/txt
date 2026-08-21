@@ -1,11 +1,11 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { FirebaseTokenProvider } from "../../src/auth/firebaseSignIn";
+import { ApiClient, type R2SigningIdentity } from "../../src/data/apiClient";
 import {
   R2_TICKET_PROOF_VERSION,
   canonicalR2TicketProof,
-} from "../../../shared/r2Proof";
-import type { FirebaseTokenProvider } from "../../src/auth/firebaseSignIn";
-import { ApiClient, type R2SigningIdentity } from "../../src/data/apiClient";
+} from "../../src/data/r2Proof";
 import { fromBase64 } from "../../src/util/base64";
 
 const API = "https://api.example.com";

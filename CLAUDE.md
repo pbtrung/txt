@@ -48,9 +48,9 @@ This repo holds the txt document-storage system's design docs, its single-owner 
 
 - Functions stay ≤15 lines; use a class (not free functions) for anything holding state — a client, an engine, a session.
 - Reuse the existing generic pieces (`RqliteClient`, `LibsqlClient`, `TursoClient`, `CryptoBlob`, `FirebaseAuth`, `OwnerInitializer`, `R2Client`, `SqliteEngine`) instead of duplicating HTTP, crypto, or storage logic in a new command.
-- UI and shared TypeScript are formatted with Prettier at 88 columns (`.prettierrc.json`); run `npm run format` before committing UI changes. `.prettierignore` excludes generated/vendored files and the Python tree.
+- UI TypeScript is formatted with Prettier at 88 columns (`.prettierrc.json`); run `npm run format` before committing UI changes. `.prettierignore` excludes generated/vendored files and the Python tree.
 - The Python tree is linted and formatted with ruff (`[tool.ruff]` in `pyproject.toml`, 88 columns to match the TS side): `python3 -m ruff check .` and `python3 -m ruff format .` before committing.
-- `ui/` and `shared/` are linted with ESLint (`eslint.config.js`): `npm run lint` before committing UI changes.
+- `ui/` is linted with ESLint (`eslint.config.js`): `npm run lint` before committing UI changes.
 - OpenResty Lua targets the current LuaJIT language supported by the container. Run `npm run lua:format` and `npm run lua:check` before committing Lua changes.
 - The project's own TypeScript is 7.x (`typescript7`, aliased since typescript-eslint doesn't support TS 7 yet); a plain `typescript@6.0.3` devDependency exists solely to satisfy typescript-eslint's own peer range. `npm run tsc` (used by every `*:typecheck`/`ui:build` script) always resolves to the real 7.x compiler, never the 6.x one — the alias exists only so both can coexist under `node_modules` without conflict.
 - Docs (this file, README, docs/*) describe current behavior and supported migration inputs only — no commit hashes or narrated development history.

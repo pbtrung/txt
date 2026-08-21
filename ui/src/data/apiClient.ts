@@ -1,12 +1,12 @@
-import {
-  P521_SIGNATURE_BYTES,
-  R2_TICKET_PROOF_VERSION,
-  canonicalR2TicketProof,
-} from "../../../shared/r2Proof";
 import type { FirebaseTokenProvider } from "../auth/firebaseSignIn";
 import { toBase64 } from "../util/base64";
 import { objectRecord, stringField } from "../util/validation";
 import { withNetworkRetries } from "./networkRequest";
+import {
+  P521_SIGNATURE_BYTES,
+  R2_TICKET_PROOF_VERSION,
+  canonicalR2TicketProof,
+} from "./r2Proof";
 
 const PROOF_LIFETIME_SECONDS = 45;
 
