@@ -191,7 +191,7 @@ revoked shared objects. Native rqlite backups use the separate credentials in
 
 Configure bucket CORS for the exact UI origin:
 
-- methods: `GET`, `PUT`, `HEAD`;
+- methods: `GET`, `PUT`, `DELETE`, `HEAD`;
 - request headers: `Range`, `If-Match`, `If-None-Match`, `Content-Type`, and the
   required SigV4 headers;
 - exposed headers: `ETag`, `Content-Length`, `Content-Range`, `Accept-Ranges`;

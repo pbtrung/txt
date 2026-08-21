@@ -167,9 +167,11 @@ remain disabled, and section frames use a restrictive content-security policy.
 ## 7. R2 CORS and headers
 
 The R2 bucket allows the exact `UI_ORIGIN` to perform shared `GET` and owner
-`GET`/`PUT` requests. It allows `Range`, conditional-write headers, and the
-SigV4 headers emitted by the client, and exposes `ETag`, `Content-Length`,
-`Content-Range`, and `Accept-Ranges`. Wildcard origins are forbidden.
+`GET`/`PUT`/`DELETE` requests — the owner's browser deletes a revoked share's
+object directly against R2 using the `db_prefix` credential. It allows
+`Range`, conditional-write headers, and the SigV4 headers emitted by the
+client, and exposes `ETag`, `Content-Length`, `Content-Range`, and
+`Accept-Ranges`. Wildcard origins are forbidden.
 
 The shared object response uses `Content-Type: application/octet-stream` and
 `Cache-Control: private, no-store`. Presigned URLs and capabilities must not be
