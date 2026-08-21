@@ -91,22 +91,6 @@ Re-running provisioning verifies the UID, handle/path bindings, KEM sizes, and
 P-521 keypair without replacing any owner material. If `owner_control` already
 contains a different UID or incompatible material, provisioning aborts.
 
-To preserve an existing Turso library identity, run:
-
-```sh
-txt --migrate turso_creds.json rqlite_creds.json --verbose --dry-run
-txt --migrate turso_creds.json rqlite_creds.json --verbose
-```
-
-The source and destination Firebase logins must resolve to the same UID. The
-command validates and decrypts the source owner record, preserves the complete
-credential payload—including `db_master_key`, `db_path`, and `db_prefix`—and
-encrypts it under the rqlite owner's UMK. With no destination row it performs
-owner initialization and generates a fresh UMK, composite KEM keypair, and
-P-521 signing keypair. With an existing destination row it preserves that UMK
-and those keypairs. The dry run performs authentication and validation but
-writes neither rqlite nor the destination credential file.
-
 There is no owner list, invitation, deprovisioning workflow, delegated access,
 or recovery copy belonging to another account. Recovery requires the owner's
 credential file, its `user_root_key`, the rqlite backup, and the R2 objects.

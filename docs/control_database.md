@@ -97,22 +97,14 @@ path only transiently, to sign a GET or issue a DELETE, and recovers it for
 that one request by decrypting the caller-supplied grant described in
 `docs/sharing.md` §4.4 rather than reading it back from this table.
 
-## 3. Owner initialization and import
+## 3. Owner initialization
 
-`txt --init-owner rqlite_creds.json` creates the singleton record directly for
-a new library. `txt --migrate turso_creds.json rqlite_creds.json` is the
-one-time import path for an existing library. Migration reads only the source
-owner's self-owned control rows, validates their handle and path bindings, and
-decrypts the source credential payload.
-
-The destination always uses newly generated rqlite-era key material when it is
-created: a new UMK, composite KEM keypair, and P-521 signing keypair. The
-imported `user_handle`, `display_name`, `db_master_key`, `db_path`, and
-`db_prefix` are re-encrypted under that UMK, so existing R2 objects remain at
-their current paths and retain their database key. If the destination singleton
-already exists, migration preserves its UMK and keypairs. Source and destination
-Firebase UIDs must match. `--dry-run` performs all reads and validation without
-writing either rqlite or the destination credential file.
+`txt --init-owner rqlite_creds.json` creates the singleton record: a fresh UMK,
+composite KEM keypair, P-521 signing keypair, and the initial encrypted
+credential payload (`user_handle`, `display_name`, `db_master_key`, `db_path`,
+`db_prefix`). Repeating the command validates the existing row against the
+same creds file rather than replacing it; a different Firebase UID is
+rejected.
 
 ## 4. Atomic operations
 

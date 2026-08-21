@@ -4,17 +4,6 @@ import secrets
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
-REQUIRED_FIELDS = [
-    "turso_org_token",
-    "turso_ctl_db_name",
-    "turso_ctl_db_url",
-    "firebase_email",
-    "firebase_password",
-    "firebase_api_key",
-]
-
-OPTIONAL_FIELDS = ["display_name", "user_root_key"]
-
 OWNER_REQUIRED_FIELDS = [
     "rqlite_admin_username",
     "rqlite_admin_password",
@@ -42,19 +31,6 @@ class R2Config:
 
 
 @dataclass
-class Creds:
-    turso_org_token: str
-    turso_ctl_db_name: str
-    turso_ctl_db_url: str
-    firebase_email: str
-    firebase_password: str
-    firebase_api_key: str
-    display_name: str = ""
-    user_root_key: str = ""
-    r2_config: R2Config | None = None
-
-
-@dataclass
 class OwnerCreds:
     rqlite_admin_username: str
     rqlite_admin_password: str
@@ -69,17 +45,6 @@ class OwnerCreds:
     user_root_key: str
 
 
-def load_creds(path: str) -> Creds:
-    data = _read_json(path)
-    missing = [k for k in REQUIRED_FIELDS if k not in data]
-    if missing:
-        raise ValueError(f"Missing fields in creds.json: {', '.join(missing)}")
-    fields = REQUIRED_FIELDS + OPTIONAL_FIELDS
-    creds = Creds(**{k: data.get(k, "") for k in fields})
-    creds.r2_config = _parse_r2_config(data.get("r2_config"))
-    return creds
-
-
 def load_owner_creds(path: str) -> OwnerCreds:
     data = _read_json(path)
     missing = [key for key in OWNER_REQUIRED_FIELDS if key not in data]
@@ -88,10 +53,6 @@ def load_owner_creds(path: str) -> OwnerCreds:
     values = {key: data[key] for key in OWNER_REQUIRED_FIELDS if key != "r2_config"}
     values["rqlite_operator_url"] = _operator_url(values["rqlite_operator_url"])
     return OwnerCreds(**values, r2_config=_require_r2_config(data["r2_config"]))
-
-
-def _parse_r2_config(value: dict | None) -> R2Config | None:
-    return R2Config(**value) if value else None
 
 
 def _require_r2_config(value: object) -> R2Config:
@@ -117,9 +78,7 @@ def _operator_url(value: object) -> str:
     return value
 
 
-def ensure_user_root_key[RootKeyCreds: (Creds, OwnerCreds)](
-    path: str, creds: RootKeyCreds
-) -> RootKeyCreds:
+def ensure_user_root_key(path: str, creds: OwnerCreds) -> OwnerCreds:
     if creds.user_root_key:
         return creds
     creds.user_root_key = base64.b64encode(secrets.token_bytes(256)).decode()

@@ -64,7 +64,7 @@ npm install
 ## Owner provisioning
 
 Provisioning is a one-time, idempotent operation. The exact credential-file
-shape and field descriptions are in [the deployment guide](docs/deployment.md#3-owner-initialization-and-migration).
+shape and field descriptions are in [the deployment guide](docs/deployment.md#3-owner-initialization).
 `rqlite_operator_url` is the externally reachable Basic-auth operator route,
 for example `https://api.example.com/operator/rqlite`; it is not rqlite's
 loopback listener. Leave `user_root_key` empty on the first run. Provisioning
@@ -98,20 +98,6 @@ the browser fields:
 `rqlite_operator_url` in the provisioning file. The UI retains the selected
 file's credentials and all decrypted material only in page memory; lock or
 reload before leaving the device. Do not commit or upload this file.
-
-To preserve an existing Turso owner's database paths, database key, display
-name, and private handle, preview and then run the one-time migration:
-
-```sh
-txt --migrate turso_creds.json rqlite_creds.json --verbose --dry-run
-txt --migrate turso_creds.json rqlite_creds.json --verbose
-```
-
-The migration validates and decrypts the Turso owner record, creates the rqlite
-owner automatically when absent, generates a fresh UMK and fresh KEM/signing
-keys, and re-encrypts the imported credential payload under the new UMK. Both
-credential files must sign in to the same Firebase UID. The command is
-idempotent.
 
 Apply pending rqlite schema migrations (`docker/migrations/NNNN_*.sql` not yet
 recorded in `schema_migrations`) to an already-provisioned instance:

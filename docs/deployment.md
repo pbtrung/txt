@@ -19,7 +19,7 @@ and protected rqlite backups.
 5. Create a public Northflank route only for OpenResty port `8080`. Do not route
    Raft port `4002`.
 6. Configure liveness at `/health/live` and readiness at `/health/ready`.
-7. Run owner initialization or migration through the Basic-authenticated
+7. Run owner initialization through the Basic-authenticated
    `/operator/rqlite/` route. The CLI installs schema version 1 automatically
    when rqlite is empty.
 
@@ -38,7 +38,7 @@ token signing certificates and for authenticated R2 HTTPS operations.
 `/health/ready` checks that rqlite can answer a simple query; it intentionally
 does not require `schema_migrations` to exist, because Northflank must route the
 operator request that installs the first schema. Application endpoints remain
-unusable until `--init-owner` or `--migrate` completes.
+unusable until `--init-owner` completes.
 
 ## 2. Runtime configuration
 
@@ -80,7 +80,7 @@ and trusted-proxy handling before enabling the public route. Only Northflank's
 own forwarding header is accepted as the public client address used for rate
 limiting.
 
-## 3. Owner initialization and migration
+## 3. Owner initialization
 
 Create `rqlite_creds.json` with this exact shape:
 
@@ -124,7 +124,7 @@ Keep this file outside the repository and back it up securely. Leave
 `asset_base_url` is the deployed UI origin. Every `r2_config` property must be
 present.
 
-For a new library with no Turso control record, initialize the owner directly:
+Initialize the owner:
 
 ```sh
 txt --init-owner rqlite_creds.json --verbose
@@ -132,27 +132,10 @@ txt --init-owner rqlite_creds.json --verbose
 
 Verify that rqlite contains one `owner_control` row with `singleton = 1` and that
 its Firebase UID equals `OWNER_FIREBASE_UID`. There is no additional account
-initialization.
+initialization. Repeating the command is safe: it validates existing owner
+material rather than replacing it.
 
-For an existing Turso-backed owner, do not initialize a placeholder owner
-first. Preview and then run the migration with the existing Turso credential
-file as the source and the new rqlite credential file as the destination:
-
-```sh
-txt --migrate turso_creds.json rqlite_creds.json --verbose --dry-run
-txt --migrate turso_creds.json rqlite_creds.json --verbose
-```
-
-Both files must authenticate the same Firebase UID. The command validates the
-source handle and path hashes, decrypts the self-owned `cred_store.content`, and
-preserves its `user_handle`, `display_name`, `db_master_key`, `db_path`, and
-`db_prefix`. If `owner_control` does not exist, migration performs owner
-initialization itself with a fresh UMK, composite KEM keypair, and P-521 signing
-keypair. If it already exists, migration preserves its UMK and keypairs and only
-rewraps the imported payload. Repeating the migration is safe; `--dry-run`
-neither writes rqlite nor fills `user_root_key`.
-
-Initialize or migrate the owner's encrypted R2 database before deploying a UI
+Initialize or update the owner's encrypted R2 database before deploying a UI
 that depends on a new local schema:
 
 ```sh
@@ -175,7 +158,7 @@ directly from `txt/rqlite_schema.py`.
 
 ### Browser unlock credential file
 
-After initialization or migration has populated `user_root_key`, create a
+After initialization has populated `user_root_key`, create a
 separate owner-only UI file with exactly this shape:
 
 ```json

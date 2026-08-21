@@ -15,10 +15,9 @@ This repo holds the txt document-storage system's design docs, its single-owner 
 
 - `txt.py` — thin entry point; also runnable as the installed `txt` console script.
 - `txt/` — one module per concern:
-  - `creds.py` — loads the exact rqlite `OwnerCreds` file, loads Turso-source credentials for migration/maintenance, and generates `user_root_key` when empty.
+  - `creds.py` — loads the exact rqlite `OwnerCreds` file and generates `user_root_key` when empty.
   - `logger.py` — `--verbose` progress logging.
   - `firebase_auth.py` — Firebase email/password sign-in, returns the uid.
-  - `turso_api.py` and `libsql_client.py` — source-control adapters used to read and validate the Turso owner during `--migrate`, its only remaining consumer.
   - `rqlite_client.py` — Basic-auth client for the external OpenResty operator route, including named parameters, BLOB arrays, transactional batches, and a dedicated non-transactional `vacuum()` (SQLite forbids `VACUUM` inside a transaction).
   - `rqlite_schema.py` — idempotent schema-v1 statements installed automatically when owner initialization reaches an empty rqlite database.
   - `rqlite_updater.py` — `RqliteUpdater`, the `--update-rql` implementation: applies every `docker/migrations/NNNN_*.sql` file not yet recorded in `schema_migrations` to an already-provisioned instance, in order, then vacuums.
@@ -27,7 +26,6 @@ This repo holds the txt document-storage system's design docs, its single-owner 
   - `crypto_blob.py` — docs/crypto.md's wrap/unwrap blob format, built on `leancrypto_wasm`.
   - `sqlite_engine.py` — real SQLCipher read/write against `sqlcipher.wasm`: an in-memory `sqlite3_vfs` (function pointers installed into the wasm indirect function table via `sqlite3_js_vfs_register`) backs the whole database in a Python `bytearray`, since this build has no working native filesystem VFS and `:memory:` connections never engage the codec. Keys are 256–8192 raw bytes (`sqlite3_key`), not a passphrase.
   - `owner_init.py` — `OwnerInitializer`, the idempotent `--init-owner` implementation. It installs an absent rqlite schema, creates exactly one `owner_control` row, and validates existing owner material. Its `load_current_owner()` (sign in, read the singleton row, validate, decrypt) is the shared entry point `ingest.py`, `db_updater.py`, and `bucket_cleaner.py` reuse to reach the owner's account.
-  - `turso_migration.py` — `OwnerMigrator`, the `--migrate TURSO_CREDS_JSON RQLITE_CREDS_JSON` implementation. It validates the source owner, preserves the credential payload, creates fresh destination keys when needed, and supports a write-free `--dry-run`.
   - `r2_client.py` — `R2Client`, a thin boto3/S3-compatible wrapper for R2 (get/put object, list keys, list common prefixes, delete keys).
   - `opf.py` — Calibre `.opf` sidecar detection and `<metadata>` parsing; `ingest.py` extracts just `title`/`authors`/`subjects`/`publisher` from it into `txt.catalog` (docs/data_model.md §2.1).
   - `ingest.py` — `TxtIngester`, the `--ingest` command: uploads each EPUB in a directory as one R2 object, keeps a resumable local SQLCipher working copy, and dedups against already-recorded filenames.
@@ -36,7 +34,7 @@ This repo holds the txt document-storage system's design docs, its single-owner 
   - `replace_images.py` — `--replace-images`: replaces EPUB images with placeholders and constrains their display size; unrelated to the rest of this package's account/storage logic.
   - `edit_epub.py` — `--edit-epub`: splits EPUB spine items into soft 1.2 MB parts, rewrites title/series metadata and sidecars, then applies the same image replacement rules as `--replace-images`.
   - `cli.py` — the click entry point.
-- `txt/tests/` — pytest. Crypto and SQLCipher tests run against the real wasm engine (`txt/tests/conftest.py`'s session-scoped `engine` fixture); everything else fakes only the network boundary (Firebase, Turso/libsql, rqlite, R2) — never the crypto itself.
+- `txt/tests/` — pytest. Crypto and SQLCipher tests run against the real wasm engine (`txt/tests/conftest.py`'s session-scoped `engine` fixture); everything else fakes only the network boundary (Firebase, rqlite, R2) — never the crypto itself.
 - `sqlcipher/` — the prebuilt SQLCipher+leancrypto wasm module `leancrypto_wasm.py`/`sqlite_engine.py` load. Not built from source in this repo.
 - `creds/` — local, gitignored credential files. Never commit these. Never run a command against a real one yourself — hand it to the user to run.
 - `docker/` — the deployable OpenResty and rqlite container. `lua/endpoints/` contains HTTP entry points, `lua/txt/` contains reusable gateway modules, `lua/tests/` contains the dependency-light test suite, and `migrations/` owns the control database schema.
@@ -48,7 +46,7 @@ This repo holds the txt document-storage system's design docs, its single-owner 
 ## Conventions
 
 - Functions stay ≤15 lines; use a class (not free functions) for anything holding state — a client, an engine, a session.
-- Reuse the existing generic pieces (`RqliteClient`, `LibsqlClient`, `TursoClient`, `CryptoBlob`, `FirebaseAuth`, `OwnerInitializer`, `R2Client`, `SqliteEngine`) instead of duplicating HTTP, crypto, or storage logic in a new command.
+- Reuse the existing generic pieces (`RqliteClient`, `CryptoBlob`, `FirebaseAuth`, `OwnerInitializer`, `R2Client`, `SqliteEngine`) instead of duplicating HTTP, crypto, or storage logic in a new command.
 - UI TypeScript is formatted with Prettier at 88 columns (`.prettierrc.json`); run `npm run format` before committing UI changes. `.prettierignore` excludes generated/vendored files and the Python tree.
 - The Python tree is linted and formatted with ruff (`[tool.ruff]` in `pyproject.toml`, 88 columns to match the TS side): `python3 -m ruff check .` and `python3 -m ruff format .` before committing.
 - `ui/` is linted with ESLint (`eslint.config.js`): `npm run lint` before committing UI changes.

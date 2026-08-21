@@ -43,35 +43,6 @@ def test_init_owner_loads_creds_and_runs_initializer(monkeypatch, tmp_path):
     assert captured["ran"] is True
 
 
-def test_migrate_loads_both_creds_and_passes_dry_run(monkeypatch, tmp_path):
-    captured = {}
-
-    class FakeMigrator:
-        def __init__(self, *args):
-            captured["args"] = args
-
-        def run(self):
-            captured["ran"] = True
-
-    old_path, new_path = tmp_path / "turso.json", tmp_path / "rqlite.json"
-    old_path.write_text("{}")
-    new_path.write_text("{}")
-    old_creds, new_creds = object(), object()
-    monkeypatch.setattr(cli_module, "load_creds", lambda _path: old_creds)
-    monkeypatch.setattr(cli_module, "load_owner_creds", lambda _path: new_creds)
-    monkeypatch.setattr(cli_module, "OwnerMigrator", FakeMigrator)
-
-    result = CliRunner().invoke(
-        cli, ["--migrate", str(old_path), str(new_path), "--dry-run", "--verbose"]
-    )
-
-    assert result.exit_code == 0
-    assert captured["args"][0:2] == (old_creds, new_creds)
-    assert captured["args"][2] == str(new_path)
-    assert captured["args"][4] is True
-    assert captured["ran"] is True
-
-
 def test_replace_images_processes_a_directory(tmp_path):
     src, dst = tmp_path / "src", tmp_path / "dst"
     src.mkdir()
@@ -169,7 +140,7 @@ def test_dry_run_without_clean_bucket_is_a_usage_error():
     result = CliRunner().invoke(cli, ["--dry-run"])
 
     assert result.exit_code != 0
-    assert "--dry-run requires --migrate or --clean-bucket" in result.output
+    assert "--dry-run requires --clean-bucket" in result.output
 
 
 def test_rejects_multiple_primary_commands(tmp_path):
