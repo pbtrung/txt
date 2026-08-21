@@ -24,7 +24,7 @@ export function LibraryMenu(props: {
       <Popover
         placement="bottom start"
         offset={4}
-        className="menu rounded-box border border-base-300 bg-base-100 shadow-lg library-dropdown"
+        className="menu rounded-box border border-base-300 bg-base-100 py-1 shadow-lg library-dropdown"
       >
         <Dialog
           aria-label="Library menu"

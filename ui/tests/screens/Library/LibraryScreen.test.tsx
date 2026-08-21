@@ -861,7 +861,7 @@ describe("LibraryScreen", () => {
 
     const menu = screen.getByRole("dialog", { name: "Library menu" });
     expect(menu).toHaveClass("library-dropdown-dialog");
-    expect(menu.parentElement).toHaveClass("library-dropdown");
+    expect(menu.parentElement).toHaveClass("library-dropdown", "py-1");
     expect(within(menu).getByRole("button", { name: /^Recent/ })).toHaveClass(
       "btn",
       "btn-active",
