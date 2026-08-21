@@ -1,16 +1,9 @@
-// The browser client's own creds.json shape -- a strict subset of
-// txt/creds.py's Creds. It never carries turso_org_token/turso_ctl_db_name/
-// turso_ctl_db_url (those talk to ctl directly and are the administrator's
-// own out-of-band secret, docs/auth.md §1) nor any R2 access key or
-// connection detail -- worker/r2Token.ts mints a short-lived, scoped
-// credential, and its response is the client's only source of R2
-// endpoint/bucket/region too (docs/auth.md §4.2). No Worker URL either:
-// wrangler.jsonc's assets block always serves this build from the same
-// origin the Worker itself answers /v1/* on, so workerClient.ts's
-// requests are relative and need nothing configured here.
 import { objectRecord, stringFields } from "../util/validation";
 
 export interface BrowserCreds {
+  rqlite_admin_username: string;
+  rqlite_admin_password: string;
+  rqlite_db_url: string;
   firebase_email: string;
   firebase_password: string;
   firebase_api_key: string;
@@ -18,6 +11,9 @@ export interface BrowserCreds {
 }
 
 const REQUIRED_FIELDS = [
+  "rqlite_admin_username",
+  "rqlite_admin_password",
+  "rqlite_db_url",
   "firebase_email",
   "firebase_password",
   "firebase_api_key",
@@ -26,5 +22,25 @@ const REQUIRED_FIELDS = [
 
 export function parseBrowserCreds(data: unknown): BrowserCreds {
   const record = objectRecord(data, "creds.json");
-  return stringFields(record, REQUIRED_FIELDS, "creds.json") satisfies BrowserCreds;
+  const creds = stringFields(record, REQUIRED_FIELDS, "creds.json");
+  validateRqliteUrl(creds.rqlite_db_url);
+  return creds satisfies BrowserCreds;
+}
+
+export function apiOrigin(creds: BrowserCreds): string {
+  return new URL(creds.rqlite_db_url).origin;
+}
+
+function validateRqliteUrl(value: string): void {
+  const url = new URL(value);
+  const local = url.hostname === "127.0.0.1" || url.hostname === "localhost";
+  if (url.protocol !== "https:" && !(local && url.protocol === "http:")) {
+    throw new Error("creds.json rqlite_db_url must use HTTPS");
+  }
+  if (url.pathname.replace(/\/+$/, "") !== "/operator/rqlite") {
+    throw new Error("creds.json rqlite_db_url must end with /operator/rqlite");
+  }
+  if (url.search || url.hash) {
+    throw new Error("creds.json rqlite_db_url must not contain a query or fragment");
+  }
 }

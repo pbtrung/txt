@@ -1,12 +1,8 @@
-// Unwraps the Worker's /v1/keys response (docs/auth.md §4.1/§5 step 3):
-// decrypt umk with user_root_key, then decrypt cred_store.content with umk
-// to recover user_handle/display_name/db_master_key/db_path/db_prefix. The Worker never
-// sees any of this in plaintext -- both decrypt steps happen here.
 import { decrypt, decryptJson } from "../crypto/cryptoBlob";
 import { fromBase64, toBase64 } from "../util/base64";
 import { objectRecord, stringField } from "../util/validation";
-import type { KeysResponse } from "./workerClient";
-import type { R2SigningIdentity } from "./workerClient";
+import type { R2SigningIdentity } from "./apiClient";
+import type { RqliteOwnerKeys } from "./rqlite";
 
 interface CredStorePayload {
   display_name: string;
@@ -23,15 +19,16 @@ interface UnwrappedSession {
 }
 
 export async function unwrapKeys(
-  keys: KeysResponse,
+  keys: RqliteOwnerKeys,
+  ticket: string,
   userRootKeyBase64: string,
 ): Promise<UnwrappedSession> {
   const ikm = fromBase64(userRootKeyBase64);
-  const umk = await decrypt(fromBase64(keys.umk), ikm);
-  const payload = await decryptJson<unknown>(fromBase64(keys.credStore), umk);
+  const umk = await decrypt(keys.wrappedUmk, ikm);
+  const payload = await decryptJson<unknown>(keys.encryptedCredentials, umk);
   const credStore = parseCredStore(payload);
   const userHandle = parseUserHandle(credStore.user_handle);
-  const privateDer = await decrypt(fromBase64(keys.signing.privateKey), umk);
+  const privateDer = await decrypt(keys.signing.wrappedPrivateKey, umk);
   try {
     const privateKey = await crypto.subtle.importKey(
       "pkcs8",
@@ -43,7 +40,7 @@ export async function unwrapKeys(
     return {
       umk,
       credStore,
-      signing: { ticket: keys.r2Ticket, userHandle, privateKey },
+      signing: { ticket, userHandle, privateKey },
     };
   } finally {
     privateDer.fill(0);

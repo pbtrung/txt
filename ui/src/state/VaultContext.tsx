@@ -11,13 +11,14 @@ import {
   type ReactNode,
 } from "react";
 import { signIn } from "../auth/firebaseSignIn";
-import { parseBrowserCreds, type BrowserCreds } from "../data/creds";
+import { apiOrigin, parseBrowserCreds, type BrowserCreds } from "../data/creds";
+import { ApiClient } from "../data/apiClient";
+import type { R2SigningIdentity } from "../data/apiClient";
 import { LibraryDatabaseStore } from "../data/databaseStore";
 import { withNetworkRetries } from "../data/networkRequest";
 import { R2Session } from "../data/r2Session";
+import { RqliteClient } from "../data/rqlite";
 import { unwrapKeys } from "../data/session";
-import { WorkerClient } from "../data/workerClient";
-import type { R2SigningIdentity } from "../data/workerClient";
 import { fromBase64 } from "../util/base64";
 import { errorMessage } from "../util/errorMessage";
 
@@ -42,7 +43,6 @@ export interface VaultSession {
   storage: R2Session;
   displayName: string;
   dbPrefix: string;
-  accountType: "admin" | "user";
 }
 
 interface VaultContextValue {
@@ -64,16 +64,29 @@ class SessionResolver {
 
   async resolve(): Promise<VaultSession> {
     const creds = await this.readCredentials();
-    const worker = await this.authenticate(creds);
+    const { api, uid } = await this.authenticate(creds);
     this.onPhase(2);
-    const keys = await withNetworkRetries((signal) => worker.fetchKeys(signal));
+    const rqlite = new RqliteClient(
+      creds.rqlite_db_url,
+      creds.rqlite_admin_username,
+      creds.rqlite_admin_password,
+    );
+    const [keys, ticket] = await Promise.all([
+      withNetworkRetries((signal) => rqlite.fetchOwnerKeys(signal)),
+      withNetworkRetries((signal) => api.fetchOwnerTicket(signal)),
+    ]);
+    requireMatchingOwner(uid, keys.uid, ticket.uid);
     this.onPhase(3);
-    const { credStore, signing } = await unwrapKeys(keys, creds.user_root_key);
+    const { credStore, signing } = await unwrapKeys(
+      keys,
+      ticket.ticket,
+      creds.user_root_key,
+    );
     this.onPhase(4);
     const credential = await withNetworkRetries((signal) =>
-      worker.fetchR2Token(credStore.db_path, credStore.db_prefix, signing, signal),
+      api.fetchR2Token(credStore.db_path, credStore.db_prefix, signing, signal),
     );
-    return this.openSession(credStore, credential, worker, signing, keys.type);
+    return this.openSession(credStore, credential, api, signing);
   }
 
   private async readCredentials(): Promise<BrowserCreds> {
@@ -81,7 +94,7 @@ class SessionResolver {
     return parseBrowserCreds(JSON.parse(await this.file.text()));
   }
 
-  private async authenticate(creds: BrowserCreds): Promise<WorkerClient> {
+  private async authenticate(creds: BrowserCreds) {
     this.onPhase(1);
     const session = await withNetworkRetries((signal) =>
       signIn(
@@ -91,19 +104,18 @@ class SessionResolver {
         signal,
       ),
     );
-    return new WorkerClient(session);
+    return { api: new ApiClient(session, apiOrigin(creds)), uid: session.uid };
   }
 
   private async openSession(
     credStore: Awaited<ReturnType<typeof unwrapKeys>>["credStore"],
-    credentials: Awaited<ReturnType<WorkerClient["fetchR2Token"]>>,
-    worker: WorkerClient,
+    credentials: Awaited<ReturnType<ApiClient["fetchR2Token"]>>,
+    api: ApiClient,
     signing: R2SigningIdentity,
-    accountType: "admin" | "user",
   ): Promise<VaultSession> {
     const key = fromBase64(credStore.db_master_key);
     const storage = new R2Session(
-      worker,
+      api,
       signing,
       credStore.db_path,
       credStore.db_prefix,
@@ -115,8 +127,13 @@ class SessionResolver {
       storage,
       displayName: credStore.display_name,
       dbPrefix: credStore.db_prefix,
-      accountType,
     };
+  }
+}
+
+function requireMatchingOwner(...uids: string[]): void {
+  if (new Set(uids).size !== 1) {
+    throw new Error("Firebase, rqlite, and API owner identities do not match");
   }
 }
 

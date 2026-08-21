@@ -1,6 +1,6 @@
 import { R2AuthorizationError, R2Client, type R2Object } from "./r2";
 import { isNetworkError, withNetworkRetries } from "./networkRequest";
-import type { R2CredentialPair, R2SigningIdentity, WorkerClient } from "./workerClient";
+import type { ApiClient, R2CredentialPair, R2SigningIdentity } from "./apiClient";
 
 const EXPIRY_SKEW_MS = 60_000;
 
@@ -10,7 +10,7 @@ export class R2Session {
   private refreshInFlight: Promise<void> | null = null;
 
   constructor(
-    private readonly worker: WorkerClient,
+    private readonly api: ApiClient,
     private readonly signing: R2SigningIdentity,
     private readonly dbPath: string,
     private readonly dbPrefix: string,
@@ -42,12 +42,12 @@ export class R2Session {
     return this.withCredential("dbPrefix", (client) => client.deleteObject(key));
   }
 
-  createShareGrant(
+  registerShare(
     sharePrefix: string,
     sharePath: string,
     shareId: string,
-  ): Promise<string> {
-    return this.worker.createShareGrant({
+  ): Promise<void> {
+    return this.api.registerShare({
       dbPath: this.dbPath,
       dbPrefix: this.dbPrefix,
       sharePrefix,
@@ -56,18 +56,12 @@ export class R2Session {
     });
   }
 
-  deleteShareRegistration(
-    sharePrefix: string,
-    sharePath: string,
-    shareId: string,
-  ): Promise<void> {
-    return this.worker.deleteShare({
-      dbPath: this.dbPath,
-      dbPrefix: this.dbPrefix,
-      sharePrefix,
-      sharePath,
-      shareId,
-    });
+  deleteShareRegistration(shareId: string): Promise<void> {
+    return this.api.deleteShare(shareId);
+  }
+
+  apiBaseUrl(): string {
+    return this.api.baseUrl;
   }
 
   private async withCredential<T>(
@@ -109,7 +103,7 @@ export class R2Session {
   }
 
   private fetchCredentials(signal: AbortSignal): Promise<R2CredentialPair> {
-    return this.worker.fetchR2Token(this.dbPath, this.dbPrefix, this.signing, signal);
+    return this.api.fetchR2Token(this.dbPath, this.dbPrefix, this.signing, signal);
   }
 
   private buildClients(credentials: R2CredentialPair) {

@@ -107,13 +107,11 @@ function renderLibrary(
   library: LibraryState,
   lock = vi.fn(),
   mutate = vi.fn().mockResolvedValue(undefined),
-  accountType: "admin" | "user" = "user",
   shares: BookShare[] = [],
 ) {
   const session = {
     database: { mutate, read: vi.fn().mockResolvedValue(shares) },
     displayName: "Trung",
-    accountType,
   } as unknown as VaultSession;
   vi.mocked(useVault).mockReturnValue({
     status: "unlocked",
@@ -315,12 +313,11 @@ describe("LibraryScreen", () => {
     expect(screen.getByTestId("location")).toHaveTextContent("/read/1");
   });
 
-  it("attaches Read and Share to search and enables both for an admin selection", async () => {
+  it("attaches Read and Share to search and enables both for the owner", async () => {
     renderLibrary(
       { status: "ready", books: LIBRARY, reload: vi.fn() },
       vi.fn(),
       vi.fn().mockResolvedValue(undefined),
-      "admin",
     );
     await userEvent.click(screen.getByRole("button", { name: /^All Books/ }));
     const search = screen.getByRole("searchbox");
@@ -377,7 +374,6 @@ describe("LibraryScreen", () => {
       { status: "ready", books: LIBRARY, reload: vi.fn() },
       vi.fn(),
       vi.fn().mockResolvedValue(undefined),
-      "admin",
     );
     await userEvent.click(screen.getByRole("button", { name: /^All Books/ }));
     await userEvent.click(screen.getByRole("row", { name: "Dune" }));
@@ -434,7 +430,6 @@ describe("LibraryScreen", () => {
       { status: "ready", books: LIBRARY, reload: vi.fn() },
       vi.fn(),
       vi.fn().mockResolvedValue(undefined),
-      "admin",
       [existingShare],
     );
     await waitFor(() =>

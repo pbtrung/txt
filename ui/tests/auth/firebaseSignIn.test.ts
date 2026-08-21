@@ -8,6 +8,7 @@ describe("signIn", () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
+        localId: "owner-uid",
         idToken: "token",
         refreshToken: "refresh",
         expiresIn: "3600",
@@ -17,6 +18,7 @@ describe("signIn", () => {
 
     const signal = new AbortController().signal;
     const session = await signIn("api key", "reader@example.com", "pw", signal);
+    expect(session.uid).toBe("owner-uid");
     await expect(session.getIdToken()).resolves.toBe("token");
     expect(fetchMock.mock.calls[0][0]).toContain("key=api%20key");
     expect(fetchMock.mock.calls[0][1].signal).toBe(signal);
@@ -25,7 +27,10 @@ describe("signIn", () => {
   it("rejects a successful response without an ID token", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }),
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ localId: "owner-uid" }),
+      }),
     );
 
     await expect(signIn("key", "reader@example.com", "pw")).rejects.toThrow(
@@ -39,6 +44,7 @@ describe("signIn", () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({
+          localId: "owner-uid",
           idToken: "old-token",
           refreshToken: "old-refresh",
           expiresIn: "1",

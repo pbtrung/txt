@@ -12,7 +12,6 @@ export function LibraryMenu(props: {
   onNavigate: (view: LibraryView) => void;
   onLock: () => void;
   shares: BookShare[];
-  isAdmin: boolean;
 }) {
   return (
     <DialogTrigger>

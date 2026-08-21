@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import { parseBrowserCreds } from "../../src/data/creds";
 
 const VALID = {
+  rqlite_admin_username: "admin",
+  rqlite_admin_password: "rqlite-secret",
+  rqlite_db_url: "https://api.example.com/operator/rqlite",
   firebase_email: "a@b.com",
   firebase_password: "pw",
   firebase_api_key: "key",
@@ -39,5 +42,26 @@ describe("parseBrowserCreds", () => {
 
   it("drops unrelated top-level fields", () => {
     expect(parseBrowserCreds({ ...VALID, turso_org_token: "secret" })).toEqual(VALID);
+  });
+
+  it("accepts a localhost HTTP operator URL for development", () => {
+    const creds = {
+      ...VALID,
+      rqlite_db_url: "http://localhost:8080/operator/rqlite/",
+    };
+    expect(parseBrowserCreds(creds)).toEqual(creds);
+  });
+
+  it("rejects an unsafe or incorrectly scoped rqlite URL", () => {
+    for (const rqlite_db_url of [
+      "http://api.example.com/operator/rqlite",
+      "ftp://localhost/operator/rqlite",
+      "https://api.example.com/v1",
+      "https://api.example.com/operator/rqlite?node=1",
+    ]) {
+      expect(() => parseBrowserCreds({ ...VALID, rqlite_db_url })).toThrow(
+        /rqlite_db_url/,
+      );
+    }
   });
 });

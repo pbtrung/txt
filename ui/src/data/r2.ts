@@ -3,7 +3,7 @@
 import { AwsClient } from "aws4fetch";
 
 import { withNetworkRetries } from "./networkRequest";
-import type { R2TempCredential } from "./workerClient";
+import type { R2TempCredential } from "./apiClient";
 
 export interface R2Object {
   bytes: Uint8Array;

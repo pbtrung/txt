@@ -15,7 +15,6 @@ export function LibrarySidebar({
   onNavigate,
   onLock,
   shares,
-  isAdmin,
 }: {
   books: LibraryBook[];
   view: LibraryView;
@@ -23,11 +22,10 @@ export function LibrarySidebar({
   onNavigate: (view: LibraryView) => void;
   onLock: () => void;
   shares: BookShare[];
-  isAdmin: boolean;
 }) {
   return (
     <div className="library-sidebar-content flex h-full w-full flex-col">
-      <LibraryNav {...{ books, view, onNavigate, shares, isAdmin }} />
+      <LibraryNav {...{ books, view, onNavigate, shares }} />
       <AccountRow displayName={displayName} onLock={onLock} />
     </div>
   );
@@ -38,13 +36,11 @@ function LibraryNav({
   view,
   onNavigate,
   shares,
-  isAdmin,
 }: {
   books: LibraryBook[];
   view: LibraryView;
   onNavigate: (view: LibraryView) => void;
   shares: BookShare[];
-  isAdmin: boolean;
 }) {
   const counts = useBrowseCounts(books);
   return (
@@ -56,14 +52,12 @@ function LibraryNav({
           active={view.kind === "recent"}
           onPress={() => onNavigate({ kind: "recent" })}
         />
-        {isAdmin && (
-          <NavRow
-            label="Shares"
-            count={shares.length}
-            active={view.kind === "shares"}
-            onPress={() => onNavigate({ kind: "shares" })}
-          />
-        )}
+        <NavRow
+          label="Shares"
+          count={shares.length}
+          active={view.kind === "shares"}
+          onPress={() => onNavigate({ kind: "shares" })}
+        />
         <div className="px-3 pt-3 pb-1 text-xs font-semibold uppercase text-base-content/60">
           Browse
         </div>

@@ -3,10 +3,10 @@ import { describe, expect, it, vi } from "vitest";
 import { R2AuthorizationError, type R2Client } from "../../src/data/r2";
 import { R2Session } from "../../src/data/r2Session";
 import type {
+  ApiClient,
   R2CredentialPair,
   R2SigningIdentity,
-  WorkerClient,
-} from "../../src/data/workerClient";
+} from "../../src/data/apiClient";
 
 function credentials(expiration: string, suffix = "initial"): R2CredentialPair {
   const common = {
@@ -24,18 +24,12 @@ function credentials(expiration: string, suffix = "initial"): R2CredentialPair {
 }
 
 function createSession(initial: R2CredentialPair, refreshed = initial) {
-  const worker = {
+  const api = {
     fetchR2Token: vi.fn().mockResolvedValue(refreshed),
-  } as unknown as WorkerClient;
+  } as unknown as ApiClient;
   const signing = {} as R2SigningIdentity;
-  const session = new R2Session(
-    worker,
-    signing,
-    "d".repeat(52),
-    "p".repeat(52),
-    initial,
-  );
-  return { session, worker };
+  const session = new R2Session(api, signing, "d".repeat(52), "p".repeat(52), initial);
+  return { session, api };
 }
 
 function fakeClients(value: string) {
@@ -55,19 +49,19 @@ function fakeClients(value: string) {
 
 describe("R2Session", () => {
   it("uses unexpired credentials without refreshing", async () => {
-    const { session, worker } = createSession(credentials("2099-01-01T00:00:00Z"));
+    const { session, api } = createSession(credentials("2099-01-01T00:00:00Z"));
     const clients = fakeClients("initial");
     (session as unknown as { clients: typeof clients }).clients = clients;
 
     const object = await session.getDatabase();
 
     expect(new TextDecoder().decode(object!.bytes)).toBe("initial");
-    expect(worker.fetchR2Token).not.toHaveBeenCalled();
+    expect(api.fetchR2Token).not.toHaveBeenCalled();
   });
 
   it("coalesces refreshes before the credential expiry", async () => {
     const refreshed = credentials("2099-01-01T00:00:00Z", "refreshed");
-    const { session, worker } = createSession(
+    const { session, api } = createSession(
       credentials("2000-01-01T00:00:00Z"),
       refreshed,
     );
@@ -85,11 +79,11 @@ describe("R2Session", () => {
 
     expect(new TextDecoder().decode(database!.bytes)).toBe("refreshed");
     expect(new TextDecoder().decode(content!)).toBe("refreshed");
-    expect(worker.fetchR2Token).toHaveBeenCalledTimes(1);
+    expect(api.fetchR2Token).toHaveBeenCalledTimes(1);
   });
 
   it("forces one refresh and retries after R2 authorization fails", async () => {
-    const { session, worker } = createSession(
+    const { session, api } = createSession(
       credentials("2099-01-01T00:00:00Z"),
       credentials("2099-01-01T00:00:00Z", "refreshed"),
     );
@@ -108,11 +102,11 @@ describe("R2Session", () => {
     const content = await session.getContent("p".repeat(52) + "/object");
 
     expect(new TextDecoder().decode(content!)).toBe("refreshed");
-    expect(worker.fetchR2Token).toHaveBeenCalledTimes(1);
+    expect(api.fetchR2Token).toHaveBeenCalledTimes(1);
   });
 
   it("refreshes credentials when the browser masks R2 rejection as fetch failure", async () => {
-    const { session, worker } = createSession(
+    const { session, api } = createSession(
       credentials("2099-01-01T00:00:00Z"),
       credentials("2099-01-01T00:00:00Z", "refreshed"),
     );
@@ -131,18 +125,18 @@ describe("R2Session", () => {
     const content = await session.getContent("p".repeat(52) + "/object");
 
     expect(new TextDecoder().decode(content!)).toBe("refreshed");
-    expect(worker.fetchR2Token).toHaveBeenCalledTimes(1);
+    expect(api.fetchR2Token).toHaveBeenCalledTimes(1);
   });
 
   it("retries credential refresh after connectivity is restored", async () => {
     vi.useFakeTimers();
     try {
       const refreshed = credentials("2099-01-01T00:00:00Z", "refreshed");
-      const { session, worker } = createSession(
+      const { session, api } = createSession(
         credentials("2000-01-01T00:00:00Z"),
         refreshed,
       );
-      vi.mocked(worker.fetchR2Token)
+      vi.mocked(api.fetchR2Token)
         .mockRejectedValueOnce(new TypeError("Failed to fetch"))
         .mockResolvedValueOnce(refreshed);
       const clients = fakeClients("refreshed");
@@ -158,21 +152,21 @@ describe("R2Session", () => {
       await expect(contentPromise).resolves.toEqual(
         new TextEncoder().encode("refreshed"),
       );
-      expect(worker.fetchR2Token).toHaveBeenCalledTimes(2);
+      expect(api.fetchR2Token).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it("tries the Worker again on a later request after retries are exhausted", async () => {
+  it("tries the API again on a later request after retries are exhausted", async () => {
     vi.useFakeTimers();
     try {
       const refreshed = credentials("2099-01-01T00:00:00Z", "refreshed");
-      const { session, worker } = createSession(
+      const { session, api } = createSession(
         credentials("2000-01-01T00:00:00Z"),
         refreshed,
       );
-      vi.mocked(worker.fetchR2Token)
+      vi.mocked(api.fetchR2Token)
         .mockRejectedValueOnce(new TypeError("Failed to fetch"))
         .mockRejectedValueOnce(new TypeError("Failed to fetch"))
         .mockRejectedValueOnce(new TypeError("Failed to fetch"))
@@ -194,7 +188,7 @@ describe("R2Session", () => {
       await expect(session.getContent("p".repeat(52) + "/object")).resolves.toEqual(
         new TextEncoder().encode("reconnected"),
       );
-      expect(worker.fetchR2Token).toHaveBeenCalledTimes(5);
+      expect(api.fetchR2Token).toHaveBeenCalledTimes(5);
     } finally {
       vi.useRealTimers();
     }

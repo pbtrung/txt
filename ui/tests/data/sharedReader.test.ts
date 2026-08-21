@@ -16,7 +16,8 @@ import { toBase64 } from "../../src/util/base64";
 
 const ID = base64Url(new Uint8Array(32).fill(1));
 const KEY = base64Url(new Uint8Array(128).fill(2));
-const GRANT = base64Url(new Uint8Array(226).fill(3));
+const API = "https://api.example.com";
+const OBJECT_URL = "https://bucket.r2.cloudflarestorage.com/shared-object?sig=1";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -24,27 +25,26 @@ beforeEach(() => {
 });
 
 describe("shared reader references", () => {
-  it("accepts exact capability and content-key lengths", () => {
-    expect(parseSharedReference(`#id=${ID}&grant=${GRANT}&key=${KEY}`)).toEqual({
+  it("accepts exact capability and content-key lengths with an API origin", () => {
+    expect(parseSharedReference(`#id=${ID}&key=${KEY}&api=${API}`)).toEqual({
       id: ID,
-      grant: GRANT,
       contentKey: new Uint8Array(128).fill(2),
+      apiBaseUrl: API,
     });
   });
 
   it("rejects missing, malformed, or incorrectly sized values", () => {
     expect(parseSharedReference("")).toBeNull();
-    expect(parseSharedReference(`#id=${ID}&grant=${GRANT}&key=not+url`)).toBeNull();
+    expect(parseSharedReference(`#id=${ID}&key=not+url&api=${API}`)).toBeNull();
     expect(
       parseSharedReference(
-        `#id=${base64Url(new Uint8Array(31))}&grant=${GRANT}&key=${KEY}`,
+        `#id=${base64Url(new Uint8Array(31))}&key=${KEY}&api=${API}`,
       ),
     ).toBeNull();
     expect(
-      parseSharedReference(
-        `#id=${ID}&grant=${base64Url(new Uint8Array(225))}&key=${KEY}`,
-      ),
+      parseSharedReference(`#id=${ID}&key=${KEY}&api=http://api.example.com`),
     ).toBeNull();
+    expect(parseSharedReference(`#id=${ID}&key=${KEY}&api=ftp://localhost`)).toBeNull();
   });
 });
 
@@ -52,7 +52,10 @@ describe("loadSharedReaderDocument", () => {
   it("fetches the encrypted object without auth and decrypts metadata locally", async () => {
     const encrypted = new Uint8Array([4, 5]);
     const epub = new Uint8Array([6, 7]);
-    const fetchMock = vi.fn().mockResolvedValue(new Response(encrypted));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(sharedUrlResponse())
+      .mockResolvedValueOnce(new Response(encrypted));
     vi.stubGlobal("fetch", fetchMock);
     vi.mocked(decrypt).mockResolvedValue(epub);
     vi.mocked(parseEpubOpf).mockResolvedValue({
@@ -64,7 +67,7 @@ describe("loadSharedReaderDocument", () => {
       },
     });
     vi.mocked(extraMetadataFields).mockReturnValue([]);
-    const reference = parseSharedReference(`#id=${ID}&grant=${GRANT}&key=${KEY}`)!;
+    const reference = parseSharedReference(`#id=${ID}&key=${KEY}&api=${API}`)!;
     const progress = vi.fn();
 
     await expect(loadSharedReaderDocument(reference, progress)).resolves.toEqual({
@@ -78,14 +81,15 @@ describe("loadSharedReaderDocument", () => {
       epubBytes: epub,
     });
     expect(fetchMock).toHaveBeenCalledWith(
-      "/v1/shared-content",
+      `${API}/v1/shared-url`,
       expect.objectContaining({
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ share_id: ID, grant: GRANT }),
+        body: JSON.stringify({ share_id: ID }),
       }),
     );
     expect(fetchMock.mock.calls[0][1].headers).not.toHaveProperty("Authorization");
+    expect(fetchMock.mock.calls[1][0]).toBe(OBJECT_URL);
     expect(decrypt).toHaveBeenCalledWith(encrypted, new Uint8Array(128).fill(2));
     expect(progress.mock.calls.map(([value]) => value.step)).toEqual([1, 2, 3, 4]);
   });
@@ -95,7 +99,7 @@ describe("loadSharedReaderDocument", () => {
       "fetch",
       vi.fn().mockResolvedValue(new Response("missing", { status: 404 })),
     );
-    const reference = parseSharedReference(`#id=${ID}&grant=${GRANT}&key=${KEY}`)!;
+    const reference = parseSharedReference(`#id=${ID}&key=${KEY}&api=${API}`)!;
 
     await expect(loadSharedReaderDocument(reference)).rejects.toThrow(
       "This shared book is unavailable.",
@@ -113,26 +117,34 @@ describe("loadSharedReaderDocument", () => {
       const encrypted = new Uint8Array([4, 5]);
       const fetchMock = vi
         .fn()
+        .mockResolvedValueOnce(sharedUrlResponse())
         .mockResolvedValueOnce(first)
+        .mockResolvedValueOnce(sharedUrlResponse())
         .mockResolvedValueOnce(new Response(encrypted));
       vi.stubGlobal("fetch", fetchMock);
       vi.mocked(decrypt).mockResolvedValue(new Uint8Array([6, 7]));
       vi.mocked(parseEpubOpf).mockResolvedValue({ metadata: { title: "Dune" } });
       vi.mocked(extraMetadataFields).mockReturnValue([]);
-      const reference = parseSharedReference(`#id=${ID}&grant=${GRANT}&key=${KEY}`)!;
+      const reference = parseSharedReference(`#id=${ID}&key=${KEY}&api=${API}`)!;
 
       const load = loadSharedReaderDocument(reference);
       const result = expect(load).resolves.toMatchObject({ title: "Dune" });
       await vi.runAllTimersAsync();
 
       await result;
-      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock).toHaveBeenCalledTimes(4);
       expect(decrypt).toHaveBeenCalledWith(encrypted, reference.contentKey);
     } finally {
       vi.useRealTimers();
     }
   });
 });
+
+function sharedUrlResponse(): Response {
+  return new Response(JSON.stringify({ url: OBJECT_URL }), {
+    headers: { "Content-Type": "application/json" },
+  });
+}
 
 function base64Url(bytes: Uint8Array): string {
   return toBase64(bytes).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");

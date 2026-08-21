@@ -65,8 +65,7 @@ const libraryToastQueue = new UNSTABLE_ToastQueue<LibraryNotice>({
 export function LibraryScreen() {
   const { session, lock } = useVault();
   const library = useLibraryBooks(session?.database ?? null);
-  const isAdmin = session?.accountType === "admin";
-  const shared = useShares(isAdmin ? (session?.database ?? null) : null);
+  const shared = useShares(session?.database ?? null);
   const [query, setQuery] = useState("");
   const [view, setView] = useState<LibraryView>(INITIAL_VIEW);
   const [selectedTxtId, setSelectedTxtId] = useState<number | null>(null);
@@ -153,7 +152,7 @@ export function LibraryScreen() {
     return progress;
   };
   const createShare = async (txtId: number) => {
-    if (!session || !isAdmin) return;
+    if (!session) return;
     const title = library.books.find((book) => book.txtId === txtId)?.title ?? "Book";
     const progress = beginOperation("Creating share", title);
     if (!progress) return;
@@ -172,7 +171,7 @@ export function LibraryScreen() {
     }
   };
   const copyShare = async (share: BookShare) => {
-    if (!session || !isAdmin) return;
+    if (!session) return;
     const progress = beginOperation("Copying share link", share.title);
     if (!progress) return;
     try {
@@ -191,7 +190,7 @@ export function LibraryScreen() {
     }
   };
   const removeShare = async (share: BookShare) => {
-    if (!session || !isAdmin) return;
+    if (!session) return;
     const progress = beginOperation("Deleting share", share.title);
     if (!progress) return;
     try {
@@ -233,7 +232,6 @@ export function LibraryScreen() {
                 onNavigate={navigate}
                 onLock={lock}
                 shares={shared.shares}
-                isAdmin={isAdmin}
               />
             )
           }
@@ -241,7 +239,7 @@ export function LibraryScreen() {
           selectedShare={selectedShare}
           showBookActions={view.kind === "books"}
           showShareActions={view.kind === "shares"}
-          canShare={isAdmin}
+          canShare={Boolean(session)}
           onRead={() => {
             if (selectedBook) routerNavigate(`/read/${selectedBook.txtId}`);
           }}
@@ -270,7 +268,6 @@ export function LibraryScreen() {
                 onNavigate={navigate}
                 onLock={lock}
                 shares={shared.shares}
-                isAdmin={isAdmin}
               />
             </aside>
           )}

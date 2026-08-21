@@ -1,5 +1,6 @@
 import { decrypt } from "../crypto/cryptoBlob";
 import { fromBase64 } from "../util/base64";
+import { objectRecord, stringField } from "../util/validation";
 import { extraMetadataFields, parseEpubOpf } from "./epubOpf";
 import { withNetworkRetries } from "./networkRequest";
 import { fieldStrings } from "./opfMetadata";
@@ -7,33 +8,31 @@ import type { ReaderDocument, ReaderLoadProgress } from "./readerDocument";
 
 const SHARE_ID_BYTES = 32;
 const CONTENT_KEY_BYTES = 128;
-const GRANT_BYTES = 226;
 const BASE64URL = /^[A-Za-z0-9_-]+$/;
 
 export const SHARED_READER_LOAD_TOTAL_STEPS = 4;
 
 export interface SharedReference {
   id: string;
-  grant: string;
   contentKey: Uint8Array;
+  apiBaseUrl: string;
 }
 
 export function parseSharedReference(hash: string): SharedReference | null {
   const params = new URLSearchParams(hash.startsWith("#") ? hash.slice(1) : hash);
   const id = params.get("id");
-  const grant = params.get("grant");
   const key = params.get("key");
-  if (!id || !grant || !key || !BASE64URL.test(id) || !BASE64URL.test(grant)) {
+  const api = params.get("api");
+  if (!id || !key || !api || !BASE64URL.test(id)) {
     return null;
   }
   try {
     const shareId = decodeBase64Url(id);
-    const grantBytes = decodeBase64Url(grant);
     const contentKey = decodeBase64Url(key);
+    const apiBaseUrl = parseApiOrigin(api);
     return shareId.byteLength === SHARE_ID_BYTES &&
-      grantBytes.byteLength === GRANT_BYTES &&
       contentKey.byteLength === CONTENT_KEY_BYTES
-      ? { id, grant, contentKey }
+      ? { id, contentKey, apiBaseUrl }
       : null;
   } catch {
     return null;
@@ -46,18 +45,21 @@ export async function loadSharedReaderDocument(
 ): Promise<ReaderDocument> {
   report(onProgress, "Requesting shared book", 1);
   const encrypted = await withNetworkRetries(async (signal) => {
-    const response = await fetch("/v1/shared-content", {
+    const response = await fetch(`${reference.apiBaseUrl}/v1/shared-url`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ share_id: reference.id, grant: reference.grant }),
+      body: JSON.stringify({ share_id: reference.id }),
       signal,
     });
     if (!response.ok) {
       if (response.status === 404) throw new Error("This shared book is unavailable.");
       throw new Error(`Could not download this shared book (${response.status}).`);
     }
+    const url = sharedObjectUrl(await response.json());
     report(onProgress, "Downloading shared book", 2);
-    return new Uint8Array(await response.arrayBuffer());
+    const object = await fetch(url, { signal });
+    if (!object.ok) throw new Error(`Could not download this shared book.`);
+    return new Uint8Array(await object.arrayBuffer());
   });
   report(onProgress, "Decrypting shared book", 3);
   const epubBytes = await decrypt(encrypted, reference.contentKey);
@@ -75,6 +77,24 @@ export async function loadSharedReaderDocument(
     extraMetadata: extraMetadataFields(opf),
     epubBytes,
   };
+}
+
+function sharedObjectUrl(value: unknown): string {
+  const data = objectRecord(value, "shared URL response");
+  const valueUrl = stringField(data, "url", "shared URL response");
+  const url = new URL(valueUrl);
+  if (url.protocol !== "https:") throw new Error("shared object URL must use HTTPS");
+  return url.toString();
+}
+
+function parseApiOrigin(value: string): string {
+  const url = new URL(value);
+  const local = url.hostname === "127.0.0.1" || url.hostname === "localhost";
+  const secure = url.protocol === "https:";
+  if (url.origin !== value || (!secure && !(local && url.protocol === "http:"))) {
+    throw new Error("invalid API origin");
+  }
+  return value;
 }
 
 function decodeBase64Url(value: string): Uint8Array {

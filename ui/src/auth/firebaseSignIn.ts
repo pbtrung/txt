@@ -16,6 +16,7 @@ export class FirebaseSession implements FirebaseTokenProvider {
 
   constructor(
     private readonly apiKey: string,
+    readonly uid: string,
     private idToken: string,
     private refreshToken: string,
     private expiresAt: number,
@@ -74,6 +75,7 @@ export async function signIn(
   const data = objectRecord(await response.json(), "Firebase sign-in response");
   return new FirebaseSession(
     apiKey,
+    stringField(data, "localId", "Firebase sign-in response"),
     stringField(data, "idToken", "Firebase sign-in response"),
     stringField(data, "refreshToken", "Firebase sign-in response"),
     expiryFromNow(data, "Firebase sign-in response", "expiresIn"),
