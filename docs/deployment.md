@@ -63,7 +63,9 @@ openssl rand -base64 32
 openssl rand -base64 32
 ```
 
-Set `UI_ORIGIN` to the exact deployed static-UI origin, with no trailing slash.
+Set `UI_ORIGIN` to the deployed static-UI origin. A trailing slash is accepted:
+the container removes it before rendering Nginx so the map, CORS response, and
+Lua configuration match the browser's canonical slashless `Origin` header.
 OpenResty rejects every `/v1/*` request with a missing or different `Origin`.
 The operator proxy returns CORS permission only for that same origin while
 remaining usable by Basic-authenticated CLI and recovery clients that do not

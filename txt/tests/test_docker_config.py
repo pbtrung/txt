@@ -15,6 +15,8 @@ def test_operator_proxy_allows_exact_ui_origin_preflight():
 
 def test_entrypoint_renders_ui_origin_into_nginx_config():
     entrypoint = (ROOT / "docker/entrypoint.sh").read_text()
+    assert 'while [ "${UI_ORIGIN%/}" != "$UI_ORIGIN" ]; do' in entrypoint
+    assert "UI_ORIGIN=${UI_ORIGIN%/}" in entrypoint
     assert "export DNS_RESOLVER RQLITE_ADMIN_HTPASSWD UI_ORIGIN" in entrypoint
     assert "$DNS_RESOLVER $RQLITE_ADMIN_HTPASSWD $UI_ORIGIN" in entrypoint
 

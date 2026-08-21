@@ -45,7 +45,10 @@ method suffix. A local host-run CLI uses
 variables above.
 
 Browser responses from this route include `Access-Control-Allow-Origin` only
-for the exact configured `UI_ORIGIN`. Non-browser CLI tools may omit `Origin`.
+for the configured `UI_ORIGIN`. Values with a trailing slash, such as
+`https://reader.example.com/`, are accepted; the entrypoint removes the slash
+before rendering Nginx to match the browser's canonical `Origin` header. Do not
+configure a URL path. Non-browser CLI tools may omit `Origin`.
 Every `/v1/*` location is stricter: OpenResty returns `403` before Lua runs when
 `Origin` is absent or differs from `UI_ORIGIN`.
 
