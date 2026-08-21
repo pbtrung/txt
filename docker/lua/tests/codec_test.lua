@@ -49,3 +49,13 @@ testlib.test("base64 rejects missing, excess, and non-alphabet characters", func
     testlib.falsy(codec.base64_decode("YQ==\n"))
   end)
 end)
+
+testlib.test("equal accepts identical strings and rejects everything else", function()
+  with_codec(function(codec)
+    testlib.truthy(codec.equal("same-value", "same-value"))
+    testlib.falsy(codec.equal("short", "longer-value"))
+    testlib.falsy(codec.equal("abcdef", "abcxef"))
+    testlib.falsy(codec.equal(nil, "abc"))
+    testlib.falsy(codec.equal("abc", 123))
+  end)
+end)
