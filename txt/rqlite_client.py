@@ -36,6 +36,10 @@ class RqliteClient:
             0
         ]
 
+    def execute_batch(self, statements: Sequence[str]) -> list[dict]:
+        body = [[sql, {}] for sql in statements]
+        return self._request("/db/execute?transaction", body)
+
     def _request(self, path: str, statements: list) -> list[dict]:
         response = self.session.post(
             self.base_url + path,

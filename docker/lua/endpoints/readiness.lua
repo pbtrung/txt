@@ -5,15 +5,10 @@ if ngx.req.get_method() ~= "GET" then
   return response.error(405, "method_not_allowed")
 end
 
-local result, err =
-  rqlite.query("SELECT max(version) AS version FROM schema_migrations")
+local result, err = rqlite.query("SELECT 1 AS ready")
 local row = result and rqlite.first_row(result)
-if not row or row.version ~= 1 then
-  ngx.log(
-    ngx.ERR,
-    "readiness schema check failed: ",
-    err or "expected schema version 1"
-  )
+if not row or row.ready ~= 1 then
+  ngx.log(ngx.ERR, "readiness rqlite check failed: ", err or "bad response")
   return response.error(503, "not_ready")
 end
 return response.json(200, { ok = true })

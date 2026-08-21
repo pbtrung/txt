@@ -112,13 +112,26 @@ def test_rejects_existing_owner_for_another_firebase_uid(owner_creds_path, engin
         _initializer(owner_creds_path, engine, rqlite).run()
 
 
-def test_missing_schema_has_actionable_error(owner_creds_path, engine):
+def test_missing_schema_is_installed_before_owner(owner_creds_path, engine):
     class MissingSchema(FakeRqlite):
-        def query_one(self, _sql, _params=None):
-            raise RqliteError("no such table: owner_control")
+        def __init__(self):
+            super().__init__()
+            self.schema_ready = False
 
-    with pytest.raises(ValueError, match="0001_control.sql"):
-        _initializer(owner_creds_path, engine, MissingSchema()).run()
+        def query_one(self, _sql, _params=None):
+            if not self.schema_ready:
+                raise RqliteError("no such table: owner_control")
+            return self.owner
+
+        def execute_batch(self, statements):
+            assert any(
+                "CREATE TABLE IF NOT EXISTS owner_control" in sql for sql in statements
+            )
+            self.schema_ready = True
+
+    rqlite = MissingSchema()
+    _initializer(owner_creds_path, engine, rqlite).run()
+    assert rqlite.owner is not None
 
 
 def _assert_owner_row(row, root_key, engine):

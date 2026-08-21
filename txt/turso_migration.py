@@ -93,7 +93,7 @@ class OwnerMigrator:
         source_uid, payload = self.source.read()
         owner_uid = self.initializer.sign_in()
         _require_matching_uid(source_uid, owner_uid)
-        owner = self.initializer.load_owner()
+        owner = self.initializer.load_owner(initialize_schema=not self.dry_run)
         if owner:
             self.initializer.validate_owner(owner, owner_uid)
         if self.dry_run:

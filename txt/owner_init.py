@@ -14,6 +14,7 @@ from .leancrypto_wasm import KEM_PK_SIZE, KEM_SK_SIZE, LeancryptoEngine
 from .logger import Logger
 from .random_token import generate_random_prefix
 from .rqlite_client import RqliteClient, RqliteError
+from .rqlite_schema import CONTROL_SCHEMA
 
 SIGN_VERSION = 1
 SIGN_ALGORITHM = "ECDSA-P521-SHA512"
@@ -94,16 +95,20 @@ class OwnerInitializer:
         self.logger.verbose(f"Firebase sign-in succeeded, uid={uid}")
         return uid
 
-    def load_owner(self) -> dict | None:
+    def load_owner(self, initialize_schema: bool = True) -> dict | None:
         try:
             return self.rqlite.query_one(OWNER_SQL)
         except RqliteError as error:
             if "no such table" in str(error):
-                raise ValueError(
-                    "rqlite control schema is missing; apply "
-                    "docker/migrations/0001_control.sql first"
-                ) from error
+                return self._missing_schema(initialize_schema)
             raise
+
+    def _missing_schema(self, initialize: bool) -> dict | None:
+        if not initialize:
+            return None
+        self.logger.verbose("Installing rqlite control schema version 1...")
+        self.rqlite.execute_batch(CONTROL_SCHEMA)
+        return self.rqlite.query_one(OWNER_SQL)
 
     def _new_owner(self, uid: str, payload: dict | None) -> dict:
         root_key = _root_key(self.creds.user_root_key, uid)

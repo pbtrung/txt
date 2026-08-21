@@ -67,6 +67,22 @@ def test_execute_encodes_blob_parameters_as_byte_arrays():
     assert options["json"][0][1]["content"] == [97, 98, 99]
 
 
+def test_execute_batch_sends_one_transactional_request():
+    session = FakeSession({"results": [{}, {}]})
+    client = RqliteClient(
+        "https://api.example.com/operator/rqlite", "u", "p", session=session
+    )
+
+    client.execute_batch(("CREATE TABLE a (id)", "CREATE TABLE b (id)"))
+
+    url, options = session.calls[0]
+    assert url.endswith("/db/execute?transaction")
+    assert options["json"] == [
+        ["CREATE TABLE a (id)", {}],
+        ["CREATE TABLE b (id)", {}],
+    ]
+
+
 def test_rqlite_statement_error_is_raised():
     session = FakeSession({"results": [{"error": "no such table: owner_control"}]})
     client = RqliteClient(
