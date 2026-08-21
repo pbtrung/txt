@@ -9,6 +9,7 @@ npm-debug.log*
 .env.*
 *.tsbuildinfo
 .wrangler/
+.lua-tools/
 
 # Python
 __pycache__/

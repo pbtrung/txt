@@ -26,6 +26,8 @@ WORKDIR /opt/txt
 
 COPY entrypoint.sh /opt/txt/entrypoint.sh
 COPY nginx.conf /opt/txt/nginx.conf
+COPY lua /opt/txt/lua
+COPY migrations /opt/txt/migrations
 
 RUN chmod 0755 /opt/txt/entrypoint.sh
 

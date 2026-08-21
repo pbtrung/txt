@@ -1,59 +1,10 @@
 {
-	"$schema": "node_modules/wrangler/config-schema.json",
-	// A placeholder, not the real name -- scripts/deploy.sh always overrides
-	// this via `wrangler deploy --name "$WORKER_NAME"` (erroring out if
-	// WORKER_NAME is unset/empty) so the actual deploy target never depends
-	// on this file matching whatever Worker resource actually exists on
-	// Cloudflare. Must still be a syntactically valid Worker name (lowercase,
-	// alphanumeric + hyphens) for `wrangler` to parse this file at all.
-	"name": "unused-placeholder-set-worker-name-via-env-var",
-	"compatibility_date": "2026-08-14",
-	"main": "worker/index.ts",
-	// No [vars] block for secrets here on purpose -- see worker/env.d.ts.
-	"kv_namespaces": [
-		{
-			"binding": "KEYS_CACHE",
-			// Placeholder -- replace with the real id after running
-			// `wrangler kv namespace create keys-cache` once, then commit the
-			// real id (KV namespace ids aren't secret, just per-account resource
-			// identifiers).
-			"id": "e790702a42b74a749f66796853244c11",
-		},
-	],
-	"assets": {
-		// ui/'s build output (`npm run ui:build`) -- scripts/deploy.sh rebuilds
-		// it fresh before every `wrangler deploy`, so this directory is never
-		// deployed stale.
-		"directory": "dist",
-		// A path that matches no file in dist/ is a client-side route
-		// (/library, /read/:txtId) -- serve index.html for it instead of 404,
-		// so a hard refresh/direct link still lands in the SPA.
-		"not_found_handling": "single-page-application",
-		// /v1/* never matches a static file either, so it would already reach
-		// this Worker script by default -- listed explicitly anyway so that
-		// stays true regardless of request type (not_found_handling's SPA
-		// fallback only skips the Worker for browser navigations, not
-		// fetch() calls, but this removes the distinction entirely).
-		"run_worker_first": [
-			"/v1/*"
-		],
-	},
-	"d1_databases": [
-		{
-			"binding": "SHARE_REGISTRY",
-			"database_name": "txt-share-registry",
-			"database_id": "d8d906d6-2187-409d-8227-374b5e8ba35d",
-		},
-	],
-	"ratelimits": [
-		{
-			"name": "SHARE_RATE_LIMITER",
-			// Account-local identifier for this binding; it is not a secret.
-			"namespace_id": "870319421",
-			"simple": {
-				"limit": 120,
-				"period": 60,
-			},
-		},
-	],
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "txt",
+  "compatibility_date": "2026-08-21",
+  "pages_build_output_dir": "./dist",
+  "assets": {
+    "directory": "./dist",
+    "binding": "STATIC_ASSETS"
+  }
 }

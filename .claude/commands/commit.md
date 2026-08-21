@@ -9,9 +9,14 @@ description: Commit staged/modified changes with a detailed message and push, no
 1. Run `git status` and `git diff` (and `git diff --staged` if anything is already staged) to see all changes.
 2. Lint and format whatever's actually touched, before staging anything:
    - Any `*.py` changed: `python3 -m ruff format .` then `python3 -m ruff check .`.
-   - Any `worker/**/*.ts` or `ui/**/*.{ts,tsx}` changed: `npm run format` then `npm run lint`.
-   - If formatting rewrote a file, or lint reports an error (not just a warning), fix it and re-run before continuing — don't commit code a linter/formatter would still flag.
-   - These tools already leave `sqlcipher/`, `worker/worker-configuration.d.ts`, and generated files alone (`.prettierignore`, `eslint.config.js`'s `ignores`) — don't widen a glob or pass an explicit path that would pull those in.
+   - Any `docker/lua/**/*.lua` changed: `npm run lua:format` then `npm run lua:check`.
+   - Any `ui/**/*.{ts,tsx}` changed: `npm run format` then `npm run lint`.
+   - If formatting rewrote a file, or any check reports an error, fix it and
+     re-run before continuing. Lua checks include StyLua, Luacheck, LuaJIT
+     bytecode compilation, and the Lua test suite.
+   - These tools already leave `sqlcipher/` and generated files alone
+     (`.prettierignore`, `eslint.config.js`'s `ignores`) — don't widen a glob or
+     pass an explicit path that would pull those in.
 3. If nothing is staged, stage all relevant modified/new files with `git add`.
 4. Write a **detailed** commit message:
    - Subject line: concise summary of the change (imperative mood, e.g. "Add", "Fix", "Refactor").
@@ -38,3 +43,5 @@ description: Commit staged/modified changes with a detailed message and push, no
 - Always push after committing — don't stop at just the local commit.
 - If the push fails (e.g. diverged branch), report the error and ask before force-pushing or rebasing.
 - Never run the Python/TS lint or format commands against `sqlcipher/` (vendored/generated, already excluded by config) — don't override that exclusion for any reason.
+- Lua targets OpenResty's latest compatible LuaJIT runtime. Do not introduce
+  syntax that only works in standalone PUC Lua releases.

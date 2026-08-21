@@ -10,19 +10,19 @@ storage, health checks, and off-node backups are mandatory.
 
 ## 1. Service topology
 
-- Run the official `ghcr.io/rqlite/rqlite` image at a pinned version or digest.
+- Build `docker/Dockerfile`, which pins rqlite and runs it beside OpenResty.
 - Set a stable node ID such as `txt-control-1`.
 - Mount a single-read/write persistent volume at `/rqlite/file` and pass that
   directory to `rqlited` as its data directory.
-- Expose HTTP port `4001` only on the Northflank private network. Do not create a
-  public port for rqlite.
+- Bind rqlite HTTP to `127.0.0.1:14001`. Only OpenResty's port `8080` receives a
+  Northflank route.
 - Keep Raft port `4002` private even though the one-node deployment has no peers.
-- Enable rqlite Basic Auth. The API credential may execute and query; a separate
-  backup credential may query, back up, and inspect readiness.
-- The API is the only application allowed to submit SQL. Browsers never receive
-  the private address or rqlite credentials.
+- OpenResty Lua is the only application allowed to submit SQL. A separately
+  Basic-authenticated `/operator/rqlite/` passthrough exists for migrations,
+  diagnostics, and recovery. Browsers never receive that credential or the
+  loopback address.
 
-The API uses `/db/query` for reads and `/db/execute?transaction` for writes. It
+Lua uses `/db/query` for reads and `/db/execute?transaction` for writes. It
 uses `/db/request?transaction` only when an operation must atomically mix writes
 and returned rows. Every statement is parameterized. BLOB parameters are byte
 arrays, and read requests use `blob_array` so text and binary values cannot be

@@ -1,8 +1,8 @@
 # txt
 
 `txt` is a single-owner encrypted EPUB library. The React application keeps the
-library database and book contents encrypted in R2, while a small Node API and a
-private rqlite database run on Northflank. There is exactly one authenticated
+library database and book contents encrypted in R2, while an OpenResty Lua API
+and a loopback-only rqlite database run in one container on Northflank. There is exactly one authenticated
 owner. There are no registrations, invitations, roles, or account-management
 screens.
 
@@ -18,8 +18,7 @@ See [authentication](docs/auth.md), [control database](docs/control_database.md)
 ## Architecture
 
 ```text
-                                private network
-Browser ── HTTPS ──> Northflank API ─────────────> rqlite
+Browser ── HTTPS ──> OpenResty/Lua ── loopback ──> rqlite
    │                       │                         │
    │                       │                         ├─ owner control record
    │                       │                         ├─ live shares
@@ -50,8 +49,8 @@ Browser ── HTTPS ──> Northflank API ────────────
   updates.
 - Owner-created, independently encrypted, revocable public shares.
 - Direct R2 downloads through 60-second exact-object presigned URLs.
-- A private single-node rqlite control database with durable storage and daily
-  SQLite backups.
+- A loopback-only single-node rqlite control database with durable storage and
+  native hot backups to private R2 storage.
 
 ## Install
 

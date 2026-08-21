@@ -89,8 +89,8 @@ class BucketCleaner:
     def _shared_keys(
         self, accounts: list[StorageAccount], bucket_keys: set[str]
     ) -> set[str]:
-        # Public-share deletion is authorized by D1 and performed by the
-        # trusted Worker. The generic R2 cleaner cannot prove that an object
+        # Public-share deletion is authorized by rqlite and performed by the
+        # trusted gateway. The generic R2 cleaner cannot prove that an object
         # is unregistered (and an R2 database rollback could hide its local
         # txt_shares row), so it must never garbage-collect this namespace.
         prefixes = tuple(f"{account.db_prefix}/shared/" for account in accounts)

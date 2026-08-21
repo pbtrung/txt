@@ -1,5 +1,4 @@
 node_modules/
-worker/worker-configuration.d.ts
 sqlcipher/
 tmp/
 replaced_txt_*/

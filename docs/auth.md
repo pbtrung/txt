@@ -14,13 +14,17 @@ share capability for a short-lived read URL as described in `docs/sharing.md`.
 | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
 | `OWNER_FIREBASE_UID`                                             | The only Firebase UID allowed to unlock or mutate the library                               |
 | `FIREBASE_PROJECT_ID`                                            | Expected Firebase issuer and audience                                                       |
-| `RQLITE_URL`                                                     | Private rqlite HTTP endpoint, normally `http://rqlite:4001`                                 |
-| `RQLITE_USERNAME`, `RQLITE_PASSWORD`                             | Basic-auth credentials for parameterized queries and transactional writes                   |
 | `R2_TICKET_SECRET`                                               | At least 32 random bytes in padded standard base64, used only for owner binding tickets     |
 | `R2_ENDPOINT`, `R2_BUCKET`, `R2_REGION`                          | S3-compatible R2 destination                                                                |
 | `R2_READ_WRITE_ACCESS_KEY_ID`, `R2_READ_WRITE_SECRET_ACCESS_KEY` | Server-held parent key used to mint owner credentials and presign exact shared-object reads |
 | `RATE_LIMIT_KEY`                                                 | Independent 32-byte secret used to hash rate-limit subjects such as client addresses        |
 | `UI_ORIGIN`                                                      | Exact browser origin accepted by CORS and share URL construction                            |
+
+OpenResty and rqlite run in the same container. Lua connects only to
+`http://127.0.0.1:14001`, so there is no application-side `RQLITE_URL`,
+`RQLITE_USERNAME`, or `RQLITE_PASSWORD`. `RQLITE_ADMIN_USERNAME` and
+`RQLITE_ADMIN_PASSWORD` protect the separate operator passthrough used for
+migrations and recovery; they are never browser credentials.
 
 `R2_TICKET_SECRET`, `RATE_LIMIT_KEY`, and the R2 secret access key are independent
 secrets. The API service holds them; the browser never does. Secret rotation is

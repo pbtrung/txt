@@ -35,8 +35,47 @@ probes.
 credentials in the browser. The route exists for controlled schema migration,
 backup, restore, and inspection.
 
-Application endpoints are added by the Lua gateway. They use fixed,
-parameterized rqlite statements and never expose arbitrary SQL.
+## Lua gateway
+
+OpenResty serves the application API directly. Endpoint entrypoints live in
+`lua/endpoints/` and are named after their behavior:
+
+- `owner_keys.lua` validates the configured owner's Firebase token and returns
+  wrapped owner material;
+- `owner_r2_credentials.lua` verifies the owner ticket and P-521 proof;
+- `create_share.lua` and `delete_share.lua` mutate the share registry;
+- `shared_object_url.lua` returns an anonymous exact-object presigned URL;
+- `readiness.lua` verifies rqlite schema version 1.
+
+Reusable modules under `lua/txt/` own Firebase certificate verification,
+rqlite transport, durable rate limits, owner tickets and proofs, SigV4, and
+response handling. There is no user lookup, role dispatch, administrator mode,
+or raw-SQL application endpoint. Every authenticated route compares the
+verified Firebase `sub` with `OWNER_FIREBASE_UID`.
+
+Required Northflank variables and secrets:
+
+```text
+OWNER_FIREBASE_UID
+FIREBASE_PROJECT_ID
+UI_ORIGIN
+R2_ENDPOINT
+R2_BUCKET
+R2_REGION
+R2_READ_WRITE_ACCESS_KEY_ID
+R2_READ_WRITE_SECRET_ACCESS_KEY
+R2_TICKET_SECRET
+RATE_LIMIT_KEY
+SHARE_URL_TTL_SECONDS=60
+RQLITE_ADMIN_USERNAME
+RQLITE_ADMIN_PASSWORD
+```
+
+`R2_TICKET_SECRET` and `RATE_LIMIT_KEY` must be independent canonical padded
+base64 values containing at least 32 random bytes. `DNS_RESOLVER` is optional
+and defaults to `1.1.1.1`. No application-side `RQLITE_URL` or rqlite password
+is needed because Lua reaches the loopback-only rqlite listener. The two
+`RQLITE_ADMIN_*` secrets protect only the operator route.
 
 ## Backups
 

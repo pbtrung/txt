@@ -1,21 +1,21 @@
 # CLAUDE.md
 
-This repo holds the txt document-storage system's design docs, the Cloudflare Worker that mediates client access, and the Python CLI that administers it.
+This repo holds the txt document-storage system's design docs, its single-owner OpenResty/rqlite gateway, the browser UI, and the Python maintenance CLI.
 
 ## Design docs (read these before touching auth/storage code)
 
-- `docs/auth.md` — Firebase-to-Turso/R2 auth flow: the `ctl` control database (`users`/`key_store`/`cred_store`), `/v1/keys`, `/v1/r2-token`.
+- `docs/auth.md` — Firebase owner authentication, owner tickets, proof-of-possession, and the `/v1/keys` and `/v1/r2-token` APIs.
 - `docs/data_model.md` — the per-user SQLCipher database (`txt`/`txt_bookmarks`) schema and its conditional read-write round trip against R2.
 - `docs/storage_layout.md` — the R2 object-key layout the per-user database and per-document content live under.
-- `docs/sharing.md` — the public document-sharing feature: the D1 share registry, `/v1/share-grant`/`/v1/share`/`/v1/shared-content`, and the share-grant crypto envelope.
+- `docs/sharing.md` — public sharing and its cryptographic grant format.
 - `docs/crypto.md` — the AEAD/HKDF/KEM primitives (Ascon-Keccak, HKDF-SHA3-512, ML-KEM-1024+X448) and the blob format every wrapped value (`umk`, `cred_store.content`, `key_store.privkey`) uses.
-- `docs/deployment.md` — R2 CORS configuration and the rollout order for shipping control-plane, schema, or Worker-secret changes.
+- `docs/deployment.md` — the Northflank container, rqlite persistence and R2 backups, gateway environment, and Cloudflare Pages UI deployment.
 
 ## Code layout
 
 - `txt.py` — thin entry point; also runnable as the installed `txt` console script.
 - `txt/` — one module per concern:
-  - `creds.py` — loads/validates `creds.json` (`Creds`, the administrator's own full shape, `r2_config` included, `--ingest`/`--init-admin`) or a reduced `UserCreds` (`--init-user`'s `--user-creds`, matching `ui/src/data/creds.ts`'s `BrowserCreds` — no `turso_org_token`/`r2_config`, since an ordinary user only ever reaches `ctl`/R2 through the Worker); generates `user_root_key` if empty for either shape.
+  - `creds.py` — loads and validates maintenance or browser credential files and generates `user_root_key` when omitted.
   - `logger.py` — `--verbose` progress logging.
   - `firebase_auth.py` — Firebase email/password sign-in, returns the uid.
   - `turso_api.py` — Turso Platform API client (mints database tokens); `extract_account_name` recovers the org slug from a `libsql://` URL.
@@ -37,29 +37,18 @@ This repo holds the txt document-storage system's design docs, the Cloudflare Wo
 - `txt/tests/` — pytest. Crypto and SQLCipher tests run against the real wasm engine (`txt/tests/conftest.py`'s session-scoped `engine` fixture); everything else fakes only the network boundary (Firebase, the Turso Platform API, libsql HTTP, R2) — never the crypto itself.
 - `sqlcipher/` — the prebuilt SQLCipher+leancrypto wasm module `leancrypto_wasm.py`/`sqlite_engine.py` load. Not built from source in this repo.
 - `creds/` — local, gitignored credential files. Never commit these. Never run a command against a real one yourself — hand it to the user to run.
-- `worker/` — the Cloudflare Worker implementing docs/auth.md and docs/sharing.md, one module per concern:
-  - `firebaseAuth.ts` — RS256/JWKS verification of a Firebase ID token, cached per the response's own `Cache-Control`.
-  - `auth.ts` — bearer-token extraction + `verifiedUid` for `/v1/keys` and the administrator-only share-management endpoints.
-  - `ctl.ts` — the `ctl` join (docs/auth.md §2) over the libsql HTTP `/v2/pipeline` protocol.
-  - `cache.ts` — the versioned `keys:v3:{uid}` KV cache and per-uid endpoint rate limits (docs/auth.md §6).
-  - `account.ts` — `getAccount`, applying the keys rate limit before resolving an account through cache → `ctl.ts`; used by `/v1/keys` and authenticated share management, never by `/v1/r2-token`.
-  - `keys.ts` — `POST /v1/keys`.
-  - `r2Ticket.ts` — issues and verifies 24-hour Worker-signed account/path/signing-key tickets.
-  - `r2Token.ts` — `POST /v1/r2-token`: verifies a ticket plus P-521 proof and locally signs exact-`db_path` and `{db_prefix}/*` R2 credentials from one parent R2 key pair. The prefix is read-only for ordinary users and read-write for the configured administrator.
-  - `share.ts` — administrator-only share registration/deletion plus anonymous shared-content reads, with opaque path grants and a D1 live-share registry.
-  - `migrations/` — D1 schema files applied through Wrangler; `0001_share_registry.sql` is the authoritative registry schema.
-  - `index.ts` — the fetch handler/router.
-  - `env.d.ts` — the `Env` interface for secrets/bindings `wrangler types` doesn't know about.
-- `worker/tests/`, `ui/tests/` — vitest, mirroring each tree's own source subdirectory structure (e.g. `ui/tests/screens/Reader/ReaderScreen.test.tsx` for `ui/src/screens/Reader/ReaderScreen.tsx`) rather than living alongside the source files they test.
-- `wrangler.jsonc`, `package.json`, `scripts/deploy.sh` — Worker config/build; `scripts/deploy.sh` requires `WORKER_NAME` so a stale placeholder name in `wrangler.jsonc` can never silently target the wrong Worker, and rebuilds `ui/` fresh before every deploy. `wrangler.jsonc`'s `assets` block deploys `ui/`'s build (`dist/`) alongside the Worker script: `/v1/*` reaches `worker/index.ts`, everything else is served (or SPA-fallback-served) from `dist/`.
-- `ui/_headers` — response headers (CSP, `X-Frame-Options`, `Permissions-Policy`, ...) Cloudflare Workers Static Assets applies to every `dist/` response, same syntax as Cloudflare Pages; `npm run ui:build` copies it into `dist/`. The CSP's `connect-src` is the only thing it restricts beyond that — deliberately no `script-src`/`style-src`/`default-src`, since epub.ts renders each book section in its own sandboxed `srcdoc` iframe, which inherits this same policy.
+- `docker/` — the deployable OpenResty and rqlite container. `lua/endpoints/` contains HTTP entry points, `lua/txt/` contains reusable gateway modules, `lua/tests/` contains the dependency-light test suite, and `migrations/` owns the control database schema.
+- `ui/tests/` — vitest, mirroring the UI source tree rather than living beside source files.
+- `wrangler.jsonc`, `package.json`, `scripts/deploy.sh` — Cloudflare Pages configuration and deployment of the freshly built `dist/` static UI. Wrangler does not run an API service.
+- `ui/_headers` — Cloudflare Pages response headers copied into `dist/` by `npm run ui:build`.
 
 ## Conventions
 
 - Functions stay ≤15 lines; use a class (not free functions) for anything holding state — a client, an engine, a session.
 - Reuse the existing generic pieces (`LibsqlClient`, `TursoClient`, `CryptoBlob`, `FirebaseAuth`, `AccountSession`, `R2Client`, `SqliteEngine`) instead of duplicating HTTP, crypto, or storage logic in a new command.
-- `worker/*.ts` is formatted with Prettier at 88 columns (`.prettierrc.json`); run `npm run format` before committing. `.prettierignore` excludes generated/vendored files (`worker/worker-configuration.d.ts`, `sqlcipher/`) and the Python tree.
+- UI and shared TypeScript are formatted with Prettier at 88 columns (`.prettierrc.json`); run `npm run format` before committing UI changes. `.prettierignore` excludes generated/vendored files and the Python tree.
 - The Python tree is linted and formatted with ruff (`[tool.ruff]` in `pyproject.toml`, 88 columns to match the TS side): `python3 -m ruff check .` and `python3 -m ruff format .` before committing.
-- `worker/` and `ui/` are linted with ESLint (`eslint.config.js`): `npm run lint` before committing.
+- `ui/` and `shared/` are linted with ESLint (`eslint.config.js`): `npm run lint` before committing UI changes.
+- OpenResty Lua targets the current LuaJIT language supported by the container. Run `npm run lua:format` and `npm run lua:check` before committing Lua changes.
 - The project's own TypeScript is 7.x (`typescript7`, aliased since typescript-eslint doesn't support TS 7 yet); a plain `typescript@6.0.3` devDependency exists solely to satisfy typescript-eslint's own peer range. `npm run tsc` (used by every `*:typecheck`/`ui:build` script) always resolves to the real 7.x compiler, never the 6.x one — the alias exists only so both can coexist under `node_modules` without conflict.
 - Docs (this file, README, docs/*) describe current behavior and supported migration inputs only — no commit hashes or narrated development history.

@@ -1,5 +1,4 @@
-// worker/ and ui/ are two separate TS programs (their own tsconfig.json
-// each) sharing this one flat config, scoped per directory below.
+// The UI and its shared TypeScript use this flat config.
 // Formatting is Prettier's job (`npm run format`), not this config's --
 // only typescript-eslint's plain `recommended` (lint rules, not the
 // `stylistic` variant) is used, so the two tools don't fight each other.
@@ -14,13 +13,12 @@ export default tseslint.config(
       "**/node_modules/**",
       "dist/**",
       "sqlcipher/**",
-      "worker/worker-configuration.d.ts",
       "ui/*.tsbuildinfo",
       "**/*.d.ts",
     ],
   },
   {
-    files: ["shared/**/*.ts", "worker/**/*.ts", "ui/**/*.{ts,tsx}"],
+    files: ["shared/**/*.ts", "ui/**/*.{ts,tsx}"],
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     languageOptions: {
       globals: { ...globals.browser, ...globals.node },

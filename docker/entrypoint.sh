@@ -22,6 +22,7 @@ RAFT_ADV_ADDR=${RAFT_ADV_ADDR:-127.0.0.1:4002}
 RQLITE_ADMIN_HTPASSWD=${RQLITE_ADMIN_HTPASSWD:-/etc/nginx/rqlite-admin.htpasswd}
 RQLITE_ADMIN_USERNAME=${RQLITE_ADMIN_USERNAME:-}
 RQLITE_ADMIN_PASSWORD=${RQLITE_ADMIN_PASSWORD:-}
+DNS_RESOLVER=${DNS_RESOLVER:-1.1.1.1}
 
 require_pair \
   RQLITE_ADMIN_USERNAME "$RQLITE_ADMIN_USERNAME" \
@@ -38,8 +39,8 @@ printf '%s' "$RQLITE_ADMIN_PASSWORD" | \
   htpasswd -ic "$RQLITE_ADMIN_HTPASSWD" "$RQLITE_ADMIN_USERNAME"
 
 rendered_nginx=/tmp/txt-nginx.conf
-export RQLITE_ADMIN_HTPASSWD
-envsubst '$RQLITE_ADMIN_HTPASSWD' </opt/txt/nginx.conf >"$rendered_nginx"
+export DNS_RESOLVER RQLITE_ADMIN_HTPASSWD
+envsubst '$DNS_RESOLVER $RQLITE_ADMIN_HTPASSWD' </opt/txt/nginx.conf >"$rendered_nginx"
 nginx -c "$rendered_nginx"
 
 set -- \
