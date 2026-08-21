@@ -18,13 +18,10 @@ See [authentication](docs/auth.md), [control database](docs/control_database.md)
 ## Architecture
 
 ```text
-Browser ── HTTPS ──> OpenResty/Lua ── loopback ──> rqlite
-   │                       │                         │
-   │                       │                         ├─ owner control record
-   │                       │                         ├─ live shares
-   │                       │                         └─ rate-limit counters
-   │                       │
-   └── encrypted objects ──┴──────────────────────> Cloudflare R2
+Browser ── HTTPS ─┬─> OpenResty /v1 Lua API ───┬─> rqlite
+                  │                              └─> Cloudflare R2
+                  ├─> OpenResty /operator/rqlite/ ──> rqlite
+                  └─> Cloudflare R2 encrypted objects
 ```
 
 - The owner signs in with Firebase; the API accepts only the configured owner
@@ -34,6 +31,9 @@ Browser ── HTTPS ──> OpenResty/Lua ── loopback ──> rqlite
 - Every EPUB is a separate immutable encrypted R2 object.
 - The browser performs EPUB encryption and decryption. The API never receives
   plaintext books or share content keys.
+- During unlock, the owner browser reads wrapped singleton material through the
+  Basic-authenticated rqlite operator proxy and obtains an R2 binding ticket
+  through the Firebase-authenticated API. All three owner UIDs must agree.
 - rqlite is the only server-side database. It stores the singleton owner control
   record, the share registry, schema versions, and rate-limit counters.
 - Shared EPUB downloads go directly from R2 to the recipient through a
@@ -76,6 +76,28 @@ txt --init-owner rqlite_creds.json --verbose
 
 The command creates exactly one `owner_control` row. A second, different
 Firebase UID is rejected rather than added.
+
+## Browser unlock file
+
+Unlock the deployed UI with a separate owner-only JSON file containing exactly
+the browser fields:
+
+```json
+{
+  "rqlite_admin_username": "operator",
+  "rqlite_admin_password": "...",
+  "rqlite_db_url": "https://api.example.com/operator/rqlite",
+  "firebase_email": "owner@example.com",
+  "firebase_password": "...",
+  "firebase_api_key": "...",
+  "user_root_key": "<generated padded base64>"
+}
+```
+
+`rqlite_db_url` is the same OpenResty operator route called
+`rqlite_operator_url` in the provisioning file. The UI retains the selected
+file's credentials and all decrypted material only in page memory; lock or
+reload before leaving the device. Do not commit or upload this file.
 
 To preserve an existing Turso owner's database paths, database key, display
 name, and private handle, preview and then run the one-time migration:

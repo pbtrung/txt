@@ -18,16 +18,22 @@ share capability for a short-lived read URL as described in `docs/sharing.md`.
 | `R2_ENDPOINT`, `R2_BUCKET`, `R2_REGION`                          | S3-compatible R2 destination                                                                |
 | `R2_READ_WRITE_ACCESS_KEY_ID`, `R2_READ_WRITE_SECRET_ACCESS_KEY` | Server-held parent key used to mint owner credentials and presign exact shared-object reads |
 | `RATE_LIMIT_KEY`                                                 | Independent 32-byte secret used to hash rate-limit subjects such as client addresses        |
-| `UI_ORIGIN`                                                      | Exact browser origin accepted by CORS and share URL construction                            |
+| `UI_ORIGIN`                                                      | Exact browser origin accepted by the API and operator-proxy CORS                            |
 
 OpenResty and rqlite run in the same container. Lua connects only to
 `http://127.0.0.1:14001`, so there is no application-side `RQLITE_URL`,
 `RQLITE_USERNAME`, or `RQLITE_PASSWORD`. `RQLITE_ADMIN_USERNAME` and
 `RQLITE_ADMIN_PASSWORD` protect the separate operator passthrough used for
-migrations and recovery; they are never browser credentials. The local Python
-CLI calls that passthrough through the credential file's
-`rqlite_operator_url`, normally
+migrations, recovery, and the owner UI's wrapped-key read. The Python CLI calls
+that passthrough through `rqlite_operator_url`; the UI calls the same route
+through its `rqlite_db_url`. Both normally equal
 `https://<public-service-domain>/operator/rqlite`.
+
+The operator credentials are high-value owner secrets. They appear in the
+owner-only unlock file, stay in browser page memory, and are never persisted by
+the application. Exact-origin CORS prevents another browser origin from reading
+operator responses, but it does not replace Basic authentication for
+non-browser clients.
 
 `R2_TICKET_SECRET`, `RATE_LIMIT_KEY`, and the R2 secret access key are independent
 secrets. The API service holds them; the browser never does. Secret rotation is
@@ -104,7 +110,29 @@ There is no owner list, invitation, deprovisioning workflow, delegated access,
 or recovery copy belonging to another account. Recovery requires the owner's
 credential file, its `user_root_key`, the rqlite backup, and the R2 objects.
 
+The browser unlock file contains only these seven fields:
+
+```json
+{
+  "rqlite_admin_username": "operator",
+  "rqlite_admin_password": "...",
+  "rqlite_db_url": "https://api.example.com/operator/rqlite",
+  "firebase_email": "owner@example.com",
+  "firebase_password": "...",
+  "firebase_api_key": "...",
+  "user_root_key": "<padded standard base64>"
+}
+```
+
+It contains no R2 parent key, account type, or user-management data. The display
+name and private R2 paths come from the encrypted singleton payload.
+
 ## 4. Endpoints
+
+OpenResty requires the browser `Origin` to equal `UI_ORIGIN` before any
+`/v1/*` Lua handler runs. A missing or different origin receives `403`. The
+operator proxy instead uses exact-origin CORS so Basic-authenticated CLI clients
+can operate without an `Origin` header.
 
 ### 4.1 `POST /v1/keys`
 
@@ -150,7 +178,11 @@ The 24-hour HS256 ticket contains:
 ```
 
 There is no role claim: any valid ticket is necessarily for the configured
-owner. The browser keeps the ticket only in unlocked memory.
+owner. The current browser uses the response's `uid` and `r2_ticket`; it reads
+the wrapped blobs directly through the operator proxy and requires the Firebase
+UID, rqlite row UID, and API response UID to be identical. The API response
+retains the wrapped fields for protocol completeness. The browser keeps the
+ticket only in unlocked memory.
 
 | Status | Condition                                  |
 | ------ | ------------------------------------------ |
@@ -202,18 +234,22 @@ rate counter.
 
 ## 5. Owner session
 
-1. The browser signs in to Firebase and calls `/v1/keys`.
-2. The API verifies the one allowed UID, loads the singleton control row, and
-   returns wrapped material plus a 24-hour binding ticket.
-3. The browser unwraps the owner master key, credential payload, and P-521
+1. The owner selects the seven-field unlock file. The browser validates that
+   `rqlite_db_url` is the HTTPS `/operator/rqlite` route, with localhost HTTP
+   allowed for development.
+2. The browser signs in to Firebase. In parallel, it queries the singleton
+   wrapped-key row through the Basic-auth operator proxy and calls `/v1/keys`
+   for an owner binding ticket.
+3. Unlock stops unless the Firebase UID, rqlite row UID, and API UID are equal.
+4. The browser unwraps the owner master key, credential payload, and P-521
    private key entirely in memory.
-4. The browser signs a short-lived proof over the exact ticket, handle, and R2
+5. The browser signs a short-lived proof over the exact ticket, handle, and R2
    paths and calls `/v1/r2-token`.
-5. The API returns 15-minute scoped R2 credentials.
-6. The browser renews those credentials with the same ticket until its fixed
-   expiry, then obtains a new ticket through Firebase.
-7. Locking the vault discards all plaintext keys, paths, tickets, and temporary
-   R2 credentials.
+6. The API returns 15-minute scoped R2 credentials. The browser renews them with
+   the same ticket until its fixed expiry, then obtains a new ticket through
+   Firebase.
+7. Locking or reloading releases the unlock credentials, plaintext keys, paths,
+   tickets, and temporary R2 credentials from the application session.
 
 ## 6. Rate limits
 
@@ -255,9 +291,11 @@ authorization state and durability, but it receives only wrapped or encrypted
 owner key material, hashes, object paths for active shares, and counters. R2 is
 trusted for object durability but not plaintext confidentiality.
 
-The API holds Firebase verification configuration, rqlite credentials, signing
-secrets, and the parent R2 key. It does not hold `user_root_key`, plaintext EPUB
-content, the SQLCipher key, the raw private handle, an unwrapped owner master
-key, or any share content key. A compromised API can authorize R2 access and is
-therefore inside the trusted computing base; a copied rqlite backup alone cannot
-decrypt the library.
+The API holds Firebase verification configuration, signing secrets, and the
+parent R2 key. Lua reaches rqlite only through its loopback listener and needs no
+rqlite password. The owner browser holds the operator Basic credentials and
+`user_root_key` only for the unlocked page session. The API does not hold
+`user_root_key`, plaintext EPUB content, the SQLCipher key, the raw private
+handle, an unwrapped owner master key, or any share content key. A compromised
+API can authorize R2 access and is therefore inside the trusted computing base;
+a copied rqlite backup alone cannot decrypt the library.

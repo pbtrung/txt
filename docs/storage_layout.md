@@ -1,9 +1,10 @@
 # R2 Storage Layout — Design
 
 The owner has one random database object path and one random content prefix. The
-plaintext values come from the encrypted credential payload after `/v1/keys` and
-exist only in unlocked browser memory. rqlite stores their fixed-length SHA-512
-binding, not the two owner paths themselves.
+plaintext values come from the encrypted credential payload after the browser
+reads and unwraps the singleton rqlite record. They exist only in unlocked
+browser memory. rqlite stores their fixed-length SHA-512 binding, not the two
+owner paths themselves.
 
 ```text
 s3://{bucket}/{db_path}
@@ -53,4 +54,6 @@ names never include the owner UID or a share capability.
   object and owner prefix.
 - A public recipient receives only a presigned `GET` for one shared object.
 - Owner credentials cannot access `control-backups/`.
-- Browser code never receives the parent R2 secret or rqlite credentials.
+- Browser code never receives the parent R2 secret. The owner unlock file does
+  contain the Basic credentials for `/operator/rqlite/`; the UI uses them only
+  to read the singleton wrapped-key row and keeps them in page memory.

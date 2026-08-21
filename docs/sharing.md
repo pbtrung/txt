@@ -43,16 +43,18 @@ defined in `docs/control_database.md`.
 The public URL has this conceptual form:
 
 ```text
-https://reader.example/shared#id=<base64url-share-id>&key=<base64url-content-key>
+https://reader.example/shared#id=<base64url-share-id>&key=<base64url-content-key>&api=<encoded-api-origin>
 ```
 
 Everything after `#` is a fragment and is not sent in the initial HTTP request.
 The shared page parses it locally. The content key remains only in browser
 memory and browser-controlled history or clipboard state.
 
-The capability must contain 32 random bytes and use canonical unpadded base64url.
-The content key must contain 128 random bytes. New shares always receive new
-values; a capability or content key is never reused.
+The capability must contain 32 random bytes and use canonical unpadded
+base64url. The content key must contain 128 random bytes. `api` is the exact
+HTTPS origin derived from the owner's `rqlite_db_url`; localhost HTTP is allowed
+only for development. New shares always receive new values; a capability or
+content key is never reused.
 
 ## 4. Endpoints
 
@@ -84,7 +86,8 @@ reusing either one for different material returns `409`.
 
 ### 4.2 `POST /v1/shared-url`
 
-This endpoint is anonymous:
+This endpoint requires no identity token, but the proxy accepts it only when the
+browser request origin exactly equals `UI_ORIGIN`:
 
 ```json
 {
@@ -152,7 +155,7 @@ references it.
    request and referrer.
 2. The shared page validates and retains the capability and content key in
    memory.
-3. It posts only the capability to `/v1/shared-url`.
+3. It posts only the capability to `{api}/v1/shared-url`.
 4. It immediately fetches the encrypted EPUB from the returned R2 URL.
 5. It decrypts and renders the EPUB locally. The API sees neither EPUB bytes nor
    the decryption key.
@@ -171,6 +174,11 @@ SigV4 headers emitted by the client, and exposes `ETag`, `Content-Length`,
 The shared object response uses `Content-Type: application/octet-stream` and
 `Cache-Control: private, no-store`. Presigned URLs and capabilities must not be
 written to application logs.
+
+OpenResty rejects every `/v1/*` request whose `Origin` header is absent or does
+not exactly match `UI_ORIGIN`. This is an origin boundary, not recipient
+authentication: possession of the random share capability remains the public
+read authorization.
 
 ## 8. Security properties
 

@@ -17,20 +17,24 @@ storage, health checks, and off-node backups are mandatory.
 - Bind rqlite HTTP to `127.0.0.1:14001`. Only OpenResty's port `8080` receives a
   Northflank route.
 - Keep Raft port `4002` private even though the one-node deployment has no peers.
-- OpenResty Lua is the only application allowed to submit SQL. A separately
-  Basic-authenticated `/operator/rqlite/` passthrough exists for migrations,
-  diagnostics, and recovery. Browsers never receive that credential or the
-  loopback address. Operator tools set `rqlite_operator_url` to the full public
-  route, such as `https://api.example.com/operator/rqlite`.
+- OpenResty Lua submits API reads and writes through loopback. A separately
+  Basic-authenticated `/operator/rqlite/` passthrough exists for owner unlock,
+  migrations, diagnostics, and recovery. The owner UI receives its Basic
+  credential only through the selected local unlock file and never receives the
+  loopback address. Operator tools call the route as `rqlite_operator_url`; the
+  UI calls the same route as `rqlite_db_url`, such as
+  `https://api.example.com/operator/rqlite`.
 
-Lua uses `/db/query` for reads and `/db/execute?transaction` for writes. It
-uses `/db/request?transaction` only when an operation must atomically mix writes
-and returned rows. Every statement is parameterized. BLOB parameters are byte
-arrays, and read requests use `blob_array` so text and binary values cannot be
-confused.
+Lua uses `/db/query` for reads and `/db/execute?transaction` for writes. It uses
+`/db/request?transaction` only when an operation must atomically mix writes and
+returned rows. Every Lua and Python statement is parameterized. BLOB parameters
+are byte arrays, and read requests use `blob_array` so text and binary values
+cannot be confused. The browser issues one fixed singleton `SELECT` and converts
+the returned BLOB arrays to in-memory byte arrays.
 
 Application code must not open, copy, checkpoint, or modify rqlite's live
-`db.sqlite` file. All live access goes through the HTTP API.
+`db.sqlite` file. All live access goes through either loopback HTTP or the
+Basic-authenticated OpenResty operator proxy.
 
 ## 2. Schema
 

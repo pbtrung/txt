@@ -7,7 +7,7 @@ This repo holds the txt document-storage system's design docs, its single-owner 
 - `docs/auth.md` — Firebase owner authentication, owner tickets, proof-of-possession, and the `/v1/keys` and `/v1/r2-token` APIs.
 - `docs/data_model.md` — the owner's SQLCipher database (`txt`/`txt_bookmarks`) schema and its conditional read-write round trip against R2.
 - `docs/storage_layout.md` — the R2 object-key layout the owner database and per-document content live under.
-- `docs/sharing.md` — public sharing and its cryptographic grant format.
+- `docs/sharing.md` — public sharing, capability URLs, and presigned R2 reads.
 - `docs/crypto.md` — the AEAD/HKDF/KEM primitives (Ascon-Keccak, HKDF-SHA3-512, ML-KEM-1024+X448) and the blob format used by `owner_control` and encrypted EPUB copies.
 - `docs/deployment.md` — the Northflank container, rqlite persistence and R2 backups, gateway environment, and Cloudflare Pages UI deployment.
 
@@ -40,6 +40,7 @@ This repo holds the txt document-storage system's design docs, its single-owner 
 - `sqlcipher/` — the prebuilt SQLCipher+leancrypto wasm module `leancrypto_wasm.py`/`sqlite_engine.py` load. Not built from source in this repo.
 - `creds/` — local, gitignored credential files. Never commit these. Never run a command against a real one yourself — hand it to the user to run.
 - `docker/` — the deployable OpenResty and rqlite container. `lua/endpoints/` contains HTTP entry points, `lua/txt/` contains reusable gateway modules, `lua/tests/` contains the dependency-light test suite, and `migrations/` owns the control database schema.
+- `ui/src/data/rqlite.ts` — the browser's fixed singleton owner query through the Basic-auth operator proxy; `ui/src/data/apiClient.ts` owns Firebase-authenticated tickets, temporary R2 credentials, and share API calls.
 - `ui/tests/` — vitest, mirroring the UI source tree rather than living beside source files.
 - `wrangler.jsonc`, `package.json`, `scripts/deploy.sh` — Cloudflare Pages configuration and deployment of the freshly built `dist/` static UI. Wrangler does not run an API service.
 - `ui/_headers` — Cloudflare Pages response headers copied into `dist/` by `npm run ui:build`.

@@ -63,10 +63,14 @@ openssl rand -base64 32
 openssl rand -base64 32
 ```
 
-Restrict API CORS to `UI_ORIGIN`. Set bounded request-body sizes, request
-timeouts, and trusted-proxy handling before enabling the public route. Only
-Northflank's own forwarding header is accepted as the public client address used
-for rate limiting.
+Set `UI_ORIGIN` to the exact deployed static-UI origin, with no trailing slash.
+OpenResty rejects every `/v1/*` request with a missing or different `Origin`.
+The operator proxy returns CORS permission only for that same origin while
+remaining usable by Basic-authenticated CLI and recovery clients that do not
+send browser-origin headers. Set bounded request-body sizes, request timeouts,
+and trusted-proxy handling before enabling the public route. Only Northflank's
+own forwarding header is accepted as the public client address used for rate
+limiting.
 
 ## 3. Owner initialization and migration
 
@@ -147,6 +151,31 @@ that depends on a new local schema:
 txt --update-db owner_creds.json --local-db-dir ./data --verbose
 ```
 
+### Browser unlock credential file
+
+After initialization or migration has populated `user_root_key`, create a
+separate owner-only UI file with exactly this shape:
+
+```json
+{
+  "rqlite_admin_username": "operator",
+  "rqlite_admin_password": "...",
+  "rqlite_db_url": "https://api.example.com/operator/rqlite",
+  "firebase_email": "owner@example.com",
+  "firebase_password": "...",
+  "firebase_api_key": "...",
+  "user_root_key": "<generated padded base64>"
+}
+```
+
+Copy `rqlite_db_url` from the provisioning file's `rqlite_operator_url`; the
+different name marks the browser's direct database-proxy endpoint. Copy the
+Firebase and root-key values from the initialized destination file. Do not copy
+`r2_config`, the asset signing key, or the display name into the UI file. Keep
+both files outside the repository. The browser reads the selected UI file into
+memory, never uploads it or stores it in Web Storage, and requires a new unlock
+after lock or reload.
+
 ## 4. R2
 
 Create a parent R2 API token limited to the application bucket. The Northflank
@@ -177,9 +206,11 @@ WORKER_NAME=txt npm run deploy
 
 `wrangler.jsonc` declares `dist/` as `pages_build_output_dir` and exposes the
 same directory through the `STATIC_ASSETS` binding. It contains no server entry
-point or API bindings. Configure SPA fallback, the security headers required by
-the EPUB renderer, and the exact Northflank API origin. The shared route must be
-public; owner library routes require Firebase and the unlocked local vault.
+point or API bindings. The static CSP permits HTTPS connections because the
+Northflank API origin is supplied at unlock time and copied into share URL
+fragments; EPUB scripts remain disabled and EPUB resource directives remain
+restricted. The shared route is public; owner library routes require Firebase
+and the unlocked local vault.
 
 The URL fragment containing a share capability and content key must never be
 forwarded to analytics, error reporting, or server logs.
@@ -203,17 +234,21 @@ Before exposing the deployment, verify:
 1. rqlite is unreachable from the public internet.
 2. The configured Firebase owner can call `/v1/keys`; another valid Firebase UID
    receives `403`.
-3. Ticket renewal, P-521 proof verification, and 15-minute R2 credentials work.
-4. Exact database reads and conditional writes work, including a deliberate
+3. A missing or mismatched browser origin receives `403` on every `/v1/*`
+   endpoint, while the Basic-authenticated CLI can still use the operator route.
+4. The seven-field UI file unlocks only when Firebase, rqlite, and API owner UIDs
+   match.
+5. Ticket renewal, P-521 proof verification, and 15-minute R2 credentials work.
+6. Exact database reads and conditional writes work, including a deliberate
    `412` conflict.
-5. Owner EPUB upload, download, reading position, and bookmarks persist.
-6. Share creation uploads one independently encrypted R2 object and registers
+7. Owner EPUB upload, download, reading position, and bookmarks persist.
+8. Share creation uploads one independently encrypted R2 object and registers
    one active rqlite row.
-7. Anonymous redemption returns a 60-second URL for only that object, and the
+9. Anonymous redemption returns a 60-second URL for only that object, and the
    EPUB downloads directly from R2.
-8. An invalid capability, expired presigned URL, malformed body, and exceeded
+10. An invalid capability, expired presigned URL, malformed body, and exceeded
    rate limit fail with the expected status.
-9. Revocation blocks new URLs immediately, deletes the R2 object, and removes the
+11. Revocation blocks new URLs immediately, deletes the R2 object, and removes the
    rqlite row after deletion succeeds.
-10. A rqlite restart preserves owner, share, migration, and counter rows.
-11. A backup can restore into an empty test rqlite service.
+12. A rqlite restart preserves owner, share, migration, and counter rows.
+13. A backup can restore into an empty test rqlite service.

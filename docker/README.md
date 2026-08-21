@@ -7,8 +7,8 @@ for rqlite itself but does not need a public Northflank route for the one-node
 deployment.
 
 The container has exactly one application owner. The Basic-auth operator route
-is for schema installation, diagnostics, and recovery; it is not an account or
-end-user API.
+is for owner unlock reads, schema installation, diagnostics, and recovery; it
+is not a user-management API.
 
 ## Build and run
 
@@ -31,9 +31,11 @@ probes.
 ## Operator access
 
 `/operator/rqlite/` proxies rqlite's native HTTP API behind
-`RQLITE_ADMIN_USERNAME` and `RQLITE_ADMIN_PASSWORD`. Do not embed these
-credentials in the browser. The route exists for controlled schema migration,
-backup, restore, and inspection.
+`RQLITE_ADMIN_USERNAME` and `RQLITE_ADMIN_PASSWORD`. The sole owner places these
+credentials in the local seven-field UI unlock file; the UI uses them to read
+the wrapped singleton row and retains them only in page memory. The same route
+supports controlled schema migration, backup, restore, and inspection, so these
+remain high-value operator secrets despite their owner-browser use.
 
 Set the Python owner's `rqlite_operator_url` to this route without an API
 method suffix. A local host-run CLI uses
@@ -41,6 +43,11 @@ method suffix. A local host-run CLI uses
 `https://<public-service-domain>/operator/rqlite`. The credential file's
 `rqlite_admin_username` and `rqlite_admin_password` must match the two container
 variables above.
+
+Browser responses from this route include `Access-Control-Allow-Origin` only
+for the exact configured `UI_ORIGIN`. Non-browser CLI tools may omit `Origin`.
+Every `/v1/*` location is stricter: OpenResty returns `403` before Lua runs when
+`Origin` is absent or differs from `UI_ORIGIN`.
 
 The operator location accepts request bodies up to 128 KiB because owner
 bootstrap sends KEM and signing BLOBs as rqlite JSON byte arrays. The global
@@ -88,7 +95,7 @@ base64 values containing at least 32 random bytes. `DNS_RESOLVER` is optional
 and defaults to `1.1.1.1`. No application-side `RQLITE_URL` or rqlite password
 is needed by Lua because it reaches the loopback-only rqlite listener. The two
 `RQLITE_ADMIN_*` secrets protect only the operator route used by the Python CLI
-and other operator tools.
+and the owner browser's wrapped-key lookup.
 
 ## Backups
 
