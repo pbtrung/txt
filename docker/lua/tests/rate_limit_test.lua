@@ -5,7 +5,7 @@ t.test("rate limit increments and checks the durable rqlite counter", function()
   local rqlite = {
     request = function(statements)
       captured = statements
-      return { {}, { columns = { "count" }, values = { { 60 } } } }
+      return { {}, { columns = { "count" }, values = { { 60 } } }, {} }
     end,
     first_row = function(result)
       return { count = result.values[1][1] }
@@ -35,8 +35,10 @@ t.test("rate limit increments and checks the durable rqlite counter", function()
   }, function(rate_limit)
     t.truthy(rate_limit.allow("owner-keys", "owner"))
     t.equal(captured[1][2].window_start, 3600)
+    t.equal(captured[3][2].stale_before, 100)
     t.equal(captured[1][2].scope, "owner-keys")
     t.truthy(captured[1][1]:match("ON CONFLICT"))
+    t.truthy(captured[3][1]:match("DELETE FROM rate_limits"))
   end)
   ngx = old_ngx
 end)
@@ -44,7 +46,7 @@ end)
 t.test("rate limit rejects a count above the endpoint budget", function()
   local rqlite = {
     request = function()
-      return { {}, { columns = { "count" }, values = { { 121 } } } }
+      return { {}, { columns = { "count" }, values = { { 121 } } }, {} }
     end,
     first_row = function(result)
       return { count = result.values[1][1] }

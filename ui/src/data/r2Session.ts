@@ -38,10 +38,6 @@ export class R2Session {
     return this.withCredential("dbPrefix", (client) => client.putImmutable(key, bytes));
   }
 
-  deleteShared(key: string): Promise<void> {
-    return this.withCredential("dbPrefix", (client) => client.deleteObject(key));
-  }
-
   registerShare(
     sharePrefix: string,
     sharePath: string,

@@ -19,18 +19,18 @@ This repo holds the txt document-storage system's design docs, its single-owner 
   - `logger.py` — `--verbose` progress logging.
   - `firebase_auth.py` — Firebase email/password sign-in, returns the uid.
   - `rqlite_client.py` — Basic-auth client for the external OpenResty operator route, including named parameters, BLOB arrays, transactional batches, and a dedicated non-transactional `vacuum()` (SQLite forbids `VACUUM` inside a transaction).
-  - `rqlite_schema.py` — idempotent schema-v1 statements installed automatically when owner initialization reaches an empty rqlite database.
+  - `rqlite_schema.py` — the idempotent current-schema snapshot installed automatically when owner initialization reaches an empty rqlite database, including migration markers for every change represented by the snapshot.
   - `rqlite_updater.py` — `RqliteUpdater`, the `--update-rql` implementation: applies every `docker/migrations/NNNN_*.sql` file not yet recorded in `schema_migrations` to an already-provisioned instance, in order, then vacuums.
   - `random_token.py` — base32-Crockford encoding, used for `db_path`/`db_prefix`/per-document key segments.
   - `leancrypto_wasm.py` — wasmtime binding to `sqlcipher/sqlcipher.wasm`'s bundled leancrypto build (AEAD, HKDF, KEM).
   - `crypto_blob.py` — docs/crypto.md's wrap/unwrap blob format, built on `leancrypto_wasm`.
   - `sqlite_engine.py` — real SQLCipher read/write against `sqlcipher.wasm`: an in-memory `sqlite3_vfs` (function pointers installed into the wasm indirect function table via `sqlite3_js_vfs_register`) backs the whole database in a Python `bytearray`, since this build has no working native filesystem VFS and `:memory:` connections never engage the codec. Keys are 256–8192 raw bytes (`sqlite3_key`), not a passphrase.
   - `owner_init.py` — `OwnerInitializer`, the idempotent `--init-owner` implementation. It installs an absent rqlite schema, creates exactly one `owner_control` row, and validates existing owner material. Its `load_current_owner()` (sign in, read the singleton row, validate, decrypt) is the shared entry point `ingest.py`, `db_updater.py`, and `bucket_cleaner.py` reuse to reach the owner's account.
-  - `r2_client.py` — `R2Client`, a thin boto3/S3-compatible wrapper for R2 (get/put object, list keys, list common prefixes, delete keys).
+  - `r2_client.py` — `R2Client`, a thin boto3/S3-compatible wrapper for R2 (get/put objects, list keys, and delete key batches with partial-failure detection).
   - `opf.py` — Calibre `.opf` sidecar detection and `<metadata>` parsing; `ingest.py` extracts just `title`/`authors`/`subjects`/`publisher` from it into `txt.catalog` (docs/data_model.md §2.1).
-  - `ingest.py` — `TxtIngester`, the `--ingest` command: uploads each EPUB in a directory as one R2 object, keeps a resumable local SQLCipher working copy, and dedups against already-recorded filenames.
+  - `ingest.py` — `TxtIngester`, the `--ingest` command: uploads each EPUB in a directory as one R2 object, writes a local SQLCipher inspection checkpoint, and dedups against filenames in the current R2 database. R2 is always the input source.
   - `db_updater.py` — `DbUpdater`, the `--update-db` command: migrates and validates the complete catalog, CFI reading-state, bookmark, share, and named-migration schema for the singleton owner's database. R2 is always the input; local files are inspection checkpoints only.
-  - `bucket_cleaner.py` — `BucketCleaner`, the `--clean-bucket` command: deletes R2 objects not referenced by the singleton owner's database, excluding the `{db_prefix}/shared/` namespace (public shares are gateway-owned).
+  - `bucket_cleaner.py` — `BucketCleaner`, the `--clean-bucket` command: deletes R2 objects not referenced by the singleton owner's database, excluding the `{db_prefix}/shared/` namespace (public shares are gateway-owned) and the server-only prefix configured by `rqlite_control_backup`.
   - `replace_images.py` — `--replace-images`: replaces EPUB images with placeholders and constrains their display size; unrelated to the rest of this package's account/storage logic.
   - `edit_epub.py` — `--edit-epub`: splits EPUB spine items into soft 1.2 MB parts, rewrites title/series metadata and sidecars, then applies the same image replacement rules as `--replace-images`.
   - `cli.py` — the click entry point.

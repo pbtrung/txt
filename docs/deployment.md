@@ -20,8 +20,8 @@ and protected rqlite backups.
    Raft port `4002`.
 6. Configure liveness at `/health/live` and readiness at `/health/ready`.
 7. Run owner initialization through the Basic-authenticated
-   `/operator/rqlite/` route. The CLI installs schema version 1 automatically
-   when rqlite is empty.
+   `/operator/rqlite/` route. The CLI installs the current schema snapshot and
+   its migration markers automatically when rqlite is empty.
 
 The rqlite volume and its backups are required. A container filesystem without a
 persistent volume is not an acceptable database deployment.
@@ -76,9 +76,11 @@ OpenResty rejects every `/v1/*` request with a missing or different `Origin`.
 The operator proxy returns CORS permission only for that same origin while
 remaining usable by Basic-authenticated CLI and recovery clients that do not
 send browser-origin headers. Set bounded request-body sizes, request timeouts,
-and trusted-proxy handling before enabling the public route. Only Northflank's
-own forwarding header is accepted as the public client address used for rate
-limiting.
+and trusted-proxy handling before enabling the public route. The gateway uses
+the direct peer address for public rate limiting and deliberately ignores
+`X-Forwarded-For`; verify that the route preserves the desired client address
+as the peer, or configure and test an explicit trusted-proxy chain before
+relying on per-client limits.
 
 ## 3. Owner initialization
 
@@ -89,21 +91,18 @@ Create `rqlite_creds.json` with this exact shape:
   "rqlite_admin_username": "operator",
   "rqlite_admin_password": "...",
   "rqlite_operator_url": "https://api.example.com/operator/rqlite",
+  "rqlite_control_backup": "control-backups/",
   "firebase_email": "owner@example.com",
   "firebase_password": "...",
   "firebase_api_key": "...",
   "display_name": "Owner",
   "r2_config": {
     "endpoint": "https://ACCOUNT_ID.r2.cloudflarestorage.com",
-    "read_only_access_key_id": "...",
-    "read_only_secret_access_key": "...",
     "read_write_access_key_id": "...",
     "read_write_secret_access_key": "...",
     "region": "auto",
     "bucket": "txt"
   },
-  "slhdsa_256f_priv_key": "",
-  "asset_base_url": "https://reader.example.com",
   "user_root_key": ""
 }
 ```
@@ -111,18 +110,22 @@ Create `rqlite_creds.json` with this exact shape:
 `rqlite_operator_url` is the public OpenResty operator route protected by
 `RQLITE_ADMIN_USERNAME` and `RQLITE_ADMIN_PASSWORD`. For Northflank it is
 `https://<public-service-domain>/operator/rqlite`, without a rqlite API suffix
-such as `/db/query`. The CLI removes a trailing slash. Do not use
-`http://127.0.0.1:14001` unless the CLI itself is running inside the container.
+such as `/db/query`. The rqlite client ignores a trailing slash. For local
+development, use the OpenResty route at
+`http://127.0.0.1:8080/operator/rqlite`, not rqlite's private port.
 OpenResty permits up to 128 KiB only on this Basic-authenticated operator route
 to accommodate JSON byte arrays for owner key material; public application
 routes retain the 16 KiB limit.
 
+`rqlite_control_backup` is the R2 object-key prefix used by rqlite automatic
+backups. It must match the prefix containing the backup object configured in
+`RQLITE_BACKUP_CONF`; bucket cleanup preserves every object under this prefix.
+Specify it relative to the configured bucket, without a leading slash.
+
 Keep this file outside the repository and back it up securely. Leave
 `user_root_key` empty only for the first write: initialization generates a
-256-byte standard-base64 key and writes it back. Empty
-`slhdsa_256f_priv_key` is reserved for the static-asset signing setup;
-`asset_base_url` is the deployed UI origin. Every `r2_config` property must be
-present.
+256-byte standard-base64 key and writes it back. Every shown `r2_config`
+property must be present.
 
 Initialize the owner:
 
@@ -151,10 +154,10 @@ so do this immediately rather than leaving it for later):
 txt --update-rql rqlite_creds.json --verbose
 ```
 
-This applies every migration not yet recorded in `schema_migrations`, in
-order, each as its own transaction, then runs `VACUUM`. A fresh
-`--init-owner` install never needs this — it gets the current schema
-directly from `txt/rqlite_schema.py`.
+This applies every migration not yet recorded in `schema_migrations`, in order,
+each as its own transaction, then runs `VACUUM`. A fresh `--init-owner` install
+already gets the current schema and corresponding migration markers directly
+from `txt/rqlite_schema.py`.
 
 ### Browser unlock credential file
 
@@ -176,7 +179,7 @@ separate owner-only UI file with exactly this shape:
 Copy `rqlite_db_url` from the provisioning file's `rqlite_operator_url`; the
 different name marks the browser's direct database-proxy endpoint. Copy the
 Firebase and root-key values from the initialized destination file. Do not copy
-`r2_config`, the asset signing key, or the display name into the UI file. Keep
+`r2_config` or the display name into the UI file. Keep
 both files outside the repository. The browser reads the selected UI file into
 memory, never uploads it or stores it in Web Storage, and requires a new unlock
 after lock or reload.
@@ -184,15 +187,15 @@ after lock or reload.
 ## 4. R2
 
 Create a parent R2 API token limited to the application bucket. The Northflank
-API uses it to mint temporary owner access, presign exact shared reads, delete
-revoked shared objects. Native rqlite backups use the separate credentials in
+API uses it to mint temporary owner access, presign exact shared reads, and
+delete revoked shared objects. Native rqlite backups use separate credentials in
 `RQLITE_BACKUP_CONF`.
 
 Configure bucket CORS for the exact UI origin:
 
-- methods: `GET`, `PUT`, `DELETE`, `HEAD`;
-- request headers: `Range`, `If-Match`, `If-None-Match`, `Content-Type`, and the
-  required SigV4 headers;
+- methods: `GET`, `PUT`, `HEAD`;
+- request headers: `Range`, `If-Match`, `If-None-Match`, `Content-Type`,
+  `Cache-Control`, and the required SigV4 headers;
 - exposed headers: `ETag`, `Content-Length`, `Content-Range`, `Accept-Ranges`;
 - no wildcard origin;
 - a short preflight cache duration during rollout.
@@ -226,9 +229,9 @@ forwarded to analytics, error reporting, or server logs.
 Render a secret-backed copy of `docker/backup.conf.json.example`, mount it in
 the service, and set `RQLITE_BACKUP_CONF` to that path. rqlite's native
 `-auto-backup` process writes its supported hot backup directly to the private
-R2 `control-backups/` prefix. It never copies the live volume database file.
-Use R2-side retention/versioning or an external copy job when multiple dated
-restore points are required.
+R2 prefix named by `rqlite_control_backup` in the credential file. It never
+copies the live volume database file. Use R2-side retention/versioning or an
+external copy job when multiple dated restore points are required.
 
 Alert on a missed backup, failed checksum, rqlite volume pressure, repeated API
 readiness failures, and sustained rate-limit rejection.

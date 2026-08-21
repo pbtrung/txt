@@ -9,6 +9,11 @@ class FirebaseAuth:
 
     def sign_in(self, email: str, password: str) -> str:
         body = {"email": email, "password": password, "returnSecureToken": True}
-        resp = requests.post(SIGN_IN_URL, params={"key": self.api_key}, json=body)
+        resp = requests.post(
+            SIGN_IN_URL,
+            params={"key": self.api_key},
+            json=body,
+            timeout=(3.05, 10),
+        )
         resp.raise_for_status()
         return resp.json()["localId"]

@@ -78,13 +78,6 @@ def test_empty_and_memoryview_values_remain_blobs(engine):
     ]
 
 
-def test_last_insert_rowid(engine):
-    engine.exec_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)")
-    engine.execute("INSERT INTO t (v) VALUES (?)", ["a"])
-    engine.execute("INSERT INTO t (v) VALUES (?)", ["b"])
-    assert engine.last_insert_rowid() == 2
-
-
 def test_vacuum_preserves_data(engine):
     engine.exec_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)")
     engine.execute("INSERT INTO t (v) VALUES (?)", ["a"])

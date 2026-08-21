@@ -77,20 +77,17 @@ export class R2Client {
     const response = await withNetworkRetries((signal) =>
       this.aws.fetch(`${this.base}/${key}`, {
         method: "PUT",
-        headers: { "If-None-Match": "*" },
+        headers: {
+          "If-None-Match": "*",
+          "Content-Type": "application/octet-stream",
+          "Cache-Control": "private, no-store",
+        },
         body: new Uint8Array(bytes),
         signal,
       }),
     );
     if (response.status === 412) throw new R2ConflictError(`R2 PUT ${key} exists`);
     this.requireSuccess(response, `R2 PUT ${key}`);
-  }
-
-  async deleteObject(key: string): Promise<void> {
-    const response = await withNetworkRetries((signal) =>
-      this.aws.fetch(`${this.base}/${key}`, { method: "DELETE", signal }),
-    );
-    this.requireSuccess(response, `R2 DELETE ${key}`);
   }
 
   private requireSuccess(response: Response, operation: string): void {

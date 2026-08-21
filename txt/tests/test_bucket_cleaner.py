@@ -123,6 +123,7 @@ def build_cleaner(
     tableless_databases=None,
     failing_databases=None,
     dry_run=False,
+    control_backup_prefix="control-backups/",
 ):
     FakeSqliteEngine.rows_by_database = rows_by_database or {}
     FakeSqliteEngine.tableless_databases = tableless_databases or set()
@@ -133,6 +134,7 @@ def build_cleaner(
     cleaner = object.__new__(BucketCleaner)
     cleaner.logger = CapturingLogger()
     cleaner.dry_run = dry_run
+    cleaner.control_backup_prefix = control_backup_prefix
     cleaner.r2 = FakeR2Client(objects)
     if account is None:
         cleaner.owner = FailingOwnerInitializer()
@@ -212,9 +214,30 @@ def test_preserves_every_shared_object_for_the_owner(monkeypatch):
 
     assert cleaner.r2.deleted == [stale]
     assert any(
-        "3 bucket object(s), 2 retained (1 shared), 1 stale" in message
+        "3 bucket object(s), 2 retained (1 shared, 0 control backup(s)), 1 stale"
+        in message
         for message in cleaner.logger.info_messages
     )
+
+
+def test_preserves_configured_control_backup_prefix(monkeypatch):
+    backup = "private/rqlite/control.sqlite"
+    old_default = "control-backups/control.sqlite"
+    cleaner = build_cleaner(
+        monkeypatch,
+        account("owner", OWNER_DB_PATH, OWNER_DB_PREFIX),
+        {
+            OWNER_DB_PATH: b"owner-database",
+            backup: b"backup",
+            old_default: b"stale",
+        },
+        rows_by_database={b"owner-database": []},
+        control_backup_prefix="private/rqlite/",
+    )
+
+    cleaner.run()
+
+    assert cleaner.r2.deleted == [old_default]
 
 
 def test_reports_listing_and_deletion_progress_per_thousand_objects(monkeypatch):

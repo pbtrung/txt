@@ -1,6 +1,8 @@
+import sqlite3
 from pathlib import Path
 
 import txt.rqlite_updater as rqlite_updater_module
+from txt.rqlite_schema import CONTROL_SCHEMA
 from txt.rqlite_updater import RqliteUpdater, _parse_filename, _split_statements
 
 
@@ -56,7 +58,7 @@ def test_parse_filename_splits_the_version_prefix_and_name():
 def test_split_statements_strips_comments_and_empty_fragments():
     sql = """
 -- a leading comment
-CREATE TABLE foo (id INTEGER);
+CREATE TABLE foo (id INTEGER); -- an inline trailing comment
 
 -- another comment
 CREATE INDEX idx_foo ON foo(id);
@@ -65,6 +67,30 @@ CREATE INDEX idx_foo ON foo(id);
         "CREATE TABLE foo (id INTEGER)",
         "CREATE INDEX idx_foo ON foo(id)",
     ]
+
+
+def test_split_statements_preserves_semicolons_inside_sql_constructs():
+    sql = """
+CREATE TABLE messages (value TEXT);
+CREATE TRIGGER copy_message AFTER INSERT ON messages BEGIN
+  INSERT INTO messages VALUES ('copy;
+--value');
+END;
+"""
+
+    statements = _split_statements(sql)
+
+    assert len(statements) == 2
+    assert "'copy;\n--value'" in statements[1]
+
+
+def test_split_statements_rejects_incomplete_sql():
+    try:
+        _split_statements("CREATE TABLE broken (id INTEGER)")
+    except ValueError as error:
+        assert "incomplete" in str(error)
+    else:
+        raise AssertionError("incomplete migration was accepted")
 
 
 def test_applies_pending_migrations_in_order_and_skips_version_one(
@@ -114,3 +140,18 @@ def test_every_real_migration_file_parses_and_splits_cleanly():
         assert version >= 1
         assert name
         assert _split_statements(path.read_text())
+
+
+def test_fresh_schema_records_every_numbered_migration():
+    connection = sqlite3.connect(":memory:")
+    for statement in CONTROL_SCHEMA:
+        connection.execute(statement)
+    recorded = connection.execute(
+        "SELECT version, name FROM schema_migrations ORDER BY version"
+    ).fetchall()
+    expected = [
+        _parse_filename(path)
+        for path in sorted(rqlite_updater_module.MIGRATIONS_DIR.glob("*.sql"))
+    ]
+
+    assert recorded == expected

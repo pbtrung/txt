@@ -150,11 +150,8 @@ Given a blob and the same IKM used to encrypt it:
 
 ## Composite KEM support
 
-The Python leancrypto wrapper exposes `lc_kyber_1024_x448_enc` and
-`lc_kyber_1024_x448_dec`. Encapsulation returns a 1624-byte KEM ciphertext and
-leancrypto's raw 88-byte hybrid shared-secret structure: 32 ML-KEM-1024 bytes
-followed by 56 X448 bytes. Decapsulation recovers the same 88 bytes. No persisted
-application record or current browser/API flow invokes these operations; the
-only active use of the composite KEM API is owner keypair provisioning. Public
-sharing instead creates an independent 128-byte symmetric content key and places
-it only in the URL fragment and the owner's encrypted SQLCipher database.
+The Python leancrypto wrapper exposes composite keypair generation for owner
+provisioning. It does not currently wrap encapsulation or decapsulation, and no
+persisted application record or browser/API flow invokes those operations.
+Public sharing instead creates an independent 128-byte symmetric content key and
+places it only in the URL fragment and the owner's encrypted SQLCipher database.

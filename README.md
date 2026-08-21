@@ -54,7 +54,7 @@ Browser ── HTTPS ─┬─> OpenResty /v1 Lua API ───┬─> rqlite
 
 ## Install
 
-Requires Python 3.14 or newer and Node.js 20 or newer.
+Requires Python 3.14 or newer and Node.js 22.13 or newer.
 
 ```sh
 pip install -e ".[dev]"
@@ -125,7 +125,9 @@ txt --edit-epub ./source ./edited --verbose
 txt --replace-images ./source ./without-images
 ```
 
-Preview and remove unreferenced owner content objects:
+Preview and remove unreferenced owner content objects. The cleaner always
+preserves gateway-owned shared objects and the server-only control-backup
+prefix configured by `rqlite_control_backup`:
 
 ```sh
 txt --clean-bucket owner_creds.json --verbose --dry-run
@@ -136,8 +138,14 @@ txt --clean-bucket owner_creds.json --verbose
 
 ```sh
 pytest
+python3 -m ruff check .
+python3 -m ruff format --check .
 npm run ui:test
+npm run ui:typecheck
 npm run lint
+npm run format:check
+npm run lua:check
+npm run ui:build
 ```
 
 Deployment configuration, rqlite initialization, R2 CORS, backups, and

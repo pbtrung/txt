@@ -311,9 +311,6 @@ class SqliteEngine(LeancryptoEngine):
             self._exports["sqlite3_close"](self.store, self.db)
         self.db = 0
 
-    def last_insert_rowid(self) -> int:
-        return self._exports["sqlite3_last_insert_rowid"](self.store, self.db)
-
     def vacuum(self) -> None:
         self.exec_sql("VACUUM")
 

@@ -48,4 +48,12 @@ CONTROL_SCHEMA = (
     INSERT OR IGNORE INTO schema_migrations (version, name, applied_at)
     VALUES (1, 'control', CAST(unixepoch('subsec') * 1000 AS INTEGER))
     """,
+    """
+    INSERT OR IGNORE INTO schema_migrations (version, name, applied_at)
+    VALUES (
+        2,
+        'share_object_path_hash',
+        CAST(unixepoch('subsec') * 1000 AS INTEGER)
+    )
+    """,
 )

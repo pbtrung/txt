@@ -214,7 +214,7 @@ describe("R2Client database operations", () => {
 });
 
 describe("R2Client immutable share operations", () => {
-  it("creates without replacement and deletes unconditionally", async () => {
+  it("creates without replacement with non-cacheable binary metadata", async () => {
     const client = new R2Client(CREDENTIAL);
     const fetchMock = (
       client as unknown as { aws: { fetch: ReturnType<typeof vi.fn> } }
@@ -222,12 +222,14 @@ describe("R2Client immutable share operations", () => {
     fetchMock.mockResolvedValue({ status: 200, ok: true, headers: new Headers() });
 
     await client.putImmutable("shared/key", new Uint8Array([1]));
-    await client.deleteObject("shared/key");
 
     expect(fetchMock.mock.calls[0][1]).toMatchObject({
       method: "PUT",
-      headers: { "If-None-Match": "*" },
+      headers: {
+        "If-None-Match": "*",
+        "Content-Type": "application/octet-stream",
+        "Cache-Control": "private, no-store",
+      },
     });
-    expect(fetchMock.mock.calls[1][1]).toMatchObject({ method: "DELETE" });
   });
 });

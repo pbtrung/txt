@@ -41,7 +41,7 @@ describe("parseBrowserCreds", () => {
   });
 
   it("drops unrelated top-level fields", () => {
-    expect(parseBrowserCreds({ ...VALID, turso_org_token: "secret" })).toEqual(VALID);
+    expect(parseBrowserCreds({ ...VALID, retired_field: "unused" })).toEqual(VALID);
   });
 
   it("accepts a localhost HTTP operator URL for development", () => {
@@ -58,6 +58,7 @@ describe("parseBrowserCreds", () => {
       "ftp://localhost/operator/rqlite",
       "https://api.example.com/v1",
       "https://api.example.com/operator/rqlite?node=1",
+      "https://user:password@api.example.com/operator/rqlite",
     ]) {
       expect(() => parseBrowserCreds({ ...VALID, rqlite_db_url })).toThrow(
         /rqlite_db_url/,

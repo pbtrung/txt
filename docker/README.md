@@ -104,7 +104,8 @@ and the owner browser's wrapped-key lookup.
 ## Backups
 
 `backup.conf.json.example` uses rqlite's native S3-compatible automatic backup
-support to write a hot backup to the private `control-backups/` R2 prefix.
+support to write a hot backup to the private `control-backups/` R2 prefix. Set
+the owner credential file's `rqlite_control_backup` to this same prefix.
 Render a secret-backed copy outside the repository and set
 `RQLITE_BACKUP_CONF` to its mounted path. The owner-facing R2 credentials must
 not have access to this prefix.

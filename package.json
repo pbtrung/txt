@@ -3,6 +3,9 @@
   "version": "0.9999",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
   "scripts": {
     "tsc": "node node_modules/typescript7/bin/tsc",
     "lua:format": "sh scripts/lua-tools.sh format",

@@ -16,6 +16,7 @@ class BucketCleaner:
     ):
         self.logger = logger
         self.dry_run = dry_run
+        self.control_backup_prefix = creds.rqlite_control_backup
         self.owner = OwnerInitializer(creds, creds_path, logger)
         self.r2 = R2Client(creds.r2_config)
 
@@ -58,11 +59,13 @@ class BucketCleaner:
         self, account: StorageAccount, allowlist: set[str], bucket_keys: set[str]
     ) -> list[str]:
         shared = self._shared_keys(account, bucket_keys)
-        retained = (bucket_keys & allowlist) | shared
+        backups = self._control_backups(bucket_keys)
+        retained = (bucket_keys & allowlist) | shared | backups
         stale = sorted(bucket_keys - retained)
         self.logger.info(
             f"{len(bucket_keys)} bucket object(s), {len(retained)} retained "
-            f"({len(shared)} shared), {len(stale)} stale."
+            f"({len(shared)} shared, {len(backups)} control backup(s)), "
+            f"{len(stale)} stale."
         )
         return stale
 
@@ -73,6 +76,11 @@ class BucketCleaner:
         # txt_shares row), so it must never garbage-collect this namespace.
         prefix = f"{account.db_prefix}/shared/"
         return {key for key in bucket_keys if key.startswith(prefix)}
+
+    def _control_backups(self, bucket_keys: set[str]) -> set[str]:
+        return {
+            key for key in bucket_keys if key.startswith(self.control_backup_prefix)
+        }
 
     def _report_stale(self, stale: list[str]) -> None:
         for key in stale:

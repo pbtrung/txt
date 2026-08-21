@@ -42,6 +42,15 @@ class TxtIngester:
         self.dirty = False
 
     def run(self) -> None:
+        self._prepare_run()
+        self._open_local_db()
+        try:
+            self._ingest_open_database()
+        finally:
+            self.engine.close()
+        self.logger.info(f"Ingest complete: db_path={self.account.db_path}")
+
+    def _prepare_run(self) -> None:
         uid, _umk, payload = self.owner.load_current_owner()
         self.account = parse_storage_account(uid, payload)
         self.local_db_dir.mkdir(parents=True, exist_ok=True)
@@ -50,7 +59,8 @@ class TxtIngester:
             f"db_path={self.account.db_path} db_prefix={self.account.db_prefix} "
             f"local={self.local_path}"
         )
-        self._open_local_db()
+
+    def _ingest_open_database(self) -> None:
         self._ensure_schema()
         self._ingest_all()
         self._finish()
@@ -138,13 +148,9 @@ class TxtIngester:
         return {"name": epub_path.name, **catalog_fields(opf_metadata, epub_path.name)}
 
     def _finish(self) -> None:
-        try:
-            data = self._final_database_bytes()
-            self.local_path.write_bytes(data)
-            self._upload_database(data)
-        finally:
-            self.engine.close()
-        self.logger.info(f"Ingest complete: db_path={self.account.db_path}")
+        data = self._final_database_bytes()
+        self.local_path.write_bytes(data)
+        self._upload_database(data)
 
     def _final_database_bytes(self) -> bytes:
         if self.dirty:

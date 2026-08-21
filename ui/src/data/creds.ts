@@ -43,4 +43,7 @@ function validateRqliteUrl(value: string): void {
   if (url.search || url.hash) {
     throw new Error("creds.json rqlite_db_url must not contain a query or fragment");
   }
+  if (url.username || url.password) {
+    throw new Error("creds.json rqlite_db_url must not contain embedded credentials");
+  }
 }

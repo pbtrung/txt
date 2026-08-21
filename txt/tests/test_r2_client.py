@@ -9,8 +9,6 @@ from txt.r2_client import R2Client, R2Object, R2PreconditionFailed
 
 CONFIG = R2Config(
     endpoint="https://x.r2.cloudflarestorage.com",
-    read_only_access_key_id="ro-id",
-    read_only_secret_access_key="ro-secret",
     read_write_access_key_id="rw-id",
     read_write_secret_access_key="rw-secret",
     region="auto",
@@ -19,13 +17,13 @@ CONFIG = R2Config(
 
 
 class FakeS3Client:
-    def __init__(self, pages=None, prefix_pages=None, objects=None):
+    def __init__(self, pages=None, objects=None, delete_responses=None):
         self.put_calls = []
         self.put_conditions = []
         self.delete_calls = []
         self._pages = pages or []
-        self._prefix_pages = prefix_pages or []
         self._objects = objects or {}
+        self._delete_responses = list(delete_responses or [])
 
     def put_object(self, Bucket, Key, Body, IfMatch=None, IfNoneMatch=None):
         self.put_calls.append((Bucket, Key, Body))
@@ -48,18 +46,16 @@ class FakeS3Client:
         MaxKeys=None,
     ):
         index = 0 if ContinuationToken is None else int(ContinuationToken)
-        pages = self._prefix_pages if Delimiter else self._pages
-        page = pages[index]
-        key = "CommonPrefixes" if Delimiter else "Contents"
-        item_key = "Prefix" if Delimiter else "Key"
-        resp = {key: [{item_key: v} for v in page]}
-        if index + 1 < len(pages):
+        page = self._pages[index]
+        resp = {"Contents": [{"Key": value} for value in page]}
+        if index + 1 < len(self._pages):
             resp["IsTruncated"] = True
             resp["NextContinuationToken"] = str(index + 1)
         return resp
 
     def delete_objects(self, Bucket, Delete):
         self.delete_calls.append((Bucket, [o["Key"] for o in Delete["Objects"]]))
+        return self._delete_responses.pop(0) if self._delete_responses else {}
 
 
 def test_client_built_with_read_write_creds_and_endpoint(monkeypatch):
@@ -209,22 +205,11 @@ def test_delete_keys_noop_for_empty_list(monkeypatch):
     assert fake.delete_calls == []
 
 
-def test_list_common_prefixes_follows_pagination(monkeypatch):
-    fake = FakeS3Client(prefix_pages=[["a/", "b/"], ["c/"]])
+def test_delete_keys_reports_partial_s3_failures(monkeypatch):
+    fake = FakeS3Client(
+        delete_responses=[{"Errors": [{"Key": "locked", "Code": "AccessDenied"}]}]
+    )
     monkeypatch.setattr(r2_client_module.boto3, "client", lambda *a, **k: fake)
 
-    assert R2Client(CONFIG).list_common_prefixes() == ["a/", "b/", "c/"]
-
-
-def test_list_common_prefixes_single_page(monkeypatch):
-    fake = FakeS3Client(prefix_pages=[["only/"]])
-    monkeypatch.setattr(r2_client_module.boto3, "client", lambda *a, **k: fake)
-
-    assert R2Client(CONFIG).list_common_prefixes() == ["only/"]
-
-
-def test_list_common_prefixes_does_not_enumerate_individual_keys(monkeypatch):
-    fake = FakeS3Client(pages=[["should-not-appear"]], prefix_pages=[["real/"]])
-    monkeypatch.setattr(r2_client_module.boto3, "client", lambda *a, **k: fake)
-
-    assert R2Client(CONFIG).list_common_prefixes() == ["real/"]
+    with pytest.raises(RuntimeError, match=r"locked \(AccessDenied\)"):
+        R2Client(CONFIG).delete_keys(["locked"])

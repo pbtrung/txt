@@ -77,7 +77,8 @@ process or unlocked browser memory.
    identity. Deployment verification requires it to equal
    `OWNER_FIREBASE_UID`.
 2. Query rqlite through `rqlite_operator_url`; if the database is empty, install
-   control schema version 1 in one transaction.
+   the current control-schema snapshot and all of its migration markers in one
+   transaction.
 3. Generate a 32-byte `user_handle`, independent `db_path` and `db_prefix`, a
    128-byte owner master key, and a 256-byte SQLCipher `db_master_key`.
 4. Generate the P-521 request-signing key pair and the composite KEM key pair
@@ -248,14 +249,13 @@ Initial budgets are:
 | Scope               |                                     Budget |
 | ------------------- | -----------------------------------------: |
 | `owner-keys`        |             60 requests per owner per hour |
-| `owner-r2-token`    |      120 valid requests per owner per hour |
+| `owner-r2-token`    |       30 valid requests per owner per hour |
 | `owner-share-write` |            120 requests per owner per hour |
-| `public-share-url`  | 120 requests per source address per minute |
+| `public-share-url`  | 120 requests per direct peer address per minute |
 
-An atomic rqlite transaction increments and reads the counter. If rqlite is
-unavailable, protected endpoints fail closed with `503`; they do not bypass the
-limit. Old windows are deleted opportunistically and by a scheduled maintenance
-job.
+An atomic rqlite transaction increments and reads the counter, then deletes
+windows older than the longest active window. If rqlite is unavailable,
+protected endpoints fail closed with `503`; they do not bypass the limit.
 
 ## 7. Expiration and incident response
 

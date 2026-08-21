@@ -1,13 +1,13 @@
 """--update-rql: applies pending numbered rqlite schema migrations.
 
-docker/migrations/0001_control.sql is the initial schema, installed
-automatically by --init-owner/--migrate when rqlite is empty. Every later
-docker/migrations/NNNN_name.sql file is applied here instead, each as one
-transactional batch, in ascending order, skipped once its own trailing
-INSERT INTO schema_migrations has recorded its name as already applied.
-A VACUUM always runs at the end, whether or not any migration applied.
+Fresh databases receive the current schema snapshot from rqlite_schema.py,
+including the markers for every migration represented by that snapshot. This
+command applies later docker/migrations/NNNN_name.sql files to existing
+databases in ascending order, each as one transactional batch. A VACUUM always
+runs at the end, whether or not any migration applied.
 """
 
+import sqlite3
 from pathlib import Path
 
 from .creds import OwnerCreds
@@ -69,11 +69,35 @@ def _parse_filename(path: Path) -> tuple[int, str]:
 
 
 def _split_statements(sql_text: str) -> list[str]:
-    without_comments = "\n".join(
-        line for line in sql_text.splitlines() if not line.strip().startswith("--")
+    statements, buffer = [], []
+    for char in sql_text:
+        buffer.append(char)
+        if char != ";":
+            continue
+        statement = _take_complete_statement(buffer)
+        if statement:
+            statements.append(statement)
+    if not _comment_only("".join(buffer)):
+        raise ValueError("migration ends with an incomplete SQL statement")
+    return statements
+
+
+def _take_complete_statement(buffer: list[str]) -> str | None:
+    candidate = "".join(buffer)
+    if not sqlite3.complete_statement(candidate):
+        return None
+    buffer.clear()
+    return _strip_leading_comments(candidate[:-1])
+
+
+def _strip_leading_comments(sql: str) -> str:
+    lines = sql.strip().splitlines()
+    while lines and (not lines[0].strip() or lines[0].lstrip().startswith("--")):
+        lines.pop(0)
+    return "\n".join(lines).strip()
+
+
+def _comment_only(sql: str) -> bool:
+    return all(
+        not line.strip() or line.lstrip().startswith("--") for line in sql.splitlines()
     )
-    return [
-        statement.strip()
-        for statement in without_comments.split(";")
-        if statement.strip()
-    ]

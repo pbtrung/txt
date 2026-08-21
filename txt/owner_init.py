@@ -116,7 +116,7 @@ class OwnerInitializer:
     def _missing_schema(self, initialize: bool) -> dict | None:
         if not initialize:
             return None
-        self.logger.verbose("Installing rqlite control schema version 1...")
+        self.logger.verbose("Installing the current rqlite control schema...")
         self.rqlite.execute_batch(CONTROL_SCHEMA)
         return self.rqlite.query_one(OWNER_SQL)
 

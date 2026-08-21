@@ -25,7 +25,7 @@ export default tseslint.config(
     },
     rules: {
       // Every module here re-exports its own domain types by design
-      // (CryptoBlob, LibsqlClient, ReaderDocument, ...) -- unused-vars
+      // (R2Client, ReaderDocument, VaultSession, ...) -- unused-vars
       // still catches real dead code, just needs to ignore the common
       // "imported only as a type, used only in a signature" pattern.
       "@typescript-eslint/no-unused-vars": [

@@ -38,8 +38,10 @@ Basic-authenticated OpenResty operator proxy.
 
 ## 2. Schema
 
-The API supplies all timestamps explicitly as Unix milliseconds; the schema
-does not use clock-dependent defaults.
+`owner_control` and `shares` receive Unix-millisecond timestamps explicitly;
+`rate_limits.window_start` uses Unix seconds. The schema does not use
+clock-dependent defaults. Migration markers use rqlite's clock when their
+migration transaction runs.
 
 ```sql
 CREATE TABLE schema_migrations (
@@ -109,12 +111,13 @@ rejected.
 ## 4. Atomic operations
 
 Schema migrations are ordered, idempotent, and applied through one transactional
-request. Owner initialization installs schema version 1 automatically when the
-database is empty. Every later `docker/migrations/NNNN_*.sql` file is applied
-to an already-provisioned instance with `txt --update-rql rqlite_creds.json`,
-which reads `schema_migrations` to skip anything already applied and runs
-`VACUUM` afterward. Application queries reject an absent, unknown, or incomplete
-schema rather than treating it as empty state.
+request. Owner initialization installs the current schema snapshot when the
+database is empty and records every numbered migration represented by that
+snapshot. Later `docker/migrations/NNNN_*.sql` files are applied to an
+already-provisioned instance with `txt --update-rql rqlite_creds.json`, which
+reads `schema_migrations` to skip anything already applied and runs `VACUUM`
+afterward. Application queries reject an absent, unknown, or incomplete schema
+rather than treating it as empty state.
 
 Share registration inserts an `active` row. Repeating the same capability and
 path is idempotent; the same capability with a different path is rejected.
@@ -130,9 +133,9 @@ requests could lose increments.
 ## 5. Availability and consistency
 
 All writes go through rqlite's Raft log even in the one-node configuration. The
-API waits for committed writes and does not use queued writes. Regular reads use
-the default leader-backed behavior; with one node there is no follower-staleness
-tradeoff.
+API waits for committed writes and does not use queued writes. Application and
+operator reads explicitly request strong consistency; with one node there is no
+follower-staleness tradeoff.
 
 The API exposes:
 
@@ -149,10 +152,10 @@ stale local state.
 
 rqlite's native `-auto-backup` process uses the secret-backed
 `RQLITE_BACKUP_CONF` configuration to upload supported hot backups directly to
-the private, server-only R2 `control-backups/` prefix. It does not read or copy
-the live volume's `db.sqlite` file. R2 server-side encryption protects the
-backup at rest. Use R2 retention or versioning for multiple restore points, and
-test restoration periodically.
+the private, server-only R2 prefix configured by `rqlite_control_backup`. It
+does not read or copy the live volume's `db.sqlite` file. R2 server-side
+encryption protects the backup at rest. Use R2 retention or versioning for
+multiple restore points, and test restoration periodically.
 
 Recovery procedure:
 

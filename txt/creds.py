@@ -8,13 +8,12 @@ OWNER_REQUIRED_FIELDS = [
     "rqlite_admin_username",
     "rqlite_admin_password",
     "rqlite_operator_url",
+    "rqlite_control_backup",
     "firebase_email",
     "firebase_password",
     "firebase_api_key",
     "display_name",
     "r2_config",
-    "slhdsa_256f_priv_key",
-    "asset_base_url",
     "user_root_key",
 ]
 
@@ -22,8 +21,6 @@ OWNER_REQUIRED_FIELDS = [
 @dataclass
 class R2Config:
     endpoint: str
-    read_only_access_key_id: str
-    read_only_secret_access_key: str
     read_write_access_key_id: str
     read_write_secret_access_key: str
     region: str
@@ -35,13 +32,12 @@ class OwnerCreds:
     rqlite_admin_username: str
     rqlite_admin_password: str
     rqlite_operator_url: str
+    rqlite_control_backup: str
     firebase_email: str
     firebase_password: str
     firebase_api_key: str
     display_name: str
     r2_config: R2Config
-    slhdsa_256f_priv_key: str
-    asset_base_url: str
     user_root_key: str
 
 
@@ -52,6 +48,7 @@ def load_owner_creds(path: str) -> OwnerCreds:
         raise ValueError(f"Missing fields in creds.json: {', '.join(missing)}")
     values = {key: data[key] for key in OWNER_REQUIRED_FIELDS if key != "r2_config"}
     values["rqlite_operator_url"] = _operator_url(values["rqlite_operator_url"])
+    values["rqlite_control_backup"] = _r2_prefix(values["rqlite_control_backup"])
     return OwnerCreds(**values, r2_config=_require_r2_config(data["r2_config"]))
 
 
@@ -66,15 +63,34 @@ def _require_r2_config(value: object) -> R2Config:
 
 def _operator_url(value: object) -> str:
     if not isinstance(value, str):
-        raise ValueError("rqlite_operator_url must be an HTTP(S) URL")
+        raise ValueError("rqlite_operator_url must be a valid operator URL")
     parsed = urlsplit(value)
-    valid_path = parsed.path.rstrip("/") == "/operator/rqlite"
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc or not valid_path:
-        raise ValueError(
-            "rqlite_operator_url must end with /operator/rqlite, without an API path"
-        )
+    _validate_operator_location(parsed)
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("rqlite_operator_url must not contain embedded credentials")
     if parsed.query or parsed.fragment:
         raise ValueError("rqlite_operator_url must not contain a query or fragment")
+    return value
+
+
+def _validate_operator_location(parsed) -> None:
+    local = parsed.hostname in {"127.0.0.1", "localhost"}
+    secure = parsed.scheme == "https" or (local and parsed.scheme == "http")
+    valid_path = parsed.path.rstrip("/") == "/operator/rqlite"
+    if secure and parsed.netloc and valid_path:
+        return
+    raise ValueError(
+        "rqlite_operator_url must use HTTPS and end with /operator/rqlite; "
+        "localhost HTTP is allowed for development"
+    )
+
+
+def _r2_prefix(value: object) -> str:
+    if not isinstance(value, str) or not value.strip() or value.startswith("/"):
+        raise ValueError(
+            "rqlite_control_backup must be a non-empty R2 object-key prefix "
+            "relative to the bucket"
+        )
     return value
 
 

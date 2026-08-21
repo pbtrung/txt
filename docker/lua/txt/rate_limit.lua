@@ -3,6 +3,7 @@ local config = require("txt.config")
 local rqlite = require("txt.rqlite")
 
 local M = {}
+local MAX_WINDOW_SECONDS = 3600
 
 local LIMITS = {
   ["owner-keys"] = { window = 3600, maximum = 60 },
@@ -26,6 +27,7 @@ function M.allow(scope, subject)
     scope = scope,
     subject_hash = codec.bytes_to_array(digest),
     window_start = window_start,
+    stale_before = now - MAX_WINDOW_SECONDS,
   }
   local results
   results, err = rqlite.request({
@@ -43,6 +45,10 @@ DO UPDATE SET count = rate_limits.count + 1
 SELECT count FROM rate_limits
 WHERE scope = :scope AND subject_hash = :subject_hash AND window_start = :window_start
 ]],
+      params,
+    },
+    {
+      "DELETE FROM rate_limits WHERE window_start < :stale_before",
       params,
     },
   })

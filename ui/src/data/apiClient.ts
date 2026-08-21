@@ -3,9 +3,9 @@ import { toBase64 } from "../util/base64";
 import { objectRecord, stringField } from "../util/validation";
 import { withNetworkRetries } from "./networkRequest";
 import {
-  P521_SIGNATURE_BYTES,
   R2_TICKET_PROOF_VERSION,
   canonicalR2TicketProof,
+  requireP521Signature,
 } from "./r2Proof";
 
 const PROOF_LIFETIME_SECONDS = 45;
@@ -195,9 +195,7 @@ async function signedProof(
       new Uint8Array(canonical),
     ),
   );
-  if (signature.byteLength !== P521_SIGNATURE_BYTES) {
-    throw new Error(`Web Crypto returned an invalid P-521 signature size`);
-  }
+  requireP521Signature(signature);
   return {
     version: R2_TICKET_PROOF_VERSION,
     expires_at: expiresAt,

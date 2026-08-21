@@ -113,21 +113,18 @@ def creds_path(tmp_path):
         "rqlite_admin_username": "operator",
         "rqlite_admin_password": "secret",
         "rqlite_operator_url": "https://api.example.com/operator/rqlite",
+        "rqlite_control_backup": "control-backups/",
         "firebase_email": "owner@example.com",
         "firebase_password": "pw",
         "firebase_api_key": "key",
         "display_name": "Owner",
         "r2_config": {
             "endpoint": "https://account.r2.cloudflarestorage.com",
-            "read_only_access_key_id": "ro-id",
-            "read_only_secret_access_key": "ro-secret",
             "read_write_access_key_id": "rw-id",
             "read_write_secret_access_key": "rw-secret",
             "region": "auto",
             "bucket": "books",
         },
-        "slhdsa_256f_priv_key": "",
-        "asset_base_url": "https://reader.example.com",
         "user_root_key": OWNER_ROOT_KEY,
     }
     path = tmp_path / "creds.json"

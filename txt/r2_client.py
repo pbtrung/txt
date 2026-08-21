@@ -98,28 +98,15 @@ class R2Client:
                 return keys
             token = resp["NextContinuationToken"]
 
-    def list_common_prefixes(self, prefix: str = "", delimiter: str = "/") -> list[str]:
-        # Cheap top-level enumeration (e.g. every {db_prefix}/ segment)
-        # without listing every object underneath each one.
-        prefixes, token = [], None
-        while True:
-            kwargs = {"Bucket": self.bucket, "Prefix": prefix, "Delimiter": delimiter}
-            if token:
-                kwargs["ContinuationToken"] = token
-            resp = self._s3.list_objects_v2(**kwargs)
-            prefixes.extend(p["Prefix"] for p in resp.get("CommonPrefixes", []))
-            if not resp.get("IsTruncated"):
-                return prefixes
-            token = resp["NextContinuationToken"]
-
     def delete_keys(
         self, keys: list[str], on_progress: Callable[[int], None] | None = None
     ) -> None:
         for i in range(0, len(keys), 1000):
             batch = keys[i : i + 1000]
-            self._s3.delete_objects(
+            response = self._s3.delete_objects(
                 Bucket=self.bucket, Delete={"Objects": [{"Key": k} for k in batch]}
             )
+            _raise_delete_errors(response)
             if on_progress is not None:
                 on_progress(i + len(batch))
 
@@ -128,3 +115,14 @@ def _is_precondition_failure(error: botocore.exceptions.ClientError) -> bool:
     code = error.response.get("Error", {}).get("Code")
     status = error.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
     return code in ("PreconditionFailed", "412") or status == 412
+
+
+def _raise_delete_errors(response: dict) -> None:
+    errors = response.get("Errors", [])
+    if not errors:
+        return
+    examples = ", ".join(
+        f"{error.get('Key', '<unknown>')} ({error.get('Code', 'unknown')})"
+        for error in errors[:3]
+    )
+    raise RuntimeError(f"R2 failed to delete {len(errors)} object(s): {examples}")

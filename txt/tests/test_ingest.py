@@ -1,6 +1,7 @@
 import base64
 import json
 import secrets
+import xml.etree.ElementTree as ET
 import zipfile
 
 import brotli
@@ -96,21 +97,18 @@ CREDS = OwnerCreds(
     rqlite_admin_username="operator",
     rqlite_admin_password="secret",
     rqlite_operator_url="https://api.example.com/operator/rqlite",
+    rqlite_control_backup="control-backups/",
     firebase_email="a@b.com",
     firebase_password="pw",
     firebase_api_key="key",
     display_name="Trung",
     r2_config=R2Config(
         endpoint="https://account.r2.cloudflarestorage.com",
-        read_only_access_key_id="ro-id",
-        read_only_secret_access_key="ro-secret",
         read_write_access_key_id="rw-id",
         read_write_secret_access_key="rw-secret",
         region="auto",
         bucket="books",
     ),
-    slhdsa_256f_priv_key="",
-    asset_base_url="https://reader.example.com",
     user_root_key="ignored-by-fake-initializer",
 )
 CREDS_PATH = "unused-creds-path.json"
@@ -327,3 +325,16 @@ def test_conditional_db_upload_preserves_a_concurrent_browser_change(tmp_path):
         TxtIngester(src, local, CREDS, CREDS_PATH, NullLogger()).run()
 
     assert FakeR2Client.objects[ACCOUNT.db_path] == remote_before
+
+
+def test_closes_database_when_ingestion_fails(tmp_path):
+    src, local = tmp_path / "src", tmp_path / "local"
+    src.mkdir()
+    _write_epub(src / "broken.epub")
+    (src / "broken.opf").write_text("<not-valid-xml")
+    ingester = TxtIngester(src, local, CREDS, CREDS_PATH, NullLogger())
+
+    with pytest.raises(ET.ParseError):
+        ingester.run()
+
+    assert ingester.engine.db == 0
