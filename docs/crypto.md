@@ -2,16 +2,19 @@
 
 ## Primitives
 
-| Primitive | leancrypto API                                                                    | Parameters                                                |
-| --------- | --------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| AEAD      | Ascon-Keccak (`lc_ak_alloc_taglen`)                                               | 64-byte key, 64-byte IV, 64-byte tag                      |
-| KDF       | HKDF-SHA3-512 (`lc_hkdf_*`)                                                       | produces 128 bytes of OKM (64-byte AEAD key + 64-byte IV) |
-| KEM       | ML-KEM-1024 + X448 (Curve448) hybrid (`lc_kyber_1024_x448_keypair`/`_enc`/`_dec`) | see Composite KEM Key Sizes below                         |
+| Primitive | leancrypto API                                                                    | Parameters                                                                            |
+| --------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| AEAD      | Ascon-Keccak (`lc_ak_alloc_taglen`)                                               | 64-byte key, 64-byte IV, 64-byte tag                                                  |
+| KDF       | HKDF-SHA3-512 (`lc_hkdf_*`)                                                       | produces 128 bytes of OKM (64-byte AEAD key + 64-byte IV)                             |
+| KEM       | ML-KEM-1024 + X448 (Curve448) hybrid (`lc_kyber_1024_x448_keypair`/`_enc`/`_dec`) | see Composite KEM Key Sizes below                                                     |
 | Signature | Web Crypto ECDSA P-521 with SHA-512                                               | signing-suite v1, request-proof protocol v2; approximately 256-bit classical security |
 
 ### Composite KEM Key Sizes
 
-The administrator's `key_store` KEM keypair is leancrypto's `lc_kyber_1024_x448` hybrid keypair—a single `lc_kyber_1024_x448_keypair` call, not something this codebase assembles by hand. Internally it combines an ML-KEM-1024 keypair with an X448 keypair:
+The owner's `owner_control` KEM keypair is leancrypto's
+`lc_kyber_1024_x448` hybrid keypair—a single
+`lc_kyber_1024_x448_keypair` call, not something this codebase assembles by
+hand. Internally it combines an ML-KEM-1024 keypair with an X448 keypair:
 
 | Component     | pubKey         | privKey        |
 | ------------- | -------------- | -------------- |
@@ -19,19 +22,29 @@ The administrator's `key_store` KEM keypair is leancrypto's `lc_kyber_1024_x448`
 | X448          | 56 bytes       | 56 bytes       |
 | **Composite** | **1624 bytes** | **3224 bytes** |
 
-`key_store.pubkey` stores the raw 1624-byte composite public key. `key_store.privkey` wraps the raw 3224-byte composite private key using the standard Encrypt procedure below with the administrator's 128-byte `umk` as IKM, so the stored blob is 3224 + 132 = 3356 bytes. The row's `umk` is separately wrapped by the administrator's 256-byte `user_root_key`. Ordinary accounts have null `pubkey`/`privkey` columns. Public book sharing does not use this KEM keypair.
+`owner_control.kem_public_key` stores the raw 1624-byte composite public key.
+`owner_control.wrapped_kem_private_key` wraps the raw 3224-byte composite private
+key using the standard Encrypt procedure below with the owner's 128-byte `umk`
+as IKM, so the stored blob is 3224 + 132 = 3356 bytes. The row's `umk` is
+separately wrapped by the owner's 256-byte `user_root_key`. Public book sharing
+does not use this KEM keypair.
 
 ### Versioned request signatures
 
-Every account has a separate signing key for proving possession when calling `/v1/r2-token` (docs/auth.md). This key is unrelated to the administrator-only composite KEM keypair above. The active signing suite is stored with the key and authenticated by the Worker-signed ticket. The proof protocol has its own version because changing the canonical message does not necessarily require rotating the key suite.
+The owner has a separate signing key for proving possession when calling
+`/v1/r2-token` (`docs/auth.md`). This key is unrelated to the composite KEM
+keypair above. The active signing suite is stored with the key and authenticated
+by the API-signed ticket. The proof protocol has its own version because changing
+the canonical message does not necessarily require rotating the key suite.
 
-| version | algorithm | public-key encoding | private-key encoding | signature encoding |
-|---:|---|---|---|---|
-| 1 | ECDSA P-521 with SHA-512 | SubjectPublicKeyInfo DER | PKCS#8 DER, wrapped by `umk` | Web Crypto raw signature: 66-byte `r` followed by 66-byte `s` (132 bytes total) |
+| version | algorithm                | public-key encoding      | private-key encoding         | signature encoding                                                              |
+| ------: | ------------------------ | ------------------------ | ---------------------------- | ------------------------------------------------------------------------------- |
+|       1 | ECDSA P-521 with SHA-512 | SubjectPublicKeyInfo DER | PKCS#8 DER, wrapped by `umk` | Web Crypto raw signature: 66-byte `r` followed by 66-byte `s` (132 bytes total) |
 
 Signing suite 1 is the only accepted suite. P-521 offers approximately 256-bit classical security but is not post-quantum secure.
 
-For proof protocol version 2 using signing suite 1, the client and Worker construct these bytes exactly:
+For proof protocol version 2 using signing suite 1, the browser and API construct
+these bytes exactly:
 
 ```
 UTF8("txt:r2-ticket-proof") || 0x00 ||
@@ -43,21 +56,30 @@ request_id_32_bytes ||
 SHA-512(UTF8(db_path) || UTF8(db_prefix))
 ```
 
-The client signs the hash of the exact compact JWS string it sends, including its original base64url segments. Re-serializing the ticket payload before hashing is forbidden. `user_handle` must decode to exactly 32 bytes. `db_path` and `db_prefix` must each be exactly 52 lowercase base32-Crockford characters, making their concatenation unambiguous. The fixed domain label prevents cross-protocol use. Integer encodings are unsigned network byte order. The request id comes from `crypto.getRandomValues`; expiry is at most 60 seconds after Worker time.
+The browser signs the hash of the exact compact JWS string it sends, including
+its original base64url segments. Re-serializing the ticket payload before hashing
+is forbidden. `user_handle` must decode to exactly 32 bytes. `db_path` and
+`db_prefix` must each be exactly 52 lowercase base32-Crockford characters,
+making their concatenation unambiguous. The fixed domain label prevents
+cross-protocol use. Integer encodings are unsigned network byte order. The
+request id comes from `crypto.getRandomValues`; expiry is at most 60 seconds
+after API time.
 
 The browser signs the canonical bytes with:
 
 ```js
-crypto.subtle.sign(
-  { name: "ECDSA", hash: "SHA-512" },
-  privateKey,
-  canonicalProof,
-)
+crypto.subtle.sign({ name: "ECDSA", hash: "SHA-512" }, privateKey, canonicalProof);
 ```
 
 Web Crypto returns the P-521 ECDSA signature as two fixed-width integers in order: `r` followed by `s`. Each integer is a 66-byte unsigned big-endian value, left-padded with zero bytes when necessary. The resulting signature is exactly 132 bytes (`r`, 66 bytes, plus `s`, 66 bytes). This is the raw IEEE P1363 form, not an ASN.1 DER sequence.
 
-The Worker first verifies the ticket and imports its authenticated `sign_public_key` as P-521 SPKI. It requires the exact 132-byte signature format, rebuilds the canonical proof independently, and verifies it with the same Web Crypto parameters. A valid signature proves access to the unwrapped per-user private key. Path authorization is the separate equality check between the final SHA-512 value above and the ticket's authenticated `db_binding_hash`; handle binding is `SHA-256(user_handle) == ticket.user_handle_hash`.
+The API first verifies the ticket and imports its authenticated
+`sign_public_key` as P-521 SPKI. It requires the exact 132-byte signature format,
+rebuilds the canonical proof independently, and verifies it with the same Web
+Crypto parameters. A valid signature proves access to the owner's unwrapped
+private key. Path authorization is the separate equality check between the final
+SHA-512 value above and the ticket's authenticated `db_binding_hash`; handle
+binding is `SHA-256(user_handle) == ticket.user_handle_hash`.
 
 ## Blob Format
 
@@ -75,7 +97,9 @@ magic (2) || version (2) || salt (64) || ciphertext (var) || tag (64)
 
 Minimum valid blob length: 2 + 2 + 64 + 0 + 64 = 132 bytes.
 
-Public sharing uses a separate Worker-side AEAD envelope, since the Worker does not load the leancrypto WASM used by this blob format: docs/sharing.md §4.
+Public sharing encrypts the copied EPUB with the same blob format and an
+independent 128-byte content key. The API sees neither plaintext nor key; it
+returns only a short-lived exact-object R2 URL (`docs/sharing.md`).
 
 ## Version Numbering
 
@@ -126,4 +150,11 @@ Given a blob and the same IKM used to encrypt it:
 
 ## Composite KEM support
 
-The Python leancrypto wrapper exposes `lc_kyber_1024_x448_enc` and `lc_kyber_1024_x448_dec`. Encapsulation returns a 1624-byte KEM ciphertext and leancrypto's raw 88-byte hybrid shared-secret structure: 32 ML-KEM-1024 bytes followed by 56 X448 bytes. Decapsulation recovers the same 88 bytes. No persisted application record or current browser/Worker flow invokes these operations; the only active use of the composite KEM API is administrator keypair provisioning. Public sharing instead creates an independent 128-byte symmetric content key and places it only in the URL fragment and the administrator's encrypted SQLCipher database.
+The Python leancrypto wrapper exposes `lc_kyber_1024_x448_enc` and
+`lc_kyber_1024_x448_dec`. Encapsulation returns a 1624-byte KEM ciphertext and
+leancrypto's raw 88-byte hybrid shared-secret structure: 32 ML-KEM-1024 bytes
+followed by 56 X448 bytes. Decapsulation recovers the same 88 bytes. No persisted
+application record or current browser/API flow invokes these operations; the
+only active use of the composite KEM API is owner keypair provisioning. Public
+sharing instead creates an independent 128-byte symmetric content key and places
+it only in the URL fragment and the owner's encrypted SQLCipher database.
