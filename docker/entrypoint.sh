@@ -39,8 +39,10 @@ printf '%s' "$RQLITE_ADMIN_PASSWORD" | \
   htpasswd -ic "$RQLITE_ADMIN_HTPASSWD" "$RQLITE_ADMIN_USERNAME"
 
 rendered_nginx=/tmp/txt-nginx.conf
-export DNS_RESOLVER RQLITE_ADMIN_HTPASSWD
-envsubst '$DNS_RESOLVER $RQLITE_ADMIN_HTPASSWD' </opt/txt/nginx.conf >"$rendered_nginx"
+export DNS_RESOLVER RQLITE_ADMIN_HTPASSWD UI_ORIGIN
+envsubst \
+  '$DNS_RESOLVER $RQLITE_ADMIN_HTPASSWD $UI_ORIGIN' \
+  </opt/txt/nginx.conf >"$rendered_nginx"
 nginx -c "$rendered_nginx"
 
 set -- \
