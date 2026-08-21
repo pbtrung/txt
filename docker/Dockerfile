@@ -6,6 +6,7 @@ RUN apk add --no-cache \
       apache2-utils \
       ca-certificates \
       gettext \
+      libsodium-dev \
       lua-resty-http \
       openresty \
       su-exec \

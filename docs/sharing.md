@@ -165,16 +165,20 @@ until its 60-second expiry unless object deletion has already completed.
 
 A grant is how the exact R2 object path travels from the API to a share URL
 and back, without ever being written to rqlite. `id_hash = SHA-256(raw
-share_id)`. The API derives a fresh per-grant ChaCha20-Poly1305 key from
+share_id)`. The API derives a fresh per-grant XChaCha20-Poly1305 key from
 `SHARE_GRANT_KEY` using HKDF-SHA-256 with a random 32-byte salt and
 `info = "txt:share-grant-key:v1" || id_hash`, then encrypts the exact object
-path with a random 12-byte nonce and associated data
+path with a random 24-byte nonce and associated data
 `"txt:share-grant:v1" || id_hash` (binding the grant to its own `share_id` so
 it cannot be replayed against a different one):
 
 ```text
-grant = base64url(0x01 || salt_32 || nonce_12 || ChaCha20-Poly1305(ciphertext || tag))
+grant = base64url(0x01 || salt_32 || nonce_24 || XChaCha20-Poly1305(ciphertext || tag))
 ```
+
+XChaCha20-Poly1305 is implemented through libsodium rather than OpenSSL, which
+has no XChaCha20 cipher; the gateway calls it directly through a LuaJIT FFI
+binding.
 
 Only the API (holding `SHARE_GRANT_KEY`) can produce or open a grant. Decrypting
 it recovers the object path, which the API then re-hashes and compares against

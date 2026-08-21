@@ -1,13 +1,12 @@
-local cipher = require("resty.openssl.cipher")
 local codec = require("txt.codec")
 local config = require("txt.config")
+local sodium = require("txt.sodium")
 
 local M = {}
-local ALGORITHM = "chacha20-poly1305"
 local VERSION = "\1"
 local SALT_BYTES = 32
-local NONCE_BYTES = 12
-local TAG_BYTES = 16
+local NONCE_BYTES = sodium.NONCE_BYTES
+local TAG_BYTES = sodium.TAG_BYTES
 local KEY_INFO = "txt:share-grant-key:v1"
 local AAD_PREFIX = "txt:share-grant:v1"
 local ENVELOPE_BYTES = #VERSION + SALT_BYTES + NONCE_BYTES + TAG_BYTES
@@ -20,26 +19,11 @@ local function grant_key(salt, id_hash)
   return codec.hmac("sha256", prk, KEY_INFO .. id_hash .. "\1")
 end
 
-local function seal(key, nonce, plaintext, aad)
-  local aead = cipher.new(ALGORITHM)
-  local ciphertext, err = aead:encrypt(key, nonce, plaintext, false, aad)
-  if not ciphertext then
-    return nil, err
-  end
-  local tag
-  tag, err = aead:get_aead_tag(TAG_BYTES)
-  if not tag then
-    return nil, err
-  end
-  return ciphertext .. tag
-end
-
 local function split_envelope(envelope)
   local salt = envelope:sub(2, 1 + SALT_BYTES)
   local nonce = envelope:sub(2 + SALT_BYTES, 1 + SALT_BYTES + NONCE_BYTES)
-  local ciphertext = envelope:sub(2 + SALT_BYTES + NONCE_BYTES, -TAG_BYTES - 1)
-  local tag = envelope:sub(-TAG_BYTES)
-  return salt, nonce, ciphertext, tag
+  local sealed = envelope:sub(2 + SALT_BYTES + NONCE_BYTES)
+  return salt, nonce, sealed
 end
 
 function M.encrypt(id_hash, object_path)
@@ -50,7 +34,7 @@ function M.encrypt(id_hash, object_path)
     return nil, err
   end
   local sealed
-  sealed, err = seal(key, nonce, object_path, AAD_PREFIX .. id_hash)
+  sealed, err = sodium.seal(key, nonce, object_path, AAD_PREFIX .. id_hash)
   if not sealed then
     return nil, err
   end
@@ -62,13 +46,12 @@ function M.decrypt(id_hash, grant)
   if not envelope or #envelope <= ENVELOPE_BYTES or envelope:sub(1, 1) ~= VERSION then
     return nil, "malformed grant"
   end
-  local salt, nonce, ciphertext, tag = split_envelope(envelope)
+  local salt, nonce, sealed = split_envelope(envelope)
   local key, err = grant_key(salt, id_hash)
   if not key then
     return nil, err
   end
-  local aead = cipher.new(ALGORITHM)
-  return aead:decrypt(key, nonce, ciphertext, false, AAD_PREFIX .. id_hash, tag)
+  return sodium.open(key, nonce, sealed, AAD_PREFIX .. id_hash)
 end
 
 return M

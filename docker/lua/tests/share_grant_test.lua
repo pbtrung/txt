@@ -1,7 +1,7 @@
 local t = require("tests.testlib")
 
 -- A fold over every byte so the fake tag actually depends on the whole
--- key/iv/aad, not just a truncated prefix of their concatenation.
+-- key/nonce/aad, not just a truncated prefix of their concatenation.
 local function fake_digest(value)
   local sum = 0
   for index = 1, #value do
@@ -10,27 +10,28 @@ local function fake_digest(value)
   return tostring(sum)
 end
 
-local function fake_tag(key, iv, aad, size)
-  return (
-    fake_digest(key .. "\0" .. iv .. "\0" .. (aad or "")) .. string.rep("0", size)
-  ):sub(1, size)
+local function fake_tag(key, nonce, aad, size)
+  return (fake_digest(key .. "\0" .. nonce .. "\0" .. (aad or "")) .. string.rep(
+    "0",
+    size
+  )):sub(1, size)
 end
 
-local function fake_aead()
-  local state = {}
+local function fake_sodium()
   return {
-    encrypt = function(_, key, iv, s, _, aad)
-      state.key, state.iv, state.aad = key, iv, aad
-      return s
+    KEY_BYTES = 32,
+    NONCE_BYTES = 24,
+    TAG_BYTES = 16,
+    seal = function(key, nonce, plaintext, aad)
+      return plaintext .. fake_tag(key, nonce, aad, 16)
     end,
-    get_aead_tag = function(_, size)
-      return fake_tag(state.key, state.iv, state.aad, size)
-    end,
-    decrypt = function(_, key, iv, s, _, aad, tag)
-      if fake_tag(key, iv, aad, #tag) ~= tag then
+    open = function(key, nonce, sealed, aad)
+      local ciphertext = sealed:sub(1, -17)
+      local tag = sealed:sub(-16)
+      if fake_tag(key, nonce, aad, 16) ~= tag then
         return nil, "tag mismatch"
       end
-      return s
+      return ciphertext
     end,
   }
 end
@@ -38,11 +39,7 @@ end
 local function stubs()
   local random_seq = 0
   return {
-    ["resty.openssl.cipher"] = {
-      new = function()
-        return fake_aead()
-      end,
-    },
+    ["txt.sodium"] = fake_sodium(),
     ["txt.codec"] = {
       hmac = function(_, key, value)
         return "hmac(" .. key .. "|" .. value .. ")"

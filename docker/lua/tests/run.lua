@@ -14,5 +14,6 @@ require("tests.shares_test")
 require("tests.share_grant_test")
 require("tests.firebase_id_token_test")
 require("tests.codec_test")
+require("tests.sodium_test")
 
 require("tests.testlib").finish()
