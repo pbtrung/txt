@@ -31,6 +31,10 @@ The service is always on, so there is no request cold start. Lua keeps only
 Firebase public certificates in shared memory; owner, share, and rate-limit
 state remains durable in rqlite.
 
+Outbound Lua HTTPS uses Alpine's system CA bundle with certificate verification
+enabled. This trust store is required both for fetching Firebase's rotating ID
+token signing certificates and for authenticated R2 HTTPS operations.
+
 `/health/ready` checks that rqlite can answer a simple query; it intentionally
 does not require `schema_migrations` to exist, because Northflank must route the
 operator request that installs the first schema. Application endpoints remain

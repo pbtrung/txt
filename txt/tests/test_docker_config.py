@@ -27,3 +27,11 @@ def test_nginx_rejects_wrong_origins_before_api_handlers():
     assert '"${UI_ORIGIN}" 1;' in config
     guard = "if ($ui_origin_allowed = 0) { return 403; }"
     assert config.count(guard) == 4
+
+
+def test_lua_outbound_https_uses_the_system_ca_bundle():
+    config = (ROOT / "docker/nginx.conf").read_text()
+    dockerfile = (ROOT / "docker/Dockerfile").read_text()
+    assert "lua_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;" in config
+    assert "lua_ssl_verify_depth 4;" in config
+    assert "ca-certificates" in dockerfile
