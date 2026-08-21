@@ -73,24 +73,28 @@ class OwnerInitializer:
 
     def run(self) -> None:
         self.logger.verbose("Starting singleton owner bootstrap...")
-        self.creds = ensure_user_root_key(self.creds_path, self.creds)
-        uid = self._sign_in()
-        existing = self._load_owner()
-        if existing:
-            self._validate_owner(existing, uid)
-            self.logger.info(f"Owner {uid} is already ready in rqlite.")
-            return
-        self.rqlite.execute(INSERT_OWNER_SQL, self._new_owner(uid))
-        self.logger.info(f"Owner {uid} is ready in rqlite.")
+        self.initialize(self.sign_in())
 
-    def _sign_in(self) -> str:
+    def initialize(self, uid: str, payload: dict | None = None) -> dict:
+        self.creds = ensure_user_root_key(self.creds_path, self.creds)
+        existing = self.load_owner()
+        if existing:
+            self.validate_owner(existing, uid)
+            self.logger.info(f"Owner {uid} is already ready in rqlite.")
+            return existing
+        owner = self._new_owner(uid, payload)
+        self.rqlite.execute(INSERT_OWNER_SQL, owner)
+        self.logger.info(f"Owner {uid} is ready in rqlite.")
+        return owner
+
+    def sign_in(self) -> str:
         self.logger.verbose(f"Signing in to Firebase as {self.creds.firebase_email}...")
         auth = self.auth_factory(self.creds.firebase_api_key)
         uid = auth.sign_in(self.creds.firebase_email, self.creds.firebase_password)
         self.logger.verbose(f"Firebase sign-in succeeded, uid={uid}")
         return uid
 
-    def _load_owner(self) -> dict | None:
+    def load_owner(self) -> dict | None:
         try:
             return self.rqlite.query_one(OWNER_SQL)
         except RqliteError as error:
@@ -101,15 +105,22 @@ class OwnerInitializer:
                 ) from error
             raise
 
-    def _new_owner(self, uid: str) -> dict:
+    def _new_owner(self, uid: str, payload: dict | None) -> dict:
         root_key = _root_key(self.creds.user_root_key, uid)
-        user_handle = secrets.token_bytes(32)
         umk = secrets.token_bytes(128)
-        payload = self._new_payload(user_handle)
+        user_handle, payload = self._payload(uid, payload)
         keys = self._new_keys()
         row = self._identity_fields(uid, user_handle, payload)
         row.update(self._key_fields(root_key, umk, payload, keys))
         return row
+
+    def _payload(self, uid: str, payload: dict | None) -> tuple[bytes, dict]:
+        if payload is None:
+            handle = secrets.token_bytes(32)
+            return handle, self._new_payload(handle)
+        handle = decode_user_handle(payload.get("user_handle"), uid)
+        parse_storage_account(uid, payload)
+        return handle, payload
 
     def _new_keys(self) -> tuple[bytes, bytes, bytes, bytes]:
         kem_public, kem_private = self.engine.kem_keypair()
@@ -146,7 +157,7 @@ class OwnerInitializer:
             "db_prefix": generate_random_prefix(),
         }
 
-    def _validate_owner(self, row: dict, uid: str) -> None:
+    def validate_owner(self, row: dict, uid: str) -> None:
         if row.get("firebase_uid") != uid:
             raise ValueError("rqlite is already provisioned for another Firebase UID")
         root_key = _root_key(self.creds.user_root_key, uid)
@@ -158,7 +169,7 @@ class OwnerInitializer:
 
     def _validate_bindings(self, row: dict, uid: str, payload: dict) -> None:
         account = parse_storage_account(uid, payload)
-        handle = _decode_handle(payload.get("user_handle"), uid)
+        handle = decode_user_handle(payload.get("user_handle"), uid)
         if not secrets.compare_digest(
             row["user_handle_hash"], hashlib.sha256(handle).digest()
         ):
@@ -193,7 +204,7 @@ def _root_key(value: str, uid: str) -> bytes:
     return key
 
 
-def _decode_handle(value: object, uid: str) -> bytes:
+def decode_user_handle(value: object, uid: str) -> bytes:
     try:
         handle = base64.b64decode(value, validate=True)
     except TypeError, ValueError:

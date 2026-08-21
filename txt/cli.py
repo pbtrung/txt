@@ -12,6 +12,7 @@ from .ingest import TxtIngester
 from .logger import Logger
 from .owner_init import OwnerInitializer
 from .replace_images import ImageReplacer
+from .turso_migration import OwnerMigrator
 
 
 @click.command()
@@ -20,6 +21,13 @@ from .replace_images import ImageReplacer
     "owner_creds_path",
     metavar="CREDS_JSON",
     help="Provision and validate the singleton owner row in rqlite",
+)
+@click.option(
+    "--migrate",
+    "migration_creds_paths",
+    nargs=2,
+    metavar="TURSO_CREDS_JSON RQLITE_CREDS_JSON",
+    help="Migrate the Turso owner into rqlite, initializing it when absent",
 )
 @click.option(
     "--replace-images",
@@ -81,7 +89,7 @@ from .replace_images import ImageReplacer
 @click.option(
     "--dry-run",
     is_flag=True,
-    help="Report --clean-bucket or --update-ctl changes without writing them",
+    help="Report migration, bucket, or control changes without writing them",
 )
 @click.option(
     "--log-file",
@@ -120,10 +128,12 @@ def _cleanup_log(opts: dict) -> Path | None:
 
 def _validate_options(opts: dict) -> None:
     if opts["dry_run"] and not (
-        opts["clean_bucket_creds_path"] or opts["update_ctl_creds_path"]
+        opts["clean_bucket_creds_path"]
+        or opts["update_ctl_creds_path"]
+        or opts["migration_creds_paths"]
     ):
         raise click.UsageError(
-            "--dry-run requires --clean-bucket or --update-ctl CREDS_JSON"
+            "--dry-run requires --migrate, --clean-bucket, or --update-ctl"
         )
     if len(_selected_commands(opts)) > 1:
         raise click.UsageError("choose only one primary command")
@@ -135,6 +145,10 @@ def _selected_commands(opts: dict) -> list[Callable]:
 
 def _dispatch_init_owner(opts: dict, logger: Logger) -> None:
     _run_init_owner(opts["owner_creds_path"], logger)
+
+
+def _dispatch_migrate(opts: dict, logger: Logger) -> None:
+    _run_migrate(opts["migration_creds_paths"], logger, opts["dry_run"])
 
 
 def _dispatch_replace_images(opts: dict, logger: Logger) -> None:
@@ -168,6 +182,7 @@ def _dispatch_clean_bucket(opts: dict, logger: Logger) -> None:
 
 COMMAND_HANDLERS = (
     ("owner_creds_path", _dispatch_init_owner),
+    ("migration_creds_paths", _dispatch_migrate),
     ("replace_images_dirs", _dispatch_replace_images),
     ("edit_epub_dirs", _dispatch_edit_epub),
     ("ingest_src_dir", _dispatch_ingest),
@@ -180,6 +195,18 @@ COMMAND_HANDLERS = (
 def _run_init_owner(creds_path: str, logger: Logger) -> None:
     creds = load_owner_creds(creds_path)
     OwnerInitializer(creds, creds_path, logger).run()
+
+
+def _run_migrate(paths: tuple[str, str], logger: Logger, dry_run: bool) -> None:
+    turso_path, owner_path = paths
+    migrator = OwnerMigrator(
+        load_creds(turso_path),
+        load_owner_creds(owner_path),
+        owner_path,
+        logger,
+        dry_run,
+    )
+    migrator.run()
 
 
 def _run_replace_images(dirs: tuple[str, str], logger: Logger) -> None:
