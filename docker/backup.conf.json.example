@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "type": "s3",
+  "interval": "24h",
+  "vacuum": false,
+  "sub": {
+    "endpoint": "https://ACCOUNT_ID.r2.cloudflarestorage.com",
+    "access_key_id": "R2_BACKUP_ACCESS_KEY_ID",
+    "secret_access_key": "R2_BACKUP_SECRET_ACCESS_KEY",
+    "region": "auto",
+    "bucket": "BUCKET_NAME",
+    "path": "control-backups/rqlite-control.sqlite.gz"
+  }
+}
