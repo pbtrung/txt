@@ -3,10 +3,11 @@ from dataclasses import dataclass
 
 import boto3
 import botocore.exceptions
+from botocore.config import Config
 
 from .creds import R2Config
 
-DOWNLOAD_CHUNK_SIZE = 1024 * 1024
+DOWNLOAD_CHUNK_SIZE = 64 * 1024
 DOWNLOAD_ERRORS = (
     botocore.exceptions.IncompleteReadError,
     botocore.exceptions.ReadTimeoutError,
@@ -39,15 +40,9 @@ class R2DownloadError(RuntimeError):
 
 
 class R2Client:
-    def __init__(self, config: R2Config):
+    def __init__(self, config: R2Config, read_timeout: int | None = None):
         self.bucket = config.bucket
-        self._s3 = boto3.client(
-            "s3",
-            endpoint_url=config.endpoint,
-            aws_access_key_id=config.read_write_access_key_id,
-            aws_secret_access_key=config.read_write_secret_access_key,
-            region_name=config.region,
-        )
+        self._s3 = boto3.client("s3", **_client_kwargs(config, read_timeout))
 
     def get_object(self, key: str) -> bytes | None:
         resp = self._get_object_response(key)
@@ -158,6 +153,18 @@ def _is_precondition_failure(error: botocore.exceptions.ClientError) -> bool:
     code = error.response.get("Error", {}).get("Code")
     status = error.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
     return code in ("PreconditionFailed", "412") or status == 412
+
+
+def _client_kwargs(config: R2Config, read_timeout: int | None) -> dict:
+    kwargs = {
+        "endpoint_url": config.endpoint,
+        "aws_access_key_id": config.read_write_access_key_id,
+        "aws_secret_access_key": config.read_write_secret_access_key,
+        "region_name": config.region,
+    }
+    if read_timeout is not None:
+        kwargs["config"] = Config(read_timeout=read_timeout)
+    return kwargs
 
 
 def _content_length(response: dict) -> int | None:

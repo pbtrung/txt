@@ -66,7 +66,8 @@ class FakeR2Client:
     conflict_keys = set()
     download_failures = 0
 
-    def __init__(self, config):
+    def __init__(self, config, read_timeout=None):
+        self.read_timeout = read_timeout
         self.put_calls = []
         self.put_conditions = []
 
@@ -332,9 +333,11 @@ def test_retries_interrupted_db_download_and_logs_progress(tmp_path, monkeypatch
     monkeypatch.setattr(ingest_module.time, "sleep", delays.append)
     logger = RecordingLogger()
 
-    TxtIngester(src, local, CREDS, CREDS_PATH, logger).run()
+    ingester = TxtIngester(src, local, CREDS, CREDS_PATH, logger)
+    ingester.run()
 
     assert delays == [1]
+    assert ingester.r2.read_timeout == 15
     assert any("attempt 1/3" in message for message in logger.verbose_messages)
     assert any("attempt 2/3" in message for message in logger.verbose_messages)
     assert any("100.0%" in message for message in logger.verbose_messages)

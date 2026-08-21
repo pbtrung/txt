@@ -17,6 +17,8 @@ from .random_token import to_base32_crockford
 from .sqlite_engine import SqliteEngine
 
 DOWNLOAD_ATTEMPTS = 3
+DOWNLOAD_PROGRESS_INTERVAL = 1
+DOWNLOAD_READ_TIMEOUT = 15
 DOWNLOAD_RETRY_DELAYS = (1, 2)
 
 
@@ -25,13 +27,28 @@ class DownloadProgressLogger:
         self.logger = logger
         self.attempt = attempt
         self.started = time.monotonic()
+        self.last_progress = self.started
+        self.reported_body = False
 
     def __call__(self, downloaded: int, total: int | None) -> None:
-        elapsed = time.monotonic() - self.started
+        now = time.monotonic()
+        elapsed = now - self.started
         if downloaded == 0:
             self.logger.verbose(self._response_message(total))
             return
+        if not self._should_report(downloaded, total, now):
+            return
         self.logger.verbose(self._progress_message(downloaded, total, elapsed))
+        self.reported_body = True
+        self.last_progress = now
+
+    def _should_report(self, downloaded: int, total: int | None, now: float) -> bool:
+        complete = total is not None and downloaded >= total
+        return (
+            not self.reported_body
+            or complete
+            or now - self.last_progress >= DOWNLOAD_PROGRESS_INTERVAL
+        )
 
     def _response_message(self, total: int | None) -> str:
         size = _format_bytes(total) if total is not None else "unknown size"
@@ -58,7 +75,7 @@ class TxtIngester:
         self.src_dir, self.local_db_dir = src_dir, local_db_dir
         self.logger = logger
         self.owner = OwnerInitializer(creds, creds_path, logger)
-        self.r2 = R2Client(creds.r2_config)
+        self.r2 = R2Client(creds.r2_config, read_timeout=DOWNLOAD_READ_TIMEOUT)
         self.engine = SqliteEngine()
         self.blob = CryptoBlob(self.engine)
         self._reset_run_state()
@@ -116,7 +133,8 @@ class TxtIngester:
         for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
             self.logger.verbose(
                 f"Downloading current db {key} from R2 "
-                f"(attempt {attempt}/{DOWNLOAD_ATTEMPTS})..."
+                f"(attempt {attempt}/{DOWNLOAD_ATTEMPTS}, "
+                f"{DOWNLOAD_READ_TIMEOUT}s read timeout)..."
             )
             try:
                 return self.r2.get_object_with_etag(

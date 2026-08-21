@@ -79,6 +79,21 @@ def test_client_built_with_read_write_creds_and_endpoint(monkeypatch):
     assert captured["kwargs"]["aws_access_key_id"] == "rw-id"
     assert captured["kwargs"]["aws_secret_access_key"] == "rw-secret"
     assert captured["kwargs"]["region_name"] == "auto"
+    assert "config" not in captured["kwargs"]
+
+
+def test_client_applies_optional_read_timeout(monkeypatch):
+    captured = {}
+
+    def fake_boto3_client(service, **kwargs):
+        captured.update(kwargs)
+        return FakeS3Client()
+
+    monkeypatch.setattr(r2_client_module.boto3, "client", fake_boto3_client)
+
+    R2Client(CONFIG, read_timeout=15)
+
+    assert captured["config"].read_timeout == 15
 
 
 def test_put_object_forwards_bucket_key_and_body(monkeypatch):
