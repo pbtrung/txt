@@ -126,6 +126,16 @@ def test_load_owner_creds_reads_operator_and_deployment_fields(owner_creds_path)
     assert creds.slhdsa_256f_priv_key == ""
 
 
+def test_load_owner_creds_rejects_service_origin_without_operator_route(tmp_path):
+    path = tmp_path / "owner_creds.json"
+    path.write_text(
+        json.dumps({**VALID_OWNER, "rqlite_operator_url": "https://api.example.com"})
+    )
+
+    with pytest.raises(ValueError, match="must end with /operator/rqlite"):
+        load_owner_creds(str(path))
+
+
 def test_load_owner_creds_has_no_turso_fields(owner_creds_path):
     creds = load_owner_creds(owner_creds_path)
     assert not hasattr(creds, "turso_org_token")

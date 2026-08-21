@@ -2,6 +2,7 @@ import base64
 import json
 import secrets
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 REQUIRED_FIELDS = [
     "turso_org_token",
@@ -85,6 +86,7 @@ def load_owner_creds(path: str) -> OwnerCreds:
     if missing:
         raise ValueError(f"Missing fields in creds.json: {', '.join(missing)}")
     values = {key: data[key] for key in OWNER_REQUIRED_FIELDS if key != "r2_config"}
+    values["rqlite_operator_url"] = _operator_url(values["rqlite_operator_url"])
     return OwnerCreds(**values, r2_config=_require_r2_config(data["r2_config"]))
 
 
@@ -99,6 +101,20 @@ def _require_r2_config(value: object) -> R2Config:
     if missing:
         raise ValueError(f"Missing r2_config fields: {', '.join(missing)}")
     return R2Config(**{name: value[name] for name in R2Config.__annotations__})
+
+
+def _operator_url(value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError("rqlite_operator_url must be an HTTP(S) URL")
+    parsed = urlsplit(value)
+    valid_path = parsed.path.rstrip("/") == "/operator/rqlite"
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc or not valid_path:
+        raise ValueError(
+            "rqlite_operator_url must end with /operator/rqlite, without an API path"
+        )
+    if parsed.query or parsed.fragment:
+        raise ValueError("rqlite_operator_url must not contain a query or fragment")
+    return value
 
 
 def ensure_user_root_key[RootKeyCreds: (Creds, OwnerCreds)](
