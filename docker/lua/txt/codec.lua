@@ -9,8 +9,16 @@ local function padding(value)
   return string.rep("=", (4 - (#value % 4)) % 4)
 end
 
+local function is_base64(value)
+  if type(value) ~= "string" then
+    return false
+  end
+  local body, suffix = value:match("^([A-Za-z0-9+/]*)(=*)$")
+  return body ~= nil and #suffix <= 2
+end
+
 function M.base64_decode(value)
-  if type(value) ~= "string" or not value:match("^[A-Za-z0-9+/]*={0,2}$") then
+  if not is_base64(value) then
     return nil, "invalid base64"
   end
   local raw = ngx.decode_base64(value .. padding(value))
