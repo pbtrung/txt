@@ -2,6 +2,8 @@ FROM alpine:edge
 
 ARG RQLITE_VERSION=10.2.7
 
+RUN apk update && \
+      apk --no-cache upgrade
 RUN apk add --no-cache \
       apache2-utils \
       ca-certificates \
