@@ -204,10 +204,11 @@ Build the React UI and deploy `dist/` to Cloudflare Pages:
 WORKER_NAME=txt npm run deploy
 ```
 
-`wrangler.jsonc` declares `dist/` as `pages_build_output_dir` and exposes the
-same directory through the `STATIC_ASSETS` binding. It contains no server entry
-point or API bindings. The static CSP permits HTTPS connections because the
-Northflank API origin is supplied at unlock time and copied into share URL
+`wrangler.jsonc` declares `dist/` only as `pages_build_output_dir`. Do not add a
+Workers `assets` block: Pages rejects that configuration, and this static site
+has no Pages Function that needs an `ASSETS` binding. It contains no server
+entry point or API bindings. The static CSP permits HTTPS connections because
+the Northflank API origin is supplied at unlock time and copied into share URL
 fragments; EPUB scripts remain disabled and EPUB resource directives remain
 restricted. The shared route is public; owner library routes require Firebase
 and the unlocked local vault.
