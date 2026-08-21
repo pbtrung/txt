@@ -35,14 +35,14 @@ end
 function M.mint(db_path, db_prefix)
   local exact, err = mint("db_path", "object-read-write", {
     objectPaths = { db_path },
-    prefixPaths = {},
+    prefixPaths = codec.empty_array,
   })
   if not exact then
     return nil, err
   end
   local prefix
   prefix, err = mint("db_prefix", "object-read-write", {
-    objectPaths = {},
+    objectPaths = codec.empty_array,
     prefixPaths = { db_prefix .. "/" },
   })
   if not prefix then

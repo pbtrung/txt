@@ -5,6 +5,8 @@ local rand = require("resty.openssl.rand")
 
 local M = {}
 
+M.empty_array = cjson.empty_array
+
 local function padding(value)
   return string.rep("=", (4 - (#value % 4)) % 4)
 end

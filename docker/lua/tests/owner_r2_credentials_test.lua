@@ -1,8 +1,11 @@
 local t = require("tests.testlib")
 
+local EMPTY_ARRAY = {}
+
 local function stubs(captured)
   return {
     ["txt.codec"] = {
+      empty_array = EMPTY_ARRAY,
       base64_encode = function(value)
         captured.encoded = value
         return "standard-base64"
@@ -26,7 +29,7 @@ local function stubs(captured)
     },
     ["txt.jwt"] = {
       sign_hs256 = function(payload)
-        captured.payload = payload
+        captured.payloads[#captured.payloads + 1] = payload
         return "signed.jwt"
       end,
     },
@@ -34,7 +37,7 @@ local function stubs(captured)
 end
 
 t.test("R2 session tokens use standard padded base64", function()
-  local captured = {}
+  local captured = { payloads = {} }
   local saved_ngx = ngx
   ngx = {
     time = function()
@@ -49,3 +52,26 @@ t.test("R2 session tokens use standard padded base64", function()
   ngx = saved_ngx
   t.equal(captured.encoded, "jwt/signed.jwt")
 end)
+
+t.test(
+  "R2 credential scopes use cjson's empty-array marker, never a bare table",
+  function()
+    local captured = { payloads = {} }
+    local saved_ngx = ngx
+    ngx = {
+      time = function()
+        return 1000
+      end,
+    }
+    t.with_stubs("txt.owner_r2_credentials", stubs(captured), function(credentials)
+      credentials.mint("database", "books")
+    end)
+    ngx = saved_ngx
+    local db_path_paths = captured.payloads[1].paths
+    t.equal(db_path_paths.objectPaths[1], "database")
+    t.equal(db_path_paths.prefixPaths, EMPTY_ARRAY)
+    local db_prefix_paths = captured.payloads[2].paths
+    t.equal(db_prefix_paths.objectPaths, EMPTY_ARRAY)
+    t.equal(db_prefix_paths.prefixPaths[1], "books/")
+  end
+)
