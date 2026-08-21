@@ -12,4 +12,5 @@ def test_pages_config_uses_only_the_pages_output_directory():
 
 def test_deploy_script_uses_the_pages_command():
     script = (ROOT / "scripts/deploy.sh").read_text()
-    assert 'wrangler pages deploy dist --project-name "$WORKER_NAME"' in script
+    assert 'wrangler pages deploy dist --project-name "$CF_PROJECT_NAME"' in script
+    assert "CF_PROJECT_NAME is required" in script

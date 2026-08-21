@@ -201,7 +201,7 @@ bodies.
 Build the React UI and deploy `dist/` to Cloudflare Pages:
 
 ```sh
-WORKER_NAME=txt npm run deploy
+CF_PROJECT_NAME=txt npm run deploy
 ```
 
 `wrangler.jsonc` declares `dist/` only as `pages_build_output_dir`. Do not add a
