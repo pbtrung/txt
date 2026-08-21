@@ -1,4 +1,5 @@
 local owner_auth = require("txt.owner_auth")
+local rate_limit = require("txt.rate_limit")
 local request = require("txt.request")
 local response = require("txt.response")
 local shares = require("txt.shares")
@@ -7,6 +8,16 @@ if not request.require_method("DELETE") then
   return response.preflight("DELETE")
 end
 local uid = owner_auth.require_owner()
+
+local allowed, limit_err = rate_limit.allow("owner-share-write", uid)
+if allowed == nil then
+  ngx.log(ngx.ERR, "owner share rate limit failed: ", limit_err)
+  return response.error(503, "rate_limit_unavailable")
+end
+if not allowed then
+  return response.error(429, "rate_limit_exceeded")
+end
+
 local body = request.json(2048)
 local input = body and shares.parse_create(body)
 if not input then

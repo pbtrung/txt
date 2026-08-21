@@ -7,6 +7,7 @@ local M = {}
 local LIMITS = {
   ["owner-keys"] = { window = 3600, maximum = 60 },
   ["owner-r2-token"] = { window = 3600, maximum = 30 },
+  ["owner-share-write"] = { window = 3600, maximum = 120 },
   ["public-share-url"] = { window = 60, maximum = 120 },
 }
 

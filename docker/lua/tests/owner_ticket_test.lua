@@ -11,6 +11,9 @@ local function codec()
     random = function(length)
       return string.rep("r", length)
     end,
+    equal = function(left, right)
+      return left == right
+    end,
   }
 end
 

@@ -1,3 +1,4 @@
+local codec = require("txt.codec")
 local config = require("txt.config")
 local firebase = require("txt.firebase_id_token")
 local request = require("txt.request")
@@ -15,7 +16,7 @@ function M.require_owner()
     ngx.log(ngx.WARN, "Firebase verification failed: ", err)
     return response.error(401, "invalid_firebase_token")
   end
-  if identity.sub ~= config.get().owner_uid then
+  if not codec.equal(identity.sub, config.get().owner_uid) then
     return response.error(403, "owner_only")
   end
   return identity.sub

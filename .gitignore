@@ -29,3 +29,4 @@ dist/
 *.log
 creds/
 replaced_txt_*/
+docker/backup.conf.json

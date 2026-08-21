@@ -26,7 +26,10 @@ if not owner then
   ngx.log(ngx.ERR, "owner lookup failed: ", err)
   return response.error(503, "owner_store_unavailable")
 end
-if owner.firebase_uid ~= uid or owner.firebase_uid ~= config.get().owner_uid then
+if
+  not codec.equal(owner.firebase_uid, uid)
+  or not codec.equal(owner.firebase_uid, config.get().owner_uid)
+then
   return response.error(503, "owner_configuration_mismatch")
 end
 

@@ -45,13 +45,9 @@ function M.bearer()
 end
 
 function M.client_address()
-  local forwarded = ngx.req.get_headers()["X-Forwarded-For"]
-  if type(forwarded) == "string" then
-    local last = forwarded:match("([^,%s]+)%s*$")
-    if last and #last <= 128 then
-      return last
-    end
-  end
+  -- Not X-Forwarded-For: nginx.conf configures no trusted-proxy chain
+  -- (no set_real_ip_from), so that header is entirely client-controlled and
+  -- would let anyone roll a fresh rate-limit bucket on every request.
   return ngx.var.remote_addr or "unknown"
 end
 

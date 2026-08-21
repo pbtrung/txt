@@ -38,6 +38,15 @@ if [ -z "$RQLITE_ADMIN_USERNAME" ]; then
   exit 1
 fi
 
+for value in "$RQLITE_ADMIN_USERNAME" "$RQLITE_ADMIN_PASSWORD"; do
+  case "$value" in
+    -*)
+      printf 'RQLITE_ADMIN_USERNAME and RQLITE_ADMIN_PASSWORD must not start with -\n' >&2
+      exit 1
+      ;;
+  esac
+done
+
 mkdir -p "$DATA_DIR" "$(dirname "$RQLITE_ADMIN_HTPASSWD")"
 chown -R rqlite:rqlite "$(dirname "$DATA_DIR")"
 printf '%s' "$RQLITE_ADMIN_PASSWORD" | \

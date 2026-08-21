@@ -43,7 +43,7 @@ function M.verify(value)
   if
     payload.v ~= 2
     or payload.aud ~= "r2-token"
-    or payload.sub ~= config.get().owner_uid
+    or not codec.equal(payload.sub, config.get().owner_uid)
     or type(payload.iat) ~= "number"
     or type(payload.exp) ~= "number"
     or payload.iat > now
