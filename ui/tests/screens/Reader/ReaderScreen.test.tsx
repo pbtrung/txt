@@ -306,8 +306,8 @@ describe("ReaderScreen", () => {
     ).toEqual(["16px", "18px", "20px", "22px"]);
     expect(screen.getByRole("menuitemradio", { name: "18px" })).toHaveClass(
       "reader-font-option",
-      "pr-1",
-      "pl-1",
+      "pr-2",
+      "pl-2",
       "py-1",
       "text-sm",
       "bg-primary",
