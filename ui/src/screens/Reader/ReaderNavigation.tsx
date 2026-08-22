@@ -298,7 +298,7 @@ function FontSizeOptions({
           textValue={`${size}px`}
           className={({ isSelected }) =>
             classNames(
-              "cursor-pointer rounded-field py-1 pr-1 pl-2 text-sm outline-none hover:bg-base-200 focus:bg-base-200 reader-font-option",
+              "cursor-pointer rounded-field py-1 pr-1 pl-1 text-sm outline-none hover:bg-base-200 focus:bg-base-200 reader-font-option",
               isSelected && "bg-primary text-primary-content hover:bg-primary",
             )
           }
