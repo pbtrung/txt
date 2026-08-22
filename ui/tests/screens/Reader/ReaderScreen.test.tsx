@@ -134,8 +134,8 @@ describe("ReaderScreen", () => {
     expect(alert.parentElement).toHaveClass(
       "reader-width",
       "reader-column",
-      "p-2",
-      "md:p-0",
+      "px-2",
+      "md:px-0",
     );
   });
 
@@ -281,9 +281,10 @@ describe("ReaderScreen", () => {
     const epubHost = container.querySelector<HTMLElement>(".reader-epub-host")!;
 
     expect(viewport).toHaveStyle({ fontSize: "18px" });
-    expect(readerColumn).toHaveClass("p-2", "md:p-0");
+    expect(viewport).toHaveClass("px-2", "md:px-0");
+    expect(readerColumn).not.toHaveClass("p-2");
+    expect(readerColumn).not.toHaveClass("px-2");
     expect(fontSize).toHaveClass("px-2", "text-sm", "reader-font-trigger");
-    expect(viewport).not.toHaveClass("px-2", "md:px-0");
     expect(epubHost).toHaveClass("h-full");
 
     expect(

@@ -345,7 +345,7 @@
 
 /* epub.ts reserves half of its column gap at each page edge. On mobile,
    widen the host by that full 16px gap and pull it outward by 8px per side:
-   the text then lands exactly on reader-column's sole Tailwind p-2 inset,
+   the text then lands exactly on the reader viewport's Tailwind px-2 inset,
    while adjacent horizontal pages remain visibly separated. */
 @media (max-width: 767.98px) {
   .reader-epub-host {
