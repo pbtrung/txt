@@ -334,7 +334,7 @@ function LibraryToastRegion() {
   return (
     <UNSTABLE_ToastRegion
       queue={libraryToastQueue}
-      className="library-toast-region"
+      className="toast toast-bottom library-toast-region"
       aria-label="Library notifications"
     >
       {({ toast }) => <LibraryToast toast={toast} />}

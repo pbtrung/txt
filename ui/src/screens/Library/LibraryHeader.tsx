@@ -65,18 +65,18 @@ export function LibraryHeader({
           )}
         >
           <SearchField
-            className="search-box relative min-w-0"
+            className="input input-sm input-secondary search-box relative min-w-0 gap-2"
             aria-label="Search"
             value={query}
             onChange={onQuery}
           >
             <Search className="search-box-icon" aria-hidden="true" />
             <Input
-              className="search-box-input library-search-control"
+              className="search-box-input min-w-0 flex-1 bg-transparent outline-none library-search-control"
               placeholder="Search…"
             />
             <Button
-              className="search-box-clear compact-x-button"
+              className="btn btn-circle btn-ghost btn-xs search-box-clear compact-x-button"
               aria-label="Clear search"
             >
               <X className="search-box-clear-icon" aria-hidden="true" />

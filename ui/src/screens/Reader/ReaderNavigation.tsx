@@ -51,7 +51,7 @@ export function ReaderNavigation({
     <div className="flex items-center justify-start gap-2 border-t border-base-300 py-1">
       <FontSizeMenu value={fontPx} onChange={onFontSize} />
       <span
-        className="h-5 border-l border-base-300 reader-nav-divider"
+        className="divider divider-horizontal mx-0 h-5 reader-nav-divider"
         aria-hidden="true"
       />
       <IconButton
@@ -197,7 +197,7 @@ function BookmarkOptions({
         )}
         {bookmarkSaved ? "Remove current bookmark" : "Add current bookmark"}
       </Button>
-      <div className="my-1 border-t border-base-300" />
+      <div className="divider my-1" />
       <BookmarkStatus {...{ status, error, onRetry }} />
       {bookmarks.length ? (
         <GridList

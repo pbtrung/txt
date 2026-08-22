@@ -42,7 +42,7 @@ export function DrawerPanel({
       <Modal className="aria-drawer-modal">
         <Dialog
           aria-labelledby={titleId}
-          className={classNames(panelClassName, "flex flex-col")}
+          className={classNames(panelClassName, "card flex flex-col")}
           style={style}
         >
           <PanelContents title={title} titleId={titleId} onClose={onClose}>
@@ -68,7 +68,12 @@ function PanelContents({
   return (
     <>
       <div className="aria-drawer-header">
-        <Heading slot="title" level={2} className="aria-drawer-title" id={titleId}>
+        <Heading
+          slot="title"
+          level={2}
+          className="card-title aria-drawer-title"
+          id={titleId}
+        >
           {title}
         </Heading>
         <Button
@@ -79,7 +84,7 @@ function PanelContents({
           <X className="size-4" aria-hidden="true" />
         </Button>
       </div>
-      <div className="aria-drawer-body">{children}</div>
+      <div className="card-body aria-drawer-body">{children}</div>
     </>
   );
 }

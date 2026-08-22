@@ -226,8 +226,9 @@ describe("LibraryScreen", () => {
     const searchbox = screen.getByRole("searchbox");
     const searchField = searchbox.closest(".search-box");
     const clear = screen.getByRole("button", { name: "Clear search" });
+    expect(searchField).toHaveClass("input", "input-sm", "input-secondary");
     expect(clear).toHaveAccessibleName("Clear search");
-    expect(clear).toHaveClass("compact-x-button");
+    expect(clear).toHaveClass("btn", "btn-circle", "btn-ghost", "compact-x-button");
     expect(clear.firstElementChild).toHaveClass("search-box-clear-icon");
     expect(searchField).toHaveAttribute("data-empty", "true");
 
@@ -393,6 +394,7 @@ describe("LibraryScreen", () => {
     const toastRegion = document.querySelector(".library-toast-region");
     const rightPane = document.querySelector(".library-right-pane");
     expect(rightPane).toContainElement(toastRegion as HTMLElement);
+    expect(toastRegion).toHaveClass("toast", "toast-bottom");
     expect(libraryToast()).toHaveClass(
       "w-full",
       "min-w-0",

@@ -284,9 +284,11 @@ function pad(value: number): string {
 
 export function EmptyState({ message }: { message: string }) {
   return (
-    <div className="py-12 text-center text-base-content/60">
-      <BookX className="mx-auto mb-2 size-10" aria-hidden="true" />
-      {message}
+    <div className="hero min-h-48 text-base-content/60">
+      <div className="hero-content flex-col gap-2 text-center">
+        <BookX className="size-10" aria-hidden="true" />
+        <span>{message}</span>
+      </div>
     </div>
   );
 }

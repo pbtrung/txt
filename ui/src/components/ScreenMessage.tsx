@@ -30,9 +30,17 @@ export function LoadingMessage({
         {children}
       </div>
       {progress && (
-        <div role="status" className="mt-2 text-sm">
-          {progress.label} (step {progress.step} of {progress.total})
-        </div>
+        <>
+          <div role="status" className="mt-2 text-sm">
+            {progress.label} (step {progress.step} of {progress.total})
+          </div>
+          <progress
+            className="progress progress-primary mt-3 w-full max-w-xs"
+            value={progress.step}
+            max={progress.total}
+            aria-label={`${progress.label}: step ${progress.step} of ${progress.total}`}
+          />
+        </>
       )}
     </div>
   );

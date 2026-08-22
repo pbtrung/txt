@@ -23,7 +23,9 @@ describe("DrawerPanel", () => {
     );
     expect(screen.getByRole("dialog", { name: "Info" })).toHaveClass(
       "aria-drawer-panel",
+      "card",
     );
+    expect(screen.getByRole("heading", { name: "Info" })).toHaveClass("card-title");
     expect(screen.getByText("content")).toBeInTheDocument();
     expect(screen.getByRole("dialog", { name: "Info" })).toContainElement(
       document.activeElement as HTMLElement,

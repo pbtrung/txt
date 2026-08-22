@@ -51,9 +51,12 @@ export function TocPanel({
       portalContainer={portalContainer}
     >
       {toc === undefined ? (
-        <p className="text-base-content/60">Loading…</p>
+        <p className="flex items-center gap-2 text-base-content/60">
+          <span className="loading loading-spinner loading-sm" aria-hidden="true" />
+          Loading…
+        </p>
       ) : toc === null ? (
-        <p role="alert" className="text-error">
+        <p role="alert" className="alert alert-error alert-soft py-2 text-sm">
           Unable to load contents.
         </p>
       ) : toc.length === 0 ? (
