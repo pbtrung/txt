@@ -450,10 +450,6 @@
   box-shadow: 0 0.125rem 0.25rem rgba(61, 57, 41, 0.12);
 }
 
-.reader-font-menu {
-  min-width: 4.5rem;
-}
-
 .reader-font-option[data-selected] {
   background-color: var(--color-primary);
   color: var(--color-primary-content);
