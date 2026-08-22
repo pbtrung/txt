@@ -289,7 +289,13 @@ describe("ReaderScreen", () => {
         screen.getByRole("button", { name: "Previous page" }),
       ),
     ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-    expect(container.querySelector(".reader-nav-divider")).toBeInTheDocument();
+    expect(container.querySelector(".reader-nav-divider")).not.toBeInTheDocument();
+    const pageNavigation = container.querySelector(".reader-page-navigation");
+    expect(pageNavigation).toHaveClass("justify-center");
+    expect(pageNavigation?.parentElement).toHaveClass(
+      "grid",
+      "grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]",
+    );
 
     await userEvent.click(fontSize);
     const menu = screen.getByRole("menu", { name: "Font size" });

@@ -48,44 +48,46 @@ export function ReaderNavigation({
   onRetry: () => void;
 }) {
   return (
-    <div className="flex items-center justify-start gap-2 border-t border-base-300 py-1">
-      <FontSizeMenu value={fontPx} onChange={onFontSize} />
-      <span
-        className="divider divider-horizontal mx-0 h-5 reader-nav-divider"
-        aria-hidden="true"
-      />
-      <IconButton
-        label="Previous page"
-        icon="chevron-left"
-        isDisabled={!renderer}
-        onPress={() => void renderer?.prev()}
-      />
-      <PageInput renderer={renderer} page={page} />
-      <span
-        className="text-sm text-base-content/60"
-        aria-label={`Total pages ${page.total}`}
-      >
-        / {page.total}
-      </span>
-      <IconButton
-        label="Next page"
-        icon="chevron-right"
-        isDisabled={!renderer}
-        onPress={() => void renderer?.next()}
-      />
-      <BookmarkMenu
-        {...{
-          renderer,
-          bookmarks,
-          bookmarkSaved,
-          bookmarkBusy,
-          status,
-          error,
-          onBookmark,
-          onRemove,
-          onRetry,
-        }}
-      />
+    <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 border-t border-base-300 py-1">
+      <div className="flex justify-start">
+        <FontSizeMenu value={fontPx} onChange={onFontSize} />
+      </div>
+      <div className="flex items-center justify-center gap-2 reader-page-navigation">
+        <IconButton
+          label="Previous page"
+          icon="chevron-left"
+          isDisabled={!renderer}
+          onPress={() => void renderer?.prev()}
+        />
+        <PageInput renderer={renderer} page={page} />
+        <span
+          className="text-sm text-base-content/60"
+          aria-label={`Total pages ${page.total}`}
+        >
+          / {page.total}
+        </span>
+        <IconButton
+          label="Next page"
+          icon="chevron-right"
+          isDisabled={!renderer}
+          onPress={() => void renderer?.next()}
+        />
+      </div>
+      <div className="flex justify-end">
+        <BookmarkMenu
+          {...{
+            renderer,
+            bookmarks,
+            bookmarkSaved,
+            bookmarkBusy,
+            status,
+            error,
+            onBookmark,
+            onRemove,
+            onRetry,
+          }}
+        />
+      </div>
     </div>
   );
 }
