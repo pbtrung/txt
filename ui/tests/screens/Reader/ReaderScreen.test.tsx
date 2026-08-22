@@ -134,8 +134,8 @@ describe("ReaderScreen", () => {
     expect(alert.parentElement).toHaveClass(
       "reader-width",
       "reader-column",
-      "px-2",
-      "md:px-0",
+      "p-2",
+      "md:p-0",
     );
   });
 
@@ -242,7 +242,7 @@ describe("ReaderScreen", () => {
     expect(instance.setFontSize).toHaveBeenCalledWith("18px");
   });
 
-  it("applies the mobile default font size when matchMedia matches", () => {
+  it("keeps the 18px default font size on mobile", () => {
     vi.stubGlobal(
       "matchMedia",
       vi.fn().mockImplementation((query: string) => ({ matches: true, media: query })),
@@ -254,7 +254,7 @@ describe("ReaderScreen", () => {
       setFontSize: (size: string) => void;
     };
 
-    expect(instance.setFontSize).toHaveBeenCalledWith("16px");
+    expect(instance.setFontSize).toHaveBeenCalledWith("18px");
   });
 
   it("keeps the previous responsive two-column preference", () => {
@@ -276,10 +276,12 @@ describe("ReaderScreen", () => {
       setFontSize: (size: string) => void;
     };
     const fontSize = screen.getByRole("button", { name: "Font size" });
+    const readerColumn = container.querySelector<HTMLElement>(".reader-column")!;
     const viewport = container.querySelector<HTMLElement>(".reader-viewport")!;
     const epubHost = container.querySelector<HTMLElement>(".reader-epub-host")!;
 
     expect(viewport).toHaveStyle({ fontSize: "18px" });
+    expect(readerColumn).toHaveClass("p-2", "md:p-0");
     expect(fontSize).toHaveClass("px-2", "text-sm", "reader-font-trigger");
     expect(viewport).not.toHaveClass("px-2", "md:px-0");
     expect(epubHost).toHaveClass("h-full");

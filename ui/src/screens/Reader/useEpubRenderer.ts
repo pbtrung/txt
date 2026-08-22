@@ -7,7 +7,7 @@ import {
 import type { ReaderDocument } from "../../data/readerDocument";
 import { errorMessage } from "../../util/errorMessage";
 
-const MOBILE_MEDIA_QUERY = "(max-width: 767.98px)";
+const DEFAULT_FONT_PX = 18;
 const INITIAL_PAGE: PagePosition = { current: 1, total: 1 };
 
 interface MountedRenderer {
@@ -35,7 +35,7 @@ export function useEpubRenderer(
   initialCfi: string | null = null,
 ) {
   const [host, setHost] = useState<HTMLDivElement | null>(null);
-  const [fontPx, setFontPx] = useState(defaultFontPx);
+  const [fontPx, setFontPx] = useState(DEFAULT_FONT_PX);
   const [mounted, setMounted] = useState<MountedRenderer | null>(null);
   const [ready, setReady] = useState<MountedRenderer | null>(null);
   const [located, setLocated] = useState<LocatedPage | null>(null);
@@ -70,10 +70,6 @@ export function useEpubRenderer(
     changeFontSize,
     error,
   };
-}
-
-function defaultFontPx(): number {
-  return window.matchMedia(MOBILE_MEDIA_QUERY).matches ? 16 : 18;
 }
 
 function mountRenderer(

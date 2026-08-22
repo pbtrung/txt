@@ -56,7 +56,7 @@ export function ReadyReaderView({
   if (error) return <ReaderError>{error}</ReaderError>;
   return (
     <div ref={setReaderContainer} className="reader-width relative mx-auto h-screen">
-      <div className="reader-column flex h-full flex-col px-2 md:px-0">
+      <div className="reader-column flex h-full flex-col p-2 md:p-0">
         <ReaderToolbar
           title={document.title}
           authors={document.authors}
@@ -118,7 +118,7 @@ export function ReadyReaderView({
 
 export function ReaderError({ children }: { children: ReactNode }) {
   return (
-    <div className="reader-width reader-column mx-auto px-2 md:px-0">
+    <div className="reader-width reader-column mx-auto p-2 md:p-0">
       <ScreenMessage error compact>
         {children}
       </ScreenMessage>
