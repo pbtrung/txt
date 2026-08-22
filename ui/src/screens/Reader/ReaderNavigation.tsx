@@ -260,7 +260,7 @@ function FontSizeMenu({
   return (
     <MenuTrigger>
       <Button
-        className="btn btn-sm btn-outline btn-secondary pr-1 pl-2 text-sm reader-font-trigger"
+        className="btn btn-sm btn-outline btn-secondary px-2 text-sm reader-font-trigger"
         aria-label="Font size"
       >
         {value}px
@@ -298,7 +298,7 @@ function FontSizeOptions({
           textValue={`${size}px`}
           className={({ isSelected }) =>
             classNames(
-              "cursor-pointer rounded-field px-2 py-1 text-sm outline-none hover:bg-base-200 focus:bg-base-200 reader-font-option",
+              "cursor-pointer rounded-field py-1 pr-1 pl-2 text-sm outline-none hover:bg-base-200 focus:bg-base-200 reader-font-option",
               isSelected && "bg-primary text-primary-content hover:bg-primary",
             )
           }

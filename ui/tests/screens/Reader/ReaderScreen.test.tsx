@@ -280,7 +280,7 @@ describe("ReaderScreen", () => {
     const epubHost = container.querySelector<HTMLElement>(".reader-epub-host")!;
 
     expect(viewport).toHaveStyle({ fontSize: "18px" });
-    expect(fontSize).toHaveClass("pr-1", "pl-2", "text-sm", "reader-font-trigger");
+    expect(fontSize).toHaveClass("px-2", "text-sm", "reader-font-trigger");
     expect(viewport).not.toHaveClass("px-2", "md:px-0");
     expect(epubHost).toHaveClass("h-full");
 
@@ -306,7 +306,8 @@ describe("ReaderScreen", () => {
     ).toEqual(["16px", "18px", "20px", "22px"]);
     expect(screen.getByRole("menuitemradio", { name: "18px" })).toHaveClass(
       "reader-font-option",
-      "px-2",
+      "pr-1",
+      "pl-2",
       "py-1",
       "text-sm",
       "bg-primary",
