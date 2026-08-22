@@ -282,7 +282,7 @@ describe("ReaderScreen", () => {
 
     expect(viewport).toHaveStyle({ fontSize: "18px" });
     expect(viewport).toHaveClass("px-2", "md:px-0");
-    expect(readerColumn).toHaveClass("py-1", "md:py-0");
+    expect(readerColumn).toHaveClass("px-1", "py-1", "md:px-0", "md:py-0");
     expect(readerColumn).not.toHaveClass("p-2");
     expect(readerColumn).not.toHaveClass("px-2");
     expect(fontSize).toHaveClass("px-2", "text-sm", "reader-font-trigger");
