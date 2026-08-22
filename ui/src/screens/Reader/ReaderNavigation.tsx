@@ -260,7 +260,7 @@ function FontSizeMenu({
   return (
     <MenuTrigger>
       <Button
-        className="btn btn-sm btn-outline btn-secondary px-2 text-sm reader-font-trigger"
+        className="btn btn-sm btn-outline btn-secondary pr-1 pl-2 text-sm reader-font-trigger"
         aria-label="Font size"
       >
         {value}px

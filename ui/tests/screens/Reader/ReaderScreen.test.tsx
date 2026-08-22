@@ -280,7 +280,7 @@ describe("ReaderScreen", () => {
     const epubHost = container.querySelector<HTMLElement>(".reader-epub-host")!;
 
     expect(viewport).toHaveStyle({ fontSize: "18px" });
-    expect(fontSize).toHaveClass("px-2", "text-sm", "reader-font-trigger");
+    expect(fontSize).toHaveClass("pr-1", "pl-2", "text-sm", "reader-font-trigger");
     expect(viewport).not.toHaveClass("px-2", "md:px-0");
     expect(epubHost).toHaveClass("h-full");
 
