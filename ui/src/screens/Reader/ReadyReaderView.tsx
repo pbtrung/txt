@@ -56,7 +56,7 @@ export function ReadyReaderView({
   if (error) return <ReaderError>{error}</ReaderError>;
   return (
     <div ref={setReaderContainer} className="reader-width relative mx-auto h-screen">
-      <div className="reader-column flex h-full flex-col">
+      <div className="reader-column flex h-full flex-col py-1 md:py-0">
         <ReaderToolbar
           title={document.title}
           authors={document.authors}
