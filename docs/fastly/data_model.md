@@ -53,53 +53,21 @@ follows the exact same eight-field pattern (`purpose`, `envelope_version`,
 [cryptography.md](cryptography.md) defines that pattern and its validation
 rules once, generically, rather than repeating it per entry.
 
-```mermaid
-flowchart TB
-  subgraph LEGEND["How every vault ciphertext unwraps"]
-    L1["KV entry: plaintext fields + ciphertext"] --> L2["envelope: purpose / envelope_version /<br/>container_role / owner_pk / vault_id / item_id / kind"]
-    L2 --> L3["record: the entry's own fields, defined below"]
-  end
+Four KV Stores, plus R2 for immutable content:
 
-  subgraph OC["KV Store: owner_control"]
-    OWNER["owner"]
-  end
-
-  subgraph VAULT["KV Store: vault"]
-    BOOK["book:{book_id}"]
-    READING["reading:{book_id}"]
-    RIDX["reading-index"]
-    HEAD["catalog-head"]
-  end
-
-  subgraph SC["KV Store: share_control"]
-    SHARE["share:{share_id_hash}"]
-    PATH["path:{object_path_hash}"]
-  end
-
-  subgraph RLC["KV Store: rate_limit_control"]
-    WINDOW["window:... (TTL)"]
-    NONCE["nonce:... (TTL)"]
-  end
-
-  subgraph R2S["R2: immutable objects"]
-    EPUB["owner EPUB"]
-    SNAP["library snapshot"]
-    SHCOPY["shared EPUB copy"]
-  end
-
-  BOOK ---|"book_id"| READING
-  READING -.->|"projects bookmarks into"| RIDX
-  BOOK -.->|"projects catalog + shares into"| SNAP
-  HEAD -->|"decrypted object_key names"| SNAP
-  BOOK -.->|"content path"| EPUB
-  BOOK -.->|"each share's path"| SHCOPY
-  SHARE -.->|"book_id back-reference"| BOOK
-```
-
-Solid arrows are same-book links; dashed arrows are a projection into a
-derived object or a plaintext reference to another store. `owner_control` and
-`rate_limit_control` have no outgoing arrows above because nothing else in
-the system references them.
+- `owner_control` holds one `owner` entry. Nothing else references it.
+- `vault` holds `book:{book_id}`, `reading:{book_id}`, `reading-index`, and
+  `catalog-head`. A `book` and its `reading` entry share the same `book_id`;
+  `book` projects its catalog fields and shares into the R2 library
+  snapshot, `catalog-head` names that snapshot object, and `reading`
+  projects its bookmarks into `reading-index`.
+- `share_control` holds `share:{share_id_hash}` (which carries a plaintext
+  `book_id` back-reference) and `path:{object_path_hash}`.
+- `rate_limit_control` holds TTL'd `window:...` and `nonce:...` entries,
+  referenced by nothing else.
+- R2 holds the immutable owner EPUB (referenced by `book.content.path`), the
+  library snapshot (named by `catalog-head`), and each shared EPUB copy
+  (referenced by `book.shares[].share_path`).
 
 ## `owner_control`
 
