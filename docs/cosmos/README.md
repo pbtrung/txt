@@ -53,9 +53,11 @@ browser origin.
 - [architecture.md](architecture.md) defines services, trust zones, containers,
   invariants, and request flows.
 - [data_model.md](data_model.md) defines Cosmos item schemas, partition keys,
-  indexes, encrypted book records, and R2 paths.
+  indexes, encrypted book/catalog records, the R2 reading-state/reading-index
+  objects, and R2 paths.
 - [cryptography.md](cryptography.md) applies the canonical primitives and blob
-  format from [docs/crypto.md](../crypto.md) to records, snapshots, and exports.
+  format from [docs/crypto.md](../crypto.md) to records, snapshots, exports,
+  and the per-request possession proof.
 - [auth_api.md](auth_api.md) defines the Fastly Compute API, authorization,
   Cosmos request signing, rate limiting, and failures.
 - [catalog.md](catalog.md) defines the encrypted R2 library snapshot, fast
@@ -71,16 +73,17 @@ browser origin.
 | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
 | Exactly one Firebase-authenticated owner       | Fastly validates the Firebase token and exact owner UID before every owner route                              |
 | Root-key-only local decryption                 | Wrapped key hierarchy remains; plaintext root, master, content, and share keys never reach Fastly or Cosmos   |
-| Fast complete library load                     | One encrypted R2 library snapshot referenced by the Cosmos `catalog-head` item                                |
+| A stolen session alone cannot mutate/mint      | A per-request P-521 possession proof, not just a Firebase token, gates every mutating/credential route         |
+| Fast complete library load                     | One encrypted R2 library snapshot referenced by `catalog-head`, plus one small R2 reading index for recency/bookmark badges |
 | Local full-text search                         | Search index is built in the browser from the decrypted snapshot; Fastly and Cosmos never receive search text |
 | Immutable encrypted EPUB objects               | Unchanged R2 layout under the owner prefix                                                                    |
-| Reading-position qualification and throttling  | Preserved in the browser; qualified state is saved in the encrypted book record through Fastly                |
-| Bookmarks, previews, ordering, and 20-item cap | Preserved atomically inside each encrypted book aggregate                                                     |
-| Share create/copy/delete state machine         | Preserved with encrypted owner state plus a server-only Cosmos registry                                       |
+| Reading-position qualification and throttling  | Preserved in the browser; qualified state is saved directly to a per-book R2 reading-state object, never through Fastly or Cosmos |
+| Bookmarks, previews, ordering, and 20-item cap | Preserved atomically inside each per-book R2 reading-state object, independent of the Cosmos book/catalog items |
+| Share create/copy/delete state machine         | Preserved with encrypted owner state (in the `vault` book item) plus a server-only Cosmos registry             |
 | Anonymous, read-only shared reading            | Fastly validates the grant and returns a short exact-object R2 URL                                            |
-| Optimistic concurrent mutation replay          | Cosmos `_etag` is carried through the Fastly API and replaces the SQLCipher object ETag                       |
+| Optimistic concurrent mutation replay          | Cosmos `_etag` (book/catalog/head) or R2 `ETag` (reading state/index) replaces the SQLCipher object ETag       |
 | Owner CLI ingestion and maintenance            | CLI uses the same Firebase-authenticated Fastly API and snapshot protocol                                     |
-| Cleanup and recovery                           | Reference-aware R2 cleanup, Cosmos backup, snapshot repair, and independent exports                           |
+| Cleanup and recovery                           | Reference-aware R2 cleanup, Cosmos backup, snapshot and reading-index repair, and independent exports          |
 
 ## Capacity target
 
@@ -95,7 +98,10 @@ immediately before provisioning against the official
 and [service limits](https://learn.microsoft.com/en-us/azure/cosmos-db/concepts-limits).
 
 This design minimizes RU use with point reads, one owner partition, excluded
-ciphertext indexes, and no server-side full-text queries. A sustained 429 rate,
-storage growth near the free allowance, or an owner partition approaching the
-logical-partition limit is an explicit signal to revisit capacity rather than
-weaken authorization or encryption.
+ciphertext indexes, no server-side full-text queries, and — deliberately —
+keeping the single highest-frequency mutation in the system (reading position
+and bookmarks) off Cosmos entirely by storing it in two small, independently
+mutable R2 objects instead ([data_model.md](data_model.md)). A sustained 429
+rate, storage growth near the free allowance, or an owner partition
+approaching the logical-partition limit is an explicit signal to revisit
+capacity rather than weaken authorization or encryption.

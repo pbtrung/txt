@@ -7,8 +7,10 @@ takes effect for new signed-URL exchanges.
 
 ## Owner-side share record
 
-Each encrypted book aggregate contains its shares as defined in
-[data_model.md](data_model.md). The current R2 layout remains:
+Each encrypted `vault` book item contains its shares as defined in
+[data_model.md](data_model.md) — shares live in the book item, not the paired
+catalog item, since they concern content access rather than catalog metadata.
+The current R2 layout remains:
 
 ```text
 {db_prefix}/shared/{share_prefix}/{share_path}
@@ -34,11 +36,11 @@ The browser performs a recoverable saga:
 5. Upload the shared ciphertext to the exact new R2 path with
    `If-None-Match: *`. On a retry, accept an existing object only after its
    locally expected ciphertext hash/length match.
-6. Call `POST /v1/shares` with Firebase owner authentication and the version-3
-   owner/vault binding.
-7. Fastly validates the Firebase token, binding, and object, then
-   transactionally reserves the share ID/path in `share_control` and returns a
-   fresh authenticated grant.
+6. Call `POST /v1/shares` with Firebase owner authentication, the possession
+   proof (`route: "share-create"`), and the version-3 owner/vault binding.
+7. Fastly validates the Firebase token, possession proof, binding, and object,
+   then transactionally reserves the share ID/path in `share_control` and
+   returns a fresh authenticated grant.
 8. Change the encrypted owner record from `creating` to `active` and republish
    the snapshot through the normal conflict-replay protocol.
 9. Construct the public URL locally. Capability and decryption material belong
@@ -92,8 +94,9 @@ The owner browser performs the inverse recoverable saga:
 
 1. Change `active` or recoverable `creating` state to `deleting` in the
    encrypted book and republish the snapshot.
-2. Call `DELETE /v1/shares` with Firebase authentication, exact owner/vault
-   binding, and the share tuple. No grant is needed or retained by the owner.
+2. Call `DELETE /v1/shares` with Firebase authentication, the possession proof
+   (`route: "share-delete"`), exact owner/vault binding, and the share tuple.
+   No grant is needed or retained by the owner.
 3. Fastly conditionally changes `active` to `deleting`; a deleting share can
    no longer mint a public URL.
 4. Fastly deletes the exact shared R2 object. Not-found is idempotent
@@ -116,7 +119,9 @@ The UI, data store, CLI, and repair tool all reject source-book deletion while
 the encrypted `shares` array is non-empty, regardless of share state. The owner
 must finish deleting every active, creating, or deleting share first. This
 prevents loss of the only owner-side share key/identity required to retry
-cleanup.
+cleanup. Fastly cannot enforce this itself — `shares` lives inside ciphertext
+it never decrypts — so this is a client-side invariant backed by the
+Recovery reconciliation table below, not a preventive server control.
 
 ## Concurrent devices and conflict handling
 
@@ -169,3 +174,5 @@ requires explicit owner confirmation.
   container/resource link.
 - Source deletion remains blocked until every share record is gone.
 - Recipient reader state never reaches owner Cosmos/R2 state.
+- `POST /v1/shares` and `DELETE /v1/shares` reject a missing, expired, wrong-
+  route, or replayed possession proof even with a valid Firebase token.

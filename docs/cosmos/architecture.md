@@ -11,6 +11,7 @@ owner browser -- Firebase ID token --> Fastly Compute API --> Cosmos DB
      |                                      |
      |                                      +-- scoped R2 credential broker
      +-- short R2 prefix credentials -----------------------> R2 owner objects
+                                     (EPUBs, catalog snapshot, reading state/index — all conditional writes, no Fastly step)
 
 share browser -- share capability --> Fastly Compute API --> share_control
      |                                      |
@@ -50,6 +51,10 @@ Fastly Compute is the only runtime Cosmos principal. It:
 - validates Firebase token signature and claims and requires the exact
   configured owner UID;
 - reads the owner bootstrap record and enforces route-specific authorization;
+- verifies the per-request P-521 possession-proof signature (using the
+  owner's already-public signing key) on every route that mutates durable
+  state or mints R2 credentials, rejecting a replayed or missing proof before
+  any Cosmos or R2 work;
 - signs Cosmos REST requests with the account key from Fastly Secret Store;
 - fixes the target database, container, partition key, item ID rules, and
   operation for each API route;
@@ -90,7 +95,7 @@ containers share the free-tier RU budget.
 | `owner_control`      | `/owner_pk`    | Fixed Fastly owner-bootstrap route only | Singleton owner identity, wrapped bootstrap keys, encrypted credentials, schema and migration markers |
 | `share_control`      | `/registry_pk` | Fixed Fastly share routes only          | Public share registry and object-path reservations                                                    |
 | `rate_limit_control` | `/bucket_pk`   | Fastly limiter/replay code only         | Durable rate-limit windows with TTL                                                                   |
-| `vault`              | `/owner_pk`    | Fixed Fastly vault routes only          | End-to-end encrypted book aggregates and one catalog-head pointer                                     |
+| `vault`              | `/owner_pk`    | Fixed Fastly vault routes only          | End-to-end encrypted book/catalog item pairs and one catalog-head pointer (reading state lives in R2, not here) |
 
 The account key technically grants broader Cosmos access than any one route.
 Application authorization therefore lives in explicit route code: the API must
@@ -106,14 +111,23 @@ describes those settings.
 
 ## Sources of truth
 
-- `owner_control` is authoritative for owner UID, wrapped key material,
+- `owner_control` is authoritative for owner UID, wrapped key material
+  (including the P-521 signing keypair used for the possession proof),
   encrypted credential payload, stable vault binding, and control schema.
-- Each encrypted `vault` book item is authoritative for one book's catalog,
-  content locator/key, reading state, bookmarks, and owner-side share state.
+- Each encrypted `vault` book item is authoritative for one book's content
+  locator/key and owner-side share state. Its paired `vault` catalog item
+  (`catalog_` + the book's opaque suffix) is authoritative for that book's
+  catalog metadata, independently of the book item.
+- Each R2 reading-state object (`{db_prefix}/reading/{book_id}.blob`) is
+  authoritative for that one book's reading position and bookmarks. It is a
+  plain conditionally-written R2 object, not a Cosmos item, and Fastly never
+  sees its plaintext or mediates its writes beyond minting the R2 credential.
 - The `vault` `catalog-head` item is authoritative for the current immutable R2
   library snapshot.
-- The library snapshot is a derived, rebuildable acceleration object. It is
-  never the sole copy of book state.
+- The library snapshot and the R2 reading index are both derived, rebuildable
+  acceleration objects. Neither is ever the sole copy of book, catalog, or
+  reading state; the reading index in particular has no Cosmos pointer and no
+  generation, and is rebuilt directly from the per-book reading-state objects.
 - `share_control` is authoritative for whether an anonymous capability is
   usable and which exact R2 object it may read.
 - R2 encrypted EPUB and share objects are immutable content. The owner book row
@@ -135,15 +149,22 @@ never their plaintext.
 4. The browser checks all returned owner identities, unwraps the user master
    key and credentials locally, and validates `vault_id`, `owner_pk`, and
    `db_prefix` against the authenticated bootstrap response.
-5. It calls the Fastly vault routes with a current Firebase ID token. Fastly
-   derives `OWNER_PK` from configuration, never from client authority, and
-   performs the corresponding point read, bounded scan, or transactional batch
-   in Cosmos.
-6. The browser loads `catalog-head`, downloads/decrypts the current R2 snapshot,
-   and builds the in-memory search index.
-7. Opening or mutating a book uses its Fastly vault route. The browser supplies
-   the previous opaque `_etag`; Fastly translates it to a Cosmos conditional
-   request and returns conflicts without hiding them.
+5. It calls the Fastly vault routes with a current Firebase ID token, adding
+   the per-request P-521 possession proof on every route that mutates state or
+   mints R2 credentials. Fastly derives `OWNER_PK` from configuration, never
+   from client authority, and performs the corresponding point read, bounded
+   scan, or transactional batch in Cosmos.
+6. The browser loads `catalog-head`, downloads/decrypts the current R2
+   snapshot, downloads/decrypts the R2 reading index, and builds the in-memory
+   search index and recency ordering.
+7. Opening a book fetches its paired `book`/`catalog` items through the Fastly
+   vault route and its reading-state object directly from R2 with the
+   temporary prefix credential. Mutating `book`/`catalog`/`catalog-head` uses
+   the Fastly vault route with the previous opaque `_etag` and, where
+   required, the possession proof; Fastly translates the `_etag` to a Cosmos
+   conditional request and returns conflicts without hiding them. Mutating
+   reading state uses a direct R2 conditional write against the same
+   temporary credential, with no Fastly or Cosmos step at all.
 
 No step allows the browser to select or directly query a control container.
 
@@ -172,18 +193,33 @@ No step allows the browser to select or directly query a control container.
 5. Cosmos and Fastly never receive plaintext owner keys or user content
    metadata.
 6. Every decrypted record's authenticated inner envelope must match its outer
-   container role, partition, item ID, kind, and versions. The canonical blob
-   itself has no caller-supplied storage context.
-7. The catalog head advances only after its immutable R2 object is fully
-   uploaded and hashable.
+   container role, partition, item ID, kind, and versions — including a
+   catalog item's `record.book_id` correlating back to its paired book item's
+   ID, and a reading-state object's `book_id` matching the R2 key it was
+   fetched from. The canonical blob itself has no caller-supplied storage
+   context.
+7. The catalog head advances only after Fastly has independently verified —
+   by a direct R2 existence/length/hash check, not client-supplied metadata
+   alone — that its immutable R2 object was fully uploaded and matches.
 8. Anonymous shares use independent encryption and server-side active registry
    state; owner credentials cannot be derived from a share.
-9. Semantic mutations replay after an `_etag` conflict and stop after three
-   automatic attempts before surfacing an unsaved state.
-10. Book deletion is rejected while any owner-side share record exists.
-11. Logs and metrics contain no Firebase tokens, Cosmos signatures/account
-    keys, R2 credentials, grants, root/master/content/share keys, catalog
-    plaintext, bookmark previews, or signed URLs.
+9. Semantic mutations replay after an `_etag` (or, for reading state, R2
+   `ETag`) conflict and stop after three automatic attempts before surfacing
+   an unsaved state.
+10. Book deletion is rejected while any owner-side share record exists. This
+    is enforced client-side only — the `shares` array lives inside ciphertext
+    Fastly cannot inspect — so a client holding a valid bearer token and
+    possession proof could still violate it; the offline reconciliation
+    report in [sharing.md](sharing.md) is the server-side detection and
+    recovery path for that case, not a preventive control.
+11. Every route that mutates durable owner state or mints R2 credentials
+    requires the per-request P-521 possession proof in
+    [cryptography.md](cryptography.md), not merely a valid Firebase token, so
+    that a stolen bearer token alone cannot delete books, revoke shares,
+    corrupt the catalog head, or obtain R2 access.
+12. Logs and metrics contain no Firebase tokens, Cosmos signatures/account
+    keys, R2 credentials, grants, possession-proof signatures, root/master/
+    content/share keys, catalog plaintext, bookmark previews, or signed URLs.
 
 ## Explicit non-goals
 

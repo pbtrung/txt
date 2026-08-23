@@ -139,8 +139,10 @@ the browser. They do not receive or store a Cosmos account key:
 - `--init-owner` remains an explicit offline administration operation that
   creates the owner item and empty encrypted snapshot/head, then writes the new
   unlock file;
-- `--ingest` uploads the immutable encrypted EPUB, constructs one canonical
-  authenticated-blob book record, and publishes through `/v1/vault/commit`;
+- `--ingest` uploads the immutable encrypted EPUB, constructs the paired
+  canonical authenticated-blob book and catalog records plus an empty
+  reading-state object, and publishes the book/catalog/head batch through
+  `/v1/vault/commit`;
 - `--edit-epub` and `--replace-images` read/decrypt through Fastly, preserve
   immutable replacement semantics, and conditionally publish affected state;
 - `--clean-bucket` derives live objects from fixed Fastly scans plus snapshot
@@ -162,7 +164,8 @@ that credential in an owner credentials file or print it.
 ## Pre-cutover preparation
 
 1. Pin exact browser, CLI, Fastly SDK/runtime, JWT library, canonical crypto blob,
-   schema, compression, Cosmos API, and grant versions in the release manifest.
+   schema, compression, Cosmos API, possession-proof, and grant versions in the
+   release manifest.
 2. Provision and verify staging Cosmos, including RU use, account-key rotation,
    HMAC signing, transactional batches, 429 propagation, and route containment.
 3. Deploy the Fastly target on a staging domain. Confirm Firebase token claim
@@ -196,32 +199,45 @@ unknown later whole-database write.
 ### 2. Transform owner control
 
 The offline migrator reads the legacy owner record and unlock file. It preserves
-the UMK, KEM, user handle, display name, `db_prefix`, wrapping algorithms,
-share-grant key, and rate-limit key. Preserve legacy P-521/ticket material only
-inside rollback backups; target protocol version 3 does not use it.
+the UMK, KEM, P-521 signing keypair, user handle, display name, `db_prefix`,
+wrapping algorithms, share-grant key, and rate-limit key. Preserve the legacy
+signed-ticket protocol (`docs/crypto.md`'s proof protocol 2) only inside
+rollback backups; target protocol version 3 replaces the ticket with the
+per-request possession proof in [cryptography.md](cryptography.md), reusing
+the same P-521 keypair and public-key-verification model, just with a
+different canonical message and no session ticket.
 
 Generate new opaque `vault_id` and `owner_pk`, rename `db_master_key` to
-`vault_master_key` without changing bytes, remove `db_path`, and re-encrypt the
-version-2 credential payload. Compute `vault_binding_hash` from `vault_id`,
-`owner_pk`, and `db_prefix`. Create the target owner item, but leave the
-migration marker incomplete so Fastly target routes remain unavailable.
+`vault_master_key` and `wrapped_umk` to `wrapped_user_master_key` without
+changing either's bytes, remove `db_path`, and re-encrypt the version-2
+credential payload. Keep `sign_public_key`/`wrapped_sign_private_key` under
+the same field names — only their protocol usage changes, not their storage
+shape. Compute `vault_binding_hash` from `vault_id`, `owner_pk`, and
+`db_prefix`. Create the target owner item, but leave the migration marker
+incomplete so Fastly target routes remain unavailable.
 
 ### 3. Transform SQLCipher rows
 
 Open the captured SQLCipher database locally with its current key. Validate the
-schema and constraints. For each `txt` row:
+schema and constraints. For each `txt` row, produce three target objects
+instead of one:
 
-- preserve catalog, creation/last-access/last-CFI values, content key, prefix,
-  and path;
-- attach ordered bookmarks with uniqueness, optional page number, preview,
-  creation time, and the 20-item cap;
-- attach ordered shares with IDs, keys, paths, states, and creation time; and
-- wrap each aggregate with its authenticated application identity fields and
-  Encrypt it using the canonical structured-payload blob from
-  [docs/crypto.md](../crypto.md).
+- a `book` item: content key, prefix, path, and ordered shares with IDs, keys,
+  paths, states, and creation time;
+- a `catalog` item, paired to the same book ID: catalog fields; and
+- an R2 reading-state object at `{db_prefix}/reading/{book_id}.blob`: creation/
+  last-access/last-CFI values and ordered bookmarks with uniqueness, optional
+  page number, preview, creation time, and the 20-item cap.
+
+Wrap each of the two Cosmos items with its authenticated application identity
+fields and Encrypt it using the canonical structured-payload blob from
+[docs/crypto.md](../crypto.md); Encrypt the reading-state object the same way
+but with the R2-object envelope from [cryptography.md](cryptography.md), not
+the Cosmos item envelope. Build the initial reading index (§4) from every
+migrated reading-state object in the same pass.
 
 New installations use random book IDs. Migration derives retry-stable opaque
-IDs as the first 128 bits of:
+IDs from the full 256-bit output of:
 
 ```text
 HMAC-SHA-256(
@@ -231,15 +247,23 @@ HMAC-SHA-256(
 ```
 
 Prefix base64url with `book_`, reject collisions, and place the legacy-to-target
-map only in the encrypted report. Create items with `If-None-Match: *`. On retry,
+map only in the encrypted report. Derive the paired catalog item's ID as
+`catalog_` followed by the same opaque suffix. Create items with
+`If-None-Match: *`; create the reading-state R2 object the same way. On retry,
 decrypt and compare an existing semantic payload before accepting it; never
 overwrite unexplained target data.
 
-### 4. Build the initial snapshot
+### 4. Build the initial snapshot and reading index
 
-Build the sorted projection, compress/encrypt generation 1, upload it to a new
+Build the sorted projection (catalog fields from each `catalog` item, shares
+from each `book` item), compress/encrypt generation 1, upload it to a new
 immutable catalog path, then create `catalog-head` with create-only semantics.
 Verify hash, length, count, decryption, schema, and local search fixtures.
+
+Separately, build and upload the initial reading index from every migrated
+reading-state object with `If-None-Match: *`. It has no Cosmos pointer and no
+generation to create; verify only its own decryption, schema, and that every
+`book_id` it references exists in the snapshot just published.
 
 ### 5. Transform server control state
 
@@ -257,16 +281,23 @@ sample of existing grants validate.
 
 The migrator must report equality for:
 
-- owner UID and all retained wrapped/public key byte lengths and hashes;
-- one target book per legacy `txt` row;
-- every catalog field and timestamp/null value;
-- every content key/prefix/path and referenced owner EPUB;
-- every bookmark CFI/page/preview/time and per-book count;
-- every share ID/key/prefix/path/state/time and shared R2 object;
+- owner UID and all retained wrapped/public key byte lengths and hashes,
+  including the P-521 signing keypair now used for the possession proof
+  instead of the removed ticket;
+- one target `book` item and one paired `catalog` item per legacy `txt` row;
+- every catalog field and timestamp/null value, in the `catalog` item and the
+  published snapshot;
+- every content key/prefix/path and referenced owner EPUB, in the `book` item;
+- every bookmark CFI/page/preview/time and per-book count, and every
+  last-access/last-CFI value, in the migrated reading-state object and the
+  published reading index;
+- every share ID/key/prefix/path/state/time and shared R2 object, in the
+  `book` item;
 - server share hashes and states;
-- initial snapshot count/hash and projection equality; and
+- initial snapshot and reading-index count/hash and projection equality; and
 - authentication of every canonical blob and agreement between each inner
-  envelope and outer record identity.
+  envelope and outer record identity, including every `catalog_id` ↔
+  `book_id` correlation.
 
 Run feature-parity smoke tests, conditionally mark migration complete, activate
 the version-3 Fastly service and browser together, then release maintenance.
@@ -356,24 +387,40 @@ persistent 429s, stale backups, or control/data schema mismatch.
 
 Do not remove rqlite, Northflank, or legacy `db_path` until all checks pass:
 
-- canonical blob and record/snapshot envelope, Firebase claim/JWKS, Cosmos
-  HMAC-signature, and share-grant test vectors;
+- canonical blob and record/snapshot/reading-index envelope, Firebase
+  claim/JWKS, Cosmos HMAC-signature, possession-proof, and share-grant test
+  vectors, all generating identifiers/nonces with at least 256 bits of
+  entropy;
 - ciphertext tamper fails AEAD authentication; row splice, wrong
-  partition/ID/kind/version, wrong owner, and snapshot relocation fail strict
-  inner-envelope validation;
+  partition/ID/kind/version, wrong owner, mismatched `catalog_id`/`book_id`
+  correlation, mismatched reading-state `book_id`, and snapshot relocation
+  fail strict inner-envelope validation;
 - no browser bundle/response contains Cosmos credentials or endpoint details;
 - every vault/control route fixes its container, partition, resource link,
-  method, and query; injected `x-ms-*` and backend-selection inputs are rejected;
-- every owner/session rate limit is atomic across Fastly POPs and instances;
+  method, and query; injected `x-ms-*` and backend-selection inputs are
+  rejected; every mutating/credential route rejects a missing, expired,
+  wrong-route, or replayed possession proof even with a valid Firebase token;
+- every owner/session rate limit is atomic across Fastly POPs and instances,
+  and the owner-subject-keyed limiter only ever consumes on a verified
+  Firebase subject, never an unverified claim;
 - private API responses bypass cache and carry the required no-store policy;
-- initial snapshot is one R2 GET on cache miss and local search matches current
-  results;
+- initial load is one R2 GET for the snapshot and one for the reading index on
+  cache miss, and local search and recency ordering match current results;
 - ingest/edit/delete, reader progress, bookmarks, and conflict replay match
-  current semantics;
+  current semantics, including that a catalog-only edit does not touch the
+  book item and a reading-position update touches neither Cosmos item;
+- content replacement is verified as the documented two-commit
+  delete-then-create sequence, and a simulated crash between the two commits
+  leaves the library in a reviewed, non-corrupting state;
 - sharing and crash recovery pass [sharing.md](sharing.md), including current
   production-format links;
-- failed R2 upload never advances the head, failed Cosmos batch leaves only an
-  orphan, and repair rebuilds from authenticated rows through the fixed scan;
+- failed R2 upload never advances the head; a `/v1/vault/commit` whose head
+  object fails Fastly's R2 existence/length/hash check is rejected before any
+  Cosmos write; a Cosmos batch failure after a successful upload leaves only an
+  orphan; and repair rebuilds the snapshot and, independently, the reading
+  index from authenticated rows through the fixed scan;
 - CLI migration is idempotent and a second run changes no semantics;
 - backup/export restore succeeds into a clean account; and
-- staging RU/storage/latency and Fastly limits fit the operating budget.
+- staging RU/storage/latency and Fastly limits fit the operating budget, with
+  Cosmos RU driven only by ingest/edit/delete/share activity and not by
+  reading-position updates.
