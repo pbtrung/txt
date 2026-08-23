@@ -383,10 +383,6 @@
     background: transparent;
     backdrop-filter: none;
   }
-
-  .reader-drawer-overlay .aria-drawer-panel {
-    position: absolute;
-  }
 }
 
 .aria-drawer-modal {
@@ -394,6 +390,7 @@
 }
 
 .aria-drawer-overlay .aria-drawer-panel {
+  position: absolute;
   top: 0.75rem;
   bottom: 0.75rem;
   z-index: 1;
@@ -416,7 +413,7 @@
 
 @media (max-width: 767.98px) {
   .reader-drawer-overlay .reader-side-panel {
-    inset-inline: 0.75rem;
+    inset: 0.75rem;
     width: auto;
     max-width: none;
   }
