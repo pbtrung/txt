@@ -14,38 +14,48 @@ value-level-encryption functions or encrypted virtual tables.
 
 | Stored value                                     | Cosmos target encryption                                                                               |
 | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
-| `vault` book aggregate                           | Canonical structured-payload blob from [docs/crypto.md](../crypto.md), using `vault_master_key` as IKM |
+| `vault` book item                                | Canonical structured-payload blob from [docs/crypto.md](../crypto.md), using `vault_master_key` as IKM |
+| `vault` catalog item                             | Canonical structured-payload blob using `vault_master_key` as IKM                                      |
+| R2 per-book reading-state object                 | Canonical structured-payload blob using `vault_master_key` as IKM                                      |
+| R2 reading-index object                          | Canonical structured-payload blob using `vault_master_key` as IKM                                      |
 | R2 library snapshot                              | Canonical structured-payload blob using `vault_master_key` as IKM                                      |
 | R2 administrative Cosmos export                  | Canonical structured-payload blob using independent `COSMOS_EXPORT_KEY` as IKM                         |
-| Wrapped UMK/KEM keys and encrypted credentials   | Existing wrapping/blob procedures in [docs/crypto.md](../crypto.md)                                    |
+| Wrapped UMK/KEM/signing keys and credentials     | Existing wrapping/blob procedures in [docs/crypto.md](../crypto.md)                                    |
 | Owner EPUB and independently encrypted share     | Existing canonical blob with the per-object content key                                                |
 | Cosmos routing, version, and `catalog-head` data | Plaintext operational metadata protected by authorization and transport; no catalog text               |
 
 The remote SQLCipher `db_path` is removed, so SQLCipher page encryption no
-longer protects owner data at rest. Each book aggregate and catalog snapshot is
-instead an independent canonical authenticated blob. Cosmos encryption at rest
-remains a separate infrastructure control and never replaces client-side blob
-encryption.
+longer protects owner data at rest. Each Cosmos item and R2 object listed above
+is instead an independent canonical authenticated blob. Cosmos encryption at
+rest remains a separate infrastructure control and never replaces client-side
+blob encryption.
 
 ## Key hierarchy
 
 - `user_root_key` exists only in the local unlock file and browser/CLI memory.
-- The wrapped user master key, wrapped composite KEM private key, and encrypted
-  credential payload remain in server-only `owner_control` and are returned
-  through authenticated `/v1/keys`.
+- The wrapped user master key, wrapped composite KEM private key, wrapped
+  P-521 signing private key, and encrypted credential payload remain in
+  server-only `owner_control` and are returned through authenticated
+  `/v1/keys`.
 - The existing 256-byte `db_master_key` is preserved byte-for-byte and renamed
-  `vault_master_key`. It is the IKM for encrypted book records and catalog
-  snapshots; do not truncate or reinterpret it.
+  `vault_master_key`. It is the IKM for encrypted book/catalog items, R2
+  reading state, and catalog snapshots; do not truncate or reinterpret it.
+- The existing P-521 request-signing keypair from [docs/crypto.md](../crypto.md)
+  is preserved. Its public half is stored in plaintext in `owner_control`
+  (public keys are not secret); its private half is wrapped by the user master
+  key exactly as before. Protocol version 3 uses it for the per-request
+  possession proof below — there is no signed ticket.
 - Every EPUB retains its independent 128-byte `txt_key`.
 - Every public share retains its independent 128-byte `share_content_key` and
   independently encrypted R2 object.
 - Fastly and Cosmos receive only wrapped keys, encrypted payloads, hashes, and
   operational metadata. They never receive plaintext root, vault, content, or
-  share keys.
+  share keys, and never receive the unwrapped signing private key — Fastly
+  verifies signatures with the public key only.
 
 Release plaintext key buffers on lock/logout as far as the runtime permits.
-Keys, decrypted payloads, Firebase tokens, and signed requests must not enter
-logs, analytics, metrics, or crash reports.
+Keys, decrypted payloads, Firebase tokens, signatures, and signed requests must
+not enter logs, analytics, metrics, or crash reports.
 
 ## Canonical blob usage
 
@@ -55,7 +65,8 @@ version handling. Structured JSON is Brotli-compressed by that procedure before
 encryption. Store the resulting blob:
 
 - as canonical unpadded base64url in a Cosmos JSON `ciphertext` field; or
-- as the raw blob bytes in an immutable R2 object.
+- as the raw blob bytes in an immutable or (for reading state/index) mutable
+  R2 object.
 
 Never prepend another private header, remove the canonical header, truncate the
 tag, substitute a SQLCipher envelope, or feed a precompressed structured JSON
@@ -81,17 +92,18 @@ Before Encrypt, serialize this object as canonical JSON UTF-8:
   "item_id": "book_K7c3...",
   "kind": "book",
   "record": {
-    "schema_version": 1,
-    "record_version": 37,
+    "schema_version": 2,
+    "record_version": 5,
     "book_id": "book_K7c3..."
   }
 }
 ```
 
-`record` is the complete decrypted book aggregate defined in
-[data_model.md](data_model.md), not only the abbreviated fields shown above.
-Encrypt the canonical bytes with `vault_master_key` via the structured-payload
-Encrypt procedure, then store its unpadded base64url encoding in `ciphertext`.
+`record` is the complete decrypted book item defined in
+[data_model.md](data_model.md) — content locator/key and shares only, not
+catalog or reading state. Encrypt the canonical bytes with `vault_master_key`
+via the structured-payload Encrypt procedure, then store its unpadded
+base64url encoding in `ciphertext`.
 
 After Decrypt, reject the entire item unless:
 
@@ -107,6 +119,72 @@ These comparisons detect a blob copied to another row after it is decrypted;
 the blob format itself does not prevent that copy. An authentication or binding
 failure is a hard corruption/security error. Never return partial plaintext or
 retry with a different key or legacy decoder on a target item.
+
+## Catalog payload envelope
+
+Same structure and rules as the book envelope, with `purpose:
+"txt:cosmos-catalog-item"`, `kind: "catalog"`, `item_id` equal to the catalog
+item's own Cosmos ID (`catalog_K7c3...`), and `record.book_id` equal to the
+*book's* opaque ID (`book_K7c3...`), not the catalog item's own ID — this is
+the one deliberate exception to "inner book_id equals outer item ID," and
+exists precisely so a decrypted catalog item can be correlated back to its
+book. Validation additionally requires that stripping the `catalog_` prefix
+from `item_id` and prepending `book_` reproduces `record.book_id` exactly,
+closing that exception back into a strict binding check rather than an
+unchecked assumption.
+
+```json
+{
+  "purpose": "txt:cosmos-catalog-item",
+  "envelope_version": 1,
+  "container_role": "vault",
+  "owner_pk": "own_opaqueRandomValue",
+  "item_id": "catalog_K7c3...",
+  "kind": "catalog",
+  "record": {
+    "schema_version": 1,
+    "record_version": 2,
+    "book_id": "book_K7c3..."
+  }
+}
+```
+
+## Reading-state and reading-index envelopes
+
+These are R2 objects, not Cosmos items, so their envelope has no
+`container_role`/`item_id`/`kind` triple to bind against — there is no outer
+Cosmos row to compare with. Binding instead runs against the R2 object key and
+the authenticated owner bootstrap:
+
+```json
+{
+  "purpose": "txt:cosmos-reading",
+  "envelope_version": 1,
+  "vault_id": "vault_opaqueRandomValue",
+  "owner_pk": "own_opaqueRandomValue",
+  "book_id": "book_K7c3...",
+  "record": { "...": "the complete reading-state object from data_model.md" }
+}
+```
+
+```json
+{
+  "purpose": "txt:cosmos-reading-index",
+  "envelope_version": 1,
+  "vault_id": "vault_opaqueRandomValue",
+  "owner_pk": "own_opaqueRandomValue",
+  "record": { "...": "the complete reading-index object from data_model.md" }
+}
+```
+
+After Decrypt, require `purpose`/`envelope_version` to be supported,
+`vault_id`/`owner_pk` to equal the authenticated owner bootstrap, and — for the
+per-book object — `record.book_id` to match the `book_id` used to construct
+the R2 key that was fetched. Because these objects are mutable and addressed
+by a predictable key, an attacker who could write to the wrong key (which the
+owner's own scoped R2 credential cannot do outside `{db_prefix}/`) would still
+fail this check; treat a mismatch as corruption, the same as any other binding
+failure in this document.
 
 ## Library snapshot envelope
 
@@ -139,12 +217,13 @@ On load, compare object length and SHA-256 with `catalog-head` before Decrypt.
 Then require all envelope identity fields to agree with the authenticated owner
 bootstrap and head before accepting `books`. Validate the snapshot schema,
 sort, unique IDs, count, and every projected record as defined in
-[catalog.md](catalog.md).
+[catalog.md](catalog.md). Reading state and bookmarks are not part of this
+envelope — see the reading-index envelope above.
 
 Migration may decrypt the legacy SQLCipher database and historical R2 blobs
-only inside the offline migration path. Every new book and snapshot is
-immediately encrypted in the canonical blob format; target runtime routes never
-fall back to a legacy decoder.
+only inside the offline migration path. Every new book, catalog, reading, and
+snapshot object is immediately encrypted in the canonical blob format; target
+runtime routes never fall back to a legacy decoder.
 
 ## Administrative export envelope
 
@@ -188,7 +267,72 @@ Fastly reads the hash from `owner_control`. The encrypted credentials contain
 all three plaintext values. After local decryption, the browser recomputes and
 constant-time compares the hash before accepting bootstrap data or requesting
 R2 credentials. Fastly independently checks the supplied binding before
-`/v1/r2-token` succeeds.
+`/v1/r2-token` succeeds. This equality check is deliberately not treated as a
+freshness or possession proof by itself — see the next section for that.
+
+## Possession proof
+
+`vault_binding_hash` and the Firebase bearer token together prove *identity*
+and that the caller once saw the decrypted credential payload; neither is
+bound to the current request or requires holding any secret key material.
+Every route that mutates durable owner state or mints direct R2 access —
+`/v1/vault/commit`, `PUT /v1/vault/books/{book_id}`, `POST /v1/r2-token`,
+`POST /v1/shares`, `DELETE /v1/shares` — additionally requires a fresh,
+per-request signature proving the caller currently holds the unwrapped P-521
+signing private key, i.e. that it completed a correct `user_root_key` unlock
+in this session, not merely that it possesses a bearer token or a previously
+observed binding triple. Reads (`/v1/keys`, `GET /v1/vault/*`) do not require
+it: they return ciphertext only, so a bearer-token-only compromise cannot
+read plaintext through them.
+
+This deliberately keeps the property the current system's ticket + proof
+protocol provides (`docs/crypto.md`), without reintroducing the removed
+API-issued session ticket. Fastly verifies the signature with
+`sign_public_key` from `owner_control` — a public key, so this adds no new
+secret custody requirement for Fastly, unlike a shared-secret HMAC would.
+
+For proof version 1, the browser and Fastly construct these bytes exactly:
+
+```text
+UTF8("txt:cosmos-possession-proof:v1") || 0x00 ||
+UTF8(route_name) || 0x00 ||
+u32be(len(owner_pk)) || UTF-8(owner_pk) ||
+u32be(len(vault_id)) || UTF-8(vault_id) ||
+u32be(len(db_prefix)) || UTF-8(db_prefix) ||
+nonce_32 ||
+U64BE(expires_at_unix_seconds)
+```
+
+`route_name` is one of `r2-token`, `vault-commit`, `vault-book-put`,
+`share-create`, `share-delete` — fixed short ASCII strings — so a signature
+minted for one route can never authorize another. `nonce_32` is 32 bytes
+(256 bits) from a cryptographic RNG, unique per proof. `expires_at` is at most
+60 seconds after Fastly's current time. Fastly reconstructs the same bytes
+using **its own** configured/stored `owner_pk`, `vault_id`, and `db_prefix` —
+never the client-supplied copies — so a forged binding cannot be smuggled in
+through the signed message.
+
+The browser signs with:
+
+```js
+crypto.subtle.sign({ name: "ECDSA", hash: "SHA-512" }, privateKey, canonicalProof);
+```
+
+exactly as in [docs/crypto.md](../crypto.md)'s existing proof protocol: raw
+IEEE P1363 `r || s`, 66 bytes each, 132 bytes total, not ASN.1 DER. Fastly
+verifies with `sign_public_key` imported as P-521 SPKI, checks `expires_at`
+against current time, and then — to prevent exact replay inside the validity
+window — attempts to create a `kind: "nonce"` item keyed by `nonce_32` in
+`rate_limit_control` with `If-None-Match: *` and a `ttl` just past
+`expires_at`. If that create fails because the nonce already exists, the proof
+is rejected as a replay regardless of whether the signature itself still
+verifies.
+
+A missing, malformed, expired, wrong-route, replayed, or invalid-signature
+proof on a route that requires one is `401 unauthorized`, not `403`, so it is
+indistinguishable at the HTTP layer from a missing Firebase token — never
+reveal which check failed beyond the shared error contract in
+[auth_api.md](auth_api.md).
 
 ## Firebase and Cosmos authentication
 
@@ -198,10 +342,9 @@ a Cosmos credential. Fastly validates the Firebase JWT as specified in
 with HMAC-SHA-256 and the account key in Fastly Secret Store. That signature is
 never returned to the browser.
 
-Protocol version 3 issues no owner ticket or Cosmos resource token. Legacy
-P-521 proof/ticket handling from [docs/crypto.md](../crypto.md) remains relevant
-only to rollback endpoints during their retention window and must not authorize
-a Fastly target route.
+Protocol version 3 issues no owner ticket or Cosmos resource token — the
+possession proof above is a per-request signature, not a session artifact, and
+Fastly never mints or stores one on the caller's behalf.
 
 ## Shared content
 
@@ -219,7 +362,11 @@ book records, snapshots, or exports.
 
 Let `id_hash = SHA-256(raw_share_id)`. For every freshly minted grant, Fastly:
 
-1. generates a random 32-byte salt and random 24-byte XChaCha20 nonce;
+1. generates a random 32-byte salt and random 24-byte XChaCha20 nonce (the
+   nonce is exempt from the 256-bit floor stated at the top of
+   [data_model.md](data_model.md): XChaCha20's extended nonce is fixed at 24
+   bytes by construction, and 192 bits of random nonce space is not a
+   collision concern for this cipher);
 2. derives a per-grant key from the independent 32-byte `SHARE_GRANT_KEY` using
    HKDF-SHA-256 with the salt and
    `info = "txt:share-grant-key:v1" || id_hash`;
@@ -256,10 +403,12 @@ only to the bounded share endpoints defined in [auth_api.md](auth_api.md).
 ## Randomness and encoding
 
 - Use only browser or operating-system cryptographic RNGs.
-- Generate Cosmos IDs with at least 128 bits of entropy.
+- Generate Cosmos IDs, possession-proof nonces, and every other opaque
+  identifier with at least 256 bits of entropy — see the floor stated at the
+  top of [data_model.md](data_model.md).
 - Continue using 32-byte random share IDs, prefixes, and paths.
 - Use canonical unpadded base64url at JSON/API boundaries.
 - Constant-time compare fixed-length hashes, bindings, and tags where the
   runtime exposes a safe primitive.
-- Pin canonical blob, JSON, compression, Firebase-claim, Cosmos-signing, and
-  grant versions in cross-runtime test vectors.
+- Pin canonical blob, JSON, compression, Firebase-claim, Cosmos-signing,
+  possession-proof, and grant versions in cross-runtime test vectors.

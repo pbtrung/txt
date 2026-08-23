@@ -36,6 +36,36 @@ Fastly does not issue an owner ticket, application session, Cosmos resource
 token, or refresh token. The Firebase client SDK refreshes the ID token, and the
 browser retries one idempotent request after refresh on a Fastly 401.
 
+## Possession proof
+
+A valid Firebase token proves who is asking; it does not prove the caller
+currently holds the unwrapped signing key that only exists after a correct
+`user_root_key` unlock. Every route in the following table additionally
+requires the per-request P-521 possession proof defined in
+[cryptography.md](cryptography.md):
+
+| Route                          | Proof required |
+| ------------------------------- | --------------- |
+| `POST /v1/keys`                 | no |
+| `GET /v1/vault/head`            | no |
+| `GET /v1/vault/books/{book_id}` | no |
+| `GET /v1/vault/books?cursor=...`| no |
+| `POST /v1/vault/commit`         | yes |
+| `PUT /v1/vault/books/{book_id}` | yes |
+| `POST /v1/r2-token`             | yes |
+| `POST /v1/shares`               | yes |
+| `DELETE /v1/shares`             | yes |
+| `POST /v1/shared-url`           | no (unauthenticated; capability is the authorization) |
+
+Reads are exempt because they return ciphertext only — a bearer-token-only
+compromise cannot recover plaintext through them. Every route that mutates
+durable owner state or hands out direct R2 access requires the proof, because
+those operations do not depend on breaking encryption to cause damage (book
+deletion, share revocation, catalog-head corruption, raw-storage credential
+minting), so a stolen bearer token alone must not be sufficient. A request
+missing, failing, or replaying a required proof is rejected before any Cosmos
+or R2 work; see the error contract below.
+
 ## Common requirements
 
 - Accept HTTPS only and allow only the configured exact UI origin in CORS. Do
@@ -49,9 +79,14 @@ browser retries one idempotent request after refresh on a Fastly 401.
   routes, even when a Cosmos response happens to be cacheable.
 - Never put credentials in query strings. Redact authorization headers, request
   bodies, Cosmos authorization/date headers, ciphertext, grants, R2
-  credentials, and signed URLs from logs.
-- Apply the route's durable rate limit before expensive cryptography, Cosmos
-  work, or R2 credential minting. Fail closed if the limiter cannot decide.
+  credentials, signatures, and signed URLs from logs.
+- Apply a subject-independent flood control (normalized client IP or a global
+  counter) before spending CPU on Firebase signature verification or any other
+  expensive cryptography. Apply the route's durable, **owner-subject-keyed**
+  rate limit only after the Firebase token has been fully verified — never key
+  a rate-limit bucket by an unverified token claim, or an attacker holding no
+  valid token can exhaust the real owner's budget with forged-signature
+  requests and lock them out. Fail closed if either limiter cannot decide.
 - Give each outbound fetch a bounded timeout. Retry at most once for a safe
   point read and only according to the operation's idempotency rules.
 - Pass Cosmos 429 `x-ms-retry-after-ms` semantics to the caller as a bounded
@@ -109,6 +144,10 @@ UID and supported schema before returning:
   "wrapped_user_master_key": "base64url",
   "kem_public_key": "base64url",
   "wrapped_kem_private_key": "base64url",
+  "sign_version": 1,
+  "sign_algorithm": "ECDSA-P521-SHA512",
+  "sign_public_key": "base64url",
+  "wrapped_sign_private_key": "base64url",
   "encrypted_credentials": "base64url"
 }
 ```
@@ -136,38 +175,56 @@ Point-read `catalog-head`. Return the allowlisted head fields from
 
 ### `GET /v1/vault/books/{book_id}`
 
-Validate the opaque ID and point-read exactly that book. Require `kind = book`,
-the supported schema, and the configured owner partition. Return the outer
-encrypted item plus `etag`; do not inspect or transform ciphertext.
+Validate the opaque ID and point-read that book item and its paired catalog
+item (`catalog_` + the book ID's opaque suffix) as one logical read. Require
+`kind = book`/`kind = catalog` respectively, the supported schema, and the
+configured owner partition on each. Return both outer encrypted items plus
+their `etag`s; do not inspect or transform either ciphertext.
 
 ### `GET /v1/vault/books?cursor=...`
 
 This fixed, owner-only scan exists solely for snapshot repair and administrative
-verification. Fastly issues the predefined `kind = "book"` query scoped to
-`OWNER_PK`, enforces a page-size and total-item ceiling, and wraps Cosmos
-continuation state in an authenticated opaque cursor. It never accepts query
-text, query parameters other than that cursor, cross-partition mode, or an
-index-policy override from the client.
+verification. Fastly issues the predefined `kind IN ("book", "catalog")` query
+scoped to `OWNER_PK`, enforces a page-size and total-item ceiling, and wraps
+Cosmos continuation state in an authenticated opaque cursor. It never accepts
+query text, query parameters other than that cursor, cross-partition mode, or
+an index-policy override from the client. This route consumes the dedicated
+`owner-vault-scan` budget below, not `owner-vault-read`: it is a container
+query, not a point read, and is materially more expensive per call.
 
 ## Vault write routes
 
 Fastly validates only the outer encrypted record, version, identifier, sizes,
 and transition shape; it cannot validate encrypted user fields. All accepted
-writes must use a current `_etag` unless they are create-only.
+writes must use a current `_etag` unless they are create-only. These routes
+require the possession proof described above.
 
 ### `POST /v1/vault/commit`
 
-Purpose: atomically update one book and `catalog-head` after the new immutable
-R2 snapshot has been uploaded.
+Purpose: atomically update a book's identity (content/shares via its `book`
+item, catalog via its paired `catalog` item) and `catalog-head` after the new
+immutable R2 snapshot has been uploaded.
 
 Request shape:
 
 ```json
 {
   "protocol_version": 3,
+  "possession_proof": {
+    "route": "vault-commit",
+    "nonce": "base64url 32 bytes",
+    "expires_at": 0,
+    "signature": "base64url raw P-521 signature"
+  },
   "book": {
     "operation": "create | replace | delete",
     "id": "book_K7c3...",
+    "etag": "required for replace/delete",
+    "item": "required for create/replace; exact encrypted outer item"
+  },
+  "catalog": {
+    "operation": "create | replace | delete",
+    "id": "catalog_K7c3...",
     "etag": "required for replace/delete",
     "item": "required for create/replace; exact encrypted outer item"
   },
@@ -178,45 +235,89 @@ Request shape:
 }
 ```
 
-Fastly rejects unexpected outer fields, overwrites neither identity nor version
+`book` and `catalog` operations are independent — a catalog metadata edit
+sends only a `catalog` replace, no `book` operation at all, and vice versa for
+a share create/delete or content-locator change. `head` is optional: it is
+included only when the mutation changes anything the snapshot projects
+(ingest, catalog edit, delete, share state change), and omitted for
+book-only content-locator changes, which never touch the snapshot. Fastly
+rejects unexpected outer fields, overwrites neither identity nor version
 silently, and requires:
 
-- the path/body book IDs agree;
-- `owner_pk` equals configured `OWNER_PK`;
-- book kind/schema/size satisfy [data_model.md](data_model.md);
-- create has no `_etag` and uses create-only semantics;
-- replace/delete carry the previous `_etag`;
-- the new head generation is exactly one greater than the current generation;
-- head owner/kind/schema and R2 object-key grammar are exact; and
-- one book operation and one head replacement target the same owner partition.
+- the possession proof verifies for `route: "vault-commit"` and has not been
+  seen before (see [cryptography.md](cryptography.md));
+- for each of `book`/`catalog` present: the path/body IDs agree, `owner_pk`
+  equals configured `OWNER_PK`, kind/schema/size satisfy
+  [data_model.md](data_model.md), create has no `_etag` and uses create-only
+  semantics, and replace/delete carry the previous `_etag`;
+- when both `book` and `catalog` are present, their IDs correlate (`catalog_`
+  + the book ID's opaque suffix) and their operations agree (both `create`,
+  or both `delete` — a book cannot be created without its catalog pairing, or
+  deleted while its catalog pairing survives);
+- when `head` is present: the new generation is exactly one greater than the
+  current generation, head owner/kind/schema and R2 object-key grammar are
+  exact, **and a direct R2 `HEAD` on `head.item.object_key` returns a
+  `Content-Length` equal to `ciphertext_bytes` and (where the object carries a
+  server-side checksum) a checksum equal to `ciphertext_sha256`** — Fastly
+  must not advance the pointer on the strength of client-supplied metadata
+  alone; and
+- every book/catalog/head operation present targets the same owner partition.
 
-Fastly sends one atomic Cosmos REST transactional batch. Cosmos supports atomic
-batches for operations sharing a logical partition; see the official
+Fastly sends one atomic Cosmos REST transactional batch covering every
+`book`/`catalog`/`head` operation present (at most three operations, well
+within Cosmos batch limits). Cosmos supports atomic batches for operations
+sharing a logical partition; see the official
 [transactional batch REST contract](https://learn.microsoft.com/en-us/rest/api/cosmos-db/transactional-batch).
-On success Fastly returns the new allowlisted book/head `_etag` values. A failed
-precondition returns the stable conflict response and no partial success.
+On success Fastly returns the new allowlisted book/catalog/head `_etag` values.
+A failed precondition returns the stable conflict response and no partial
+success. If the R2 `HEAD` check fails, Fastly returns `409 conflict` without
+attempting the Cosmos batch at all — from the browser's perspective this looks
+like any other precondition failure, and the standard conflict-replay flow in
+[catalog.md](catalog.md) applies (re-verify the upload landed, or re-upload,
+then retry).
+
+Replacing a book's content (a new EPUB superseding an existing catalog entry)
+is **not** expressed as a `replace` on the existing `book_id`: doing so would
+let a new, unrelated document silently reuse CFIs and bookmarks that were
+computed against the old content. It is instead a `delete` of the old
+`book_id`/`catalog_id`/reading-state/index-entry (blocked, as always, while
+`shares` is non-empty) followed by an ordinary `create` of a new `book_id`.
+These are two independent `/v1/vault/commit` calls, each with its own
+generation bump, not one atomic operation — Cosmos transactional batches are
+scoped to one partition's items in one request, but the pair of book+catalog
+"identities" being fully replaced (not merely mutated) is a two-step,
+non-atomic sequence by construction. A crash between the two calls leaves the
+library either missing that title or, if delete failed to commit, still
+showing the old content; neither state loses data (the failed step is simply
+retried) and neither needs special repair handling, unlike an R2 upload that
+raced ahead of its Cosmos commit.
 
 ### `PUT /v1/vault/books/{book_id}`
 
-Purpose: replace one encrypted book for a mutation such as `last_cfi` that does
-not change the snapshot. The request contains `protocol_version`, previous
-`etag`, and the complete next encrypted outer book item. Fastly applies the
-same identity/schema/size checks and a conditional replace. It cannot be used
-to create, delete, change owner partition, or write `catalog-head`.
+Purpose: replace one encrypted `book` item — for example, a content-locator or
+share-state change that does not affect the paired catalog item or the
+snapshot. The request contains `protocol_version`, the possession proof,
+previous `etag`, and the complete next encrypted outer book item. Fastly
+applies the same identity/schema/size checks and a conditional replace. It
+cannot be used to create, delete, change owner partition, touch the catalog
+item, or write `catalog-head`.
 
-There is no general create/delete/upsert endpoint. Book create/delete occurs
-only through `/v1/vault/commit`, preserving book/head atomicity.
+There is no general create/delete/upsert endpoint. Book/catalog create/delete
+occurs only through `/v1/vault/commit`, preserving their atomicity.
 
 ## `POST /v1/r2-token`
 
-Purpose: return short-lived direct R2 access for owner object reads, immutable
-uploads, and cleanup under one prefix. The request contains `protocol_version`
-and the locally decrypted `vault_id`, `owner_pk`, and `db_prefix` binding.
+Purpose: return short-lived direct R2 access for owner object reads —
+including EPUB content, the catalog snapshot, and the per-book reading-state
+and reading-index objects — plus immutable uploads and cleanup, all under one
+prefix. The request contains `protocol_version`, the possession proof, and the
+locally decrypted `vault_id`, `owner_pk`, and `db_prefix` binding.
 
-Fastly validates Firebase, consumes `owner-r2-token`, point-reads
-`owner_control`, hashes and compares the binding, and asks R2 for a 900-second
-temporary credential limited to the configured bucket and normalized
-`{db_prefix}/`. It returns only:
+Fastly validates Firebase, verifies the possession proof for
+`route: "r2-token"`, consumes `owner-r2-token`, point-reads `owner_control`,
+hashes and compares the binding, and asks R2 for a 900-second temporary
+credential limited to the configured bucket and normalized `{db_prefix}/`. It
+returns only:
 
 ```json
 {
@@ -238,32 +339,49 @@ R2 endpoint/bucket/prefix, keeps the response in memory, and refreshes at most
 once near expiry or after one authorization failure. Cloudflare documents the
 credential mechanism at [R2 temporary credentials](https://developers.cloudflare.com/r2/api/s3/temporary-credentials/).
 
+Reading-state and reading-index reads/writes never go through a Fastly vault
+route: they are plain R2 requests against this credential, conditionally
+written with `If-Match`/`If-None-Match` exactly like EPUB content. Fastly's
+only role in that path is minting the credential above.
+
 ## `POST /v1/shares`
 
 Purpose: register an uploaded independent share object or return a fresh grant
 for an identical active registration.
 
-The Firebase-authenticated request carries protocol version, owner/vault
-binding, raw share ID, and rendered share prefix/path. Fastly consumes
-`owner-share-write`, validates the binding against `owner_control`, constructs
-and normalizes exactly:
+The Firebase-authenticated request carries protocol version, the possession
+proof (`route: "share-create"`), owner/vault binding, raw share ID, and
+rendered share prefix/path. Fastly consumes `owner-share-write`, validates the
+binding against `owner_control`, constructs and normalizes exactly:
 
 ```text
 {db_prefix}/shared/{share_prefix}/{share_path}
 ```
 
 It hashes the identifiers, checks that the immutable R2 object exists, and
-creates the share plus path reservation in one server-only `share_control`
-transactional batch. An identical active retry is idempotent and returns a
-fresh authenticated grant. Any conflicting ID/path pairing returns 409.
+attempts to create the share plus path reservation in one server-only
+`share_control` transactional batch using create-only operations. If that
+create fails because a `share:{share_id_hash}` item already exists, Fastly
+point-reads the existing share and reservation items: identical
+`object_path_hash` on both is the idempotent-retry case (return a fresh grant,
+no write); anything else is `409`. See [data_model.md](data_model.md) for the
+exact reconciliation rule.
+
+```json
+{
+  "registered": true,
+  "grant": "<base64url grant envelope, see cryptography.md>"
+}
+```
 
 ## `DELETE /v1/shares`
 
 Purpose: revoke one owner share and delete its R2 object.
 
-The Firebase-authenticated request contains protocol version, owner/vault
-binding, raw share ID, and rendered share prefix/path. Fastly reconstructs the
-exact key, recomputes every hash, and requires agreement with the registry. It:
+The Firebase-authenticated request contains protocol version, the possession
+proof (`route: "share-delete"`), owner/vault binding, raw share ID, and
+rendered share prefix/path. Fastly reconstructs the exact key, recomputes
+every hash, and requires agreement with the registry. It:
 
 1. conditionally changes `active` to `deleting`;
 2. deletes the exact R2 object, treating not-found as success on retry; and
@@ -275,8 +393,9 @@ path is not treated as absent. A `deleting` item never authorizes a new URL.
 ## `POST /v1/shared-url`
 
 Purpose: exchange an anonymous capability for a 60-second exact-object R2 GET
-URL. No Firebase authentication is used. The bounded request carries only
-protocol version, raw share ID, and current encrypted grant. Fastly:
+URL. No Firebase authentication or possession proof is used — a public
+recipient has neither. The bounded request carries only protocol version, raw
+share ID, and current encrypted grant. Fastly:
 
 1. consumes `public-share-url` by privacy-preserving client-IP hash;
 2. verifies and decrypts the grant;
@@ -291,9 +410,10 @@ an issued URL remains usable only for its short lifetime.
 ## Health endpoints
 
 - `/health/live` confirms that the deployed Compute package can serve requests.
-- `/health/ready` reads required config/secret entries and point-reads fixed
-  schema markers from all four containers. It must not write, query user data,
-  or mint R2 credentials.
+- `/health/ready` reads required config/secret entries and point-reads the
+  `schema:*` marker item from the `system` partition of all four containers
+  (see [data_model.md](data_model.md)). It must not write, query user data, or
+  mint R2 credentials.
 - Health responses reveal no account, container, owner, bucket, key, generation,
   or schema values.
 
@@ -303,28 +423,37 @@ resource link can influence an origin request.
 
 ## Rate limits
 
-| Scope               | Limit            | Subject              |
-| ------------------- | ---------------- | -------------------- |
-| `owner-keys`        | 60 per hour      | owner UID            |
-| `owner-r2-token`    | 30 per hour      | owner UID            |
-| `owner-vault-read`  | 1,200 per minute | owner UID            |
-| `owner-vault-write` | 600 per hour     | owner UID            |
-| `owner-share-write` | 120 per hour     | owner UID            |
-| `public-share-url`  | 120 per minute   | normalized client IP |
+| Scope                | Limit            | Subject              |
+| --------------------- | ---------------- | --------------------- |
+| `owner-keys`          | 60 per hour      | owner UID            |
+| `owner-r2-token`      | 30 per hour      | owner UID            |
+| `owner-vault-read`    | 1,200 per minute | owner UID            |
+| `owner-vault-scan`    | 12 per hour      | owner UID            |
+| `owner-vault-write`   | 600 per hour     | owner UID            |
+| `owner-share-write`   | 120 per hour     | owner UID            |
+| `public-share-url`    | 120 per minute   | normalized client IP |
+
+`owner-vault-scan` covers `GET /v1/vault/books?cursor=...` only — the
+administrative repair/verification scan — deliberately far tighter than
+`owner-vault-read`'s point-read budget, since each call is a container query
+over the whole owner partition and repeatedly triggering it is a realistic way
+to burn the shared free-tier RU budget.
 
 Subject identifiers are HMAC-SHA-256 with `RATE_LIMIT_KEY`; store only the
-digest in `rate_limit_control`. Preliminary edge rejection may shed obvious
-floods, but the Cosmos counter is authoritative across POPs and restarts.
+digest in `rate_limit_control`, and only ever compute it from a **verified**
+Firebase subject or a normalized client IP, per the ordering rule in Common
+requirements above. Preliminary edge rejection may shed obvious floods, but the
+Cosmos counter is authoritative across POPs and restarts.
 
 ## Error contract
 
 | HTTP | Code                  | Meaning                                                                            |
 | ---- | --------------------- | ---------------------------------------------------------------------------------- |
 | 400  | `invalid_request`     | Invalid route shape, encoding, item, or protocol version                           |
-| 401  | `unauthorized`        | Missing, invalid, expired, or wrong-owner Firebase token; invalid share capability |
+| 401  | `unauthorized`        | Missing, invalid, expired, or wrong-owner Firebase token; invalid share capability; missing, invalid, expired, wrong-route, or replayed possession proof |
 | 403  | `binding_mismatch`    | Authenticated identity does not match owner/vault binding                          |
 | 404  | `not_found`           | Item absent, or public share absent/inactive without state disclosure              |
-| 409  | `conflict`            | `_etag` mismatch, share/path collision, or incompatible state transition           |
+| 409  | `conflict`            | `_etag` mismatch, share/path collision, incompatible state transition, or a `/v1/vault/commit` head whose R2 object failed existence/length/hash verification |
 | 413  | `too_large`           | Request, ciphertext item, or page exceeds its fixed limit                          |
 | 429  | `rate_limited`        | Fastly/Cosmos limit exceeded; include bounded `Retry-After`                        |
 | 502  | `upstream_invalid`    | Cosmos/R2 returned an invalid or unsupported response                              |
@@ -362,6 +491,9 @@ R2_SECRET_ACCESS_KEY
 SHARE_GRANT_KEY
 RATE_LIMIT_KEY
 ```
+
+`sign_public_key` used to verify possession proofs is not a secret — it is
+read directly from the `owner_control` item, not from Secret Store.
 
 Read only the secrets needed by the selected route and stay within Fastly
 Secret Store per-request limits. Remove `RQLITE_*`, Northflank, OpenResty,
