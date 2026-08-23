@@ -54,8 +54,8 @@ browser origin.
   invariants, and request flows.
 - [data_model.md](data_model.md) defines Cosmos item schemas, partition keys,
   indexes, encrypted book records, and R2 paths.
-- [cryptography.md](cryptography.md) defines key handling, value-level
-  encryption contexts, Firebase-token validation, and snapshot encryption.
+- [cryptography.md](cryptography.md) applies the canonical primitives and blob
+  format from [docs/crypto.md](../crypto.md) to records, snapshots, and exports.
 - [auth_api.md](auth_api.md) defines the Fastly Compute API, authorization,
   Cosmos request signing, rate limiting, and failures.
 - [catalog.md](catalog.md) defines the encrypted R2 library snapshot, fast

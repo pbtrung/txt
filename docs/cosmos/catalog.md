@@ -1,7 +1,7 @@
 # Encrypted library snapshot and local search
 
 The initial library screen must not point-read and decrypt every Cosmos book
-record. Instead it downloads one immutable, compressed, encrypted JSON array
+record. Instead it downloads one immutable encrypted structured-payload blob
 from R2. Cosmos stores only the current object pointer in `catalog-head`.
 
 The snapshot is a derived projection. Encrypted Cosmos book aggregates remain
@@ -9,7 +9,23 @@ authoritative and are sufficient to rebuild it.
 
 ## Snapshot schema
 
-The decrypted payload is an array sorted by `book_id` bytewise. Each entry is:
+The decrypted canonical JSON is the authenticated catalog envelope from
+[cryptography.md](cryptography.md):
+
+```json
+{
+  "purpose": "txt:cosmos-catalog",
+  "envelope_version": 1,
+  "vault_id": "vault_opaqueRandomValue",
+  "owner_pk": "own_opaqueRandomValue",
+  "generation": 184,
+  "object_key": "{db_prefix}/catalog/184-random.blob",
+  "snapshot_schema_version": 1,
+  "books": []
+}
+```
+
+`books` is sorted by `book_id` bytewise. Each member is:
 
 ```json
 {
@@ -55,9 +71,11 @@ fetched. Although share secrets are duplicated in the projection, they remain
 under the same end-to-end `vault_master_key` and never appear in the Cosmos
 pointer or server logs.
 
-Every value is validated using the same rules as its source book record.
-Duplicate book IDs, bookmark CFIs, share IDs, unsupported versions, or a count
-different from `catalog-head.book_count` make the entire snapshot invalid.
+Every envelope field must match the authenticated owner bootstrap and
+`catalog-head`. Every projected value is validated using the same rules as its
+source book record. Duplicate book IDs, bookmark CFIs, share IDs, unsupported
+versions, or a count different from `catalog-head.book_count` make the entire
+snapshot invalid.
 
 ## Initial load
 
@@ -71,10 +89,11 @@ After `/v1/keys`, local unwrapping, and `/v1/r2-token`:
    the bucket and do not use range requests; compression and AEAD require the
    complete object.
 4. Verify byte length and SHA-256 before decryption.
-5. Derive the exact context from the head, VLE-decrypt, Brotli-decompress, parse
-   canonical JSON with duplicate-key rejection, and validate every entry.
-6. Keep the plaintext array and search index only in memory. IndexedDB stores
-   ciphertext and verified pointer metadata, never plaintext or session
+5. Decrypt using the canonical structured-payload procedure from
+   [docs/crypto.md](../crypto.md), parse canonical JSON with duplicate-key
+   rejection, verify all envelope/head fields, and validate every entry.
+6. Keep the plaintext projection and search index only in memory. IndexedDB
+   stores ciphertext and verified pointer metadata, never plaintext or session
    credentials.
 7. Render the current library ordering, bookmark summaries, and share state,
    and build the existing local full-text index over `name`, `title`,
@@ -120,10 +139,11 @@ For one semantic mutation:
 
 1. Start from the currently decrypted book row and snapshot identified by the
    opaque Cosmos `_etag` values returned through Fastly.
-2. Apply a pure, replayable mutation to produce the next book record and next
-   snapshot array. Increment the book `record_version` and head `generation`.
-3. Canonically serialize, Brotli-compress, context-encrypt, and SHA-256 hash the
-   new snapshot as defined in [cryptography.md](cryptography.md).
+2. Apply a pure, replayable mutation to produce the next book record and
+   projection. Increment the book `record_version` and head `generation`.
+3. Build the authenticated catalog envelope, canonically serialize it, Encrypt
+   it with the canonical structured-payload procedure, and SHA-256 hash the raw
+   blob as defined in [cryptography.md](cryptography.md).
 4. Upload it to a new random immutable R2 object with `If-None-Match: *`.
 5. Call `POST /v1/vault/commit`. Fastly validates the outer items and submits a
    Cosmos transactional batch in the one owner partition containing:
@@ -189,7 +209,8 @@ contains a row version mismatch:
 1. retain the failed head/object for diagnosis without exposing plaintext;
 2. page through Fastly's fixed authenticated owner-book scan; never submit
    client query text;
-3. decrypt and validate every row using its row-specific context;
+3. decrypt each canonical blob and validate its inner envelope against the
+   outer row;
 4. sort and build a fresh projection;
 5. publish a new immutable generation using an `_etag` condition on the head;
 6. retry on a concurrent winner and accept the winner if it validates.

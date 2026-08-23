@@ -139,8 +139,8 @@ the browser. They do not receive or store a Cosmos account key:
 - `--init-owner` remains an explicit offline administration operation that
   creates the owner item and empty encrypted snapshot/head, then writes the new
   unlock file;
-- `--ingest` uploads the immutable encrypted EPUB, constructs one VLE book
-  record, and publishes through `/v1/vault/commit`;
+- `--ingest` uploads the immutable encrypted EPUB, constructs one canonical
+  authenticated-blob book record, and publishes through `/v1/vault/commit`;
 - `--edit-epub` and `--replace-images` read/decrypt through Fastly, preserve
   immutable replacement semantics, and conditionally publish affected state;
 - `--clean-bucket` derives live objects from fixed Fastly scans plus snapshot
@@ -161,7 +161,7 @@ that credential in an owner credentials file or print it.
 
 ## Pre-cutover preparation
 
-1. Pin exact browser, CLI, Fastly SDK/runtime, JWT library, SQLCipher-WASM, VLE,
+1. Pin exact browser, CLI, Fastly SDK/runtime, JWT library, canonical crypto blob,
    schema, compression, Cosmos API, and grant versions in the release manifest.
 2. Provision and verify staging Cosmos, including RU use, account-key rotation,
    HMAC signing, transactional batches, 429 propagation, and route containment.
@@ -216,7 +216,9 @@ schema and constraints. For each `txt` row:
 - attach ordered bookmarks with uniqueness, optional page number, preview,
   creation time, and the 20-item cap;
 - attach ordered shares with IDs, keys, paths, states, and creation time; and
-- encode/encrypt one aggregate with its row-specific VLE context.
+- wrap each aggregate with its authenticated application identity fields and
+  Encrypt it using the canonical structured-payload blob from
+  [docs/crypto.md](../crypto.md).
 
 New installations use random book IDs. Migration derives retry-stable opaque
 IDs as the first 128 bits of:
@@ -263,7 +265,8 @@ The migrator must report equality for:
 - every share ID/key/prefix/path/state/time and shared R2 object;
 - server share hashes and states;
 - initial snapshot count/hash and projection equality; and
-- authentication of every VLE record with its exact context.
+- authentication of every canonical blob and agreement between each inner
+  envelope and outer record identity.
 
 Run feature-parity smoke tests, conditionally mark migration complete, activate
 the version-3 Fastly service and browser together, then release maintenance.
@@ -299,8 +302,9 @@ scheduled administration job that:
    consistency boundary;
 2. exports canonical item JSON including IDs, partitions, diagnostic `_etag`
    values, and schema versions;
-3. Brotli-compresses and VLE-encrypts with an independent 256-byte
-   `COSMOS_EXPORT_KEY` held in that job's secret manager and offline escrow;
+3. Encrypts the structured export with the canonical blob procedure and an
+   independent 256-byte `COSMOS_EXPORT_KEY` held in that job's secret manager
+   and offline escrow;
 4. uploads immutably under the administrative export prefix; and
 5. writes/verifies a signed manifest with counts, hashes, timestamp, and
    software/schema versions.
@@ -352,10 +356,11 @@ persistent 429s, stale backups, or control/data schema mismatch.
 
 Do not remove rqlite, Northflank, or legacy `db_path` until all checks pass:
 
-- VLE row/snapshot, Firebase claim/JWKS, Cosmos HMAC-signature, and share-grant
-  test vectors;
-- ciphertext tamper, row splice, wrong partition/ID/kind/version, wrong owner,
-  and snapshot relocation fail authentication;
+- canonical blob and record/snapshot envelope, Firebase claim/JWKS, Cosmos
+  HMAC-signature, and share-grant test vectors;
+- ciphertext tamper fails AEAD authentication; row splice, wrong
+  partition/ID/kind/version, wrong owner, and snapshot relocation fail strict
+  inner-envelope validation;
 - no browser bundle/response contains Cosmos credentials or endpoint details;
 - every vault/control route fixes its container, partition, resource link,
   method, and query; injected `x-ms-*` and backend-selection inputs are rejected;

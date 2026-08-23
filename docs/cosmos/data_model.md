@@ -122,7 +122,7 @@ One item holds all mutable owner state for one book:
   "kind": "book",
   "schema_version": 1,
   "record_version": 37,
-  "ciphertext": "base64url SQLCipher-VLE envelope",
+  "ciphertext": "base64url canonical authenticated blob",
   "updated_at": 1787356800000
 }
 ```
@@ -133,7 +133,8 @@ values must match after decryption. It aids diagnosis but does not replace
 Cosmos `_etag` concurrency. `updated_at` is informational and cannot authorize
 or order writes.
 
-The decrypted canonical JSON payload is:
+The canonical blob and its authenticated application envelope are defined in
+[cryptography.md](cryptography.md). The envelope's `record` member is:
 
 ```json
 {
@@ -214,7 +215,7 @@ immutable library snapshot:
   "kind": "catalog-head",
   "schema_version": 1,
   "generation": 184,
-  "object_key": "{db_prefix}/catalog/184-random.json.br.vle",
+  "object_key": "{db_prefix}/catalog/184-random.blob",
   "ciphertext_sha256": "base64url 32 bytes",
   "ciphertext_bytes": 91842,
   "book_count": 713,
@@ -227,8 +228,9 @@ from authenticated Cosmos transport, route authorization, `_etag`, and the
 snapshot AEAD/hash checks. `generation` increases by one for every snapshot
 publication. It is not a timestamp.
 
-The empty library still has a valid head and an encrypted snapshot containing
-`[]`; absence of `catalog-head` is an initialization or corruption error.
+The empty library still has a valid head and an encrypted snapshot envelope
+whose `books` member is `[]`; absence of `catalog-head` is an initialization or
+corruption error.
 
 ## `share_control`
 
@@ -324,9 +326,9 @@ production. Do not enable broad indexing merely to inspect encrypted data.
 
 ```text
 {db_prefix}/{txt_prefix}/{path}                       owner EPUB
-{db_prefix}/catalog/{generation}-{random}.json.br.vle library snapshot
+{db_prefix}/catalog/{generation}-{random}.blob        library snapshot
 {db_prefix}/shared/{share_prefix}/{share_path}        shared EPUB copy
-{db_prefix}/exports/{timestamp}-{random}.json.br.vle  optional control/data export
+{db_prefix}/exports/{timestamp}-{random}.blob         optional control/data export
 ```
 
 The former top-level `{db_path}` SQLCipher object and rqlite backup prefix are

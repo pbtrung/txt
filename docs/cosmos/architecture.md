@@ -171,8 +171,9 @@ No step allows the browser to select or directly query a control container.
    operation from trusted configuration; client input cannot widen them.
 5. Cosmos and Fastly never receive plaintext owner keys or user content
    metadata.
-6. Every encrypted record is bound to its container, partition, item ID, kind,
-   and schema version so ciphertext cannot be moved between rows.
+6. Every decrypted record's authenticated inner envelope must match its outer
+   container role, partition, item ID, kind, and versions. The canonical blob
+   itself has no caller-supplied storage context.
 7. The catalog head advances only after its immutable R2 object is fully
    uploaded and hashable.
 8. Anonymous shares use independent encryption and server-side active registry
