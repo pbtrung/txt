@@ -1,35 +1,34 @@
 # Sharing protocol and lifecycle
 
-Sharing remains an explicit independent-copy design. A share recipient gets no
-owner account, Cosmos access, owner EPUB key, owner R2 prefix credential, or
-server-side reading state. Revocation remains a server registry decision and
-takes effect for new signed-URL exchanges.
+Sharing is an explicit independent-copy design. A share recipient gets no
+owner account, KV Store access, owner EPUB key, owner R2 prefix credential, or
+server-side reading state. Revocation is a server registry decision and takes
+effect for new signed-URL exchanges.
 
 ## Owner-side share record
 
-Each encrypted `vault` book item contains its shares as defined in
-[data_model.md](data_model.md) — shares live in the book item, not the paired
-catalog item, since they concern content access rather than catalog metadata.
-The current R2 layout remains:
+Each `vault:book:{book_id}` entry contains its shares as defined in
+[data_model.md](data_model.md), alongside that book's content locator and
+catalog metadata. The R2 layout for a shared object is:
 
 ```text
 {db_prefix}/shared/{share_prefix}/{share_path}
 ```
 
-The owner-side `share_id`, `share_content_key`, prefix, path, state, timestamps,
-and ordering are end-to-end encrypted in the book row and library snapshot.
-Fastly sees the raw ID/path only in authenticated owner API calls and stores
-only SHA-256 hashes in server-only `share_control`.
+The owner-side `share_id`, `share_content_key`, prefix, path, state,
+timestamps, and ordering are end-to-end encrypted in the book entry and
+library snapshot. Fastly sees the raw ID/path only in authenticated owner API
+calls and stores only SHA-256 hashes in the server-only `share_control` store.
 
 ## Creating a share
 
 The browser performs a recoverable saga:
 
-1. Point-read and decrypt the current book record.
+1. Fetch and decrypt the current book entry.
 2. Generate a fresh 32-byte `share_id`, 128-byte `share_content_key`, 32-byte
    `share_prefix`, and 32-byte `share_path` using the cryptographic RNG.
-3. Append a `creating` share record and atomically publish the book plus library
-   snapshot using the current book/head `_etag` values.
+3. Append a `creating` share record and atomically publish the book entry plus
+   library snapshot using the current book/head `generation` values.
 4. Download and decrypt the immutable owner EPUB if it is not already in
    memory. Encrypt a new independent shared copy with `share_content_key`; never
    reuse or wrap the owner `txt_key` for a recipient.
@@ -37,10 +36,10 @@ The browser performs a recoverable saga:
    `If-None-Match: *`. On a retry, accept an existing object only after its
    locally expected ciphertext hash/length match.
 6. Call `POST /v1/shares` with Firebase owner authentication, the possession
-   proof (`route: "share-create"`), and the version-3 owner/vault binding.
+   proof (`route: "share-create"`), and the owner/vault binding.
 7. Fastly validates the Firebase token, possession proof, binding, and object,
-   then transactionally reserves the share ID/path in `share_control` and
-   returns a fresh authenticated grant.
+   then reserves the share ID/path in `share_control` and returns a fresh
+   authenticated grant.
 8. Change the encrypted owner record from `creating` to `active` and republish
    the snapshot through the normal conflict-replay protocol.
 9. Construct the public URL locally. Capability and decryption material belong
@@ -58,7 +57,7 @@ the browser to finish step 8.
 For an `active` owner share, Copy Link calls `POST /v1/shares` again with the
 same authenticated identity and exact share tuple. Fastly requires the
 same active share-ID and object-path hashes and returns a newly encrypted grant.
-It must not create a second registry row or upload another R2 copy.
+It must not create a second registry entry or upload another R2 copy.
 
 The browser then reconstructs the fragment locally from the owner-side
 encrypted share record and returned grant. A registry collision or a path that
@@ -72,15 +71,15 @@ attention.
    current UI already does so.
 2. It sends only the raw `share_id` and encrypted grant to
    `POST /v1/shared-url`.
-3. Fastly applies the IP rate limit, authenticates the grant, point-reads
-   the server-only hashed registry entry, and requires `active` plus an exact
+3. Fastly applies the IP rate limit, authenticates the grant, reads the
+   server-only hashed registry entry, and requires `active` plus an exact
    path-hash match.
 4. It returns a 60-second R2 URL granting GET for one object.
 5. The browser downloads and decrypts the independent share ciphertext with
    `share_content_key` from the fragment.
 
 Recipient reading progress, CFI, font choice, and bookmarks are local browser
-state only. They do not write Cosmos or the owner snapshot. The existing
+state only. They never write KV Store or the owner snapshot. The existing
 read-only reader restrictions remain; no editing, re-sharing, owner metadata
 mutation, or R2 upload path is exposed.
 
@@ -93,7 +92,7 @@ issued exact-object URL only until that URL's short expiry.
 The owner browser performs the inverse recoverable saga:
 
 1. Change `active` or recoverable `creating` state to `deleting` in the
-   encrypted book and republish the snapshot.
+   encrypted book entry and republish the snapshot.
 2. Call `DELETE /v1/shares` with Firebase authentication, the possession proof
    (`route: "share-delete"`), exact owner/vault binding, and the share tuple.
    No grant is needed or retained by the owner.
@@ -101,12 +100,13 @@ The owner browser performs the inverse recoverable saga:
    no longer mint a public URL.
 4. Fastly deletes the exact shared R2 object. Not-found is idempotent
    success for an otherwise matching record.
-5. Fastly transactionally removes the registry and path-reservation items.
+5. Fastly deletes the share entry, then the path-reservation entry.
 6. The browser removes the local share record and republishes the snapshot.
 
 If the API call fails, keep `deleting` visible and retry it. If the browser
 crashes after server deletion but before the local update, an idempotent retry
-returns success and step 6 completes. Never reactivate a deleting server row.
+returns success and step 6 completes. Never reactivate a deleting server
+entry.
 
 A `creating` share that was never registered can be cleaned locally after the
 browser verifies no matching active registry through the authenticated owner
@@ -125,9 +125,10 @@ Recovery reconciliation table below, not a preventive server control.
 
 ## Concurrent devices and conflict handling
 
-All local share transitions are semantic book mutations and therefore use book
-and catalog-head `_etag` conditions. On conflict, refetch/decrypt and reapply by
-`share_id`; do not replace the entire shares array from stale memory.
+All local share transitions are semantic book mutations and therefore use the
+book entry and catalog-head `generation` conditions. On conflict, refetch/
+decrypt and reapply by `share_id`; do not replace the entire shares array from
+stale memory.
 
 - Creating an already-present identical share is idempotent.
 - Creating the same ID with different key/path values is a hard conflict.
@@ -136,9 +137,9 @@ and catalog-head `_etag` conditions. On conflict, refetch/decrypt and reapply by
 - Removing requires `deleting`; it must not erase a concurrently replaced
   record with the same array position.
 
-The server registry independently uses Cosmos conditional writes and one
-partition transactional batches. Client `_etag` correctness never substitutes
-for server-side share authorization.
+The server registry independently uses KV Store conditional writes for its
+own two entries. Client `generation` correctness never substitutes for
+server-side share authorization.
 
 ## Recovery reconciliation
 
@@ -159,20 +160,27 @@ Automated repair may only take idempotent actions that cannot publish a new
 capability. Creating/re-registering an anonymous share after ambiguous state
 requires explicit owner confirmation.
 
+A path reservation with no matching share entry is a distinct case, described
+in [data_model.md](data_model.md): it means the two-step share registration
+was interrupted between its first and second write. Treat it the same way as
+a `creating`/absent/absent row above — retry registration, or remove the
+reservation after confirming no matching share exists anywhere.
+
 ## Tests required before cutover
 
 - A share uses ciphertext/key material independent from its source EPUB.
-- Raw share IDs and paths do not appear in Cosmos control documents or logs.
-- Register and path reservation succeed or fail atomically under concurrency.
+- Raw share IDs and paths do not appear in KV Store control entries or logs.
+- Registration and path reservation together survive an interruption between
+  their two writes without producing a usable, unreserved path.
 - Copy Link is idempotent only for an exact active tuple.
 - A deleting share cannot exchange for a URL.
-- Delete retries survive R2 404, Cosmos conflict, browser crash at every saga
-  boundary, and an expired Firebase ID token or R2 credential.
+- Delete retries survive R2 404, a `generation` conflict, browser crash at
+  every saga boundary, and an expired Firebase ID token or R2 credential.
 - Public rate limiting is durable across Fastly POPs and Compute instances.
 - A grant for one path/share cannot authorize another.
-- No client response contains a Cosmos credential or can select a control
-  container/resource link.
+- No client response contains a KV Store binding or can select a control
+  store/key.
 - Source deletion remains blocked until every share record is gone.
-- Recipient reader state never reaches owner Cosmos/R2 state.
+- Recipient reader state never reaches owner KV Store/R2 state.
 - `POST /v1/shares` and `DELETE /v1/shares` reject a missing, expired, wrong-
   route, or replayed possession proof even with a valid Firebase token.
