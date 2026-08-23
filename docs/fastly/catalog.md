@@ -23,7 +23,7 @@ The decrypted canonical JSON is the authenticated catalog envelope from
   "vault_id": "vault_opaqueRandomValue",
   "owner_pk": "own_opaqueRandomValue",
   "generation": 184,
-  "object_key": "{db_prefix}/catalog/184-random.blob",
+  "object_key": "{db_prefix}/catalog/random.blob",
   "snapshot_schema_version": 1,
   "books": []
 }
@@ -71,8 +71,10 @@ and never appear in the KV Store pointer or server logs.
 
 Every envelope field must match the authenticated owner bootstrap and
 `catalog-head`. Every projected value is validated using the same rules as its
-source book entry. Duplicate book IDs, unsupported versions, or a count
-different from `catalog-head.book_count` make the entire snapshot invalid.
+source book entry. Duplicate book IDs or unsupported versions make the entire
+snapshot invalid; there is no separate persisted book count to cross-check
+against — the `books` array's own length is the count, and the array's own
+duplicate-ID/schema validation is what catches a malformed projection.
 
 ## Reading index schema
 
@@ -109,16 +111,19 @@ After `/v1/keys` and local unwrapping:
 
 1. Call `GET /v1/vault/head`; Fastly reads the `catalog-head` entry from the
    `vault` store.
-2. Look up encrypted snapshot bytes in IndexedDB by
-   `(object_key, ciphertext_sha256, ciphertext_bytes)`.
-3. If absent, call `POST /v1/r2-token` (adding the possession proof) and GET
+2. Decrypt `wrapped_object_key` locally to obtain `object_key`
+   ([cryptography.md](cryptography.md)'s catalog-head pointer envelope).
+3. Look up encrypted snapshot bytes in IndexedDB by `(object_key, generation)`.
+4. If absent, call `POST /v1/r2-token` (adding the possession proof) and GET
    the exact object with the temporary R2 credential. Do not list the bucket
    and do not use range requests; compression and AEAD require the complete
    object.
-4. Verify byte length and SHA-256 before decryption.
 5. Decrypt using the canonical structured-payload procedure from
    [docs/crypto.md](../crypto.md), parse canonical JSON with duplicate-key
    rejection, verify all envelope/head fields, and validate every entry.
+   There is no separate length or hash pre-check: a truncated or corrupted
+   object fails AEAD authentication here, which is treated the same as any
+   other repair-triggering failure below.
 6. In parallel with steps 2–5, call `GET /v1/vault/reading-index`. A
    `present: false` response (first session, or an owner with no reading
    history yet) is not an error — treat it as an empty index. Verify and
@@ -187,13 +192,15 @@ For one snapshot-affecting mutation:
 2. Apply a pure, replayable mutation to produce the next book entry/entries
    and projection. Increment the affected entry's `record_version` and the
    head's `generation` field.
-3. Build the authenticated catalog envelope, canonically serialize it, Encrypt
-   it with the canonical structured-payload procedure, and SHA-256 hash the
-   raw blob as defined in [cryptography.md](cryptography.md).
-4. Upload it to a new random immutable R2 object with `If-None-Match: *`.
-5. Call `POST /v1/vault/commit` with the possession proof and the book
-   operation plus the head operation. Fastly validates the outer entries,
-   performs the R2 existence/length/hash check on the new head object, then
+3. Build the authenticated catalog envelope, canonically serialize it, and
+   Encrypt it with the canonical structured-payload procedure, choosing a new
+   random `object_key`, as defined in [cryptography.md](cryptography.md).
+4. Upload it to that new random immutable R2 object with `If-None-Match: *`,
+   then wrap `object_key` alone with the catalog-head pointer envelope.
+5. Call `POST /v1/vault/commit` with the possession proof, the book
+   operation, the head operation (carrying the wrapped pointer), and the
+   plaintext `object_key` as a verification-only field. Fastly validates the
+   outer entries, performs the R2 existence check on that object key, then
    writes the book entry followed by the head entry, each conditional on its
    own `generation` where applicable.
 6. Treat success of both writes as the commit point. Update in-memory state

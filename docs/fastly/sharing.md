@@ -36,7 +36,9 @@ The browser performs a recoverable saga:
    `If-None-Match: *`. On a retry, accept an existing object only after its
    locally expected ciphertext hash/length match.
 6. Call `POST /v1/shares` with Firebase owner authentication, the possession
-   proof (`route: "share-create"`), and the owner/vault binding.
+   proof (`route: "share-create"`), the owner/vault binding, and the book's
+   `book_id`, which Fastly stores in plaintext alongside the hashes so later
+   reconciliation can find the owning book without decrypting the library.
 7. Fastly validates the Firebase token, possession proof, binding, and object,
    then reserves the share ID/path in `share_control` and returns a fresh
    authenticated grant.
@@ -143,7 +145,11 @@ server-side share authorization.
 
 ## Recovery reconciliation
 
-The administration CLI provides a read-only report and explicit repair mode:
+The administration CLI provides a read-only report and explicit repair mode.
+Because every `share_control` entry carries a plaintext `book_id`
+([data_model.md](data_model.md)), the report looks up each entry's owning
+book directly rather than decrypting the whole library to find which book's
+`shares` array contains a matching hash:
 
 | Owner encrypted state | Server registry | R2 object | Action                                                                             |
 | --------------------- | --------------- | --------- | ---------------------------------------------------------------------------------- |

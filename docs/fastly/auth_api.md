@@ -243,7 +243,8 @@ Request shape:
   },
   "head": {
     "generation": "current head generation",
-    "entry": "next catalog-head outer entry"
+    "entry": "next catalog-head outer entry, with wrapped_object_key already wrapped client-side",
+    "object_key": "plaintext R2 key, used once for verification, never persisted"
   }
 }
 ```
@@ -258,19 +259,28 @@ version silently, and requires:
   has no `generation` and uses a create-only write, and replace/delete carry
   the previous `generation`;
 - the new head `generation` field inside the entry is exactly one greater than
-  the current one, head kind/schema and R2 object-key grammar are exact,
-  **and a direct R2 `HEAD` on the entry's `object_key` returns a
-  `Content-Length` equal to `ciphertext_bytes` and (where the object carries a
-  server-side checksum) a checksum equal to `ciphertext_sha256`** — Fastly
-  must not advance the pointer on the strength of client-supplied metadata
-  alone.
+  the current one, head kind/schema are exact, `head.object_key` matches the
+  required R2 key grammar, **and a direct R2 `HEAD` on `head.object_key`
+  returns 200** — Fastly must not advance the pointer on the strength of
+  client-supplied metadata alone, so this existence check runs against R2
+  itself, not against anything the client merely claims.
+
+`head.object_key` is used for that one check and discarded; only
+`head.entry` (carrying the already-wrapped `wrapped_object_key`) is written
+to KV Store. Fastly cannot verify that the plaintext `object_key` it checked
+and the ciphertext inside `wrapped_object_key` agree, since it cannot decrypt
+the latter — that agreement is the browser's own responsibility, the same way
+the browser is responsible for every other field it encrypts before sending.
+A self-inconsistent commit from a malfunctioning client is not a security
+issue (no other principal's data or access is at risk), only a correctness
+one: the next load fails Decrypt or fetches a nonexistent object, and repair
+in [catalog.md](catalog.md) rebuilds a fresh, consistent pointer.
 
 Fastly then performs, in this fixed order:
 
 1. the book operation (create-only write, or a conditional replace/delete
    against the supplied `generation`);
-2. the R2 existence/length/hash check against the new head's `object_key`;
-   and
+2. the R2 existence check against `head.object_key`; and
 3. the conditional write of the `catalog-head` entry against its supplied
    `generation`.
 
@@ -284,7 +294,7 @@ schedule a repair," and the same retry that produced the mismatch (a fresh
 `/v1/vault/commit` with the current head `generation`) is exactly how it
 self-heals. Fastly returns the actual step that failed inside the standard
 conflict response so the caller retries from the right place rather than
-reapplying step 1. If the R2 existence/length/hash check fails, Fastly returns
+reapplying step 1. If the R2 existence check fails, Fastly returns
 `409 conflict` without attempting the head write at all.
 
 Replacing a book's content (a new EPUB superseding an existing entry) is
@@ -378,17 +388,20 @@ Purpose: register an uploaded independent share object or return a fresh grant
 for an identical active registration.
 
 The Firebase-authenticated request carries protocol version, the possession
-proof (`route: "share-create"`), owner/vault binding, raw share ID, and
-rendered share prefix/path. Fastly consumes `owner-share-write`, validates the
-binding against `owner_control`, constructs and normalizes exactly:
+proof (`route: "share-create"`), owner/vault binding, the owning `book_id`,
+raw share ID, and rendered share prefix/path. Fastly consumes
+`owner-share-write`, validates the binding against `owner_control`, constructs
+and normalizes exactly:
 
 ```text
 {db_prefix}/shared/{share_prefix}/{share_path}
 ```
 
 It hashes the identifiers, checks that the immutable R2 object exists, and
-creates the path reservation followed by the share entry in `share_control`,
-both as create-only writes. If the share create fails because
+creates the path reservation followed by the share entry — which stores
+`book_id` in plaintext alongside the hashes, per
+[data_model.md](data_model.md) — in `share_control`, both as create-only
+writes. If the share create fails because
 `share:{share_id_hash}` already exists, Fastly reads the existing share and
 reservation entries: identical `object_path_hash` on both is the
 idempotent-retry case (return a fresh grant, no write); anything else is
@@ -498,7 +511,7 @@ in Common requirements above.
 | 401  | `unauthorized`        | Missing, invalid, expired, or wrong-owner Firebase token; invalid share capability; missing, invalid, expired, wrong-route, or replayed possession proof |
 | 403  | `binding_mismatch`    | Authenticated identity does not match owner/vault binding                          |
 | 404  | `not_found`           | Entry absent, or public share absent/inactive without state disclosure             |
-| 409  | `conflict`            | `generation` mismatch, share/path collision, incompatible state transition, or a `/v1/vault/commit` head whose R2 object failed existence/length/hash verification |
+| 409  | `conflict`            | `generation` mismatch, share/path collision, incompatible state transition, or a `/v1/vault/commit` head whose R2 object failed the existence check |
 | 413  | `too_large`           | Request, ciphertext entry, or page exceeds its fixed limit                         |
 | 429  | `rate_limited`        | A durable or best-effort limit was exceeded; include bounded `Retry-After`         |
 | 502  | `upstream_invalid`    | KV Store or R2 returned an invalid or unsupported response                         |

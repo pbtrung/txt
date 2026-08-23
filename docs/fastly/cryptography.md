@@ -36,7 +36,7 @@ client-side blob encryption.
   P-521 signing private key, and encrypted credential payload remain in the
   server-only `owner_control` entry and are returned through authenticated
   `/v1/keys`.
-- `vault_master_key` is 256 bytes of key material, the IKM for every encrypted
+- `vault_master_key` is 128 bytes of key material, the IKM for every encrypted
   book, reading-state, reading-index, and catalog-snapshot value.
 - The P-521 request-signing keypair from [docs/crypto.md](../crypto.md) is
   used for the per-request possession proof below. Its public half is stored
@@ -164,7 +164,7 @@ decrypted canonical JSON object is:
   "vault_id": "vault_opaqueRandomValue",
   "owner_pk": "own_opaqueRandomValue",
   "generation": 184,
-  "object_key": "{db_prefix}/catalog/184-random.blob",
+  "object_key": "{db_prefix}/catalog/random.blob",
   "snapshot_schema_version": 1,
   "books": []
 }
@@ -175,14 +175,20 @@ Publication performs this exact sequence:
 1. choose `generation` and the immutable `object_key`;
 2. build and canonical-JSON serialize the complete envelope;
 3. Encrypt it as a structured payload with `vault_master_key` according to
-   [docs/crypto.md](../crypto.md);
-4. SHA-256 hash the resulting raw blob bytes; and
-5. upload those bytes unchanged to the selected R2 key.
+   [docs/crypto.md](../crypto.md); and
+4. upload those bytes unchanged to the selected R2 key.
 
-On load, compare object length and SHA-256 with `catalog-head` before Decrypt.
-Then require all envelope identity fields to agree with the authenticated
-owner bootstrap and head before accepting `books`. Validate the snapshot
-schema, sort, unique IDs, count, and every projected record as defined in
+Then, separately, wrap `object_key` alone (see the catalog-head pointer
+envelope below) for the `catalog-head` entry Fastly is about to write.
+
+On load, decrypt the wrapped pointer to obtain `object_key`, download that
+object, and Decrypt it directly — there is no separate length or hash to
+check first; the canonical blob's AEAD authentication is the integrity check,
+and a failure here is treated as corruption requiring repair
+([catalog.md](catalog.md)), the same as any other authentication failure in
+this document. Then require all envelope identity fields to agree with the
+authenticated owner bootstrap and head before accepting `books`. Validate the
+snapshot schema, sort, unique IDs, and every projected record as defined in
 [catalog.md](catalog.md). Reading state and bookmarks are not part of this
 envelope — see the reading-index envelope above.
 
@@ -190,6 +196,32 @@ Migration may decrypt the legacy SQLCipher database only inside the offline
 migration path. Every new book, reading, and snapshot entry/object is
 immediately encrypted in the canonical blob format; target runtime routes
 never fall back to a legacy decoder.
+
+## Catalog-head pointer envelope
+
+The `wrapped_object_key` field on the `catalog-head` entry
+([data_model.md](data_model.md)) is its own small canonical structured-payload
+blob, built and decrypted entirely client-side:
+
+```json
+{
+  "purpose": "txt:catalog-head-pointer",
+  "envelope_version": 1,
+  "vault_id": "vault_opaqueRandomValue",
+  "owner_pk": "own_opaqueRandomValue",
+  "object_key": "{db_prefix}/catalog/random.blob"
+}
+```
+
+Fastly stores this blob opaquely; it never decrypts it and never learns
+`object_key` from it. To perform the R2 existence check required before
+accepting a new pointer (see `/v1/vault/commit` in
+[auth_api.md](auth_api.md)), the client additionally sends the plaintext
+`object_key` as an ordinary, non-persisted request field alongside the
+wrapped blob — Fastly uses it once, for that one HEAD request, and never
+writes it to KV Store. After Decrypt, require `purpose`/`envelope_version` to
+be supported and `vault_id`/`owner_pk` to equal the authenticated owner
+bootstrap before trusting `object_key`.
 
 ## Administrative export envelope
 
@@ -219,7 +251,7 @@ inner identity, and counts before writing anything to KV Store.
 
 ```text
 vault_binding_input =
-  "txt:vault-binding:v1\0" ||
+  UTF8("txt:vault-binding:v1") || 0x00 ||
   u32be(len(vault_id)) || UTF-8(vault_id) ||
   u32be(len(owner_pk)) || UTF-8(owner_pk) ||
   u32be(len(db_prefix)) || UTF-8(db_prefix)

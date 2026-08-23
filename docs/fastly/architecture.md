@@ -192,8 +192,10 @@ No step allows the browser to select or directly query a control store.
    the key it was fetched from. The canonical blob itself has no
    caller-supplied storage context.
 7. The catalog head advances only after Fastly has independently verified —
-   by a direct R2 existence/length/hash check, not client-supplied metadata
-   alone — that its immutable R2 object was fully uploaded and matches.
+   by a direct R2 existence check, not client-supplied metadata alone — that
+   its immutable R2 object was actually uploaded. A subsequent content
+   mismatch (a truncated or corrupted upload that still exists) is instead
+   caught by AEAD authentication at decrypt time and handled through repair.
 8. Anonymous shares use independent encryption and server-side active registry
    state; owner credentials cannot be derived from a share.
 9. Semantic mutations replay after a `generation` conflict and stop after

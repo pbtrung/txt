@@ -97,14 +97,14 @@ The encrypted credential plaintext is versioned and contains:
   "version": 1,
   "user_handle": "base64url 32 bytes",
   "display_name": "owner display name",
-  "vault_master_key": "base64url 256 bytes",
+  "vault_master_key": "base64url 128 bytes",
   "vault_id": "vault_opaqueRandomValue",
   "owner_pk": "own_opaqueRandomValue",
   "db_prefix": "52-character owner R2 prefix"
 }
 ```
 
-`vault_master_key` is 256 bytes of key material used as the IKM for every
+`vault_master_key` is 128 bytes of key material used as the IKM for every
 encrypted KV Store entry and R2 object in this directory. `db_prefix` scopes
 owner EPUB, catalog, and shared R2 objects. The decrypted `vault_id`,
 `owner_pk`, and `db_prefix` must match the authenticated values or hashes
@@ -324,22 +324,30 @@ is a pointer to the current immutable library snapshot:
   "kind": "catalog-head",
   "schema_version": 1,
   "generation": 184,
-  "object_key": "{db_prefix}/catalog/184-random.blob",
-  "ciphertext_sha256": "base64url 32 bytes",
-  "ciphertext_bytes": 91842,
-  "book_count": 713,
+  "wrapped_object_key": "base64url canonical authenticated blob",
   "created_at": 1787356800000
 }
 ```
 
-The pointer metadata is not confidential. Its integrity and concurrency come
-from route authorization, the KV Store `generation` marker, and the snapshot
-AEAD/hash checks — **and**, before Fastly accepts a new pointer, a direct R2
-existence/length/hash check against the object it names (see
-[auth_api.md](auth_api.md) `/v1/vault/commit`). The `generation` field inside
-the value increases by one for every snapshot publication; it is a counter,
-not a timestamp, and is distinct from the KV Store `generation` marker on the
-`catalog-head` key itself.
+`wrapped_object_key` is the R2 object key, encrypted client-side with
+`vault_master_key` before it is sent to Fastly — see
+[cryptography.md](cryptography.md)'s catalog-head pointer envelope. Fastly
+never learns the plaintext object key from this entry; it only ever sees one
+transiently, as a request field, when it needs to perform the R2 existence
+check described below. Keeping it wrapped at rest means a KV Store leak, log
+capture, or mishandled administrative export cannot reveal `db_prefix` or the
+snapshot object-naming pattern through this entry.
+
+The `generation` field is plaintext — a bare counter carries no owner
+information worth hiding — and increases by one for every snapshot
+publication; it is a counter, not a timestamp, and is distinct from the KV
+Store `generation` marker on the `catalog-head` key itself. Its integrity and
+concurrency come from route authorization and the KV Store `generation`
+marker — **and**, before Fastly accepts a new pointer, a direct R2 existence
+check against the object the request names (see [auth_api.md](auth_api.md)
+`/v1/vault/commit`). There is no separate persisted length or hash to check
+against: the canonical blob's own AEAD authentication is what detects a
+corrupted or truncated object, at decrypt time on the next load.
 
 The empty library still has a valid head and an encrypted snapshot envelope
 whose `books` member is `[]`; absence of `catalog-head` is an initialization
@@ -362,11 +370,19 @@ Access: fixed Fastly share routes and offline administration only.
   "schema_version": 1,
   "share_id_hash": "base64url SHA-256",
   "object_path_hash": "base64url SHA-256",
+  "book_id": "book_K7c3...",
   "state": "active",
   "created_at": 1787356800000,
   "updated_at": 1787356800000
 }
 ```
+
+`book_id` is a plaintext back-reference to the owning book. It carries no
+confidential information — it is already returned in plaintext by every
+authenticated vault route — and it lets the administration CLI look up which
+book a share belongs to directly, instead of decrypting every book entry in
+the library to find a hash match during reconciliation (see
+[sharing.md](sharing.md)).
 
 Only `active` entries may produce a shared URL. The raw share identifier and
 R2 path are carried in the authenticated share grant, not stored in plaintext
@@ -441,10 +457,16 @@ it.
 
 ```text
 {db_prefix}/{txt_prefix}/{path}                       owner EPUB
-{db_prefix}/catalog/{generation}-{random}.blob        library snapshot
+{db_prefix}/catalog/{random}.blob                     library snapshot
 {db_prefix}/shared/{share_prefix}/{share_path}        shared EPUB copy
 {db_prefix}/exports/{timestamp}-{random}.blob         optional control/data export
 ```
+
+The snapshot's object name carries only a random component, not the
+generation number — the generation is already available, in plaintext, on
+the `catalog-head` entry itself, and repeating it in the object key would
+leak publish cadence to anyone who could see the wrapped pointer's ciphertext
+length change over time without buying anything else.
 
 Every object in this layout is immutable and uploaded with
 `If-None-Match: *`; the whole R2 object layout is immutable — reading state,

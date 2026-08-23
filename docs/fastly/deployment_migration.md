@@ -195,11 +195,15 @@ protocol replaces the ticket with the per-request possession proof in
 public-key-verification model, just with a different canonical message and no
 session ticket.
 
-Generate a new opaque `vault_id` and `owner_pk`, rename `db_master_key` to
-`vault_master_key` and `wrapped_umk` to `wrapped_user_master_key` without
-changing either's bytes, remove `db_path`, and re-encrypt the credential
-payload. Keep `sign_public_key`/`wrapped_sign_private_key` under the same
-field names — only their protocol usage changes, not their storage shape.
+Generate a new opaque `vault_id` and `owner_pk`, and a fresh random 128-byte
+`vault_master_key` — it replaces the legacy 256-byte `db_master_key`
+entirely rather than reusing its bytes, since every row is already being
+re-encrypted into the canonical blob format in the next step regardless, and
+`vault_master_key` no longer needs to satisfy SQLCipher's raw-key length
+rule. Rename `wrapped_umk` to `wrapped_user_master_key` without changing its
+bytes, remove `db_path`, and re-encrypt the credential payload. Keep
+`sign_public_key`/`wrapped_sign_private_key` under the same field names —
+only their protocol usage changes, not their storage shape.
 Compute `vault_binding_hash` from `vault_id`, `owner_pk`, and `db_prefix`.
 Create the target `owner` entry, but leave the migration marker incomplete so
 Fastly target routes remain unavailable.
@@ -239,9 +243,10 @@ accepting it; never overwrite unexplained target data.
 ### 4. Build the initial snapshot and reading index
 
 Build the sorted projection (catalog fields and shares from each book entry),
-compress/encrypt generation 1, upload it to a new immutable catalog path, then
-create `catalog-head` with a create-only write. Verify hash, length, count,
-decryption, schema, and local search fixtures.
+compress/encrypt generation 1, upload it to a new immutable random catalog
+path, wrap that path with the catalog-head pointer envelope, then create
+`catalog-head` with a create-only write. Verify decryption, schema, book
+count against the projection's own `books` array, and local search fixtures.
 
 Separately, build and write the initial reading index from every migrated
 reading-state entry with a create-only write. Verify only its own decryption,
@@ -250,9 +255,10 @@ published.
 
 ### 5. Transform server control state
 
-- Import every rqlite share row, preserving hashes, state, and timestamps.
-  Create one path reservation per row before its share entry, and fail on any
-  collision/mismatch.
+- Import every rqlite share row, preserving hashes, state, and timestamps, and
+  set each target share entry's plaintext `book_id` from the target `book_id`
+  its source row belongs to. Create one path reservation per row before its
+  share entry, and fail on any collision/mismatch.
 - Import unexpired rate-limit windows with counts/boundaries so cutover cannot
   reset abuse budgets. Expired windows may be omitted.
 - Create target schema markers and an incomplete encrypted migration report
@@ -278,7 +284,7 @@ The migrator must report equality for:
   reading index;
 - every share ID/key/prefix/path/state/time and shared R2 object, in the
   `book` entry;
-- server share hashes and states;
+- server share hashes, states, and `book_id` back-references;
 - initial snapshot and reading-index count/hash and projection equality; and
 - authentication of every canonical blob and agreement between each inner
   envelope and its outer entry's key and kind.
@@ -402,8 +408,8 @@ Do not remove rqlite, Northflank, or legacy `db_path` until all checks pass:
 - sharing and crash recovery pass [sharing.md](sharing.md), including current
   production-format links;
 - failed R2 upload never advances the head; a `/v1/vault/commit` whose head
-  object fails Fastly's R2 existence/length/hash check is rejected before any
-  KV Store write; a book-write-then-head-write failure after a successful
+  object fails Fastly's R2 existence check is rejected before any KV Store
+  write; a book-write-then-head-write failure after a successful
   upload leaves only an orphan; and repair rebuilds the snapshot and,
   independently, the reading index from authenticated entries through the
   fixed scan;
