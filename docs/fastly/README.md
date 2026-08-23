@@ -123,12 +123,16 @@ correctness:
   delete each cost one vault write instead of two;
 - reading position and bookmarks live in their own small KV entry plus a
   shared reading-index entry, separate from a book's identity/catalog entry,
-  so a relocation never rewrites content/catalog/share data. At a debounced
-  write every 15 seconds during continuous reading, a single owner's
-  realistic worst case is on the order of tens of thousands of Class A
-  operations per month — well inside the unpackaged free tier's 250,000, and
-  negligible against a packaged account's 20,000,000. Track it anyway (see
-  the metrics list in [catalog.md](catalog.md)) rather than assuming the
+  so a relocation never rewrites content/catalog/share data. The reading
+  index is updated only twice per reading session (once when it qualifies,
+  once on close, if a bookmark changed) — never on the 15-second CFI-only
+  debounce that dominates a session's writes, per
+  [data_model.md](data_model.md)'s `reading-index` entry — so a debounced
+  relocation costs exactly one Class A write, not two. Even so, a single
+  owner's realistic worst case is on the order of tens of thousands of Class
+  A operations per month — well inside the unpackaged free tier's 250,000,
+  and negligible against a packaged account's 20,000,000. Track it anyway
+  (see the metrics list in [catalog.md](catalog.md)) rather than assuming the
   estimate holds;
 - neither the possession proof nor the durable per-owner rate-limit counter —
   each itself a KV write — applies to the reading-state route. This is not a
@@ -137,7 +141,7 @@ correctness:
   book, revoke a share, corrupt `catalog-head`, or mint an R2 credential —
   its blast radius is self-contained and repairable — so it gets the same
   best-effort, in-instance flood control as read routes instead of a durable
-  counter write on top of its own two writes per update;
+  counter write on top of its own write(s) per update;
 - the durable, KV-backed rate limiter is applied only to routes whose abuse is
   not self-contained — `owner-keys`, `owner-r2-token`, `owner-vault-write`,
   `owner-vault-scan`, and `owner-share-write` — plus the unauthenticated

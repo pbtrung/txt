@@ -327,22 +327,27 @@ There is no general create/delete/upsert endpoint outside `/v1/vault/commit`.
 
 Purpose: write a book's reading position and bookmarks. The request contains
 `protocol_version`, the previous `generation` (omitted for the first write),
-and the complete next encrypted outer entry. No possession proof is required
-— see the table above. Fastly:
+the complete next encrypted outer entry, and — only when this call is the
+session's qualifying read or changes `bookmarks`, per
+[data_model.md](data_model.md)'s `reading-index` entry — an optional
+`reading_index` sub-object carrying the updated index entry and its previous
+`generation`. A routine CFI-only debounce write omits it entirely. No
+possession proof is required — see the table above. Fastly:
 
 1. validates the opaque book ID, entry kind/schema/size, and that
    `owner_pk`/`vault_id` (checked only as authenticated opaque values; Fastly
    does not decrypt) are present;
 2. performs a create-only write, or a conditional replace against the
    supplied `generation`; and
-3. on success, separately updates the `reading-index` entry the caller
-   supplies alongside it (also conditional on its own `generation`), in the
-   same request but as its own independent KV write — a reading-index
-   conflict is reported and retried independently of the reading-state write.
+3. only if `reading_index` is present in the request, separately updates the
+   `reading-index` entry the caller supplies (also conditional on its own
+   `generation`), as its own independent KV write — a reading-index conflict
+   is reported and retried independently of the reading-state write.
 
 A `409` on either write means another tab or device wrote first: fetch the
-current entry through `GET /v1/vault/reading/{book_id}`, reapply the same
-semantic mutation, and retry.
+current entry through `GET /v1/vault/reading/{book_id}` (and, if updating
+the index, `GET /v1/vault/reading-index`), reapply the same semantic
+mutation, and retry.
 
 ## `POST /v1/r2-token`
 

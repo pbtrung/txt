@@ -2,10 +2,9 @@
 
 All binary fields in JSON use unpadded base64url. Persisted timestamps use
 nonnegative Unix milliseconds; protocol fields explicitly named as Unix
-seconds remain seconds. KV Store keys
-and the identifiers embedded in them use ASCII opaque tokens and must not
-contain user metadata. Clients must reject unknown required schema versions
-rather than guessing.
+seconds remain seconds. KV Store keys and the identifiers embedded in them
+use ASCII opaque tokens and must not contain user metadata. Clients must
+reject unknown required schema versions rather than guessing.
 
 Every random identifier, nonce, or opaque token minted anywhere in this
 directory uses at least 256 bits (32 bytes) of CSPRNG output before encoding,
@@ -43,6 +42,64 @@ independent, individually conditional writes, described where it occurs. Each
 entry carries a `generation` marker maintained by KV Store itself, used the
 same way throughout this directory: read it, act only while it still matches
 on the next write, and treat a mismatch as a conflict to reload and retry.
+
+## The whole picture
+
+Every section below shows one entry's complete shape: its outer, plaintext KV
+fields, and — nested right below, not in a separate document — what its
+`ciphertext` field decrypts to. Every `vault`-store entry's decrypted envelope
+follows the exact same eight-field pattern (`purpose`, `envelope_version`,
+`container_role`, `owner_pk`, `vault_id`, `item_id`, `kind`, `record`);
+[cryptography.md](cryptography.md) defines that pattern and its validation
+rules once, generically, rather than repeating it per entry.
+
+```mermaid
+flowchart TB
+  subgraph LEGEND["How every vault ciphertext unwraps"]
+    L1["KV entry: plaintext fields + ciphertext"] --> L2["envelope: purpose / envelope_version /<br/>container_role / owner_pk / vault_id / item_id / kind"]
+    L2 --> L3["record: the entry's own fields, defined below"]
+  end
+
+  subgraph OC["KV Store: owner_control"]
+    OWNER["owner"]
+  end
+
+  subgraph VAULT["KV Store: vault"]
+    BOOK["book:{book_id}"]
+    READING["reading:{book_id}"]
+    RIDX["reading-index"]
+    HEAD["catalog-head"]
+  end
+
+  subgraph SC["KV Store: share_control"]
+    SHARE["share:{share_id_hash}"]
+    PATH["path:{object_path_hash}"]
+  end
+
+  subgraph RLC["KV Store: rate_limit_control"]
+    WINDOW["window:... (TTL)"]
+    NONCE["nonce:... (TTL)"]
+  end
+
+  subgraph R2S["R2: immutable objects"]
+    EPUB["owner EPUB"]
+    SNAP["library snapshot"]
+    SHCOPY["shared EPUB copy"]
+  end
+
+  BOOK ---|book_id| READING
+  READING -.->|projects bookmarks into| RIDX
+  BOOK -.->|projects catalog + shares into| SNAP
+  HEAD -->|decrypted object_key names| SNAP
+  BOOK -.->|content.path| EPUB
+  BOOK -.->|shares[].share_path| SHCOPY
+  SHARE -.->|book_id back-reference| BOOK
+```
+
+Solid arrows are same-book links; dashed arrows are a projection into a
+derived object or a plaintext reference to another store. `owner_control` and
+`rate_limit_control` have no outgoing arrows above because nothing else in
+the system references them.
 
 ## `owner_control`
 
@@ -168,43 +225,53 @@ ciphertext on every accepted mutation; the values must match after
 decryption. It aids diagnosis but does not replace the KV Store `generation`
 for concurrency.
 
-The canonical blob and its authenticated application envelope are defined in
-[cryptography.md](cryptography.md). The envelope's `record` member is:
+`ciphertext` decrypts to the vault entry envelope
+([cryptography.md](cryptography.md)):
 
 ```json
 {
-  "schema_version": 1,
-  "record_version": 5,
-  "book_id": "book_K7c3...",
-  "created_at": 1787184000000,
-  "content": {
-    "txt_key": "base64url 128 bytes",
-    "txt_prefix": "base64url 32 bytes",
-    "path": "base64url 32 bytes"
-  },
-  "catalog": {
-    "name": "original.epub",
-    "title": "Title",
-    "authors": ["Author"],
-    "subjects": ["Subject"],
-    "publisher": "Publisher"
-  },
-  "shares": [
-    {
-      "share_id": "base64url 32 bytes",
-      "share_content_key": "base64url 128 bytes",
-      "share_prefix": "base64url 32 bytes",
-      "share_path": "base64url 32 bytes",
-      "state": "active",
-      "created_at": 1787356800000,
-      "sequence": 2
-    }
-  ],
-  "next_share_sequence": 3
+  "purpose": "txt:book",
+  "envelope_version": 1,
+  "container_role": "vault",
+  "owner_pk": "own_opaqueRandomValue",
+  "vault_id": "vault_opaqueRandomValue",
+  "item_id": "book_K7c3...",
+  "kind": "book",
+  "record": {
+    "schema_version": 1,
+    "record_version": 5,
+    "book_id": "book_K7c3...",
+    "created_at": 1787184000000,
+    "content": {
+      "txt_key": "base64url 128 bytes",
+      "txt_prefix": "base64url 32 bytes",
+      "path": "base64url 32 bytes"
+    },
+    "catalog": {
+      "name": "original.epub",
+      "title": "Title",
+      "authors": ["Author"],
+      "subjects": ["Subject"],
+      "publisher": "Publisher"
+    },
+    "shares": [
+      {
+        "share_id": "base64url 32 bytes",
+        "share_content_key": "base64url 128 bytes",
+        "share_prefix": "base64url 32 bytes",
+        "share_path": "base64url 32 bytes",
+        "state": "active",
+        "created_at": 1787356800000,
+        "sequence": 2
+      }
+    ],
+    "next_share_sequence": 3
+  }
 }
 ```
 
-Validation rules:
+Validation rules for `record` (envelope-level binding checks are in
+[cryptography.md](cryptography.md)):
 
 - content and share locators are validated before interpolating an R2 key;
 - catalog fields keep the accepted types and limits used at ingestion, and
@@ -228,38 +295,46 @@ content locator, catalog metadata, or share state.
 ```json
 {
   "kind": "reading",
-  "envelope_version": 1,
+  "schema_version": 1,
   "book_id": "book_K7c3...",
   "ciphertext": "base64url canonical authenticated blob",
   "updated_at": 1787356800000
 }
 ```
 
-Decrypted canonical JSON record:
+`ciphertext` decrypts to the same vault entry envelope shape as a `book`
+entry ([cryptography.md](cryptography.md)), with `item_id` equal to
+`book_id` and `kind: "reading"`:
 
 ```json
 {
   "purpose": "txt:reading-state",
   "envelope_version": 1,
-  "vault_id": "vault_opaqueRandomValue",
+  "container_role": "vault",
   "owner_pk": "own_opaqueRandomValue",
-  "book_id": "book_K7c3...",
-  "last_accessed": 1787356800000,
-  "last_cfi": "epubcfi(...)",
-  "bookmarks": [
-    {
-      "cfi": "epubcfi(...)",
-      "page_number": 12,
-      "preview": "normalized UTF-8 preview",
-      "created_at": 1787356800000,
-      "sequence": 4
-    }
-  ],
-  "next_bookmark_sequence": 5
+  "vault_id": "vault_opaqueRandomValue",
+  "item_id": "book_K7c3...",
+  "kind": "reading",
+  "record": {
+    "book_id": "book_K7c3...",
+    "last_accessed": 1787356800000,
+    "last_cfi": "epubcfi(...)",
+    "bookmarks": [
+      {
+        "cfi": "epubcfi(...)",
+        "page_number": 12,
+        "preview": "normalized UTF-8 preview",
+        "created_at": 1787356800000,
+        "sequence": 4
+      }
+    ],
+    "next_bookmark_sequence": 5
+  }
 }
 ```
 
-Validation rules: `last_accessed` is `0` until the first qualifying read and
+Validation rules for `record`: `last_accessed` is `0` until the first
+qualifying read and
 otherwise Unix milliseconds; `last_cfi` may be `null`; bookmark uniqueness is
 `(book_id, cfi)`; previews are normalized and capped at 100 UTF-8 bytes; a
 book has at most 20 bookmarks, evicting the lowest `sequence` when the cap is
@@ -287,35 +362,41 @@ entry aggregates exactly that, and only that, across every book:
 ```json
 {
   "kind": "reading-index",
-  "envelope_version": 1,
+  "schema_version": 1,
   "ciphertext": "base64url canonical authenticated blob",
   "updated_at": 1787356800000
 }
 ```
 
-Decrypted canonical JSON:
+`ciphertext` decrypts to the same vault entry envelope shape, with
+`item_id: "reading-index"` and `kind: "reading-index"`:
 
 ```json
 {
   "purpose": "txt:reading-index",
   "envelope_version": 1,
-  "vault_id": "vault_opaqueRandomValue",
+  "container_role": "vault",
   "owner_pk": "own_opaqueRandomValue",
-  "entries": [
-    {
-      "book_id": "book_K7c3...",
-      "last_accessed": 1787356800000,
-      "bookmarks": [
-        {
-          "cfi": "epubcfi(...)",
-          "page_number": 12,
-          "preview": "normalized UTF-8 preview",
-          "created_at": 1787356800000,
-          "sequence": 4
-        }
-      ]
-    }
-  ]
+  "vault_id": "vault_opaqueRandomValue",
+  "item_id": "reading-index",
+  "kind": "reading-index",
+  "record": {
+    "entries": [
+      {
+        "book_id": "book_K7c3...",
+        "last_accessed": 1787356800000,
+        "bookmarks": [
+          {
+            "cfi": "epubcfi(...)",
+            "page_number": 12,
+            "preview": "normalized UTF-8 preview",
+            "created_at": 1787356800000,
+            "sequence": 4
+          }
+        ]
+      }
+    ]
+  }
 }
 ```
 
@@ -323,18 +404,31 @@ Each entry's `bookmarks` array is the same complete array carried in that
 book's `reading:{book_id}` entry — not a count. A bookmark-count badge is
 just `bookmarks.length`; a library-wide bookmarks view renders directly from
 this one entry instead of fetching every book's reading entry individually.
-`last_cfi` is deliberately excluded: it changes on every debounced relocation
-while `bookmarks` changes only when the owner explicitly adds or removes one,
-so folding `last_cfi` in here would mean rewriting every other book's
-bookmarks alongside it for no reason.
 
-A reading-state mutation updates both `reading:{book_id}` and this entry in
-two conditional writes. Like the catalog snapshot, the index is a **derived,
-rebuildable accelerator** — never the sole copy of anything. Unlike the
-catalog snapshot, it never has a "generation" field of its own inside the
-ciphertext or an owning pointer elsewhere: it is simply the latest
-successfully-written entry at that fixed key, rebuildable at any time by
-paging the fixed Fastly book scan and reading each book's own reading entry.
+`last_cfi` is deliberately excluded, and for a reason that is about write
+frequency, not read convenience: opening a book always fetches its own
+`reading:{book_id}` entry directly ([catalog.md](catalog.md)'s initial-load
+and open-book steps), so the index is never consulted to find a CFI, and
+excluding `last_cfi` costs nothing on the read side. `last_accessed` changes
+once per reading session (at the six-second qualification moment) and
+`bookmarks` changes only when the owner explicitly adds or removes one, but
+`last_cfi` changes on every 15-second debounced relocation while actively
+reading — by far the highest-frequency field in the entire system. Because
+this index is one entry covering every book, writing it at all means
+rewriting the complete `entries` array regardless of which book changed; a
+reading-state write therefore updates this index **only when `last_accessed`
+first qualifies for the session or `bookmarks` changes**, never on a
+CFI-only debounce. This is the specific Class A operation saving described
+in [README.md](README.md#capacity-target): most debounced writes during a
+reading session cost exactly one KV write (`reading:{book_id}` alone), not
+two.
+
+Like the catalog snapshot, the index is a **derived, rebuildable
+accelerator** — never the sole copy of anything. Unlike the catalog
+snapshot, it never has a "generation" field of its own inside the ciphertext
+or an owning pointer elsewhere: it is simply the latest successfully-written
+entry at that fixed key, rebuildable at any time by paging the fixed Fastly
+book scan and reading each book's own reading entry.
 
 ### `catalog-head` entry
 
@@ -351,15 +445,32 @@ is a pointer to the current immutable library snapshot:
 }
 ```
 
-Unlike a `book` or `reading` entry, whose `ciphertext` wraps the complete
-record, this entry's `ciphertext` wraps only the R2 object key — encrypted
-client-side with `vault_master_key` before it is sent to Fastly — see
-[cryptography.md](cryptography.md)'s catalog-head pointer envelope. Fastly
-never learns the plaintext object key from this entry; it only ever sees one
-transiently, as a request field, when it needs to perform the R2 existence
-check described below. Keeping it wrapped at rest means a KV Store leak, log
-capture, or mishandled administrative export cannot reveal `db_prefix` or the
-snapshot object-naming pattern through this entry.
+`ciphertext` decrypts to the same eight-field vault entry envelope as every
+other entry in this store ([cryptography.md](cryptography.md)), but unlike a
+`book` or `reading` entry, its `record` holds only the R2 object key, not a
+complete application record:
+
+```json
+{
+  "purpose": "txt:catalog-head-pointer",
+  "envelope_version": 1,
+  "container_role": "vault",
+  "owner_pk": "own_opaqueRandomValue",
+  "vault_id": "vault_opaqueRandomValue",
+  "item_id": "catalog-head",
+  "kind": "catalog-head-pointer",
+  "record": {
+    "object_key": "{db_prefix}/catalog/random"
+  }
+}
+```
+
+This is encrypted client-side with `vault_master_key` before it is sent to
+Fastly. Fastly never learns the plaintext object key from this entry; it
+only ever sees one transiently, as a request field, when it needs to perform
+the R2 existence check described below. Keeping it wrapped at rest means a
+KV Store leak, log capture, or mishandled administrative export cannot
+reveal `db_prefix` or the snapshot object-naming pattern through this entry.
 
 The `generation` field is plaintext — a bare counter carries no owner
 information worth hiding — and increases by one for every snapshot

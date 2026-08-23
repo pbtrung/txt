@@ -247,7 +247,8 @@ accepting it; never overwrite unexplained target data.
 
 Build the sorted projection (catalog fields and shares from each book entry),
 compress/encrypt generation 1, upload it to a new immutable random catalog
-path, wrap that path with the catalog-head pointer envelope, then create
+path, wrap that path in the `catalog-head-pointer` vault entry envelope
+(cryptography.md), then create
 `catalog-head` with a create-only write. Verify decryption, schema, book
 count against the projection's own `books` array, and local search fixtures.
 

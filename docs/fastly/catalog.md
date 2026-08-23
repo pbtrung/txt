@@ -108,16 +108,20 @@ small KV Store entry:
 Each entry's `bookmarks` is the complete array from that book's
 `reading:{book_id}` entry, not merely a count, so a library-wide "all
 bookmarks" view and per-book bookmark-count badges both render from this one
-entry — neither needs a per-book fetch. `last_cfi` stays out of the index: it
+entry — neither needs a per-book fetch. Opening a book always fetches its own
+`reading:{book_id}` entry directly (see Initial load below), so the index is
+never consulted for that; `last_cfi` therefore stays out of it entirely. It
 changes on every debounced relocation, while `bookmarks` changes only when
-the owner explicitly adds or removes one.
+the owner explicitly adds or removes one — so this index is overwritten only
+when a session's `last_accessed` first qualifies or `bookmarks` changes,
+never on a CFI-only debounce; see [data_model.md](data_model.md).
 
 It has no generation field inside the ciphertext and no relationship to
-`catalog-head`'s conditional-write protocol: it is simply overwritten in
-place, conditional on its own KV Store `generation`, whenever any book's
-reading state changes, and read as a plain fetch (no hash/length pinning
-beyond its own `generation`, since there is no separate authoritative pointer
-to compare against — the entry itself is the only copy of "current"). An
+`catalog-head`'s conditional-write protocol: it is conditionally overwritten
+in place on its own KV Store `generation`, and read as a plain fetch (no
+hash/length pinning beyond its own `generation`, since there is no separate
+authoritative pointer to compare against — the entry itself is the only copy
+of "current"). An
 entry referencing a `book_id` absent from the current snapshot is stale (the
 book was deleted after the index was last written) and is dropped
 client-side rather than treated as corruption; the reverse — a book present
@@ -131,7 +135,8 @@ After `/v1/keys` and local unwrapping:
 1. Call `GET /v1/vault/head`; Fastly reads the `catalog-head` entry from the
    `vault` store.
 2. Decrypt the head entry's `ciphertext` locally to obtain `object_key`
-   ([cryptography.md](cryptography.md)'s catalog-head pointer envelope).
+   ([cryptography.md](cryptography.md)'s `catalog-head-pointer` vault entry
+   envelope).
 3. Look up encrypted snapshot bytes in IndexedDB by `(object_key, generation)`.
 4. If absent, call `POST /v1/r2-token` (adding the possession proof) and GET
    the exact object with the temporary R2 credential. Do not list the bucket
@@ -183,17 +188,26 @@ carries.
 Reading position (`last_accessed`, `last_cfi`) and bookmark mutations
 **never** republish the snapshot — they write only through
 `PUT /v1/vault/reading/{book_id}`, which touches the per-book reading entry
-and the reading index and nothing else. This is the deliberate point of
-keeping them in their own entry: the highest-frequency mutation in the system
-never touches a book's merged entry, `catalog-head`, or a generation counter.
-Preserve current reader semantics for triggering those writes:
+and, only sometimes (see below), the reading index — and nothing else. This
+is the deliberate point of keeping them in their own entry: the
+highest-frequency mutation in the system never touches a book's merged
+entry, `catalog-head`, or a generation counter. Preserve current reader
+semantics for triggering those writes:
 
 - require six seconds of visible reading before a session qualifies;
 - retain candidate CFI only before qualification;
 - after qualification, write `last_accessed` and the latest CFI to the
-  reading-state entry and update the reading index;
-- debounce owner relocation by two seconds and write at most every 15 seconds;
-- perform the final qualified flush on hidden, book switch, or reader close;
+  reading-state entry, **and include the `reading_index` update** in that
+  same call — this is the one write per session that changes
+  `last_accessed`;
+- debounce owner relocation by two seconds and write at most every 15
+  seconds, writing only the reading-state entry — no index update, since
+  neither `last_accessed` nor `bookmarks` changed;
+- perform the final qualified flush on hidden, book switch, or reader close,
+  again without an index update unless a bookmark changed during the
+  session;
+- include the `reading_index` update on any call that adds or removes a
+  bookmark, regardless of qualification state;
 - keep a failed semantic mutation as visibly unsaved and retryable.
 
 ## Atomic publication protocol
@@ -215,7 +229,8 @@ For one snapshot-affecting mutation:
    Encrypt it with the canonical structured-payload procedure, choosing a new
    random `object_key`, as defined in [cryptography.md](cryptography.md).
 4. Upload it to that new random immutable R2 object with `If-None-Match: *`,
-   then wrap `object_key` alone with the catalog-head pointer envelope.
+   then wrap `object_key` alone in the `catalog-head-pointer` vault entry
+   envelope.
 5. Call `POST /v1/vault/commit` with the possession proof, the book
    operation, the head operation (carrying the wrapped pointer), and the
    plaintext `object_key` as a verification-only field. Fastly validates the

@@ -75,38 +75,41 @@ is not cryptographically tied to a KV Store, key, kind, or R2 object key. The
 application must enforce those bindings with authenticated inner envelope
 fields and strict comparisons after decryption.
 
-## Book payload envelope
+## Vault entry envelope
 
-Before Encrypt, serialize this object as canonical JSON UTF-8:
+Every `vault`-store entry's `ciphertext` field
+([data_model.md](data_model.md) shows the complete nested shape for each one)
+decrypts to exactly the same eight-field envelope:
 
 ```json
 {
-  "purpose": "txt:book",
+  "purpose": "txt:<kind>",
   "envelope_version": 1,
   "container_role": "vault",
   "owner_pk": "own_opaqueRandomValue",
-  "item_id": "book_K7c3...",
-  "kind": "book",
-  "record": {
-    "schema_version": 1,
-    "record_version": 5,
-    "book_id": "book_K7c3..."
-  }
+  "vault_id": "vault_opaqueRandomValue",
+  "item_id": "<the outer entry's own identifier>",
+  "kind": "<the outer entry's kind>",
+  "record": { "...": "the entry-specific fields, defined in data_model.md" }
 }
 ```
 
-`record` is the complete decrypted book entry defined in
-[data_model.md](data_model.md) — content locator, catalog metadata, and
-shares together. Encrypt the canonical bytes with `vault_master_key` via the
-structured-payload Encrypt procedure, then store its unpadded base64url
-encoding in `ciphertext`.
+| `kind`                 | `purpose`                  | `item_id`       |
+| ---------------------- | --------------------------- | ---------------- |
+| `book`                 | `txt:book`                 | the book ID      |
+| `reading`              | `txt:reading-state`        | the book ID      |
+| `reading-index`        | `txt:reading-index`        | `reading-index`  |
+| `catalog-head-pointer` | `txt:catalog-head-pointer` | `catalog-head`   |
+
+Encrypt the canonical bytes with `vault_master_key` via the structured-payload
+Encrypt procedure, then store its unpadded base64url encoding in `ciphertext`.
 
 After Decrypt, reject the entire entry unless:
 
 - `purpose` and `envelope_version` are exactly supported;
-- `container_role`, `owner_pk`, `item_id`, and `kind` equal the trusted outer
-  route/entry values;
-- `record.book_id` equals both `item_id` and the outer entry key; and
+- `container_role`, `owner_pk`, `vault_id`, `item_id`, and `kind` equal the
+  trusted outer route/entry values;
+- for `book` and `reading`, `record.book_id` equals `item_id`; and
 - canonical JSON parsing, duplicate-key rejection, and the full record schema
   all succeed.
 
@@ -116,42 +119,13 @@ binding failure is a hard corruption/security error. Never return partial
 plaintext, or retry a failed authentication with a different key or decoder,
 on a target entry.
 
-## Reading-state and reading-index envelopes
-
-These follow the same outer/inner binding pattern as the book envelope:
-
-```json
-{
-  "purpose": "txt:reading-state",
-  "envelope_version": 1,
-  "container_role": "vault",
-  "owner_pk": "own_opaqueRandomValue",
-  "vault_id": "vault_opaqueRandomValue",
-  "item_id": "book_K7c3...",
-  "kind": "reading",
-  "record": { "...": "the complete reading-state record from data_model.md" }
-}
-```
-
-```json
-{
-  "purpose": "txt:reading-index",
-  "envelope_version": 1,
-  "container_role": "vault",
-  "owner_pk": "own_opaqueRandomValue",
-  "vault_id": "vault_opaqueRandomValue",
-  "item_id": "reading-index",
-  "kind": "reading-index",
-  "record": { "...": "the complete reading-index record from data_model.md" }
-}
-```
-
-After Decrypt, require `purpose`/`envelope_version` to be supported,
-`container_role`/`owner_pk`/`vault_id` to equal the authenticated owner
-bootstrap, `kind`/`item_id` to equal the outer entry's key and kind, and —
-for the per-book record — `record.book_id` to equal `item_id`. Treat a
-mismatch as corruption, the same as any other binding failure in this
-document.
+`catalog-head-pointer` is the one kind worth calling out specially: its
+`record` is just `{ "object_key": "..." }`, Fastly stores the whole ciphertext
+opaquely and never decrypts it, and it only ever sees the plaintext
+`object_key` transiently, as a non-persisted request field, to perform the R2
+existence check in `/v1/vault/commit` ([auth_api.md](auth_api.md)). Keeping
+it wrapped at rest means a KV Store leak or mishandled administrative export
+cannot reveal `db_prefix` or the snapshot object-naming pattern.
 
 ## Library snapshot envelope
 
@@ -179,10 +153,11 @@ Publication performs this exact sequence:
    [docs/crypto.md](../crypto.md); and
 4. upload those bytes unchanged to the selected R2 key.
 
-Then, separately, wrap `object_key` alone (see the catalog-head pointer
-envelope below) for the `catalog-head` entry Fastly is about to write.
+Then, separately, wrap `object_key` alone in the `catalog-head-pointer`
+envelope (see Vault entry envelope above) for the `catalog-head` entry
+Fastly is about to write.
 
-On load, decrypt the wrapped pointer to obtain `object_key`, download that
+On load, decrypt that wrapped pointer to obtain `object_key`, download that
 object, and Decrypt it directly — there is no separate length or hash to
 check first; the canonical blob's AEAD authentication is the integrity check,
 and a failure here is treated as corruption requiring repair
@@ -191,38 +166,12 @@ this document. Then require all envelope identity fields to agree with the
 authenticated owner bootstrap and head before accepting `books`. Validate the
 snapshot schema, sort, unique IDs, and every projected record as defined in
 [catalog.md](catalog.md). Reading state and bookmarks are not part of this
-envelope — see the reading-index envelope above.
+envelope — they live in the `reading` and `reading-index` vault entries
+instead.
 
 Every book, reading, and snapshot entry/object is encrypted in this one
 canonical blob format from the moment it is written; no runtime route ever
 falls back to any other decoder.
-
-## Catalog-head pointer envelope
-
-The `catalog-head` entry's `ciphertext` field
-([data_model.md](data_model.md)) wraps only the R2 object key, not a complete
-record. It is its own small canonical structured-payload blob, built and
-decrypted entirely client-side:
-
-```json
-{
-  "purpose": "txt:catalog-head-pointer",
-  "envelope_version": 1,
-  "vault_id": "vault_opaqueRandomValue",
-  "owner_pk": "own_opaqueRandomValue",
-  "object_key": "{db_prefix}/catalog/random"
-}
-```
-
-Fastly stores this blob opaquely; it never decrypts it and never learns
-`object_key` from it. To perform the R2 existence check required before
-accepting a new pointer (see `/v1/vault/commit` in
-[auth_api.md](auth_api.md)), the client additionally sends the plaintext
-`object_key` as an ordinary, non-persisted request field alongside the
-wrapped blob — Fastly uses it once, for that one HEAD request, and never
-writes it to KV Store. After Decrypt, require `purpose`/`envelope_version` to
-be supported and `vault_id`/`owner_pk` to equal the authenticated owner
-bootstrap before trusting `object_key`.
 
 ## Administrative export envelope
 
