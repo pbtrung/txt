@@ -299,6 +299,7 @@ describe("ReaderScreen", () => {
     expect(pageNavigation?.parentElement).toHaveClass(
       "grid",
       "grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]",
+      "px-1",
     );
 
     await userEvent.click(fontSize);
@@ -353,7 +354,7 @@ describe("ReaderScreen", () => {
     renderScreen();
     const toolbar = screen.getByRole("toolbar", { name: "Reader actions" });
 
-    expect(toolbar).toHaveClass("reader-toolbar");
+    expect(toolbar).toHaveClass("reader-toolbar", "px-1");
     expect(toolbar.querySelectorAll("a, button")).toHaveLength(3);
     expect(screen.queryByRole("button", { name: "Display settings" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Two-column layout" })).toBeNull();

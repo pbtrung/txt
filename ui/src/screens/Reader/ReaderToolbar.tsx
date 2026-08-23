@@ -18,7 +18,7 @@ export function ReaderToolbar({
   return (
     <Toolbar
       aria-label="Reader actions"
-      className="reader-toolbar flex items-center gap-1 border-b border-base-300 py-1"
+      className="reader-toolbar flex items-center gap-1 border-b border-base-300 px-1 py-1"
     >
       {backHref && (
         <Link

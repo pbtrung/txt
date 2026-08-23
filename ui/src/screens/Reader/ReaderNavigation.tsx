@@ -48,7 +48,7 @@ export function ReaderNavigation({
   onRetry: () => void;
 }) {
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 border-t border-base-300 py-1">
+    <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 border-t border-base-300 px-1 py-1">
       <div className="flex justify-start">
         <FontSizeMenu value={fontPx} onChange={onFontSize} />
       </div>
