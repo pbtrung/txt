@@ -29,10 +29,10 @@ migration in [deployment_migration.md](deployment_migration.md) is complete.
   [Capacity target](#capacity-target).
 - Keep immutable encrypted EPUB and share objects in R2. Do not put EPUB bytes
   in KV Store. Fastly continues to broker narrowly scoped R2 access.
-- Replace the monolithic SQLCipher database object with an immutable,
-  Brotli-compressed, encrypted library snapshot in R2. KV Store stores only its
-  authenticated pointer. The snapshot provides one fast initial load and local
-  full-text search; encrypted KV Store book records are authoritative.
+- Store the library catalog as an immutable, Brotli-compressed, encrypted
+  snapshot in R2. KV Store holds only its authenticated pointer. The snapshot
+  provides one fast initial load and local full-text search; encrypted KV
+  Store book entries are authoritative.
 - Reading position and bookmarks are their own KV Store entry, separate from
   a book's identity/catalog entry, updated through a dedicated Fastly route.
   R2 holds only immutable content — EPUBs, library snapshots, shared copies,

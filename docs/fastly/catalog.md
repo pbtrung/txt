@@ -23,7 +23,7 @@ The decrypted canonical JSON is the authenticated catalog envelope from
   "vault_id": "vault_opaqueRandomValue",
   "owner_pk": "own_opaqueRandomValue",
   "generation": 184,
-  "object_key": "{db_prefix}/catalog/random.blob",
+  "object_key": "{db_prefix}/catalog/random",
   "snapshot_schema_version": 1,
   "books": []
 }
@@ -88,10 +88,29 @@ small KV Store entry:
   "vault_id": "vault_opaqueRandomValue",
   "owner_pk": "own_opaqueRandomValue",
   "entries": [
-    { "book_id": "book_K7c3...", "last_accessed": 1787356800000, "bookmark_count": 2 }
+    {
+      "book_id": "book_K7c3...",
+      "last_accessed": 1787356800000,
+      "bookmarks": [
+        {
+          "cfi": "epubcfi(...)",
+          "page_number": 12,
+          "preview": "normalized UTF-8 preview",
+          "created_at": 1787356800000,
+          "sequence": 4
+        }
+      ]
+    }
   ]
 }
 ```
+
+Each entry's `bookmarks` is the complete array from that book's
+`reading:{book_id}` entry, not merely a count, so a library-wide "all
+bookmarks" view and per-book bookmark-count badges both render from this one
+entry — neither needs a per-book fetch. `last_cfi` stays out of the index: it
+changes on every debounced relocation, while `bookmarks` changes only when
+the owner explicitly adds or removes one.
 
 It has no generation field inside the ciphertext and no relationship to
 `catalog-head`'s conditional-write protocol: it is simply overwritten in
@@ -111,7 +130,7 @@ After `/v1/keys` and local unwrapping:
 
 1. Call `GET /v1/vault/head`; Fastly reads the `catalog-head` entry from the
    `vault` store.
-2. Decrypt `wrapped_object_key` locally to obtain `object_key`
+2. Decrypt the head entry's `ciphertext` locally to obtain `object_key`
    ([cryptography.md](cryptography.md)'s catalog-head pointer envelope).
 3. Look up encrypted snapshot bytes in IndexedDB by `(object_key, generation)`.
 4. If absent, call `POST /v1/r2-token` (adding the possession proof) and GET
@@ -320,10 +339,12 @@ small requests instead of one-per-book. Record these metrics:
 - cache hit rate.
 
 Set an initial warning at 8 MiB encrypted snapshot or 10,000 books, and
-separately at 2 MiB for the reading index (bounded by book count, not by
-reading activity, since it holds one small fixed-size entry per book
-regardless of how often that book is read). Crossing either does not silently
-change the format. A future version may shard the snapshot by stable book-ID
-range behind a signed manifest, but must keep atomic manifest publication,
-local search, and complete rebuild semantics; the reading index can be
-sharded the same way without touching the snapshot protocol at all.
+separately at 8 MiB for the reading index too: each entry now carries its
+book's full bookmark array (up to the 20-bookmark cap, each with a
+100-UTF-8-byte preview), not a bare count, so the index is bounded by book
+count times the per-book bookmark cap rather than by one fixed-size field per
+book. Crossing either does not silently change the format. A future version
+may shard the snapshot by stable book-ID range behind a signed manifest, but
+must keep atomic manifest publication, local search, and complete rebuild
+semantics; the reading index can be sharded the same way without touching the
+snapshot protocol at all.

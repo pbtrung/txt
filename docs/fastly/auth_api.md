@@ -243,7 +243,7 @@ Request shape:
   },
   "head": {
     "generation": "current head generation",
-    "entry": "next catalog-head outer entry, with wrapped_object_key already wrapped client-side",
+    "entry": "next catalog-head outer entry, with ciphertext already wrapped client-side",
     "object_key": "plaintext R2 key, used once for verification, never persisted"
   }
 }
@@ -266,10 +266,11 @@ version silently, and requires:
   itself, not against anything the client merely claims.
 
 `head.object_key` is used for that one check and discarded; only
-`head.entry` (carrying the already-wrapped `wrapped_object_key`) is written
-to KV Store. Fastly cannot verify that the plaintext `object_key` it checked
-and the ciphertext inside `wrapped_object_key` agree, since it cannot decrypt
-the latter — that agreement is the browser's own responsibility, the same way
+`head.entry` (carrying the already-wrapped `ciphertext`) is written to KV
+Store. Fastly cannot verify that the plaintext `object_key` it checked and
+the object key encrypted inside `head.entry.ciphertext` agree, since it
+cannot decrypt the latter — that agreement is the browser's own
+responsibility, the same way
 the browser is responsible for every other field it encrypts before sending.
 A self-inconsistent commit from a malfunctioning client is not a security
 issue (no other principal's data or access is at risk), only a correctness
@@ -457,9 +458,8 @@ remains usable only for its short lifetime.
 - Health responses reveal no owner, KV Store, key, generation, or schema
   values.
 
-Readiness fails if rqlite/Northflank configuration is still required, a
-required KV Store binding is missing, or a client-supplied value can
-influence which store or key a route targets.
+Readiness fails if a required KV Store binding is missing, or a
+client-supplied value can influence which store or key a route targets.
 
 ## Rate limits
 
@@ -553,8 +553,7 @@ possession proofs is not a secret — it is read directly from the `owner`
 entry, not from Secret Store.
 
 Read only the secrets needed by the selected route and stay within Fastly
-Secret Store per-request limits. Remove `RQLITE_*`, Northflank, OpenResty, and
-operator-proxy/persistent-volume configuration after rollback retention.
+Secret Store per-request limits.
 
 Config and Secret Stores are versionless: an entry update affects linked
 active services without a Compute deploy. Keep reviewed desired values in

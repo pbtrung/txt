@@ -1,8 +1,8 @@
 # KV Store and R2 data model
 
 All binary fields in JSON use unpadded base64url. Persisted timestamps use
-nonnegative Unix milliseconds, matching the current SQL/rqlite representation;
-protocol fields explicitly named as Unix seconds remain seconds. KV Store keys
+nonnegative Unix milliseconds; protocol fields explicitly named as Unix
+seconds remain seconds. KV Store keys
 and the identifiers embedded in them use ASCII opaque tokens and must not
 contain user metadata. Clients must reject unknown required schema versions
 rather than guessing.
@@ -135,7 +135,7 @@ rate_limit_control: schema:rate-limit-control
 ```
 
 Migration marker keys follow the same convention, for example
-`migration:sqlcipher-import:v1`. Only the deployment migrator may write these
+`migration:initial-import:v1`. Only the deployment migrator may write these
 keys. Runtime startup fails readiness if the supported and stored versions
 differ in any store.
 
@@ -280,7 +280,8 @@ semantic mutation, and retry.
 ### `reading-index` entry
 
 The library screen needs one cheap way to sort by "recently read" and show
-bookmark counts for the whole library without a per-book fetch. One small
+bookmarks for the whole library — including a surface that lists every
+bookmark across every book — without a per-book fetch for each one. One small
 entry aggregates exactly that, and only that, across every book:
 
 ```json
@@ -301,10 +302,31 @@ Decrypted canonical JSON:
   "vault_id": "vault_opaqueRandomValue",
   "owner_pk": "own_opaqueRandomValue",
   "entries": [
-    { "book_id": "book_K7c3...", "last_accessed": 1787356800000, "bookmark_count": 2 }
+    {
+      "book_id": "book_K7c3...",
+      "last_accessed": 1787356800000,
+      "bookmarks": [
+        {
+          "cfi": "epubcfi(...)",
+          "page_number": 12,
+          "preview": "normalized UTF-8 preview",
+          "created_at": 1787356800000,
+          "sequence": 4
+        }
+      ]
+    }
   ]
 }
 ```
+
+Each entry's `bookmarks` array is the same complete array carried in that
+book's `reading:{book_id}` entry — not a count. A bookmark-count badge is
+just `bookmarks.length`; a library-wide bookmarks view renders directly from
+this one entry instead of fetching every book's reading entry individually.
+`last_cfi` is deliberately excluded: it changes on every debounced relocation
+while `bookmarks` changes only when the owner explicitly adds or removes one,
+so folding `last_cfi` in here would mean rewriting every other book's
+bookmarks alongside it for no reason.
 
 A reading-state mutation updates both `reading:{book_id}` and this entry in
 two conditional writes. Like the catalog snapshot, the index is a **derived,
@@ -324,13 +346,14 @@ is a pointer to the current immutable library snapshot:
   "kind": "catalog-head",
   "schema_version": 1,
   "generation": 184,
-  "wrapped_object_key": "base64url canonical authenticated blob",
+  "ciphertext": "base64url canonical authenticated blob",
   "created_at": 1787356800000
 }
 ```
 
-`wrapped_object_key` is the R2 object key, encrypted client-side with
-`vault_master_key` before it is sent to Fastly — see
+Unlike a `book` or `reading` entry, whose `ciphertext` wraps the complete
+record, this entry's `ciphertext` wraps only the R2 object key — encrypted
+client-side with `vault_master_key` before it is sent to Fastly — see
 [cryptography.md](cryptography.md)'s catalog-head pointer envelope. Fastly
 never learns the plaintext object key from this entry; it only ever sees one
 transiently, as a request field, when it needs to perform the R2 existence
@@ -457,7 +480,7 @@ it.
 
 ```text
 {db_prefix}/{txt_prefix}/{path}                       owner EPUB
-{db_prefix}/catalog/{random}.blob                     library snapshot
+{db_prefix}/catalog/{random}                          library snapshot
 {db_prefix}/shared/{share_prefix}/{share_path}        shared EPUB copy
 {db_prefix}/exports/{timestamp}-{random}.blob         optional control/data export
 ```
@@ -468,12 +491,9 @@ the `catalog-head` entry itself, and repeating it in the object key would
 leak publish cadence to anyone who could see the wrapped pointer's ciphertext
 length change over time without buying anything else.
 
-Every object in this layout is immutable and uploaded with
-`If-None-Match: *`; the whole R2 object layout is immutable — reading state,
-bookmarks, and every other mutable owner value live in KV Store, not R2. The
-former top-level `{db_path}` SQLCipher object and rqlite backup prefix are not
-part of this layout. Existing owner and share EPUB object paths stay
-unchanged during migration.
+Every object in this layout is immutable and uploaded with `If-None-Match: *`;
+reading state, bookmarks, and every other mutable owner value live in KV
+Store, not R2.
 
 The cleaner constructs the live set from all decrypted vault book entries, the
 current and retained catalog heads, active/deleting server share entries, and

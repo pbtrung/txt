@@ -7,8 +7,8 @@ Store entries and R2 objects use that existing contract. It does not define a
 second encryption format.
 
 This design uses the canonical versioned authenticated blob based on
-Ascon-Keccak AEAD and HKDF-SHA3-512 everywhere. It does **not** use SQLCipher
-value-level-encryption functions or encrypted virtual tables.
+Ascon-Keccak AEAD and HKDF-SHA3-512 everywhere — for every KV Store entry and
+every R2 object, with no other encryption mechanism anywhere in the system.
 
 ## Encryption map
 
@@ -23,9 +23,9 @@ value-level-encryption functions or encrypted virtual tables.
 | Owner EPUB and independently encrypted share     | Existing canonical blob with the per-object content key                                                 |
 | KV Store routing, version, and `catalog-head` data | Plaintext operational metadata protected by authorization and transport; no catalog text              |
 
-The remote SQLCipher `db_path` is removed, so SQLCipher page encryption no
-longer protects owner data at rest. Each KV Store entry and R2 object listed
-above is instead an independent canonical authenticated blob. KV Store and R2
+Every KV Store entry and R2 object listed above is an independent canonical
+authenticated blob providing its own confidentiality and integrity; there is
+no page-level database encryption anywhere in this design. KV Store and R2
 encryption at rest remain separate infrastructure controls and never replace
 client-side blob encryption.
 
@@ -64,9 +64,9 @@ encryption. Store the resulting blob:
 - as canonical unpadded base64url in a KV Store JSON `ciphertext` field; or
 - as the raw blob bytes in an immutable R2 object.
 
-Never prepend another private header, remove the canonical header, truncate the
-tag, substitute a SQLCipher envelope, or feed a precompressed structured JSON
-payload into a path that would compress it a second time.
+Never prepend another private header, remove the canonical header, truncate
+the tag, or feed a precompressed structured JSON payload into a path that
+would compress it a second time.
 
 The canonical blob format has no caller-supplied associated-data context. Its
 HKDF `info` is empty and its AEAD additional data is the stored blob header,
@@ -113,7 +113,8 @@ After Decrypt, reject the entire entry unless:
 These comparisons detect a blob copied to another key after it is decrypted;
 the blob format itself does not prevent that copy. An authentication or
 binding failure is a hard corruption/security error. Never return partial
-plaintext or retry with a different key or legacy decoder on a target entry.
+plaintext, or retry a failed authentication with a different key or decoder,
+on a target entry.
 
 ## Reading-state and reading-index envelopes
 
@@ -164,7 +165,7 @@ decrypted canonical JSON object is:
   "vault_id": "vault_opaqueRandomValue",
   "owner_pk": "own_opaqueRandomValue",
   "generation": 184,
-  "object_key": "{db_prefix}/catalog/random.blob",
+  "object_key": "{db_prefix}/catalog/random",
   "snapshot_schema_version": 1,
   "books": []
 }
@@ -192,16 +193,16 @@ snapshot schema, sort, unique IDs, and every projected record as defined in
 [catalog.md](catalog.md). Reading state and bookmarks are not part of this
 envelope — see the reading-index envelope above.
 
-Migration may decrypt the legacy SQLCipher database only inside the offline
-migration path. Every new book, reading, and snapshot entry/object is
-immediately encrypted in the canonical blob format; target runtime routes
-never fall back to a legacy decoder.
+Every book, reading, and snapshot entry/object is encrypted in this one
+canonical blob format from the moment it is written; no runtime route ever
+falls back to any other decoder.
 
 ## Catalog-head pointer envelope
 
-The `wrapped_object_key` field on the `catalog-head` entry
-([data_model.md](data_model.md)) is its own small canonical structured-payload
-blob, built and decrypted entirely client-side:
+The `catalog-head` entry's `ciphertext` field
+([data_model.md](data_model.md)) wraps only the R2 object key, not a complete
+record. It is its own small canonical structured-payload blob, built and
+decrypted entirely client-side:
 
 ```json
 {
@@ -209,7 +210,7 @@ blob, built and decrypted entirely client-side:
   "envelope_version": 1,
   "vault_id": "vault_opaqueRandomValue",
   "owner_pk": "own_opaqueRandomValue",
-  "object_key": "{db_prefix}/catalog/random.blob"
+  "object_key": "{db_prefix}/catalog/random"
 }
 ```
 

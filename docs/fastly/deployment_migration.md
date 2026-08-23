@@ -223,7 +223,10 @@ Wrap each with its authenticated application identity fields and Encrypt it
 using the canonical structured-payload blob from
 [docs/crypto.md](../crypto.md), with the corresponding envelope from
 [cryptography.md](cryptography.md). Build the initial reading index (§4) from
-every migrated reading-state entry in the same pass.
+every migrated reading-state entry in the same pass. Each row's existing
+owner EPUB and share object paths under `db_prefix` carry over unchanged; the
+migrator only ever adds new KV Store entries and a new catalog snapshot, and
+never rewrites or relocates existing R2 objects.
 
 New installations use random book IDs. Migration derives retry-stable opaque
 IDs from the full 256-bit output of:
