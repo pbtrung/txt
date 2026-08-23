@@ -87,13 +87,13 @@ flowchart TB
     SHCOPY["shared EPUB copy"]
   end
 
-  BOOK ---|book_id| READING
-  READING -.->|projects bookmarks into| RIDX
-  BOOK -.->|projects catalog + shares into| SNAP
-  HEAD -->|decrypted object_key names| SNAP
-  BOOK -.->|content.path| EPUB
-  BOOK -.->|shares[].share_path| SHCOPY
-  SHARE -.->|book_id back-reference| BOOK
+  BOOK ---|"book_id"| READING
+  READING -.->|"projects bookmarks into"| RIDX
+  BOOK -.->|"projects catalog + shares into"| SNAP
+  HEAD -->|"decrypted object_key names"| SNAP
+  BOOK -.->|"content path"| EPUB
+  BOOK -.->|"each share's path"| SHCOPY
+  SHARE -.->|"book_id back-reference"| BOOK
 ```
 
 Solid arrows are same-book links; dashed arrows are a projection into a
