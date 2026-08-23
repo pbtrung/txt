@@ -203,14 +203,57 @@ P-521 proof/ticket handling from [docs/crypto.md](../crypto.md) remains relevant
 only to rollback endpoints during their retention window and must not authorize
 a Fastly target route.
 
-## Shares, randomness, and encoding
+## Shared content
 
 Owner EPUBs and independent shared EPUB copies use the canonical blob procedure
 and their independent content keys exactly as defined in
-[docs/crypto.md](../crypto.md). The existing authenticated share-grant protocol
-and `SHARE_GRANT_KEY` remain an API capability format, not an owner-content
-encryption format. Share URLs keep content keys in the URL fragment; logs,
-analytics, referrers, and API bodies must never receive them.
+[docs/crypto.md](../crypto.md). A shared EPUB always has a fresh 128-byte
+`share_content_key`; never reuse or wrap the owner's `txt_key` for a recipient.
+
+## Share grants
+
+Share grants preserve the existing XChaCha20-Poly1305 capability format. This
+is an explicit exception to the canonical owner-content blob format: a grant
+encrypts only an exact R2 object path for the API and never encrypts EPUB bytes,
+book records, snapshots, or exports.
+
+Let `id_hash = SHA-256(raw_share_id)`. For every freshly minted grant, Fastly:
+
+1. generates a random 32-byte salt and random 24-byte XChaCha20 nonce;
+2. derives a per-grant key from the independent 32-byte `SHARE_GRANT_KEY` using
+   HKDF-SHA-256 with the salt and
+   `info = "txt:share-grant-key:v1" || id_hash`;
+3. encrypts the normalized exact R2 object path with XChaCha20-Poly1305 and
+   associated data `"txt:share-grant:v1" || id_hash`; and
+4. returns the canonical unpadded base64url encoding of:
+
+```text
+0x01 || salt_32 || nonce_24 || XChaCha20-Poly1305(ciphertext || tag)
+```
+
+Decryption requires the same raw share ID, so a grant cannot be replayed for a
+different capability. Fastly re-hashes the decrypted normalized path and
+requires equality with the active `share_control.object_path_hash` before
+signing an exact-object R2 URL. A deleting, absent, malformed, or mismatched
+share never produces a URL.
+
+Only Fastly and the offline recovery environment hold `SHARE_GRANT_KEY`. Keep
+the current envelope byte format and grant decoder so existing distributed
+links continue to work. A new grant for the same active share uses fresh salt
+and nonce. Key rotation uses a versioned read keyring while new grants use only
+the current write key.
+
+Use a libsodium-compatible XChaCha20-Poly1305 implementation. Do not substitute
+the 12-byte-nonce ChaCha20-Poly1305 variant. Reject an unknown version byte,
+noncanonical base64url, wrong salt/nonce/tag length, failed associated-data
+check, invalid normalized path, or an encoded grant over 512 bytes.
+
+Share URLs keep the `share_id`, grant, and `share_content_key` in the URL
+fragment. Logs, analytics, referrers, API bodies, and Cosmos records must never
+receive the content key. The owner may send the raw share ID and encrypted grant
+only to the bounded share endpoints defined in [auth_api.md](auth_api.md).
+
+## Randomness and encoding
 
 - Use only browser or operating-system cryptographic RNGs.
 - Generate Cosmos IDs with at least 128 bits of entropy.
