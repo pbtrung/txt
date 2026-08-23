@@ -414,6 +414,14 @@
   right: 0.75rem;
 }
 
+@media (max-width: 767.98px) {
+  .reader-drawer-overlay .reader-side-panel {
+    inset-inline: 0.75rem;
+    width: auto;
+    max-width: none;
+  }
+}
+
 .aria-drawer-overlay .aria-drawer-header {
   display: flex;
   align-items: center;
