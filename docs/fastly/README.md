@@ -81,6 +81,8 @@ apply CORS to in the first place.
   revocation, and anonymous reading behavior.
 - [deployment_migration.md](deployment_migration.md) defines provisioning,
   deployment, migration, CLI changes, rollback, operations, and verification.
+- [milestones.md](milestones.md) defines the build order and test plan for
+  implementing everything above, before cutover begins.
 
 ## Feature-parity requirement
 
