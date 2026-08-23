@@ -61,9 +61,10 @@ different from `catalog-head.book_count` make the entire snapshot invalid.
 
 ## Initial load
 
-After `/v1/keys`, local unwrapping, proof, and `/v1/data-token`:
+After `/v1/keys`, local unwrapping, and `/v1/r2-token`:
 
-1. Point-read `catalog-head` from the owner `vault` partition.
+1. Call `GET /v1/vault/head`; Fastly point-reads `catalog-head` from the fixed
+   owner `vault` partition.
 2. Look up encrypted snapshot bytes in IndexedDB by
    `(object_key, ciphertext_sha256, ciphertext_bytes)`.
 3. If absent, GET the exact object with temporary R2 credentials. Do not list
@@ -81,12 +82,12 @@ After `/v1/keys`, local unwrapping, proof, and `/v1/data-token`:
 
 Search behavior remains client-side, offline after unlock/cache load, and
 independent of Cosmos indexing. Queries, tokens, normalized terms, and result
-sets never reach Northflank or Cosmos.
+sets never reach Fastly or Cosmos.
 
-Opening a search result point-reads and decrypts the matching book aggregate,
-checks its `record_version` against the projection, and fetches the immutable
-EPUB. If versions differ, treat the row as authoritative and schedule snapshot
-repair rather than showing stale share or bookmark state.
+Opening a search result calls the fixed Fastly book route, decrypts the matching
+book aggregate, checks its `record_version` against the projection, and fetches
+the immutable EPUB. If versions differ, treat the row as authoritative and
+schedule snapshot repair rather than showing stale share or bookmark state.
 
 ## Which mutations republish the snapshot
 
@@ -117,14 +118,15 @@ uploaded.
 
 For one semantic mutation:
 
-1. Start from the currently decrypted book row and snapshot identified by their
-   Cosmos `_etag` values.
+1. Start from the currently decrypted book row and snapshot identified by the
+   opaque Cosmos `_etag` values returned through Fastly.
 2. Apply a pure, replayable mutation to produce the next book record and next
    snapshot array. Increment the book `record_version` and head `generation`.
 3. Canonically serialize, Brotli-compress, context-encrypt, and SHA-256 hash the
    new snapshot as defined in [cryptography.md](cryptography.md).
 4. Upload it to a new random immutable R2 object with `If-None-Match: *`.
-5. Submit a Cosmos transactional batch in the one owner partition containing:
+5. Call `POST /v1/vault/commit`. Fastly validates the outer items and submits a
+   Cosmos transactional batch in the one owner partition containing:
    - create/replace/delete of the affected book item, with its expected `_etag`
      where applicable; and
    - replace of `catalog-head` with its expected `_etag` and the new pointer.
@@ -145,13 +147,13 @@ remains valid.
 
 ## Conflict replay
 
-On 409/412 from the Cosmos batch:
+On `409 conflict` from Fastly after a Cosmos precondition failure:
 
-1. Point-read the winning `catalog-head` and affected book row.
+1. Refetch the winning `catalog-head` and affected book row through Fastly.
 2. Load and validate the winning snapshot.
 3. Reapply the original semantic mutation, not a byte-level overwrite.
 4. Upload a new generation to a new immutable key.
-5. retry the conditional batch.
+5. Retry the conditional batch.
 
 Match the current store's limit of three automatic attempts. Newly uploaded
 losing generations remain safe orphans for cleanup. After the third conflict,
@@ -162,10 +164,10 @@ Serialization is per browser tab. Cross-tab coordination uses the existing
 browser locking mechanism where supported, but `_etag` remains authoritative
 across tabs, devices, and CLI writers.
 
-For a `last_cfi`-only mutation, conditionally replace just the book item. A
-conflict still replays the semantic relocation against the latest decrypted
-book. It must not overwrite newer bookmarks, shares, catalog, or content
-fields.
+For a `last_cfi`-only mutation, call the conditional Fastly single-book replace
+route. A conflict still replays the semantic relocation against the latest
+decrypted book. It must not overwrite newer bookmarks, shares, catalog, or
+content fields.
 
 ## Cache and offline behavior
 
@@ -176,8 +178,8 @@ fields.
 - A cached snapshot may render while offline only after the user supplies the
   root key and it authenticates. Mutations remain queued/unsaved until both
   Cosmos and R2 are available.
-- Never let a service worker cache `/v1/keys`, `/v1/data-token`, grants, signed
-  URLs, or credential-bearing responses.
+- Never let a service worker cache `/v1/keys`, `/v1/r2-token`, any `/v1/vault/*`
+  route, grants, signed URLs, or credential-bearing responses.
 
 ## Repair and rebuild
 
@@ -185,7 +187,8 @@ If the current snapshot is missing, corrupt, fails AEAD/schema validation, or
 contains a row version mismatch:
 
 1. retain the failed head/object for diagnosis without exposing plaintext;
-2. query only the authenticated owner partition for `kind = "book"`;
+2. page through Fastly's fixed authenticated owner-book scan; never submit
+   client query text;
 3. decrypt and validate every row using its row-specific context;
 4. sort and build a fresh projection;
 5. publish a new immutable generation using an `_etag` condition on the head;
@@ -217,7 +220,7 @@ initial load and full-text indexing one request. Record these metrics:
 - book count, build time, download time, decrypt/decompress time, and index
   build time;
 - R2 publication failures/orphans;
-- Cosmos batch RU, conflicts, and 429 responses; and
+- Fastly-to-Cosmos request latency, batch RU, conflicts, and 429 responses; and
 - cache hit rate.
 
 Set an initial warning at 8 MiB encrypted or 10,000 books. Crossing it does not

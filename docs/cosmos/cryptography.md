@@ -1,19 +1,19 @@
 # Cryptography and record binding
 
-This design preserves the existing root-key, user-master-key, KEM, P-521,
-content-key, share-key, HKDF-SHA3-512, and authenticated blob primitives. It
+This design preserves the existing root-key, user-master-key, KEM, content-key,
+share-key, HKDF-SHA3-512, and authenticated blob primitives. It
 changes storage granularity and binding, not the user's root of trust.
 
 ## Where value encryption is used
 
-| Stored value | Encryption in the Cosmos target |
-| --- | --- |
-| `vault` book aggregate | SQLCipher VLE over canonical JSON BLOB with row context |
-| R2 library snapshot | Brotli first, then SQLCipher VLE over the compressed BLOB with snapshot context |
-| R2 administrative Cosmos export | Brotli first, then SQLCipher VLE with the independent export key and export-specific context |
-| Wrapped UMK/KEM/signing keys and encrypted owner credentials | Existing key-wrap/blob procedures; returned only through authenticated Northflank bootstrap |
-| Owner EPUB and independent shared EPUB | Existing versioned authenticated blob format with per-object content key |
-| Cosmos `catalog-head` and routing/version fields | Plaintext operational metadata protected by Cosmos authorization/transport; no user catalog text |
+| Stored value                                         | Encryption in the Cosmos target                                                                  |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `vault` book aggregate                               | SQLCipher VLE over canonical JSON BLOB with row context                                          |
+| R2 library snapshot                                  | Brotli first, then SQLCipher VLE over the compressed BLOB with snapshot context                  |
+| R2 administrative Cosmos export                      | Brotli first, then SQLCipher VLE with the independent export key and export-specific context     |
+| Wrapped UMK/KEM keys and encrypted owner credentials | Existing key-wrap/blob procedures; returned only through authenticated Fastly bootstrap          |
+| Owner EPUB and independent shared EPUB               | Existing versioned authenticated blob format with per-object content key                         |
+| Cosmos `catalog-head` and routing/version fields     | Plaintext operational metadata protected by Cosmos authorization/transport; no user catalog text |
 
 SQLCipher page encryption no longer protects a remote `db_path`, because that
 file is removed. VLE is the mandatory end-to-end encryption boundary for each
@@ -23,8 +23,8 @@ separate infrastructure control and never replaces VLE.
 ## Key hierarchy
 
 - `user_root_key` exists only in the local unlock file and browser memory.
-- The wrapped user master key, wrapped KEM private key, wrapped P-521 signing
-  private key, and encrypted credential payload are stored in server-only
+- The wrapped user master key, wrapped KEM private key, and encrypted credential
+  payload are stored in server-only
   `owner_control` and returned through authenticated `/v1/keys`.
 - The existing 256-byte `db_master_key` is preserved byte-for-byte and renamed
   `vault_master_key`. It encrypts Cosmos book values and derived library
@@ -32,9 +32,9 @@ separate infrastructure control and never replaces VLE.
 - Every EPUB retains its independent 128-byte `txt_key`.
 - Every public share retains its independent 128-byte `share_content_key` and
   independently encrypted R2 object.
-- Northflank stores only public keys, wrapped keys, encrypted payloads, hashes,
-  and server secrets. It never receives plaintext owner, vault, content, or
-  share keys.
+- Fastly and Cosmos store only public keys, wrapped keys, encrypted payloads,
+  hashes, and server secrets. They never receive plaintext owner, vault,
+  content, or share keys.
 
 The browser must zero or release plaintext key buffers on lock/logout as far as
 the runtime permits. Key material, VLE plaintext, and signed requests must not
@@ -101,8 +101,8 @@ SQLCipher encrypted virtual tables are not a remote Cosmos storage adapter and
 must not be treated as one. They bind cells to local SQL table/column/row
 identity and are useful only if the browser or migration CLI retains a
 temporary local SQLite representation. Cosmos persistence always uses the VLE
-record envelope and context above. No SQLCipher database file is mounted on
-Northflank in the target architecture.
+record envelope and context above. No SQLCipher database file is mounted in the
+Fastly target architecture.
 
 If a temporary encrypted virtual table is used, initialize its connection key
 with `sqlcipher_vle_key` before the first row access and rely on the module's
@@ -177,66 +177,23 @@ vault_binding_input =
 vault_binding_hash = SHA-512(vault_binding_input)
 ```
 
-Northflank stores the hash in `owner_control`. The encrypted credentials contain
+Fastly reads the hash from `owner_control`. The encrypted credentials contain
 all three plaintext values. After local decryption, the browser recomputes and
-constant-time compares the hash before requesting data credentials.
+constant-time compares the hash before accepting bootstrap data or requesting
+R2 credentials. Fastly independently compares the supplied binding to the
+stored hash before `/v1/r2-token` succeeds.
 
-## Owner ticket
+## Firebase and Cosmos authentication
 
-`/v1/keys` returns an authenticated, opaque version-3 owner ticket using the
-existing ticket primitive and `R2_TICKET_SECRET`. Its authenticated claims are:
+Firebase authenticates the owner to Fastly; it does not encrypt owner data and
+is not a Cosmos credential. Fastly validates the Firebase JWT as specified in
+[auth_api.md](auth_api.md), then signs the exact allowlisted Cosmos REST request
+with HMAC-SHA-256 and the account key held in Fastly Secret Store. That signature
+authenticates Fastly to Cosmos and is never returned to the browser.
 
-```json
-{
-  "version": 3,
-  "purpose": "owner-data-session",
-  "firebase_uid": "owner uid",
-  "user_handle_hash": "base64url",
-  "vault_binding_hash": "base64url",
-  "ticket_id": "base64url 32 random bytes",
-  "issued_at": 1787356800,
-  "expires_at": 1787443200
-}
-```
-
-The default lifetime remains 24 hours. The ticket is authorization state, not
-an encryption key. The client keeps it in memory and must reauthenticate with
-Firebase after expiry.
-
-## P-521 proof for data credentials
-
-For each `/v1/data-token` request, the browser creates a fresh 32-byte random
-`nonce` and includes `requested_at` as Unix seconds. It signs the SHA-512 digest
-of this canonical message with the locally unwrapped P-521 private key:
-
-```text
-"txt:data-token-proof:v3\0"
-u32be(len(ticket_id))         || ticket_id bytes
-u32be(len(user_handle))       || user_handle bytes
-u32be(len(vault_id))          || UTF-8(vault_id)
-u32be(len(owner_pk))          || UTF-8(owner_pk)
-u32be(len(db_prefix))         || UTF-8(db_prefix)
-u64be(requested_at)
-u32be(len(nonce))             || nonce bytes
-```
-
-Northflank must:
-
-1. authenticate and validate the ticket and purpose;
-2. require `requested_at` within 120 seconds of server time;
-3. recompute and compare user-handle and vault-binding hashes;
-4. verify the P-521 signature using the `owner_control` public key;
-5. create a server-only, TTL-backed replay marker for
-   `(ticket_id, SHA-256(nonce))` using create-only semantics; and
-6. mint credentials only if all checks succeed.
-
-A duplicate replay marker is a failed authorization, not an idempotent token
-response. Replay markers may live in `rate_limit_control` under a dedicated
-`proof-replay` partition and expire after five minutes.
-
-The version-2 proof that binds `db_path` must not authorize target Cosmos or R2
-credentials. During cutover, version 2 is accepted only by the explicitly
-legacy endpoint and is disabled when rollback data becomes read-only.
+Protocol version 3 issues no owner ticket and no Cosmos resource token. The
+legacy P-521 proof and ticket formats remain valid only on rollback endpoints
+during the retention window and must not authorize a Fastly target route.
 
 ## Share grants
 
@@ -254,9 +211,10 @@ analytics, referrers, and API bodies must not receive the share content key.
 
 - Use the browser or operating system cryptographic RNG only.
 - Generate new opaque Cosmos IDs with at least 128 bits of entropy.
-- Continue using 32-byte random share IDs, prefixes, paths, and proof nonces.
+- Continue using 32-byte random share IDs, prefixes, and paths.
 - Use unpadded base64url at JSON/API boundaries and reject non-canonical input.
 - Compare hashes, binding values, tags, and fixed-length identifiers in
   constant time where the runtime exposes a safe primitive.
-- Pin serialization, compression, VLE envelope, and proof versions in test
-  vectors shared by the browser, CLI, and Northflank verifier.
+- Pin serialization, compression, VLE envelope, Firebase-claim validation,
+  Cosmos request signing, and grant versions in tests shared by the browser,
+  CLI, and Fastly implementation where applicable.

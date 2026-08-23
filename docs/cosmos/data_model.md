@@ -26,16 +26,17 @@ owner data:         vault
 ```
 
 Production names may differ, but container roles and access boundaries must
-not be combined. In particular, no control item may be moved into `vault`,
-because the owner browser has `All` permission within its vault partition.
+not be combined. Fastly routes are bound to one container role each; no route
+may accept a client-selected container or generic resource link.
 
 ## `owner_control`
 
-Partition key: `/owner_pk`. Access: Northflank and offline administration only.
+Partition key: `/owner_pk`. Access: the fixed Fastly bootstrap route and offline
+administration only.
 
 ### Owner item
 
-There is exactly one owner item. Northflank point-reads it using configured
+There is exactly one owner item. Fastly point-reads it using configured
 `OWNER_PK` and ID `owner`.
 
 ```json
@@ -51,8 +52,6 @@ There is exactly one owner item. Northflank point-reads it using configured
   "wrapped_user_master_key": "base64url",
   "kem_public_key": "base64url",
   "wrapped_kem_private_key": "base64url",
-  "signing_public_key": "base64url P-521 public key",
-  "wrapped_signing_private_key": "base64url",
   "encrypted_credentials": "base64url",
   "created_at": 1787356800000,
   "updated_at": 1787356800000
@@ -77,11 +76,11 @@ The encrypted credential plaintext is versioned and contains:
 that reflects its new purpose. Migration preserves its bytes. `db_path` is
 removed entirely; `db_prefix` remains because it scopes owner EPUB, catalog,
 and shared R2 objects. The decrypted `vault_id`, `owner_pk`, and `db_prefix`
-must match the authenticated values or hashes returned by Northflank before the
+must match the authenticated values or hashes returned by Fastly before the
 browser accepts a session.
 
 The control item contains no plaintext `user_handle` or display name. It is
-safe for Northflank to return the wrapped/encrypted fields from `/v1/keys`, but
+safe for Fastly to return the wrapped/encrypted fields from `/v1/keys`, but
 the item itself remains server-only.
 
 ### Schema and migration items
@@ -104,14 +103,13 @@ readiness if the supported and stored versions differ.
 
 ## `vault`
 
-Partition key: `/owner_pk`. Access: Northflank/offline administration plus a
-short-lived native resource token with `All` permission scoped to exactly the
-configured owner partition.
+Partition key: `/owner_pk`. Access: fixed Fastly vault routes and offline
+administration only. No browser credential can access this container.
 
-All of the owner's items deliberately share one logical partition. This makes
-book-and-head publication transactional and makes the delegated permission
-unambiguous. Alert well before this partition approaches Cosmos's logical
-partition storage limit.
+All owner items deliberately share one logical partition. This makes
+book-and-head publication transactional and lets Fastly inject one immutable
+partition value for every route. Alert well before this partition approaches
+Cosmos's logical-partition storage limit.
 
 ### Encrypted book aggregate
 
@@ -225,7 +223,7 @@ immutable library snapshot:
 ```
 
 The pointer metadata is not confidential. Its integrity and concurrency come
-from authenticated Cosmos transport, scoped authorization, `_etag`, and the
+from authenticated Cosmos transport, route authorization, `_etag`, and the
 snapshot AEAD/hash checks. `generation` increases by one for every snapshot
 publication. It is not a timestamp.
 
@@ -234,9 +232,9 @@ The empty library still has a valid head and an encrypted snapshot containing
 
 ## `share_control`
 
-Partition key: `/registry_pk`. Access: Northflank and offline administration
-only. Every item uses `registry_pk: "shares"` so a registration or deletion can
-be a single-partition transactional batch.
+Partition key: `/registry_pk`. Access: fixed Fastly share routes and offline
+administration only. Every item uses `registry_pk: "shares"` so a registration
+or deletion can be a single-partition transactional batch.
 
 ### Share registry item
 
@@ -280,9 +278,9 @@ deletes R2, then transactionally removes both items.
 
 ## `rate_limit_control`
 
-Partition key: `/bucket_pk`. Access: Northflank and offline administration only.
-Configure container TTL and set a per-item `ttl` slightly longer than its
-window.
+Partition key: `/bucket_pk`. Access: Fastly limiter code and offline
+administration only. Configure container TTL and set a per-item `ttl` slightly
+longer than its window.
 
 ```json
 {
@@ -298,7 +296,7 @@ window.
 }
 ```
 
-Northflank consumes a slot atomically: create the item with count 1, or on
+Fastly consumes a slot atomically: create the item with count 1, or on
 conflict use conditional PATCH to increment only while `count < limit`. A
 concurrent precondition failure is treated as limited and may be retried only
 after a fresh point read. Cosmos unavailability fails closed for protected
