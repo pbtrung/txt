@@ -33,20 +33,30 @@ getting there with confidence.
 ## Milestone 1 — Cryptographic and KV Store primitives
 
 No user-facing behavior yet. This milestone produces the shared libraries
-every later route is built on, in both the Fastly Compute runtime and the
-browser/CLI.
+every later route is built on. Note the split: the canonical blob format
+(Ascon-Keccak AEAD, HKDF-SHA3-512) is implemented only in the browser and
+CLI, since Fastly never holds `vault_master_key` and never decrypts a vault
+entry; Fastly's own cryptographic surface is the narrower, different set of
+primitives in [deployment_migration.md](deployment_migration.md#rust-toolchain-and-cryptographic-crates).
 
 **Builds:**
 
-- The canonical structured-payload Encrypt/Decrypt procedure from
-  [docs/crypto.md](../crypto.md), and the vault entry envelope wrap/unwrap
-  from [cryptography.md](cryptography.md) built on top of it, as one shared
-  module reused by every route — never reimplemented per route.
-- A KV Store access wrapper exposing exactly four operations to route code:
-  point read, create-only write, conditional write (`if_generation_match`),
-  and conditional delete — plus the bounded prefix-list operation used only
-  by the vault scan. No route-level code touches the raw KV Store binding
-  directly.
+- Browser/CLI: the canonical structured-payload Encrypt/Decrypt procedure
+  from [docs/crypto.md](../crypto.md), and the vault entry envelope
+  wrap/unwrap from [cryptography.md](cryptography.md) built on top of it, as
+  one shared module reused everywhere an entry is built or opened — never
+  reimplemented per call site.
+- Fastly Compute: the Rust service skeleton on `wasm32-wasip1`, with the
+  pure-Rust crate selected and pinned for each of Fastly's own primitives —
+  JWT verification, P-521 signature verification, SHA-256/512, HMAC, HKDF,
+  XChaCha20-Poly1305, and SigV4 — each wired up but not yet exercised by a
+  real route, and the `cargo audit`/`cargo deny` allowlist entry for the
+  `rsa` crate's open advisory recorded and justified.
+- Fastly Compute: a KV Store access wrapper exposing exactly four operations
+  to route code: point read, create-only write, conditional write
+  (`if_generation_match`), and conditional delete — plus the bounded
+  prefix-list operation used only by the vault scan. No route-level code
+  touches the raw KV Store binding directly.
 - A Fastly Compute service skeleton: the four KV Store resource links, a
   Config Store, a Secret Store, health endpoints returning static
   not-ready responses, and a CI pipeline that builds and runs the local
@@ -59,7 +69,7 @@ browser/CLI.
 
 - Cross-runtime test vectors for the canonical blob format: known
   plaintext/IKM/salt in, known ciphertext out, and the reverse, run against
-  every runtime that implements Encrypt/Decrypt.
+  every runtime that implements Encrypt/Decrypt (browser and CLI only).
 - Envelope binding-failure vectors: tampered ciphertext, wrong
   `container_role`, wrong `owner_pk`, wrong `vault_id`, `item_id` that
   doesn't match the outer key, `record.book_id` that doesn't match
@@ -68,6 +78,11 @@ browser/CLI.
 - Property tests generating random opaque identifiers and asserting the
   256-bit entropy floor and canonical base64url encoding round-trip exactly,
   including the one documented exception (XChaCha20's 24-byte nonce).
+- Confirm every selected Rust crate actually builds for `wasm32-wasip1` and
+  runs correctly under the local Compute development server — a plain
+  `cargo test` on the host target is not sufficient evidence, since a
+  crate's WASI behavior (especially anything touching `getrandom`) can
+  differ from its native-target behavior.
 - KV Store fake conformance tests: create-only write against an existing key
   fails; conditional write against a stale generation fails; a TTL'd entry
   is treated as absent after expiry; list respects prefix and pagination
@@ -76,10 +91,11 @@ browser/CLI.
 - Fuzz the canonical blob decoder with truncated, bit-flipped, and
   oversized inputs; every case must fail closed, never partially decode.
 
-**Exit criteria:** cross-runtime vectors agree in all three runtimes; the KV
-Store fake's conformance suite passes identically against the fake and a
-real staging store; the Compute skeleton deploys to staging and answers
-`/health/live`.
+**Exit criteria:** the canonical-blob cross-runtime vectors agree between
+the browser and CLI; every selected Fastly-side crate builds and runs
+correctly for `wasm32-wasip1`; the KV Store fake's conformance suite passes
+identically against the fake and a real staging store; the Compute skeleton
+deploys to staging and answers `/health/live`.
 
 ## Milestone 2 — Owner bootstrap, Firebase auth, possession proof
 

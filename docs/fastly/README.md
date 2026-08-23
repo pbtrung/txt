@@ -11,6 +11,11 @@ migration in [deployment_migration.md](deployment_migration.md) is complete.
   sends its Firebase ID token to Fastly Compute, and Fastly Compute reads and
   writes Fastly KV Store directly through the platform's native KV Store
   binding — not through a signed HTTP call to an external database.
+- Build the Fastly Compute service in Rust, targeting `wasm32-wasip1`, using
+  only pure-Rust cryptographic crates — no crate that links a C or assembly
+  library (`ring`, OpenSSL, BoringSSL, `aws-lc-rs`). See
+  [deployment_migration.md](deployment_migration.md#rust-toolchain-and-cryptographic-crates)
+  for the exact crate per primitive and the caveats that go with each.
 - Make Fastly Compute the only runtime principal that touches KV Store.
   Browsers and anonymous share recipients never receive a KV Store handle and
   never call it directly; there is no such thing as a browser-facing KV Store

@@ -31,8 +31,8 @@ Store name or an enumerated key.
 
 ## Fastly Compute target deployment
 
-Create a JavaScript or Rust Fastly Compute service implementing
-[auth_api.md](auth_api.md). Configure:
+Create a Rust Fastly Compute service implementing [auth_api.md](auth_api.md).
+Configure:
 
 - the exact public API domain with TLS;
 - the four KV Store resource links described above;
@@ -51,14 +51,61 @@ service, persistent volume, and native rqlite backup job only after rollback
 retention. Fastly is request-driven and stateless; durable rate limits and
 share state live in KV Store, not Compute memory.
 
-Pin the Fastly SDK/runtime and compatible JWT implementation. Test Firebase key
-rotation/unknown-`kid` behavior, KV Store conditional-write and create-only
-behavior under concurrent requests, response size limits, and secret-read
-failures in both the local Compute server and a staging Fastly service. The
-local server is not a perfect simulation of production edge routing and does
-not reproduce cross-point-of-presence KV Store propagation delay, so
-production-like staging is a release requirement — see the write-time
-consistency assumption in [architecture.md](architecture.md).
+### Rust toolchain and cryptographic crates
+
+Target `wasm32-wasip1` — the toolchain Fastly's Compute Rust SDK (the
+`fastly` crate) requires as of Fastly CLI 11 and later; the older
+`wasm32-wasi` target is deprecated. Pin the exact Rust toolchain, the `fastly`
+crate version, and every crate below in the release manifest alongside the
+other pinned versions this directory already requires.
+
+Use only pure-Rust crates for cryptography — nothing that links a C or
+assembly library (`ring`, OpenSSL, BoringSSL, `aws-lc-rs`), since those either
+fail to cross-compile for `wasm32-wasip1` at all or require a WASI-aware C
+toolchain this design has no other reason to carry. Fastly itself never holds
+`vault_master_key` and never decrypts a book/reading/reading-index/catalog-head
+ciphertext, so it never needs Ascon-Keccak AEAD, HKDF-SHA3-512, or the
+ML-KEM-1024+X448 composite KEM — those run only in the browser and CLI, using
+their own existing implementations, unaffected by this section. Fastly's own
+cryptographic surface is narrower:
+
+| Operation                                                    | Crate                                                         |
+| -------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Firebase RS256 JWT verification                               | `jwt-simple` with `default-features = false, features = ["pure-rust"]` — its own documentation states it builds for and is compatible with Fastly Compute out of the box |
+| Possession-proof ECDSA P-521 signature verification            | `p521` (RustCrypto) with its `ecdsa` feature, called directly — not through a JWT library, since the proof is a raw signature over a canonical byte string, not a JWT |
+| `vault_binding_hash` recomputation (SHA-512)                   | `sha2` (RustCrypto)                                            |
+| `share_id_hash`/`object_path_hash` computation (SHA-256)       | `sha2` (RustCrypto)                                            |
+| Rate-limit subject hashing (HMAC-SHA-256 with `RATE_LIMIT_KEY`) | `hmac` + `sha2` (RustCrypto)                                    |
+| Share-grant per-grant key derivation (HKDF-SHA-256)             | `hkdf` + `sha2` (RustCrypto)                                    |
+| Share-grant encrypt/decrypt (XChaCha20-Poly1305)                | `chacha20poly1305`, `XChaCha20Poly1305` type (RustCrypto)       |
+| Signing Fastly's own R2 API calls (existence checks, deletes, minting temporary credentials) | `aws-sigv4` — prefer this over a hand-rolled signer; the existing OpenResty gateway's own hand-rolled Lua SigV4 module has no test coverage and previously shipped a live canonical-request bug, a mistake not worth repeating here |
+
+The only place Fastly generates randomness is the fresh 32-byte salt and
+24-byte nonce for each newly minted share grant
+([cryptography.md](cryptography.md)); `getrandom` supports `wasm32-wasip1`
+natively via the WASI `random_get` import, with no extra configuration.
+Firebase and possession-proof verification are pure computation and need no
+RNG at all.
+
+Two caveats to track, not reasons to avoid these crates: the `rsa` crate
+(pulled in by `jwt-simple`'s pure-Rust build for RS256) carries an open,
+unpatched RustSec advisory (Marvin Attack, RUSTSEC-2023-0071) — it is a
+private-key timing leak during signing/decryption, and Fastly only ever
+verifies with the public key, so the vulnerable code path is not exercised
+here, but `cargo audit`/`cargo deny` will still flag it, so add an explicit,
+documented allowlist entry rather than let it surface as a surprise CI
+failure; and the RustCrypto AEAD/elliptic-curve crates (`ascon-aead` if the
+browser/CLI side ever needs a Rust implementation, `p521`) are, as of this
+writing, not independently security-audited — acceptable for a personal,
+single-owner deployment, but worth revisiting if that ever changes.
+
+Test Firebase key rotation/unknown-`kid` behavior, KV Store conditional-write
+and create-only behavior under concurrent requests, response size limits, and
+secret-read failures in both the local Compute server and a staging Fastly
+service. The local server is not a perfect simulation of production edge
+routing and does not reproduce cross-point-of-presence KV Store propagation
+delay, so production-like staging is a release requirement — see the
+write-time consistency assumption in [architecture.md](architecture.md).
 
 Readiness performs only fixed schema-marker reads. It validates supported
 schema markers across all four KV Stores. An absent or mismatched owner entry
