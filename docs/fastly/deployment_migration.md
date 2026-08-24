@@ -358,8 +358,19 @@ published.
   collision/mismatch.
 - Convert each unexpired legacy rate-limit window into that many occupied
   create-only admission slots with the original boundary, capped at the new
-  ring size, so cutover cannot reset abuse budgets. Do not import a mutable
-  counter entry. Expired windows may be omitted.
+  ring size, so cutover cannot reset abuse budgets — but only for a scope
+  whose legacy and target subject/window actually match: `owner-keys` is
+  60/hour in both, and legacy `owner-share-write` (120/hour) maps exactly onto
+  the target's 20-per-10-minute ring. `owner-r2-token` has no target scope to
+  convert into: it is superseded by the differently shaped `owner-r2-url`, an
+  owner-subject/hourly scope like every other owner route rather than a ticket
+  budget, so it starts cutover with an empty ring. `public-share-url` also
+  starts empty: the legacy limit keys by requester IP address per minute,
+  while the target ring keys by `share_id_hash` per hour, and no meaningful
+  window conversion exists between those two dimensions. `owner-vault-scan`
+  and `owner-vault-write` are new routes with no legacy analog at all, so
+  nothing is imported for them either. Do not import a mutable counter entry.
+  Expired windows may be omitted.
 - Create target schema markers and an incomplete encrypted migration report
   with source hashes/ETags, entry counts, generation, and opaque errors.
 

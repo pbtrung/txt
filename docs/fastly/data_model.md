@@ -595,11 +595,12 @@ with 503, never by treating it as an occupied slot.
 
 Only after Firebase verification may an owner UID select its slot ring. For
 the public route, validate the cryptographic capability before selecting that
-share's own durable ring, keyed by `share_id_hash` rather than by a requester
-IP or one counter shared across every share. A best-effort in-instance IP
-counter runs before expensive authentication. Keeping IP out of durable ring
-identity prevents rotating-source multiplication of Class A writes — minting a
-new `share_id` still requires the authenticated, already-rate-limited
+share's own durable ring: its `subject_hash` is
+`HMAC-SHA-256(RATE_LIMIT_KEY, share_id_hash)`, never a requester IP or one
+digest shared across every share. A best-effort in-instance IP counter runs
+before expensive authentication. Keeping IP out of durable ring identity
+prevents rotating-source multiplication of Class A writes — minting a new
+`share_id` still requires the authenticated, already-rate-limited
 `owner-share-write` route — and keying by share rather than a single
 deployment-wide counter confines an abused share's cost, and any resulting
 429s, to that one share instead of denying redemption of every other active

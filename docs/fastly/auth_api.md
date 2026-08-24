@@ -646,16 +646,17 @@ two routes specifically, in exchange for not spending a KV Store write on
 every point read and every 15-second reading-position debounce; every other
 route's abuse potential is high enough that this tradeoff is not offered.
 
-Subject identifiers for owner durable limits are HMAC-SHA-256 with
-`RATE_LIMIT_KEY`; store only the digest in `rate_limit_control`, and only ever
-compute it from a **verified** Firebase subject. The anonymous share route
-selects its ring only after capability validation succeeds, keyed by the
-share's own `share_id_hash` — not by requester IP and not by one deployment-
-wide label — so a rotating-IP attacker still cannot multiply durable rings and
-exhaust free-tier Class A writes: minting a new `share_id` requires the
-authenticated, already-rate-limited `owner-share-write` route, not an
-anonymous request, and exhausting one share's ring cannot deny redemption of
-any other active share. Its cheap
+Subject identifiers for every durable limit, owner and public alike, are
+HMAC-SHA-256 with `RATE_LIMIT_KEY`; store only the digest as `subject_hash` in
+`rate_limit_control`. An owner-subject digest is computed only from a
+**verified** Firebase subject. The anonymous share route selects its ring only
+after capability validation succeeds, computing its digest as
+`HMAC-SHA-256(RATE_LIMIT_KEY, share_id_hash)` — not from requester IP and not
+from one deployment-wide label — so a rotating-IP attacker still cannot
+multiply durable rings and exhaust free-tier Class A writes: minting a new
+`share_id` requires the authenticated, already-rate-limited
+`owner-share-write` route, not an anonymous request, and exhausting one
+share's ring cannot deny redemption of any other active share. Its cheap
 pre-verification flood control remains in-instance and IP-keyed. Each accepted
 durable call consumes one create-only slot. Start probing at
 a CSPRNG-random slot and walk at most the configured `N` slots; cache a known

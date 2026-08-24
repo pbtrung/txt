@@ -27,8 +27,9 @@ getting there with confidence.
   must be traceable to at least one automated test by the end of Milestone 5.
   Tag those tests (e.g. a comment or test-name convention referencing
   `invariant-7`) so a reviewer can check the mapping without re-deriving it.
-- Milestones 4 and 5's sharing work do not depend on each other and may run
-  in parallel once Milestone 3 is done; everything else is sequential.
+- Milestones 4 and 5 do not depend on each other — Milestone 4's reading-state
+  work and Milestone 5's sharing work touch disjoint routes and entries — and
+  may run in parallel once Milestone 3 is done; everything else is sequential.
 
 ## Milestone 1 — Cryptographic and KV Store primitives
 
