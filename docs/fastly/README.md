@@ -116,15 +116,16 @@ apply CORS to in the first place.
 
 Fastly meters KV Store operations in three classes: **Class A** (`SetKey`,
 plus one-time `CreateStore`/`UpdateStore` calls), **Class B** (`GetKey`), and
-free (`DeleteKey`). This design targets only Fastly's free/unpackaged account
-limit of 250,000 Class A and 5,000,000 Class B operations per month; it does
-not assume a paid package or paid edge rate limiter. Confirm the current free-
-tier entitlement and per-key/per-store limits immediately before
-provisioning against Fastly's own
-[edge data storage product page](https://docs.fastly.com/products/edge-data-storage)
-and [compute resource limits page](https://docs.fastly.com/products/compute-resource-limits).
-Class A writes are the tight free-tier budget, so this design
-treats every avoidable `SetKey` call as a cost, not merely a latency concern.
+free (`DeleteKey`). As checked in August 2026, Fastly's published free tier
+includes 1 GB of KV storage, 100,000 Class A operations, and 1,000,000 Class B
+operations per month. It also lists 10 million Compute requests, 100 million
+Compute vCPU milliseconds, and 10 Secret Store entries. This design assumes
+only those free allowances and no paid edge rate limiter. Recheck the current
+[Fastly pricing page](https://www.fastly.com/pricing) and
+[compute resource limits](https://docs.fastly.com/products/compute-resource-limits)
+immediately before provisioning. Class A writes are the tight budget, so this
+design treats every avoidable `SetKey` call as a cost, not merely a latency
+concern.
 
 Every design decision in this directory that could plausibly touch KV Store on
 a hot path is evaluated against that Class A budget, not merely against
@@ -139,11 +140,10 @@ correctness:
   changes — never on the 15-second CFI-only
   debounce that dominates a session's writes, per
   [data_model.md](data_model.md)'s `reading-index` entry — so a debounced
-  relocation costs exactly one Class A write, not two. Even so, a single
-  owner's realistic worst case is on the order of tens of thousands of Class
-  A operations per month — well inside the free tier's 250,000. Track it anyway
-  (see the metrics list in [catalog.md](catalog.md)) rather than assuming the
-  estimate holds;
+  relocation costs exactly one Class A write, not two. A heavily used reader
+  can still consume tens of thousands of Class A operations per month, a
+  material fraction of the 100,000-operation allowance. Measure it rather than
+  assuming it fits (see the metrics list in [catalog.md](catalog.md));
 - neither the possession proof nor a durable per-owner admission slot — each
   itself a KV write — applies to a conditional replacement of an existing
   reading-state entry. Fastly first confirms the book exists, and the blast
@@ -160,15 +160,20 @@ correctness:
   best-effort in-instance counter instead of a durable KV write per call — see
   [auth_api.md](auth_api.md) for the admission algorithm and its bounded-probe
   tradeoff;
-- anonymous share exchange uses one deployment-global 60/hour durable ring
+- anonymous share exchange uses one deployment-global 20/hour durable ring
   after an in-instance IP prefilter and capability validation. A rotating-IP
   attacker therefore cannot create a new durable ring per source or drive
-  more than 43,200 accepted-slot writes in a 30-day month;
+  more than 14,400 accepted-slot writes in a 30-day month;
 - the fixed vault scan used for repair remains deliberately far more
   rate-limited than point reads, since it is the one route whose cost scales
   with library size rather than being O(1).
 
-A sustained approach toward the Class A monthly ceiling, KV Store size
-approaching its storage allowance, or an unexpected volume of `SetKey` calls
-from a route that should be read-only is an explicit signal to revisit
-capacity or route design rather than to weaken authorization or encryption.
+The route limits are short-window abuse controls, not proof that their combined
+monthly maxima fit the free tier. Operate against an internal cutoff of 80,000
+Class A operations per month, leaving 20% headroom for delayed telemetry,
+repair, and provisioning. A scheduled budget monitor sets the deployment
+read-only before that cutoff; routes that would create a nonce, slot, or
+application entry fail closed until the next billing window. Approaching that
+cutoff, the KV storage allowance, or an unexpected write volume is a signal to
+reduce activity or revise the design, never to incur a paid feature silently
+or weaken security.

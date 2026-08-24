@@ -122,6 +122,9 @@ gives every later route its authorization primitives.
   bounded probing, TTL, and full-ring negative cache) and the
   subject-independent pre-verification flood control. Do not depend on
   Fastly Edge Rate Limiting.
+- The Class A budget monitor and fail-closed `MUTATIONS_DISABLED` gate, tested
+  against the allowance on Fastly's current pricing page rather than a legacy
+  trial limit.
 - The administrative bootstrap path used only by `--init-owner`: this is
   the one place that needs broader-than-route access to KV Store, since no
   owner exists yet for a Firebase-authenticated route to gate on. Build and

@@ -9,8 +9,8 @@ encrypted KV Store entries.
 
 Before applying infrastructure, recheck Fastly's current free-tier KV Store
 limits and entitlements against
-[the edge data storage product page](https://docs.fastly.com/products/edge-data-storage)
-and [the compute resource limits page](https://docs.fastly.com/products/compute-resource-limits).
+[the pricing page](https://www.fastly.com/pricing) and
+[the compute resource limits page](https://docs.fastly.com/products/compute-resource-limits).
 Create four KV Stores matching [data_model.md](data_model.md):
 
 1. `owner_control`;
@@ -40,7 +40,8 @@ Configure:
 - the four KV Store resource links described above;
 - a static Firebase certificate backend and R2 control/data backends as needed;
 - a linked Config Store for nonsecret IDs, origins, route limits, API versions,
-  and backend names, with desired values tracked in deployment configuration;
+  backend names, and the budget monitor's fail-closed `MUTATIONS_DISABLED`
+  flag, with desired values tracked in deployment configuration;
 - a linked Secret Store for R2 signing credentials, the share-grant key, and the
   rate-limit subject-hashing key — there is no KV Store account key to store,
   since KV Store
@@ -444,6 +445,11 @@ Alert on attempted generic/client-selected store or key access, repeated
 owner/binding failures, an unexpected volume of `SetKey` calls from a route
 that should be read-only, snapshot head/object mismatch, sustained
 throttling, stale backups, or control/data schema mismatch.
+
+Alert at 50% and 70% of the current monthly Class A free allowance. Before the
+internal 80% cutoff, the scheduled monitor must set `MUTATIONS_DISABLED`; do
+not rely on overage billing as a limiter. Test the flag and the monitor's
+fail-closed behavior before cutover.
 
 ## Key and secret rotation
 

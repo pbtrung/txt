@@ -597,8 +597,9 @@ Only after Firebase verification may an owner UID select its slot ring. For
 the public route, validate the cryptographic capability before touching the
 single deployment-global durable ring. A best-effort in-instance IP counter
 runs before expensive authentication. Keeping IP out of durable ring identity
-prevents rotating-source multiplication of Class A writes; the global cap is
-the free-tier cost boundary.
+prevents rotating-source multiplication of Class A writes; the global cap
+reserves a bounded portion of the free-tier budget rather than claiming the
+entire monthly allowance.
 
 This store also holds single-use possession-proof nonces (`kind: "nonce"`),
 created with a create-only write and a TTL just past the proof's expiry; see

@@ -609,7 +609,7 @@ self-contained. They use the create-only slot ledger in
 | `owner-vault-scan`    | 12 per hour      | owner UID            |
 | `owner-vault-write`   | 100 per 10 min   | owner UID            |
 | `owner-share-write`   | 20 per 10 min    | owner UID            |
-| `public-share-url`    | 60 per hour      | deployment-global    |
+| `public-share-url`    | 20 per hour      | deployment-global    |
 
 `owner-vault-scan` covers `GET /v1/vault/books?cursor=...` only — the
 administrative repair/verification scan — deliberately far tighter than
@@ -655,6 +655,15 @@ slot is an ordinary collision, but a provider error is 503. The configured
 maximum is 120 slots per ring so an attacker cannot force an unbounded scan.
 This free-tier mechanism requires no Fastly Edge Rate Limiting product.
 
+These short windows limit bursts; their combined maxima are not a monthly cost
+budget. Before any route that could create a nonce, admission slot, or
+application entry, Fastly also checks the operator-controlled
+`MUTATIONS_DISABLED` Config Store flag. The scheduled budget monitor sets it
+before the internal Class A cutoff in [README.md](README.md#capacity-target).
+When set, or when the flag cannot be read, those routes return `503` without a
+KV write; ciphertext-only routes that require no durable admission remain
+readable.
+
 ## Error contract
 
 | HTTP | Code                  | Meaning                                                                            |
@@ -686,6 +695,7 @@ KV_STORE_SHARE_CONTROL
 KV_STORE_RATE_LIMIT_CONTROL
 R2_ENDPOINT
 R2_BUCKET
+MUTATIONS_DISABLED
 ```
 
 The four `KV_STORE_*` values name the KV Store resources linked to this
