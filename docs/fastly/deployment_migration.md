@@ -295,14 +295,27 @@ schema and constraints. For each `txt` row, produce two target objects:
   bookmarks with uniqueness, optional page number, preview, creation time, and
   the 20-item cap.
 
+Neither the legacy `txt` row nor the legacy `txt_shares` row stores an object
+ETag, length, or ciphertext SHA-256 for its R2 object — those fields are new
+in the target schema. Before wrapping each `{book_id}` entry, the migrator
+performs one direct, uncached R2 `HEAD` of the owner EPUB object and, for
+every share whose legacy `state` is `active` or `deleting` (a `creating` share
+may still have no object and keeps null metadata exactly as a fresh
+create-only share would), one direct `HEAD` of that share's object, populating
+`content.object_etag`/`object_length`/`ciphertext_sha256` and each such
+share's own copies from the verified response. Abort that row rather than
+guess if a required object is missing or a legacy `active`/`deleting` share's
+object cannot be HEADed.
+
 Wrap each with its authenticated application identity fields and Encrypt it
 using the canonical structured-payload blob from
 [docs/crypto.md](../crypto.md), with the corresponding envelope from
 [cryptography.md](cryptography.md). Build the initial reading index (§4) from
 every migrated reading-state entry in the same pass. Each row's existing
 owner EPUB and share object paths under `db_prefix` carry over unchanged; the
-migrator only adds new KV Store entries and creates one random catalog object;
-it never rewrites or relocates existing EPUB/share R2 objects.
+migrator only reads them to populate integrity metadata and adds new KV Store
+entries and one random catalog object; it never rewrites or relocates existing
+EPUB/share R2 objects.
 
 New installations use random book IDs. Migration derives retry-stable opaque
 IDs from the full 256-bit output of:
@@ -325,8 +338,8 @@ Build the sorted projection (catalog fields and shares from each book entry),
 choose a fresh random `{db_prefix}/catalog/{random}` key, include it in the
 snapshot envelope, and upload with `If-None-Match: *` plus required integrity
 metadata. Direct-HEAD it, encrypt that same key in the
-`catalog-head-pointer` envelope, then create schema-v2 `catalog-head` with the
-exact ETag/length/digest/logical generation and ciphertext. Verify both
+`catalog-head-pointer` envelope, then create schema-version-1 `catalog-head`
+with the exact ETag/length/digest/logical generation and ciphertext. Verify both
 decryptions, random inner-key equality, head bindings, projection, and search.
 
 Separately, build and write the initial reading index from every migrated
@@ -338,8 +351,11 @@ published.
 
 - Import every rqlite share row, preserving hashes, state, and timestamps, and
   set each target share entry's plaintext `book_id` from the target `book_id`
-  its source row belongs to. Create one path reservation per row before its
-  share entry, and fail on any collision/mismatch.
+  its source row belongs to. Populate each `active`/`deleting` row's
+  `object_etag`/`object_length`/`ciphertext_sha256` from the verified R2
+  `HEAD` performed in §3, never left null or guessed here. Create one path
+  reservation per row before its share entry, and fail on any
+  collision/mismatch.
 - Convert each unexpired legacy rate-limit window into that many occupied
   create-only admission slots with the original boundary, capped at the new
   ring size, so cutover cannot reset abuse budgets. Do not import a mutable
@@ -366,8 +382,9 @@ The migrator must report equality for:
 - every bookmark CFI/page/preview/time and per-book count, and every
   last-access/last-CFI value, in the migrated reading entry and the published
   reading index;
-- every share ID/key/prefix/path/state/time and shared R2 object, including its
-  ETag/length/ciphertext SHA-256, in the `book` entry;
+- every share ID/key/prefix/path/state/time and shared R2 object, including an
+  `active`/`deleting` share's ETag/length/ciphertext SHA-256 populated by
+  verified reads during migration, in the `book` entry;
 - server share hashes, states, `book_id` back-references, and object integrity
   metadata;
 - initial snapshot and reading-index count/hash and projection equality; and

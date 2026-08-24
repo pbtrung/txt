@@ -444,7 +444,7 @@ operational metadata needed for conditional publication and integrity checks:
 ```json
 {
   "kind": "catalog-head",
-  "schema_version": 2,
+  "schema_version": 1,
   "snapshot_generation": 184,
   "object_etag": "opaque R2 validator",
   "object_length": 12345,

@@ -546,9 +546,10 @@ Purpose: revoke one owner share and delete its R2 object.
 
 The Firebase-authenticated request contains protocol version, the possession
 proof bound to this exact request, raw share ID, and rendered share prefix/
-path. Fastly derives the binding from `owner_control`, reconstructs the exact
-key, recomputes every hash, and requires agreement with every present control
-entry. It:
+path. Fastly consumes `owner-share-write` — the same scope as
+`POST /v1/shares` — derives the binding from `owner_control`, reconstructs the
+exact key, recomputes every hash, and requires agreement with every present
+control entry. It:
 
 1. conditionally changes `active` to `deleting`, or resumes an exact
    already-`deleting` entry;
@@ -618,10 +619,12 @@ repeatedly triggering it is a realistic way to burn the Class A/B budget
 documented in [README.md](README.md).
 
 `owner-vault-write` covers book/head commits, head-only repair, first-create
-or delete reading writes, and reading-index writes. For proof-bearing calls,
-Fastly validates Firebase and the proof, successfully claims the replay nonce,
-and only then probes the durable admission ring. A rejected replay therefore
-cannot exhaust the owner's write budget.
+or delete reading writes, and reading-index writes. `owner-share-write` covers
+both `POST /v1/shares` and `DELETE /v1/shares` — registration and revocation
+share one scope. For proof-bearing calls, Fastly validates Firebase and the
+proof, successfully claims the replay nonce, and only then probes the durable
+admission ring. A rejected replay therefore cannot exhaust the owner's write
+budget.
 
 Two route scopes are deliberately **not** covered by a durable slot ledger and
 instead rely on a best-effort in-instance request counter that resets whenever
