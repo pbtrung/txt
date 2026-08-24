@@ -162,12 +162,13 @@ as a searchable list. Reading state and sharing are still out of scope.
 
 **Builds:**
 
-- `vault` key `book_{book_id}` CRUD via `POST /v1/vault/commit` and
-  `PUT /v1/vault/books/{book_id}`, including the fixed write order (book,
-  then R2 existence check, then head) and the two-step content-replacement
-  sequence.
-- `catalog-head`, the R2 snapshot publish/verify path, and the vault scan
-  (`GET /v1/vault/books?cursor=...`) used for repair.
+- `vault` key `{book_id}` (the ID already starts with `book_`) CRUD only through
+  `POST /v1/vault/commit`, including direct R2 HEAD before any KV write,
+  idempotent book/head postconditions, and create-new-first content
+  replacement.
+- The plaintext `catalog-head`, single fixed overwrite-only R2 snapshot,
+  `PUT /v1/vault/head` repair path, and fixed vault scan
+  (`GET /v1/vault/books?cursor=...`).
 - The browser's snapshot loader, local search index builder, and conflict
   replay (up to three attempts).
 - CLI `--ingest`, calling the same Fastly routes as the browser — the CLI
@@ -176,36 +177,34 @@ as a searchable list. Reading state and sharing are still out of scope.
 
 **Test plan:**
 
-- Ordered-commit fault injection: kill the process (or inject a forced
-  failure) between the book write and the head write, and confirm the
-  system self-heals on the next commit via the documented
-  `record_version`-vs-projection mismatch path, with no data loss and no
-  manual intervention required.
+- Ordered-commit fault injection at every boundary: before/after conditional
+  R2 overwrite, direct HEAD, book write, and head write. Retry the identical
+  semantic request and confirm exact postconditions prevent double apply;
+  an R2/head ETag mismatch must stop ordinary publication and enter repair.
 - Conflict-replay test: two simulated clients race a commit against the
   same book; the loser must reload, reapply its original semantic mutation
   (not a byte-level overwrite), and succeed within the three-attempt cap; a
   fourth forced conflict must surface as a recoverable "unsaved" state, not
   a crash or silent data loss.
-- Content-replacement test: simulate a crash between the delete and the
-  create half of a content-replacement sequence; assert the library ends up
-  either missing the title or showing the old content — never both, never
-  neither, never corrupted.
-- Repair test: corrupt/delete the current snapshot object directly in a
-  staging R2 bucket, trigger repair, and confirm the rebuilt snapshot is
-  byte-identical in content (not necessarily bytes) to what the live book
-  entries project.
-- Validation fuzzing on every catalog field (name/title/authors/subjects/
-  publisher) and on content/share locator grammar, confirming rejection
-  before any R2 key is constructed from unvalidated input.
+- Content-replacement test: simulate a crash between create-new and
+  delete-old; assert the library contains old only, both, or new only — never
+  neither — and never transfers old CFIs/bookmarks to the new ID.
+- Repair test: corrupt/delete the fixed snapshot object and separately leave
+  its ETag ahead of `catalog-head`; confirm repair overwrites that same key,
+  advances the head, creates no generation object, and exactly projects live
+  book entries.
+- Client/CLI validation fuzzing on every decrypted catalog field and
+  content/share locator. Fastly fuzzing covers only outer ID/kind/schema/size
+  and must demonstrate that it never claims to inspect ciphertext fields.
 - Scale test: ingest 10,000 synthetic books into staging and measure actual
   snapshot size, Class A/B operation counts, and load latency against the
   estimates in [README.md](README.md#capacity-target) and
   [catalog.md](catalog.md)'s scale guardrails — this is the test that turns
   those numbers from an estimate into a verified fact.
-- Security: attempt to submit a `book` operation with a client-chosen
-  `owner_pk`, a `container_role` other than `vault`, or a raw KV Store key
-  in place of a book ID; every case must be rejected before any KV Store or
-  R2 call.
+- Security: reject a raw KV key or mismatched outer item ID before storage
+  access; after decryption, client/CLI tests reject a client-chosen `owner_pk`
+  or wrong `container_role`. Confirm no content-locator-only bypass route
+  exists.
 
 **Exit criteria:** the 10,000-book scale test's measured numbers are within
 the documented estimates (or the estimates are corrected before moving on);
@@ -219,13 +218,14 @@ to getting the write-frequency accounting right.
 
 **Builds:**
 
-- `PUT`/`GET /v1/vault/reading/{book_id}` and `GET /v1/vault/reading-index`,
-  including the best-effort in-instance flood control that deliberately
-  skips the possession proof and durable rate limiter on this route.
+- `PUT`/`GET` and `DELETE /v1/vault/reading/{book_id}` plus
+  `PUT`/`GET /v1/vault/reading-index`. Every reading PUT point-reads its book
+  first; only existing-entry conditional replacement is proof/durable-limiter
+  exempt. First create, delete, and all index writes require proof.
 - The client-side qualification/debounce state machine (six-second
   qualification, two-second debounce, 15-second maximum write interval,
-  final flush on hide/switch/close) and the logic that decides whether a
-  given write also includes a `reading_index` update.
+  final flush on hide/switch/close) and the logic that writes authoritative
+  reading state first, then independently writes the index when needed.
 - Reading-index rebuild and orphaned-reading-entry cleanup in the
   administration CLI.
 
@@ -248,18 +248,18 @@ to getting the write-frequency accounting right.
   100-byte cap, and that `page_number` is never treated as identity.
 - Conflict tests: concurrent devices racing a reading-state write, and
   separately racing a reading-index write, each resolved by fetch-reapply-
-  retry independent of the other.
+  retry independent of the other. An index failure must not replay an
+  already-successful reading-state write.
 - Repair tests: delete the reading index directly in staging, rebuild it
   from the vault scan, and confirm every book's bookmarks and
   `last_accessed` match its authoritative `reading_{book_id}` entry; delete
   a book without its reading entry being cleaned up first, and confirm the
   cleanup step finds and removes the resulting orphan.
-- Security/self-containment tests confirming the deliberate exemptions: a
-  request with no possession proof succeeds on this route and only this
-  route (outside the routes already exempted for being reads); a flood of
-  requests from many simulated Compute instances demonstrates the
-  best-effort limiter's known weakness (documented, not silently assumed
-  fixed) without being able to touch any other route's data.
+- Security/self-containment tests: a proofless conditional replacement
+  succeeds only for an existing reading entry whose book exists. Proofless
+  first create, absent book, and every index write fail. A multi-instance
+  flood demonstrates the existing-entry best-effort limiter's documented
+  weakness without touching other routes or creating arbitrary keys.
 - Soak test: multiple simulated devices reading concurrently for a
   simulated multi-day period, watching for any drift between the
   reading-index and the per-book reading entries it was derived from.
@@ -306,7 +306,7 @@ before cutover begins.
   limiting holds under concurrent requests distributed across simulated
   points of presence.
 - Backup/restore drill: export, wipe a scratch account's KV Stores, restore,
-  and diff every entry and every snapshot reference against the
+  and diff every entry plus the fixed snapshot/head state against the
   pre-wipe state. This drill must succeed before the milestone closes, not
   merely be scheduled.
 - Full dry-run migration against a staging copy of real production-shaped

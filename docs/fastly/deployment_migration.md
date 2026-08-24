@@ -7,8 +7,8 @@ encrypted KV Store entries.
 
 ## Provision KV Store
 
-Before applying infrastructure, recheck Fastly's current KV Store limits and
-package entitlements against
+Before applying infrastructure, recheck Fastly's current free-tier KV Store
+limits and entitlements against
 [the edge data storage product page](https://docs.fastly.com/products/edge-data-storage)
 and [the compute resource limits page](https://docs.fastly.com/products/compute-resource-limits).
 Create four KV Stores matching [data_model.md](data_model.md):
@@ -18,9 +18,11 @@ Create four KV Stores matching [data_model.md](data_model.md):
 3. `rate_limit_control`; and
 4. `vault`.
 
-Confirm the account's package tier includes at least four KV Stores and enough
-combined storage and Class A/B operation headroom for the capacity target in
-[README.md](README.md#capacity-target) before creating them. Link all four to
+Confirm the free-tier account includes at least four KV Stores and enough
+combined storage and Class A/B headroom for the capacity target in
+[README.md](README.md#capacity-target) before creating them. If it does not,
+stop and revise the deployment; do not merge trust roles or assume a paid
+upgrade. Link all four to
 the Compute service as resources; a Compute service reads and writes a linked
 KV Store through its native binding, with no separate network endpoint,
 region choice, or firewall allowlist to configure.
@@ -65,9 +67,9 @@ or assembly library (`ring`, OpenSSL, BoringSSL, `aws-lc-rs`), since those
 either fail to cross-compile for `wasm32-wasip1` at all or require a
 WASI-aware C toolchain this design has no other reason to carry. Host
 WASI-Crypto acceleration is allowed because the crate has a functional pure-Rust
-fallback. Fastly itself never holds
-`vault_master_key` and never decrypts a book/reading/reading-index/catalog-head
-ciphertext, so it never needs Ascon-Keccak AEAD, HKDF-SHA3-512, or the
+fallback. Fastly itself never holds `vault_master_key` and never decrypts
+book, reading, reading-index, or catalog ciphertext, so it never needs
+Ascon-Keccak AEAD, HKDF-SHA3-512, or the
 ML-KEM-1024+X448 composite KEM — those run only in the browser and CLI, using
 their own existing implementations, unaffected by this section. Fastly's own
 cryptographic surface is narrower:
@@ -177,7 +179,9 @@ read-only sharing.
 Keep the R2 bucket private. Its CORS policy allows only exact `UI_ORIGIN` owner
 and shared operations required by the browser. Preserve `Range`,
 `Cache-Control`, conditional-write, and SigV4 request headers; expose `ETag`,
-`Content-Length`, `Content-Range`, and `Accept-Ranges`. Wildcard origins remain
+`Content-Length`, `Content-Range`, `Accept-Ranges`, and
+`x-amz-meta-txt-sha256`. Explicitly allow `If-Match`, `If-None-Match`, and the
+signed checksum-metadata header on catalog PUT. Wildcard origins remain
 forbidden. Encrypted EPUB and snapshot responses use
 `Content-Type: application/octet-stream`; credentialed reads use
 `Cache-Control: private, no-store`.
@@ -195,12 +199,12 @@ the browser. They do not receive or store any KV Store binding or credential:
   creates the owner entry and empty encrypted snapshot/head, then writes the
   new unlock file;
 - `--ingest` uploads the immutable encrypted EPUB, constructs the merged
-  canonical authenticated-blob book entry and an initially empty reading-state
-  entry, and publishes the book/head write through `/v1/vault/commit`;
+  canonical authenticated-blob book entry, and publishes the book/head write
+  through `/v1/vault/commit`; reading state remains absent until first open;
 - `--edit-epub` and `--replace-images` read/decrypt through Fastly, preserve
   immutable replacement semantics, and conditionally publish affected state;
-- `--clean-bucket` derives live objects from fixed Fastly scans plus snapshot
-  retention and performs a two-pass, safety-aged cleanup of both R2 objects
+- `--clean-bucket` derives live objects from fixed Fastly scans plus protected
+  export retention and performs a two-pass, safety-aged cleanup of R2 objects
   and orphaned KV Store reading entries;
 - `--update-kv` is an offline admin command for explicit idempotent schema
   migrations; and
@@ -280,7 +284,7 @@ Fastly target routes remain unavailable.
 Open the captured SQLCipher database locally with its current key. Validate the
 schema and constraints. For each `txt` row, produce two target objects:
 
-- a merged `book_{book_id}` entry: content key, prefix, path, catalog fields,
+- a merged `{book_id}` entry: content key, prefix, path, catalog fields,
   and ordered shares with IDs, keys, paths, states, and creation time; and
 - a `reading_{book_id}` entry: creation/last-access/last-CFI values and ordered
   bookmarks with uniqueness, optional page number, preview, creation time, and
@@ -292,8 +296,8 @@ using the canonical structured-payload blob from
 [cryptography.md](cryptography.md). Build the initial reading index (§4) from
 every migrated reading-state entry in the same pass. Each row's existing
 owner EPUB and share object paths under `db_prefix` carry over unchanged; the
-migrator only ever adds new KV Store entries and a new catalog snapshot, and
-never rewrites or relocates existing R2 objects.
+migrator only adds new KV Store entries and creates the fixed catalog object;
+it never rewrites or relocates existing EPUB/share R2 objects.
 
 New installations use random book IDs. Migration derives retry-stable opaque
 IDs from the full 256-bit output of:
@@ -313,11 +317,12 @@ accepting it; never overwrite unexplained target data.
 ### 4. Build the initial snapshot and reading index
 
 Build the sorted projection (catalog fields and shares from each book entry),
-compress/encrypt generation 1, upload it to a new immutable random catalog
-path, wrap that path in the `catalog-head-pointer` vault entry envelope
-(cryptography.md), then create
-`catalog-head` with a create-only write. Verify decryption, schema, book
-count against the projection's own `books` array, and local search fixtures.
+compress/encrypt generation 1 for the fixed
+`{db_prefix}/catalog/library.blob` key, and upload with `If-None-Match: *` plus
+the required ciphertext-digest metadata. Direct-HEAD it, then create the
+plaintext schema-v2 `catalog-head` with the exact ETag, length, digest, and
+logical generation using a create-only write. Verify decryption, fixed inner
+key, head bindings, book count, projection, and local search fixtures.
 
 Separately, build and write the initial reading index from every migrated
 reading-state entry with a create-only write. Verify only its own decryption,
@@ -359,8 +364,8 @@ The migrator must report equality for:
   `book` entry;
 - server share hashes, states, and `book_id` back-references;
 - initial snapshot and reading-index count/hash and projection equality; and
-- authentication of every canonical blob and agreement between each inner
-  envelope and its outer entry's key and kind.
+- authentication of every canonical blob and client-side agreement between
+  each encrypted inner envelope and its outer entry's key and kind.
 
 Run feature-parity smoke tests, conditionally mark migration complete, activate
 the target Fastly service and browser together, then release maintenance.
@@ -405,7 +410,8 @@ The export key is independent from owner keys and API HMAC keys. Run this job
 on a schedule tight enough that a restore's data loss window is acceptable —
 record the interval and retention explicitly, since there is no other backup
 to fall back on. Apply retention only after restore drills. A restore targets
-a new set of KV Stores first, validates entries and snapshot references, then
+a new set of KV Stores first, validates entries and the fixed snapshot head,
+then
 updates the Fastly Config/Secret Store links and KV Store resource bindings.
 Never restore control entries into `vault` or expose a KV Store binding to a
 browser.
@@ -420,8 +426,8 @@ Collect redacted metrics by Fastly route and KV Store:
 - Firebase verification and unknown-`kid` refresh failures, never token
   values;
 - KV Store binding/backend failures, never credentials;
-- R2 snapshot bytes, load/build latency, publication failures, orphan count,
-  and cleanup candidates;
+- R2 snapshot bytes, load/build latency, conditional-overwrite failures,
+  head/object mismatches and repairs, plus immutable-object cleanup candidates;
 - rate-limit decisions (durable and best-effort), share transitions, and
   anonymous URL exchanges with nonreversible labels;
 - backup/export age, entry/object counts, restore-test date, migration schema;
@@ -430,7 +436,7 @@ Collect redacted metrics by Fastly route and KV Store:
 
 Alert on attempted generic/client-selected store or key access, repeated
 owner/binding failures, an unexpected volume of `SetKey` calls from a route
-that should be read-only, snapshot pointer/object mismatch, sustained
+that should be read-only, snapshot head/object mismatch, sustained
 throttling, stale backups, or control/data schema mismatch.
 
 ## Key and secret rotation
@@ -445,7 +451,7 @@ throttling, stale backups, or control/data schema mismatch.
   read keyring remains. Issue new grants with the current key while retaining
   intended legacy validation keys.
 - Rotating `vault_master_key` requires authenticated re-encryption of every
-  book, reading, and retained snapshot entry/object under maintenance; never
+  book, reading, reading-index, and current snapshot object under maintenance; never
   treat it as incidental schema migration.
 
 ## Release gate
@@ -477,16 +483,16 @@ Do not remove rqlite, Northflank, or legacy `db_path` until all checks pass:
   current semantics, including that a reading-position update touches neither
   a book's merged entry nor `catalog-head`;
 - content replacement is verified as the documented two-commit
-  delete-then-create sequence, and a simulated crash between the two commits
-  leaves the library in a reviewed, non-corrupting state;
+  create-new-then-delete-old sequence; a simulated crash leaves old only,
+  both, or new only, never neither, and does not transfer reading state;
 - sharing and crash recovery pass [sharing.md](sharing.md), including current
   production-format links;
-- failed R2 upload never advances the head; a `/v1/vault/commit` whose head
-  object fails Fastly's R2 existence check is rejected before any KV Store
-  write; a book-write-then-head-write failure after a successful
-  upload leaves only an orphan; and repair rebuilds the snapshot and,
-  independently, the reading index from authenticated entries through the
-  fixed scan;
+- failed R2 upload never advances the head; a `/v1/vault/commit` whose direct
+  R2 HEAD does not exactly match ETag/length/digest is rejected before any KV
+  write; exact postconditions make book-write/head-write retries idempotent;
+  an upload-without-commit mismatch blocks normal publication and repair
+  overwrites the same fixed catalog key from authenticated entries; and the
+  reading index repairs independently through the fixed scan;
 - CLI migration is idempotent and a second run changes no semantics;
 - backup/export restore succeeds into a clean set of KV Stores; and
 - staging Class A/B operation counts, storage, latency, and Fastly limits fit

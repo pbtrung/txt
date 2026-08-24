@@ -9,9 +9,9 @@ owner browser -- Firebase ID token --> Fastly Compute API --> Fastly KV Store
      |                                      |                 share_control
      |                                      |                 rate_limit_control
      |                                      |
-     |                                      +-- scoped R2 credential broker
-     +-- short R2 prefix credentials -----------------------> R2 owner objects
-                                     (EPUBs, catalog snapshot — immutable, conditional creates, no Fastly step)
+     |                                      +-- scoped R2 authorization broker
+     +-- exact/bounded R2 access --------------------------> R2 owner objects
+                     (immutable EPUBs; one conditionally overwritten catalog object)
 
 share browser -- share capability --> Fastly Compute API --> share_control
      |                                      |
@@ -23,8 +23,9 @@ The static UI may remain on Cloudflare Pages. All API traffic terminates at a
 stateless Fastly Compute service. Every authenticated owner route verifies a
 Firebase ID token and then performs a fixed operation against one linked KV
 Store through the platform's native KV Store binding. KV Store holds every
-piece of control and encrypted mutable owner state; R2 holds only large
-immutable encrypted objects.
+piece of control and authoritative encrypted mutable owner state. R2 holds
+large immutable encrypted EPUB/share/export objects and one derived encrypted
+catalog object that is conditionally overwritten at a fixed key.
 
 There is no browser-facing KV Store endpoint, credential, or query interface.
 Do not ship a KV Store handle, store name, or generic lookup proxy to the
@@ -97,7 +98,7 @@ credential, or control entry. Fastly validates the capability and returns a
 | `owner_control`      | Fixed Fastly owner-bootstrap route only | Singleton owner identity, wrapped bootstrap keys, encrypted credentials, schema and migration markers |
 | `share_control`      | Fixed Fastly share routes only          | Public share registry and object-path reservations                                                    |
 | `rate_limit_control` | Fastly limiter/replay code only         | Create-only admission slots and possession-proof replay nonces, both with a native entry TTL          |
-| `vault`              | Fixed Fastly vault routes only          | End-to-end encrypted book/catalog entries, one catalog-head pointer, and per-book reading-state/index entries |
+| `vault`              | Fixed Fastly vault routes only          | End-to-end encrypted book/reading entries plus one plaintext catalog integrity head                         |
 
 A KV Store binding technically grants a Compute service access to every key in
 that store. Application authorization therefore lives in explicit route code:
@@ -111,15 +112,14 @@ parameters that have already been validated against the authenticated owner.
   material (including the P-521 signing keypair used for the possession
   proof), encrypted credential payload, stable vault binding, and control
   schema.
-- Each `vault` key `book_{book_id}` is authoritative for that book's content
+- Each `vault` key `{book_id}` (already prefixed `book_`) is authoritative for that book's content
   locator, owner-side share state, and catalog metadata together.
 - Each `vault` key `reading_{book_id}` is authoritative for that one book's
-  reading position and bookmarks. It is mutated far more often than a book's
-  identity/catalog entry and is deliberately exempt from the possession proof
-  and, for existing-entry replacements, from durable rate limiting — see
-  [auth_api.md](auth_api.md).
-- The `vault` key `catalog-head` is authoritative for the current R2
-  library snapshot.
+  reading position and bookmarks. Existing-entry replacement is deliberately
+  exempt from the possession proof and durable rate limiting; first creation
+  is not — see [auth_api.md](auth_api.md).
+- The `vault` key `catalog-head` pins the ETag, length, ciphertext digest, and
+  logical generation of the last committed bytes at the fixed R2 catalog key.
 - The library snapshot and `vault` key `reading-index` are both derived, rebuildable
   acceleration objects/entries. Neither is ever the sole copy of book,
   catalog, or reading state; the reading index has no generation dependency
@@ -127,8 +127,8 @@ parameters that have already been validated against the authenticated owner.
   entry.
 - `share_control` is authoritative for whether an anonymous capability is
   usable and which exact R2 object it may read.
-- R2 encrypted EPUB and share objects are immutable content. The owner book
-  entry or share registry determines whether each object is referenced.
+- R2 encrypted EPUB and share objects are immutable. The fixed catalog object
+  is the one mutable exception and is derived from authoritative book entries.
 
 KV Store keys, kinds, generations, object paths, lengths, hashes, and
 timestamps may be plaintext metadata. User catalog text, reading state,
@@ -159,9 +159,10 @@ never their plaintext.
    and bookmark detail before rendering the reader. Mutating a book entry uses
    the Fastly vault route with the previous opaque `generation` and, where
    required, the possession proof. Mutating reading state uses its own
-   dedicated route with the previous `generation`, no possession proof, and
-   the reading-only rate-limit treatment described in
-   [auth_api.md](auth_api.md).
+   dedicated route with the previous `generation`; its first create requires
+   proof, while an existing conditional replacement uses the reading-only
+   rate-limit treatment in [auth_api.md](auth_api.md). A qualifying recency or
+   bookmark change updates the proof-required reading-index route afterward.
 
 No step allows the browser to select or directly query a control store.
 
@@ -189,15 +190,15 @@ No step allows the browser to select or directly query a control store.
    them.
 5. KV Store and Fastly never receive plaintext owner keys or user content
    metadata.
-6. Every decrypted record's authenticated inner envelope must match its outer
-   entry's key and kind, including a reading-state entry's `book_id` matching
-   the key it was fetched from. The canonical blob itself has no
-   caller-supplied storage context.
-7. The catalog head advances only after Fastly has independently verified —
-   by a direct R2 existence check, not client-supplied metadata alone — that
-   its immutable R2 object was actually uploaded. A subsequent content
-   mismatch (a truncated or corrupted upload that still exists) is instead
-   caught by AEAD authentication at decrypt time and handled through repair.
+6. The browser or CLI must require every decrypted record's authenticated
+   inner envelope to match its outer entry's key and kind, including a reading
+   entry's `book_id`. Fastly cannot inspect these encrypted bindings. The
+   canonical blob itself has no caller-supplied storage context.
+7. The catalog head advances only after a direct uncached R2 HEAD of the fixed
+   key exactly matches the proposed ETag, length, and ciphertext-digest
+   metadata. Clients also hash the downloaded ciphertext and authenticate the
+   matching inner generation/key/owner/vault. Any head/object mismatch is an
+   interrupted publication signal that blocks mutation until repair.
 8. Anonymous shares use independent encryption and server-side active registry
    state; owner credentials cannot be derived from a share.
 9. Semantic mutations replay after a `generation` conflict and stop after
@@ -208,15 +209,12 @@ No step allows the browser to select or directly query a control store.
     possession proof could still violate it; the offline reconciliation
     report in [sharing.md](sharing.md) is the server-side detection and
     recovery path for that case, not a preventive control.
-11. Every route whose abuse is not self-contained — one that mutates a book's
-    identity/catalog, deletes it, publishes the catalog head, revokes a
-    share, or mints an R2 credential — requires the per-request P-521
-    possession proof in [cryptography.md](cryptography.md), not merely a
-    valid Firebase token, so that a stolen bearer token alone cannot cause
-    unrecoverable damage. Reading-state mutation is the deliberate exception:
-    its damage is confined to one book's reading position/bookmarks and is
-    always repairable, so it is gated by Firebase authentication and its own
-    rate limit alone.
+11. Every route whose abuse is not self-contained — including book/head,
+    reading-index, first reading create, reading delete, share, and R2-
+    authorization writes — requires the per-request P-521 proof in
+    [cryptography.md](cryptography.md). Only conditional replacement of an
+    existing reading entry is exempt: Fastly first confirms the book exists,
+    and damage is confined to that book's rebuildable reading state.
 12. Logs and metrics contain no Firebase tokens, KV Store contents,
     R2 credentials, grants, possession-proof signatures, root/master/
     content/share keys, catalog plaintext, bookmark previews, or signed URLs.

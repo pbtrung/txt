@@ -38,14 +38,15 @@ migration in [deployment_migration.md](deployment_migration.md) is complete.
   [Capacity target](#capacity-target).
 - Keep immutable encrypted EPUB and share objects in R2. Do not put EPUB bytes
   in KV Store. Fastly continues to broker narrowly scoped R2 access.
-- Store the library catalog as an immutable, Brotli-compressed, encrypted
-  snapshot in R2. KV Store holds only its authenticated pointer. The snapshot
-  provides one fast initial load and local full-text search; encrypted KV
-  Store book entries are authoritative.
+- Store the library catalog as a Brotli-compressed, encrypted snapshot at one
+  fixed R2 key and conditionally overwrite it on publication. KV Store holds
+  its ETag/length/digest/generation head. R2 keeps only the latest catalog
+  object; encrypted KV Store book entries remain authoritative and rebuild it.
 - Reading position and bookmarks are their own KV Store entry, separate from
   a book's identity/catalog entry, updated through a dedicated Fastly route.
-  R2 holds only immutable content — EPUBs, library snapshots, shared copies,
-  and exports; every piece of mutable owner state lives in KV Store.
+  R2 EPUBs, shared copies, and exports are immutable. The derived catalog is
+  the sole mutable R2 exception; authoritative mutable owner state lives in
+  KV Store.
 - Keep the current one-owner model. Anonymous share recipients remain read-only
   capability holders and never access KV Store.
 
@@ -100,7 +101,7 @@ apply CORS to in the first place.
 | Exactly one Firebase-authenticated owner       | Fastly validates the Firebase token and exact owner UID before every owner route                              |
 | Root-key-only local decryption                 | Wrapped key hierarchy remains; plaintext root, master, content, and share keys never reach Fastly or KV Store  |
 | A stolen session alone cannot mutate/mint      | A per-request P-521 possession proof, not just a Firebase token, gates every route whose abuse is not self-contained |
-| Fast complete library load                     | One encrypted R2 library snapshot referenced by `catalog-head`, plus one small reading-index KV entry for recency/bookmark badges |
+| Fast complete library load                     | One fixed encrypted R2 snapshot pinned by `catalog-head`, plus one small reading-index KV entry for recency/bookmark badges |
 | Local full-text search                         | Search index is built in the browser from the decrypted snapshot; Fastly and KV Store never receive search text |
 | Immutable encrypted EPUB objects               | Unchanged R2 layout under the owner prefix                                                                    |
 | Reading-position qualification and throttling  | Preserved in the browser; qualified state is saved to a per-book KV Store reading-state entry through a dedicated Fastly route |
@@ -115,15 +116,14 @@ apply CORS to in the first place.
 
 Fastly meters KV Store operations in three classes: **Class A** (`SetKey`,
 plus one-time `CreateStore`/`UpdateStore` calls), **Class B** (`GetKey`), and
-free (`DeleteKey`). A free/unpackaged account is limited to 250,000 Class A
-and 5,000,000 Class B operations per month; a Compute Advantage or Ultimate
-package raises that to 20,000,000 Class A and 1,000,000,000 Class B
-operations per month, alongside a much larger storage allowance. Confirm the
-current entitlement and per-key/per-store limits immediately before
+free (`DeleteKey`). This design targets only Fastly's free/unpackaged account
+limit of 250,000 Class A and 5,000,000 Class B operations per month; it does
+not assume a paid package or paid edge rate limiter. Confirm the current free-
+tier entitlement and per-key/per-store limits immediately before
 provisioning against Fastly's own
 [edge data storage product page](https://docs.fastly.com/products/edge-data-storage)
 and [compute resource limits page](https://docs.fastly.com/products/compute-resource-limits).
-Class A writes are the tight budget in every account tier, so this design
+Class A writes are the tight free-tier budget, so this design
 treats every avoidable `SetKey` call as a cost, not merely a latency concern.
 
 Every design decision in this directory that could plausibly touch KV Store on
@@ -135,25 +135,20 @@ correctness:
 - reading position and bookmarks live in their own small KV entry plus a
   shared reading-index entry, separate from a book's identity/catalog entry,
   so a relocation never rewrites content/catalog/share data. The reading
-  index is updated only twice per reading session (once when it qualifies,
-  once on close, if a bookmark changed) — never on the 15-second CFI-only
+  index is updated when the session first qualifies and whenever a bookmark
+  changes — never on the 15-second CFI-only
   debounce that dominates a session's writes, per
   [data_model.md](data_model.md)'s `reading-index` entry — so a debounced
   relocation costs exactly one Class A write, not two. Even so, a single
   owner's realistic worst case is on the order of tens of thousands of Class
-  A operations per month — well inside the unpackaged free tier's 250,000,
-  and negligible against a packaged account's 20,000,000. Track it anyway
+  A operations per month — well inside the free tier's 250,000. Track it anyway
   (see the metrics list in [catalog.md](catalog.md)) rather than assuming the
   estimate holds;
-- neither the possession proof nor the durable per-owner admission slot —
-  each itself a KV write — applies to an existing reading-state replacement.
-  This is not a general reads-are-cheaper exemption: it holds specifically
-  because a
-  corrupted or flooded reading-state/reading-index entry cannot delete a
-  book, revoke a share, corrupt `catalog-head`, or mint an R2 credential —
-  its blast radius is self-contained and repairable — so it gets the same
-  best-effort, in-instance flood control as read routes instead of a durable
-  counter write on top of its own write(s) per update;
+- neither the possession proof nor a durable per-owner admission slot — each
+  itself a KV write — applies to a conditional replacement of an existing
+  reading-state entry. Fastly first confirms the book exists, and the blast
+  radius is that book's rebuildable reading state. First creation and every
+  library-wide reading-index write require proof and durable admission;
 - the free-tier durable limiter never rewrites a shared counter. Each accepted
   protected request claims one create-only `slot_...` key in
   `rate_limit_control`, avoiding Fastly's one-write-per-second-per-item limit.

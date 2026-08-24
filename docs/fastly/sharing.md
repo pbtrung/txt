@@ -7,7 +7,7 @@ effect for new signed-URL exchanges.
 
 ## Owner-side share record
 
-Each `vault` key `book_{book_id}` contains its shares as defined in
+Each `vault` key `{book_id}` contains its shares as defined in
 [data_model.md](data_model.md), alongside that book's content locator and
 catalog metadata. The R2 layout for a shared object is:
 
@@ -36,9 +36,10 @@ The browser performs a recoverable saga:
    `If-None-Match: *`. On a retry, accept an existing object only after its
    locally expected ciphertext hash/length match.
 6. Call `POST /v1/shares` with Firebase owner authentication, the possession
-   proof (`route: "share-create"`), the owner/vault binding, and the book's
-   `book_id`, which Fastly stores in plaintext alongside the hashes so later
-   reconciliation can find the owning book without decrypting the library.
+   proof bound to this exact request and the book's `book_id`, which Fastly
+   stores in plaintext alongside the hashes so later reconciliation can find
+   the owning book without decrypting the library. Fastly derives owner/vault
+   binding from its stored owner entry.
 7. Fastly validates the Firebase token, possession proof, binding, and object,
    then reserves the share ID/path in `share_control` and returns a fresh
    authenticated grant.
@@ -96,8 +97,9 @@ The owner browser performs the inverse recoverable saga:
 1. Change `active` or recoverable `creating` state to `deleting` in the
    encrypted book entry and republish the snapshot.
 2. Call `DELETE /v1/shares` with Firebase authentication, the possession proof
-   (`route: "share-delete"`), exact owner/vault binding, and the share tuple.
-   No grant is needed or retained by the owner.
+   bound to this exact request and the share tuple. Fastly derives owner/vault
+   binding from its stored owner entry. No grant is needed or retained by the
+   owner.
 3. Fastly conditionally changes `active` to `deleting`; a deleting share can
    no longer mint a public URL.
 4. Fastly deletes the exact shared R2 object. Not-found is idempotent
@@ -128,7 +130,7 @@ Recovery reconciliation table below, not a preventive server control.
 ## Concurrent devices and conflict handling
 
 All local share transitions are semantic book mutations and therefore use the
-book entry and catalog-head `generation` conditions. On conflict, refetch/
+book entry and catalog-head KV `generation` conditions. On conflict, refetch/
 decrypt and reapply by `share_id`; do not replace the entire shares array from
 stale memory.
 

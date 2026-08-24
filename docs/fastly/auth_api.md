@@ -56,29 +56,32 @@ requires the per-request P-521 possession proof defined in
 | `GET /v1/vault/books/{book_id}`       | no |
 | `GET /v1/vault/reading/{book_id}`     | no |
 | `GET /v1/vault/reading-index`         | no |
-| `PUT /v1/vault/reading/{book_id}`     | no — see note below |
+| `PUT /v1/vault/reading/{book_id}`     | first create only |
+| `DELETE /v1/vault/reading/{book_id}`  | yes |
+| `PUT /v1/vault/reading-index`         | yes |
 | `GET /v1/vault/books?cursor=...`      | no |
 | `POST /v1/vault/commit`               | yes |
-| `PUT /v1/vault/books/{book_id}`       | yes |
+| `PUT /v1/vault/head`                  | yes |
 | `POST /v1/r2-token`                   | yes |
 | `POST /v1/shares`                     | yes |
 | `DELETE /v1/shares`                   | yes |
 | `POST /v1/shared-url`                 | no (unauthenticated; capability is the authorization) |
 
-Reads are exempt because they return ciphertext only — a bearer-token-only
-compromise cannot recover plaintext through them. `PUT /v1/vault/reading/{book_id}`
-is exempt for a different reason: it can only ever corrupt or flood one
-book's reading position and bookmarks, never delete a book, revoke a share,
-corrupt `catalog-head`, or obtain raw storage credentials, and any damage it
-causes is repairable exactly as a missing or corrupt reading entry already is
-in [catalog.md](catalog.md). Every other mutating or credential-minting route
-requires the proof, because those operations do not depend on breaking
-encryption to cause damage and are not confined the same way, so a stolen
-bearer token alone must not be sufficient. A request missing, failing, or
-replaying a required proof is rejected before any state-changing vault/share
-KV or R2 work. Verification necessarily reads the fixed `owner` entry; after
-signature validation, the only earlier writes are the route's admission-slot
-claim and the proof's create-only replay nonce. See the error contract below.
+Reads are exempt because they return only ciphertext or nonsensitive catalog
+integrity metadata — a bearer-token-only compromise cannot recover user
+plaintext through them. Replacing an existing
+`reading_{book_id}` entry is also exempt: Fastly first point-reads the matching
+book, then requires a current reading generation, so the request can corrupt
+only one existing book's rebuildable reading state. The first reading write is
+not exempt: it can create a new key and therefore requires proof and a durable
+write-admission slot. A `reading-index` write always requires proof because it
+changes a library-wide entry. Every other mutating or credential-minting route
+requires proof. A request missing, failing, or replaying a required proof is
+rejected before any state-changing vault/share KV or R2 work. Verification
+necessarily reads the fixed `owner` entry. After signature validation, claim
+the proof's create-only replay nonce **before** claiming the route's durable
+admission slot; a concurrent replay must fail without burning another rate
+slot. See the error contract below.
 
 ## Common requirements
 
@@ -193,10 +196,11 @@ Read the `catalog-head` entry. Return the allowlisted head fields from
 
 ### `GET /v1/vault/books/{book_id}`
 
-Validate the opaque ID and read the `book_{book_id}` entry. Require
-`kind = book`, the supported schema, and the correct `owner_pk` binding
-inside the decrypted envelope. Return the outer encrypted entry plus its
-`generation`; do not inspect or transform the ciphertext.
+Validate the opaque ID and read the exact `{book_id}` entry. Require
+`kind = book`, the supported outer schema, matching outer `item_id`, and valid
+size/encoding. Return the outer encrypted entry plus its `generation`; do not
+inspect or transform the ciphertext. Only the browser or CLI can decrypt and
+validate the authenticated inner `owner_pk`, `vault_id`, kind, and item ID.
 
 ### `GET /v1/vault/reading/{book_id}`
 
@@ -226,18 +230,19 @@ is materially more expensive per call.
 ## Vault write routes
 
 Fastly validates only the outer encrypted record, version, identifier, sizes,
-and transition shape; it cannot validate encrypted user fields. All accepted
-writes must use a current `generation` unless they are create-only. These
-routes require the possession proof described above.
+and transition shape; it cannot validate encrypted user fields. The browser or
+CLI must validate authenticated inner fields after decryption. All accepted
+writes must use a current `generation` unless they are create-only. Proof
+requirements are route-specific in the table above.
 
 ### `POST /v1/vault/commit`
 
-Purpose: create, replace, or delete a book — its content locator, catalog
-metadata, and shares together — and advance `catalog-head` in the same call,
-after the new immutable R2 snapshot has been uploaded. A book operation and a
-head operation are always both present: because catalog metadata and shares
-are projected into the snapshot, every create/replace/delete of a book's
-merged entry changes what the snapshot must show.
+Purpose: create, replace, or delete a book and advance `catalog-head` after the
+client has conditionally overwritten the one catalog R2 object. A book
+operation and a head operation are always both present: every accepted change
+to a book entry republishes the derived projection, including a content-path,
+catalog-metadata, or share change. There is no endpoint on which Fastly tries
+to distinguish those encrypted semantics.
 
 Request shape:
 
@@ -258,8 +263,10 @@ Request shape:
   },
   "head": {
     "generation": "current head generation",
-    "entry": "next catalog-head outer entry, with ciphertext already wrapped client-side",
-    "object_key": "plaintext R2 key, used once for verification, never persisted"
+    "snapshot_generation": 185,
+    "object_etag": "opaque ETag returned by the successful conditional R2 PUT",
+    "object_length": 12345,
+    "ciphertext_sha256": "base64url SHA-256"
   }
 }
 ```
@@ -267,114 +274,119 @@ Request shape:
 Fastly rejects unexpected outer fields, overwrites neither identity nor
 version silently, and requires:
 
-- the possession proof verifies for `route: "vault-commit"` and has not been
-  seen before (see [cryptography.md](cryptography.md));
-- the path/body book IDs agree, `owner_pk` equals the configured owner
-  identity, kind/schema/size satisfy [data_model.md](data_model.md), create
-  has no `generation` and uses a create-only write, and replace/delete carry
-  the previous `generation`;
-- the new head `generation` field inside the entry is exactly one greater than
-  the current one, head kind/schema are exact, `head.object_key` matches the
-  required R2 key grammar, **and a direct R2 `HEAD` on `head.object_key`
-  returns 200** — Fastly must not advance the pointer on the strength of
-  client-supplied metadata alone, so this existence check runs against R2
-  itself, not against anything the client merely claims.
+- the v2 possession proof binds the exact HTTP method, normalized target, and
+  canonical request body and has not been replayed;
+- the body book ID matches the outer entry item ID; outer kind/schema/size are
+  valid; create omits `generation`; and replace/delete carry the previously
+  read `generation`;
+- the current head either exactly equals the requested head (an already-
+  applied retry), or `head.snapshot_generation` is exactly one greater than
+  its current value; ETag, length, and digest have strict bounded encodings;
+  and
+- a direct, uncached R2 `HEAD` of the configured fixed key
+  `{db_prefix}/catalog/library.blob` returns that exact ETag and length plus
+  `x-amz-meta-txt-sha256` equal to `head.ciphertext_sha256`. Fastly derives the
+  key from `owner_control`; the caller never supplies it.
 
-`head.object_key` is used for that one check and discarded; only
-`head.entry` (carrying the already-wrapped `ciphertext`) is written to KV
-Store. Fastly cannot verify that the plaintext `object_key` it checked and
-the object key encrypted inside `head.entry.ciphertext` agree, since it
-cannot decrypt the latter — that agreement is the browser's own
-responsibility, the same way
-the browser is responsible for every other field it encrypts before sending.
-A self-inconsistent commit from a malfunctioning client is not a security
-issue (no other principal's data or access is at risk), only a correctness
-one: the next load fails Decrypt or fetches a nonexistent object, and repair
-in [catalog.md](catalog.md) rebuilds a fresh, consistent pointer.
+R2 has
+[strong read-after-write consistency](https://developers.cloudflare.com/r2/reference/consistency/)
+for object updates. The direct `HEAD` therefore establishes that the bytes the
+head will pin are current; do not put a caching custom domain between Fastly
+and the S3 endpoint.
 
-Fastly then performs, in this fixed order:
+Fastly performs the direct R2 `HEAD` **before any KV write**, followed by the
+book operation and then the conditional `catalog-head` write. Cross-store and
+cross-key atomicity is unavailable, so retries use postconditions:
 
-1. the book operation (create-only write, or a conditional replace/delete
-   against the supplied `generation`);
-2. the R2 existence check against `head.object_key`; and
-3. the conditional write of the `catalog-head` entry against its supplied
-   `generation`.
+- if create reports that the key exists, point-read it and succeed only if its
+  complete canonical outer entry exactly equals the requested entry;
+- if replace reports a generation mismatch, point-read and succeed only if
+  the current complete canonical outer entry equals the requested entry;
+- if delete finds the key absent, treat it as already applied (book IDs are
+  never reused); otherwise a generation mismatch is a conflict;
+- if the head write reports a generation mismatch, point-read and succeed only
+  if every persisted head field exactly equals the requested head.
 
-A KV Store has no cross-key transaction, so steps 1 and 3 are not atomic with
-each other. If step 1 succeeds and step 2 or 3 fails, the book entry is ahead
-of `catalog-head` — the book's `record_version` will no longer match the
-version projected in the last published snapshot. This is not a corruption:
-[catalog.md](catalog.md) already treats a `record_version` mismatch between a
-live entry and the snapshot projection as "the live entry is authoritative,
-schedule a repair," and the same retry that produced the mismatch (a fresh
-`/v1/vault/commit` with the current head `generation`) is exactly how it
-self-heals. Fastly returns the actual step that failed inside the standard
-conflict response so the caller retries from the right place rather than
-reapplying step 1. If the R2 existence check fails, Fastly returns
-`409 conflict` without attempting the head write at all.
+An eventually consistent point-read immediately following a write conflict
+may not yet reveal that postcondition. Return `503 commit_pending` with phase
+`propagation`; the caller retries the same semantic request with jitter and a
+fresh proof. Never convert uncertainty into an overwrite. Other failures name
+phase `snapshot`, `book`, or `head`, so a caller can distinguish a failed
+precondition from an already-applied partial commit. This makes retrying after
+a lost response or a successful book write safe and prevents the same
+mutation being applied twice.
 
-Replacing a book's content (a new EPUB superseding an existing entry) is
-**not** expressed as a `replace` on the existing `book_id`: doing so would let
-a new, unrelated document silently reuse CFIs and bookmarks that were computed
-against the old content. It is instead a `delete` of the old
-`book_id`/reading entry (blocked, as always, while `shares` is non-empty)
-followed by an ordinary `create` of a new `book_id`, as two independent
-`/v1/vault/commit` calls, each with its own head generation bump. A crash
-between the two calls leaves the library either missing that title or, if
-delete did not commit, still showing the old content; neither state loses
-data (the failed step is simply retried) and neither needs special repair
-handling.
+Replacing a book's content is **not** a replace of the existing `book_id`,
+because CFIs and bookmarks belong to the old document. Upload and commit the
+new EPUB under a fresh `book_id` first. Only after that create is visible may
+the client delete the old book, blocked while shares are nonempty, then delete
+its reading entry through the separate proof-required route. A crash therefore
+leaves old only, both old and new, or new only — never neither. The client does
+not transfer reading state automatically.
 
-### `PUT /v1/vault/books/{book_id}`
+There is no general create/delete/upsert or content-locator-only book endpoint
+outside `/v1/vault/commit`.
 
-Purpose: replace one encrypted book entry for a content-locator-only change —
-for example, re-keying or relocating a book's underlying content — that does
-not touch catalog metadata or shares and therefore does not affect the
-snapshot projection, so no `catalog-head` step is needed. The request contains
-`protocol_version`, the possession proof, the previous `generation`, and the
-complete next encrypted outer entry. Fastly applies the same identity/schema/
-size checks and a conditional replace. It cannot be used to create, delete,
-change catalog metadata or shares, or write `catalog-head`.
+### `PUT /v1/vault/head`
 
-There is no general create/delete/upsert endpoint outside `/v1/vault/commit`.
+Purpose: publish only a repaired catalog projection after a complete owner
+book scan. The proof-bearing request carries the current head `generation`
+and the same next head fields as `/v1/vault/commit`. Fastly performs the same
+direct R2 `HEAD`, one-step generation check, conditional write, and exact
+postcondition handling, but no book write. Normal book changes cannot use this
+route; it is for a projection of already-authoritative entries.
 
 ### `PUT /v1/vault/reading/{book_id}`
 
 Purpose: write a book's reading position and bookmarks. The request contains
 `protocol_version`, the previous `generation` (omitted for the first write),
-the complete next encrypted outer entry, and — only when this call is the
-session's qualifying read or changes `bookmarks`, per
-[data_model.md](data_model.md)'s `reading-index` entry — an optional
-`reading_index` sub-object carrying the updated index entry and its previous
-`generation`. A routine CFI-only debounce write omits it entirely. No
-possession proof is required — see the table above. Fastly:
+and the complete next encrypted outer entry. It never contains an index
+sub-object. Fastly first point-reads the exact `{book_id}` key and rejects an absent
+book, then validates only the reading entry's outer ID/kind/schema/size.
 
-1. validates the opaque book ID, entry kind/schema/size, and that
-   `owner_pk`/`vault_id` (checked only as authenticated opaque values; Fastly
-   does not decrypt) are present;
-2. performs a create-only write, or a conditional replace against the
-   supplied `generation`; and
-3. only if `reading_index` is present in the request, separately updates the
-   `reading-index` entry the caller supplies (also conditional on its own
-   `generation`), as its own independent KV write — a reading-index conflict
-   is reported and retried independently of the reading-state write.
+An absent reading entry uses create-only semantics and requires a possession
+proof plus the durable reading-create admission slot. Replacing an existing
+entry requires its current `generation`; it is proof-exempt and uses the
+bounded existing-entry rate limit. If the read observed an entry but the
+subsequent conditional replace loses a race, return `409`; never fall back to
+create. The browser fetches, decrypts, reapplies the semantic mutation, and
+retries. Fastly cannot validate bookmark or CFI plaintext.
 
-A `409` on either write means another tab or device wrote first: fetch the
-current entry through `GET /v1/vault/reading/{book_id}` (and, if updating
-the index, `GET /v1/vault/reading-index`), reapply the same semantic
-mutation, and retry.
+### `DELETE /v1/vault/reading/{book_id}`
+
+Purpose: remove obsolete reading state after its book deletion has committed.
+The request contains protocol version, possession proof, and the last reading
+`generation`. Fastly performs a conditional delete; absence is idempotent
+success, while a present generation mismatch is `409`. This proof-required
+step is independent of the book/head commit, so a crash may leave an orphan
+reading entry but cannot make a deleted book reappear. The safety-aged cleaner
+is the fallback for abandoned orphans.
+
+### `PUT /v1/vault/reading-index`
+
+Purpose: independently update the derived library-wide reading index after a
+qualifying reading-state write or bookmark mutation. The request carries a
+possession proof, the complete encrypted outer entry, and either the previous
+`generation` or an explicit create-only operation. Fastly validates outer
+shape and conditionally writes only `reading-index`.
+
+Write authoritative per-book reading state first, then the derived index. If
+the index conflicts or fails, retain it as unsaved and independently fetch,
+decrypt, merge, and retry the index without replaying the already-successful
+reading-state write. A stale or missing index is repairable and never rolls
+back authoritative reading state.
 
 ## `POST /v1/r2-token`
 
 Purpose: return short-lived direct R2 access for owner object reads —
 including EPUB content and the catalog snapshot — plus immutable uploads and
 cleanup, all under one prefix. The request contains `protocol_version`, the
-possession proof, and the locally decrypted `vault_id`, `owner_pk`, and
-`db_prefix` binding.
+possession proof, and no client-supplied binding fields. Fastly obtains the
+owner/vault/prefix binding from the single stored owner entry.
 
-Fastly validates Firebase, verifies the possession proof for
-`route: "r2-token"`, consumes `owner-r2-token`, reads the `owner` entry,
-hashes and compares the binding, and asks R2 for a 900-second temporary
+Fastly validates Firebase, verifies the v2 proof against this exact request,
+consumes `owner-r2-token`, reads the `owner` entry, validates its stored
+binding, and asks R2 for a 900-second temporary
 credential limited to the configured bucket and normalized `{db_prefix}/`. It
 returns only:
 
@@ -409,10 +421,9 @@ Purpose: register an uploaded independent share object or return a fresh grant
 for an identical active registration.
 
 The Firebase-authenticated request carries protocol version, the possession
-proof (`route: "share-create"`), owner/vault binding, the owning `book_id`,
-raw share ID, and rendered share prefix/path. Fastly consumes
-`owner-share-write`, validates the binding against `owner_control`, constructs
-and normalizes exactly:
+proof bound to this exact request, the owning `book_id`, raw share ID, and
+rendered share prefix/path. Fastly consumes `owner-share-write`, derives the
+binding from `owner_control`, constructs and normalizes exactly:
 
 ```text
 {db_prefix}/shared/{share_prefix}/{share_path}
@@ -440,9 +451,9 @@ idempotent-retry case (return a fresh grant, no write); anything else is
 Purpose: revoke one owner share and delete its R2 object.
 
 The Firebase-authenticated request contains protocol version, the possession
-proof (`route: "share-delete"`), owner/vault binding, raw share ID, and
-rendered share prefix/path. Fastly reconstructs the exact key, recomputes
-every hash, and requires agreement with the registry. It:
+proof bound to this exact request, raw share ID, and rendered share prefix/
+path. Fastly derives the binding from `owner_control`, reconstructs the exact
+key, recomputes every hash, and requires agreement with the registry. It:
 
 1. conditionally changes `active` to `deleting`;
 2. deletes the exact R2 object, treating not-found as success on retry; and
@@ -502,16 +513,23 @@ ordinary reads, since each call lists across the whole `book_` key prefix and
 repeatedly triggering it is a realistic way to burn the Class A/B budget
 documented in [README.md](README.md).
 
+`owner-vault-write` covers book/head commits, head-only repair, first-create
+or delete reading writes, and reading-index writes. For proof-bearing calls, Fastly
+validates Firebase and the proof, successfully claims the replay nonce, and
+only then probes the durable admission ring. A rejected replay therefore
+cannot exhaust the owner's write budget.
+
 Two routes are deliberately **not** covered by a durable slot ledger, and instead
 rely on a best-effort, in-instance request counter that resets whenever a
 Compute instance is recycled and is not shared across Fastly points of
 presence:
 
 - `owner-vault-read` (`GET /v1/vault/head`, `GET /v1/vault/books/{book_id}`,
-  `GET /v1/vault/reading/{book_id}`), because it returns ciphertext only; and
-- `owner-reading-write` (`PUT /v1/vault/reading/{book_id}`), because its
-  damage is confined to one book's reading state and always repairable, per
-  the possession-proof table above.
+  `GET /v1/vault/reading/{book_id}`, `GET /v1/vault/reading-index`), because it
+  returns ciphertext or nonsensitive head metadata only; and
+- `owner-reading-replace` (only a generation-conditional existing-entry
+  `PUT /v1/vault/reading/{book_id}`), because its damage is confined to one
+  existing book's reading state and always repairable.
 
 Treat both as flood control, not a security boundary: a determined caller
 distributed across many points of presence can exceed the intended ceiling
@@ -538,11 +556,11 @@ This free-tier mechanism requires no Fastly Edge Rate Limiting product.
 | 401  | `unauthorized`        | Missing, invalid, expired, or wrong-owner Firebase token; invalid share capability; missing, invalid, expired, wrong-request, or replayed possession proof |
 | 403  | `binding_mismatch`    | Authenticated identity does not match owner/vault binding                          |
 | 404  | `not_found`           | Entry absent, or public share absent/inactive without state disclosure             |
-| 409  | `conflict`            | `generation` mismatch, share/path collision, incompatible state transition, or a `/v1/vault/commit` head whose R2 object failed the existence check |
+| 409  | `conflict`            | True generation/precondition conflict, share/path collision, incompatible state transition, or mismatched catalog metadata |
 | 413  | `too_large`           | Request, ciphertext entry, or page exceeds its fixed limit                         |
 | 429  | `rate_limited`        | A durable slot ring or best-effort limit was exceeded; include bounded `Retry-After` |
 | 502  | `upstream_invalid`    | KV Store or R2 returned an invalid or unsupported response                         |
-| 503  | `control_unavailable` | Firebase keys, KV Store, limiter, secret, or R2 broker unavailable                  |
+| 503  | `control_unavailable` / `commit_pending` | Dependency unavailable, or an eventually consistent postcondition cannot yet prove whether a commit phase applied |
 
 Detailed causes belong only in redacted structured telemetry. Never reflect a
 Firebase-certificate, Secret Store, KV Store, or R2 provider response body.
