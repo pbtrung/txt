@@ -16,9 +16,10 @@ catalog metadata. The R2 layout for a shared object is:
 ```
 
 The owner-side `share_id`, `share_content_key`, prefix, path, state,
-timestamps, and ordering are end-to-end encrypted in the book entry and
-library snapshot. Fastly sees the raw ID/path only in authenticated owner API
-calls and stores only SHA-256 hashes in the server-only `share_control` store.
+timestamps, ordering, and R2 integrity metadata are end-to-end encrypted in
+the book entry and library snapshot. Fastly sees the raw ID/path only in
+authenticated owner API calls and stores path/ID hashes plus nonsensitive
+ETag/length/digest in the server-only `share_control` store.
 
 ## Creating a share
 
@@ -27,40 +28,47 @@ The browser performs a recoverable saga:
 1. Fetch and decrypt the current book entry.
 2. Generate a fresh 32-byte `share_id`, 128-byte `share_content_key`, 32-byte
    `share_prefix`, and 32-byte `share_path` using the cryptographic RNG.
-3. Append a `creating` share record and atomically publish the book entry plus
-   library snapshot using the current book/head `generation` values.
-4. Download and decrypt the immutable owner EPUB if it is not already in
-   memory. Encrypt a new independent shared copy with `share_content_key`; never
-   reuse or wrap the owner `txt_key` for a recipient.
-5. Upload the shared ciphertext to the exact new R2 path with
-   `If-None-Match: *`. On a retry, accept an existing object only after its
-   locally expected ciphertext hash/length match.
-6. Call `POST /v1/shares` with Firebase owner authentication, the possession
-   proof bound to this exact request and the book's `book_id`, which Fastly
-   stores in plaintext alongside the hashes so later reconciliation can find
-   the owning book without decrypting the library. Fastly derives owner/vault
-   binding from its stored owner entry.
-7. Fastly validates the Firebase token, possession proof, binding, and object,
-   then reserves the share ID/path in `share_control` and returns a fresh
-   authenticated grant.
-8. Change the encrypted owner record from `creating` to `active` and republish
-   the snapshot through the normal conflict-replay protocol.
-9. Construct the public URL locally. Capability and decryption material belong
-   in the URL fragment so normal HTTP requests and referrers do not disclose
-   them.
+3. Append a `creating` share record and commit the book entry plus derived
+   snapshot through the idempotent publication protocol, using the current
+   book/head `generation` values.
+4. If the immutable owner EPUB is not already in memory, obtain an exact
+   `owner-epub-get` URL through `/v1/r2-url`, download, verify its encrypted
+   book locator metadata, and decrypt it. Encrypt a new independent shared copy
+   with `share_content_key`; never reuse or wrap the owner `txt_key`.
+5. Obtain an exact `share-put` URL bound to the path, `If-None-Match: *`,
+   content type, Content-MD5, and SHA-256 metadata; upload the shared
+   ciphertext and record its ETag/length/digest. On a retry, accept an existing
+   object only after a `pending-get` exact URL fetch and full local verification.
+6. Fill those integrity fields while the encrypted owner record remains
+   `creating`, and republish it through `/v1/vault/commit`. This makes the
+   expected immutable bytes durable before registration.
+7. Call `POST /v1/shares` with Firebase owner authentication, the possession
+   proof bound to this exact request, the book's `book_id`, and uploaded
+   ETag/length/SHA-256. Fastly stores the book ID and integrity metadata in
+   plaintext alongside path hashes so later reconciliation can work without
+   decrypting the library. It derives owner/vault binding from its owner entry.
+8. Fastly validates the Firebase token, possession proof, binding, and a direct
+   R2 HEAD against the submitted ETag/length/SHA-256 metadata, then reserves
+   the share ID/path in `share_control` and returns a fresh authenticated grant.
+9. Change the encrypted owner record from `creating` to `active` and republish
+   through the normal conflict-replay protocol.
+10. Construct the public URL locally. Capability and decryption material belong
+   in the URL fragment, together with expected object ETag/length/SHA-256, so
+   normal HTTP requests and referrers do not disclose them.
 
-The UI exposes Copy Link only after step 7 succeeds. A failure after step 3
+The UI exposes Copy Link only after step 9 succeeds. A failure after step 3
 leaves visible `creating` state and a retry action, not a fabricated active
 link. A failure after server registration may retry the identical registration;
 Fastly returns a fresh grant for an identical active hash pair, allowing
-the browser to finish step 8.
+the browser to finish step 9.
 
 ## Copying an existing link
 
 For an `active` owner share, Copy Link calls `POST /v1/shares` again with the
 same authenticated identity and exact share tuple. Fastly requires the
-same active share-ID and object-path hashes and returns a newly encrypted grant.
-It must not create a second registry entry or upload another R2 copy.
+same active book ID, share/path hashes, and integrity metadata and returns a
+newly encrypted grant. It must not create a second registry entry or upload
+another R2 copy.
 
 The browser then reconstructs the fragment locally from the owner-side
 encrypted share record and returned grant. A registry collision or a path that
@@ -74,12 +82,14 @@ attention.
    current UI already does so.
 2. It sends only the raw `share_id` and encrypted grant to
    `POST /v1/shared-url`.
-3. Fastly applies the IP rate limit, authenticates the grant, reads the
-   server-only hashed registry entry, and requires `active` plus an exact
-   path-hash match.
-4. It returns a 60-second R2 URL granting GET for one object.
-5. The browser downloads and decrypts the independent share ciphertext with
-   `share_content_key` from the fragment.
+3. Fastly applies the best-effort in-instance IP prefilter, authenticates the
+   grant, reads the server-only hashed registry entry, requires `active` plus
+   an exact path-hash match, and claims the deployment-global durable slot.
+4. It returns a 60-second R2 URL granting GET for one object, signed
+   `If-Match`, and the registry's expected integrity metadata.
+5. The browser requires registry and fragment ETag/length/SHA-256 equality,
+   sends the required `If-Match`, hashes the ciphertext, and then decrypts it
+   with `share_content_key`. Any mismatch fails closed without plaintext.
 
 Recipient reading progress, CFI, font choice, and bookmarks are local browser
 state only. They never write KV Store or the owner snapshot. The existing
@@ -156,13 +166,23 @@ book directly rather than decrypting the whole library to find which book's
 | Owner encrypted state | Server registry | R2 object | Action                                                                             |
 | --------------------- | --------------- | --------- | ---------------------------------------------------------------------------------- |
 | `creating`            | absent          | absent    | retry encryption/upload or remove after confirmation                               |
-| `creating`            | absent          | present   | retry registration                                                                 |
-| `creating`            | active          | present   | issue fresh grant and mark owner state active                                      |
-| `active`              | active          | present   | healthy                                                                            |
+| `creating`            | absent          | present/exact | retry registration                                                              |
+| `creating`            | absent          | present/mismatch | delete the exact orphan and retry with fresh immutable bytes/path              |
+| `creating`            | active          | present/exact | issue fresh grant and mark owner state active                                   |
+| `creating`            | active          | absent/mismatch | quarantine; revoke the broken registry before retrying creation               |
+| `active`              | active          | present/exact | healthy                                                                         |
+| `active`              | active          | absent/mismatch | quarantine; do not issue/use a link; explicitly repair or revoke              |
 | `active`              | absent/deleting | any       | block Copy Link; complete deletion or re-register only with an exact binding match |
 | `deleting`            | active/deleting | any       | retry server deletion                                                              |
+| `deleting`            | absent          | present   | retry exact orphan-object deletion, then remove owner state                        |
 | `deleting`            | absent          | absent    | remove owner record                                                                |
 | absent                | active/deleting | any       | report orphan; require explicit revocation before deletion                         |
+
+`present/exact` means every present owner/registry ETag, length, and ciphertext
+SHA-256 agrees with R2; for `active`, all three copies must agree. A pre-upload
+`creating` row with null metadata is not exact: recovery must download the
+exact path, verify length/hash and AEAD, persist those fields while still
+`creating`, and only then register it. Existence alone is never healthy.
 
 Automated repair may only take idempotent actions that cannot publish a new
 capability. Creating/re-registering an anonymous share after ambiguous state
@@ -170,22 +190,27 @@ requires explicit owner confirmation.
 
 A path reservation with no matching share entry is a distinct case, described
 in [data_model.md](data_model.md): it means the two-step share registration
-was interrupted between its first and second write. Treat it the same way as
-a `creating`/absent/absent row above — retry registration, or remove the
-reservation after confirming no matching share exists anywhere.
+was interrupted between its first and second write. An exact owner retry
+resumes registration from that reservation. Administrative cleanup removes it
+only after the grace period and a second absence check; owner cancellation uses
+the proof-bearing delete route to remove the exact R2 object and reservation.
 
 ## Tests required before cutover
 
 - A share uses ciphertext/key material independent from its source EPUB.
 - Raw share IDs and paths do not appear in KV Store control entries or logs.
+- No browser response contains an R2 credential, prefix/list authority, or
+  DELETE URL; every owner URL is method/object/header scoped.
 - Registration and path reservation together survive an interruption between
   their two writes without producing a usable, unreserved path.
 - Copy Link is idempotent only for an exact active tuple.
 - A deleting share cannot exchange for a URL.
 - Delete retries survive R2 404, a `generation` conflict, browser crash at
-  every saga boundary, and an expired Firebase ID token or R2 credential.
+  every saga boundary, and an expired Firebase ID token or presigned URL.
 - Public rate limiting is durable across Fastly POPs and Compute instances.
 - A grant for one path/share cannot authorize another.
+- Fragment/registry/R2 ETag, length, or SHA-256 disagreement blocks download
+  before decryption.
 - No client response contains a KV Store binding or can select a control
   store/key.
 - Source deletion remains blocked until every share record is gone.

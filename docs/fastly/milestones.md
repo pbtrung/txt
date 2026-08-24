@@ -99,7 +99,10 @@ primitives in [deployment_migration.md](deployment_migration.md#rust-toolchain-a
 the browser and CLI; every selected Fastly-side crate builds and runs
 correctly for `wasm32-wasip1`; the KV Store fake's conformance suite passes
 identically against the fake and a real staging store; the Compute skeleton
-deploys to staging and answers `/health/live`.
+deploys to staging and answers `/health/live`; and valid/invalid RS256
+verification fits the measured Fastly request CPU budget. If the host silently
+uses the pure-Rust fallback and misses that budget, this milestone is blocked;
+the published WASI-Crypto benchmark is not evidence of Fastly acceleration.
 
 ## Milestone 2 — Owner bootstrap, Firebase auth, possession proof
 
@@ -163,12 +166,17 @@ as a searchable list. Reading state and sharing are still out of scope.
 **Builds:**
 
 - `vault` key `{book_id}` (the ID already starts with `book_`) CRUD only through
-  `POST /v1/vault/commit`, including direct R2 HEAD before any KV write,
-  idempotent book/head postconditions, and create-new-first content
-  replacement.
-- The plaintext `catalog-head`, single fixed overwrite-only R2 snapshot,
+  `POST /v1/vault/commit`, including owner-EPUB and catalog direct R2 HEAD
+  checks before any KV write, idempotent book/head postconditions, and
+  create-new-first content replacement.
+- The hybrid `catalog-head` (encrypted random object key plus plaintext
+  integrity metadata), immutable random-path R2 snapshots,
   `PUT /v1/vault/head` repair path, and fixed vault scan
   (`GET /v1/vault/books?cursor=...`).
+- `POST /v1/r2-url` for exact owner-EPUB and catalog GET/conditional-PUT,
+  with signed method, key, expiry, content type, Content-MD5, SHA-256 metadata,
+  and create/ETag preconditions. No runtime response exposes credentials,
+  list/delete permission, multipart authority, or a reusable prefix grant.
 - The browser's snapshot loader, local search index builder, and conflict
   replay (up to three attempts).
 - CLI `--ingest`, calling the same Fastly routes as the browser — the CLI
@@ -177,10 +185,10 @@ as a searchable list. Reading state and sharing are still out of scope.
 
 **Test plan:**
 
-- Ordered-commit fault injection at every boundary: before/after conditional
-  R2 overwrite, direct HEAD, book write, and head write. Retry the identical
-  semantic request and confirm exact postconditions prevent double apply;
-  an R2/head ETag mismatch must stop ordinary publication and enter repair.
+- Ordered-commit fault injection at every boundary: before/after immutable R2
+  create, each direct HEAD, book write, and head write. Retry the identical
+  semantic request and confirm exact postconditions prevent double apply; a
+  failed KV commit leaves only unreferenced immutable upload objects.
 - Conflict-replay test: two simulated clients race a commit against the
   same book; the loser must reload, reapply its original semantic mutation
   (not a byte-level overwrite), and succeed within the three-attempt cap; a
@@ -189,10 +197,9 @@ as a searchable list. Reading state and sharing are still out of scope.
 - Content-replacement test: simulate a crash between create-new and
   delete-old; assert the library contains old only, both, or new only — never
   neither — and never transfers old CFIs/bookmarks to the new ID.
-- Repair test: corrupt/delete the fixed snapshot object and separately leave
-  its ETag ahead of `catalog-head`; confirm repair overwrites that same key,
-  advances the head, creates no generation object, and exactly projects live
-  book entries.
+- Repair test: corrupt/delete the current pointed-to snapshot, confirm repair
+  creates a fresh immutable random generation, encrypts that key in the head,
+  and exactly projects live book entries without selecting an orphan.
 - Client/CLI validation fuzzing on every decrypted catalog field and
   content/share locator. Fastly fuzzing covers only outer ID/kind/schema/size
   and must demonstrate that it never claims to inspect ciphertext fields.
@@ -205,6 +212,12 @@ as a searchable list. Reading state and sharing are still out of scope.
   access; after decryption, client/CLI tests reject a client-chosen `owner_pk`
   or wrong `container_role`. Confirm no content-locator-only bypass route
   exists.
+- R2 authorization tests: mutate each presigned URL's method/key/query or any
+  required header and require signature failure; reuse an immutable upload URL
+  and require precondition failure; race two catalog commits and retain only
+  the winner's pointer while the losing random object is an orphan; reject bad
+  Content-MD5; and confirm responses/logs expose no signing secret, session
+  credential, list/delete URL, or provider error body.
 
 **Exit criteria:** the 10,000-book scale test's measured numbers are within
 the documented estimates (or the estimates are corrected before moving on);
@@ -278,7 +291,8 @@ before cutover begins.
 
 - `POST`/`DELETE /v1/shares`, `POST /v1/shared-url`, the two-step
   path-reservation-then-share create in `share_control`, and the plaintext
-  `book_id` back-reference on the share entry.
+  `book_id` plus ETag/length/digest on the share entry. Extend `/v1/r2-url`
+  with exact create-only `share-put`; public GET pins the registered ETag.
 - The administration CLI's read-only reconciliation report and explicit
   repair mode for every row of [sharing.md](sharing.md)'s recovery table.
 - The scheduled administrative export job (KV Store's only backup
@@ -301,14 +315,20 @@ before cutover begins.
   recovery table, including the path-reservation-orphan case introduced by
   the two-step (non-transactional) create, and assert the CLI's report and
   repair action match the documented action exactly.
+- Registration fault injection: lose the response after reservation creation
+  and separately after share creation; an exact retry must resume the matching
+  reservation or return the existing active registration without another
+  write, while any tuple mismatch remains a conflict.
 - Grant/capability tests: a grant for one share/path cannot authorize
   another; a `deleting` share cannot exchange for a URL; public rate
   limiting holds under concurrent requests distributed across simulated
-  points of presence.
+  points of presence, and rotating IPs still share the one global durable
+  ring. Any ETag/length/SHA-256 mismatch among fragment, registry, and R2
+  blocks download before AEAD plaintext is released.
 - Backup/restore drill: export, wipe a scratch account's KV Stores, restore,
-  and diff every entry plus the fixed snapshot/head state against the
-  pre-wipe state. This drill must succeed before the milestone closes, not
-  merely be scheduled.
+  and diff every entry plus the catalog head and pointed-to immutable snapshot
+  against the pre-wipe state. This drill must succeed before the milestone
+  closes, not merely be scheduled.
 - Full dry-run migration against a staging copy of real production-shaped
   data (per deployment_migration.md's pre-cutover step 4 and cutover step
   6), diffing every book, bookmark, position, catalog field, share tuple,

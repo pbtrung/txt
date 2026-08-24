@@ -9,8 +9,8 @@ format.
 
 This design uses the canonical versioned authenticated blob based on
 Ascon-Keccak AEAD and HKDF-SHA3-512 for every confidential KV/R2 payload.
-Plaintext routing and integrity metadata, including `catalog-head`, never
-contains user content or secret key material.
+Plaintext routing and integrity fields, including the outer fields of
+`catalog-head`, never contain user content or secret key material.
 
 ## Encryption map
 
@@ -19,11 +19,12 @@ contains user content or secret key material.
 | `vault` key `{book_id}` (already `book_...`)      | Canonical structured-payload blob from [docs/crypto.md](../crypto.md), using `vault_master_key` as IKM |
 | `vault` key `reading_{book_id}`                  | Canonical structured-payload blob using `vault_master_key` as IKM                                       |
 | `vault` key `reading-index`                      | Canonical structured-payload blob using `vault_master_key` as IKM                                       |
+| `vault` key `catalog-head` pointer               | Canonical structured-payload blob using `vault_master_key` as IKM                                       |
 | R2 library snapshot                              | Canonical structured-payload blob using `vault_master_key` as IKM                                       |
 | R2 administrative export                         | Canonical structured-payload blob using independent `EXPORT_KEY` as IKM                                 |
 | Wrapped UMK/KEM/signing keys and credentials     | Existing wrapping/blob procedures in [docs/crypto.md](../crypto.md)                                     |
 | Owner EPUB and independently encrypted share     | Existing canonical blob with the per-object content key                                                 |
-| KV Store routing, version, and `catalog-head` data | Plaintext operational metadata protected by authorization and transport; no catalog text              |
+| KV Store routing/version and catalog integrity metadata | Plaintext operational metadata protected by authorization and transport; no catalog path/text    |
 
 Every encrypted value listed above is an independent canonical authenticated
 blob providing its own confidentiality and integrity; there is no page-level
@@ -39,7 +40,8 @@ client-side blob encryption.
   server-only `owner_control` entry and are returned through authenticated
   `/v1/keys`.
 - `vault_master_key` is 128 bytes of key material, the IKM for every encrypted
-  book, reading-state, reading-index, and catalog-snapshot value.
+  book, reading-state, reading-index, catalog-head pointer, and catalog-snapshot
+  value.
 - The P-521 request-signing keypair from [docs/crypto.md](../crypto.md) is
   used for the per-request possession proof below. Its public half is stored
   in plaintext in the `owner_control` entry (public keys are not secret); its
@@ -64,8 +66,7 @@ version handling. Structured JSON is Brotli-compressed by that procedure before
 encryption. Store the resulting blob:
 
 - as canonical unpadded base64url in a KV Store JSON `ciphertext` field; or
-- as raw blob bytes in R2. EPUB/share/export objects are immutable; the fixed
-  catalog object is conditionally overwritten.
+- as raw blob bytes in immutable R2 objects created at random paths.
 
 Never prepend another private header, remove the canonical header, truncate
 the tag, or feed a precompressed structured JSON payload into a path that
@@ -102,6 +103,7 @@ decrypts to exactly the same eight-field envelope:
 | `book`                 | `txt:book`                 | the book ID      |
 | `reading`              | `txt:reading-state`        | the book ID      |
 | `reading-index`        | `txt:reading-index`        | `reading-index`  |
+| `catalog-head-pointer` | `txt:catalog-head-pointer` | `catalog-head`   |
 
 Encrypt the canonical bytes with `vault_master_key` via the structured-payload
 Encrypt procedure, then store its unpadded base64url encoding in `ciphertext`.
@@ -109,8 +111,10 @@ Encrypt procedure, then store its unpadded base64url encoding in `ciphertext`.
 After Decrypt, reject the entire entry unless:
 
 - `purpose` and `envelope_version` are exactly supported;
-- `container_role`, `owner_pk`, `vault_id`, `item_id`, and `kind` equal the
-  trusted outer route/entry values;
+- `container_role`, `owner_pk`, `vault_id`, and `item_id` equal the trusted
+  outer route/entry values, and purpose/kind equal the table's expected
+  mapping (`catalog-head` outer kind deliberately maps to the
+  `catalog-head-pointer` inner kind; other kinds match directly);
 - for `book` and `reading`, `record.book_id` equals `item_id`; and
 - canonical JSON parsing, duplicate-key rejection, and the full record schema
   all succeed.
@@ -121,10 +125,11 @@ binding failure is a hard corruption/security error. Never return partial
 plaintext, or retry a failed authentication with a different key or decoder,
 on a target entry.
 
-`catalog-head` is not an encrypted vault envelope. It is the allowlisted
-plaintext ETag/length/digest/generation record in
-[data_model.md](data_model.md); the fixed catalog key is derived from the
-server's stored `db_prefix`.
+`catalog-head` additionally carries plaintext ETag/length/digest/generation
+metadata, but its random object key exists only in the encrypted
+`catalog-head-pointer` envelope. A proof-bearing commit supplies a transient
+plaintext copy for Fastly's exact R2 HEAD. Fastly cannot compare it with the
+ciphertext; the browser/CLI must validate that equality after decryption.
 
 ## Library snapshot envelope
 
@@ -138,7 +143,7 @@ decrypted canonical JSON object is:
   "vault_id": "vault_opaqueRandomValue",
   "owner_pk": "own_opaqueRandomValue",
   "generation": 184,
-  "object_key": "{db_prefix}/catalog/library.blob",
+  "object_key": "{db_prefix}/catalog/random",
   "snapshot_schema_version": 1,
   "books": []
 }
@@ -146,19 +151,22 @@ decrypted canonical JSON object is:
 
 Snapshot construction performs this exact sequence:
 
-1. choose the next logical `generation` and fixed `object_key`;
+1. choose the next logical `generation` and a fresh random `object_key`;
 2. build and canonical-JSON serialize the complete envelope;
 3. Encrypt it as a structured payload with `vault_master_key` according to
    [docs/crypto.md](../crypto.md); and
-4. compute SHA-256 and length over the exact blob, then conditionally overwrite
-   the fixed R2 key as specified in [catalog.md](catalog.md).
+4. compute SHA-256 and length over the exact blob, then create the R2 object
+   with `If-None-Match: *` as specified in [catalog.md](catalog.md); and
+5. separately encrypt that same object key inside the catalog-head-pointer
+   envelope.
 
-On load, compare the downloaded object's ETag, length, checksum metadata, and
-computed ciphertext SHA-256 with `catalog-head` before Decrypt. Those checks
-detect stale/interrupted transport state but do not replace AEAD
-authentication. After Decrypt, require the inner generation, fixed object key,
-owner, and vault to match authenticated outer context before accepting
-`books`. Validate schema, order, unique IDs, and every projected record.
+On load, decrypt and validate the pointer, then obtain an exact URL for that
+random path. Compare the downloaded object's ETag, length, checksum metadata,
+and computed ciphertext SHA-256 with `catalog-head` before snapshot Decrypt.
+Those checks do not replace AEAD authentication. After Decrypt, require the
+inner generation, random object key, owner, and vault to match the pointer and
+authenticated outer context before accepting `books`. Validate schema, order,
+unique IDs, and every projected record.
 Reading state and bookmarks remain in `reading` and `reading-index` entries.
 
 Every book, reading, and snapshot entry/object is encrypted in this one
@@ -218,7 +226,7 @@ bound to the current request or requires holding any secret key material.
 Every route whose abuse is not self-contained — `/v1/vault/commit`,
 `PUT /v1/vault/head`, `PUT /v1/vault/reading-index`, first-create
 `PUT /v1/vault/reading/{book_id}`, `DELETE /v1/vault/reading/{book_id}`,
-`POST /v1/r2-token`, `POST /v1/shares`, and `DELETE /v1/shares` — additionally
+`POST /v1/r2-url`, `POST /v1/shares`, and `DELETE /v1/shares` — additionally
 requires a fresh per-request signature
 proving the caller currently holds the unwrapped P-521 signing private key,
 i.e. that it completed a correct `user_root_key` unlock in this session, not
@@ -320,8 +328,8 @@ Firebase authenticates the owner to Fastly; it is neither an encryption key
 nor a KV Store credential. Fastly validates the Firebase JWT as specified in
 [auth_api.md](auth_api.md), then reads or writes the fixed KV Store entry
 through its native resource binding — there is no request to sign and no
-credential to construct, unlike the R2 access this design still brokers with
-short-lived credentials.
+credential to construct. R2 is separate: Fastly retains its signing key and
+returns only short-lived exact-object presigned URLs, never that credential.
 
 This design issues no owner ticket. The possession proof above is a
 per-request signature, not a session artifact, and Fastly never mints or
@@ -362,8 +370,10 @@ Let `id_hash = SHA-256(raw_share_id)`. For every freshly minted grant, Fastly:
 Decryption requires the same raw share ID, so a grant cannot be replayed for a
 different capability. Fastly re-hashes the decrypted normalized path and
 requires equality with the active `share_control` entry's `object_path_hash`
-before signing an exact-object R2 URL. A deleting, absent, malformed, or
-mismatched share never produces a URL.
+before signing an exact-object R2 URL with `If-Match` for the registered ETag.
+It returns the registered length/SHA-256, which the recipient requires to
+equal the copy in the URL fragment before hashing and AEAD decryption. A
+deleting, absent, malformed, or mismatched share never produces a URL.
 
 Only Fastly and the offline recovery environment hold `SHARE_GRANT_KEY`. A new
 grant for the same active share uses fresh salt and nonce. Key rotation uses a

@@ -58,8 +58,8 @@ fields and, when encrypted, what its `ciphertext` field decrypts to. Encrypted
 `envelope_version`, `container_role`, `owner_pk`, `vault_id`, `item_id`,
 `kind`, `record`);
 [cryptography.md](cryptography.md) defines that pattern and its validation
-rules once. `catalog-head` is the explicit exception: it contains only
-nonsensitive operational integrity metadata and no ciphertext.
+rules once. `catalog-head` combines nonsensitive outer integrity metadata with
+an encrypted vault envelope containing its random R2 object key.
 
 Four KV Stores, plus R2 for encrypted content:
 
@@ -67,15 +67,15 @@ Four KV Stores, plus R2 for encrypted content:
 - `vault` holds `{book_id}`, `reading_{book_id}`, `reading-index`, and
   `catalog-head`. A `book` and its `reading` entry share the same `book_id`;
   `book` projects its catalog fields and shares into the R2 library
-  snapshot, `catalog-head` pins that snapshot object's current validator, and `reading`
-  projects its bookmarks into `reading-index`.
+  snapshot, `catalog-head` privately points to that snapshot object, and
+  `reading` projects its bookmarks into `reading-index`.
 - `share_control` holds `share_{share_id_hash}` (which carries a plaintext
   `book_id` back-reference) and `path_{object_path_hash}`.
 - `rate_limit_control` holds TTL'd `slot_...` and `nonce_...` entries,
   referenced by nothing else.
-- R2 holds immutable owner EPUB and share copies plus the single fixed,
-  overwrite-only library snapshot. `catalog-head` pins the current catalog
-  ETag, length, and ciphertext digest.
+- R2 holds immutable owner EPUB/share copies and immutable catalog generations
+  at random paths. `catalog-head` encrypts the current path and pins its ETag,
+  length, and ciphertext digest.
 
 ## `owner_control`
 
@@ -203,10 +203,10 @@ and delete each require exactly one vault write.
 `id` is a randomly generated, stable opaque identifier (`book_` followed by at
 least 256 bits of random data, canonically encoded), also used to derive the
 KV key exactly as-is. Do not prepend `book_` a second time: the ID already
-supplies the `book_` prefix used by scans. `record_version` is incremented inside and outside the
-ciphertext on every accepted mutation; the values must match after
-decryption. It aids diagnosis but does not replace the KV Store `generation`
-for concurrency.
+supplies the `book_` prefix used by scans. `record_version` is incremented
+inside and outside the ciphertext on every accepted mutation; the values must
+match after decryption. It aids diagnosis but does not replace the KV Store
+`generation` for concurrency.
 
 `ciphertext` decrypts to the vault entry envelope
 ([cryptography.md](cryptography.md)):
@@ -228,7 +228,10 @@ for concurrency.
     "content": {
       "txt_key": "base64url 128 bytes",
       "txt_prefix": "base64url 32 bytes",
-      "path": "base64url 32 bytes"
+      "path": "base64url 32 bytes",
+      "object_etag": "opaque R2 validator",
+      "object_length": 12345,
+      "ciphertext_sha256": "base64url SHA-256"
     },
     "catalog": {
       "name": "original.epub",
@@ -243,6 +246,9 @@ for concurrency.
         "share_content_key": "base64url 128 bytes",
         "share_prefix": "base64url 32 bytes",
         "share_path": "base64url 32 bytes",
+        "object_etag": "opaque R2 validator",
+        "object_length": 12345,
+        "ciphertext_sha256": "base64url SHA-256",
         "state": "active",
         "created_at": 1787356800000,
         "sequence": 2
@@ -258,10 +264,17 @@ After decryption, the browser or CLI applies these validation rules for
 checks. Fastly can validate only the outer entry:
 
 - content and share locators are validated before interpolating an R2 key;
+- object ETags are treated as opaque bounded quoted validators; lengths and
+  SHA-256 digests must match the exact R2 bytes before decryption;
 - catalog fields keep the accepted types and limits used at ingestion, and
   `publisher` may be `null`;
 - share state is exactly `creating`, `active`, or `deleting`; and
 - a book cannot be deleted while `shares` is non-empty.
+
+A pre-upload `creating` share may carry `null` object ETag/length/digest. After
+upload, the client must persist all three while the state remains `creating`
+before calling `POST /v1/shares`; `active` and `deleting` shares require them
+and never change them.
 
 Editing catalog metadata, changing a content locator, and creating/removing a
 share all replace this same entry and republish the snapshot; none of them
@@ -425,9 +438,8 @@ or replays the successful reading-state mutation.
 
 ### `catalog-head` entry
 
-The only unencrypted vault entry is operational metadata for the current
-bytes at the fixed R2 catalog key
-`{db_prefix}/catalog/library.blob`:
+The catalog head keeps its object key encrypted while exposing only the
+operational metadata needed for conditional publication and integrity checks:
 
 ```json
 {
@@ -437,30 +449,50 @@ bytes at the fixed R2 catalog key
   "object_etag": "opaque R2 validator",
   "object_length": 12345,
   "ciphertext_sha256": "base64url SHA-256",
+  "ciphertext": "base64url encrypted catalog-head-pointer envelope",
   "updated_at": 1787356800000
 }
 ```
 
-The key is derived from the `db_prefix` already stored in `owner_control`, so
-it is neither client-supplied nor repeated in the head. These fields reveal no
-book metadata or key material. They let Fastly direct-HEAD R2 and let clients
-reject truncated, stale, or interrupted publication before decryption.
+The ciphertext decrypts with `vault_master_key` to:
+
+```json
+{
+  "purpose": "txt:catalog-head-pointer",
+  "envelope_version": 1,
+  "container_role": "vault",
+  "owner_pk": "own_opaqueRandomValue",
+  "vault_id": "vault_opaqueRandomValue",
+  "item_id": "catalog-head",
+  "kind": "catalog-head-pointer",
+  "record": {
+    "object_key": "{db_prefix}/catalog/random"
+  }
+}
+```
+
+Fastly stores that ciphertext opaquely. A commit supplies the same object key
+transiently so Fastly can validate its stored owner prefix/random grammar and
+direct-HEAD R2; the key is never persisted in plaintext. Only the browser/CLI
+can require equality between that transient construction and the decrypted
+pointer on the next load.
 
 `snapshot_generation` increases by exactly one per publication. It is a
 logical counter, not a timestamp, and is distinct from KV Store's opaque
 per-item `generation` used for conditional writes. Before committing a head,
-Fastly requires a direct uncached R2 HEAD of the fixed key to match the exact
-ETag, length, and `x-amz-meta-txt-sha256`. The client additionally computes
-the digest over downloaded ciphertext, then authenticates the encrypted
-snapshot's matching inner generation, owner, vault, and fixed key.
+Fastly requires a direct uncached R2 HEAD of the transiently supplied key to
+match the exact ETag, length, and `x-amz-meta-txt-sha256`. The client
+additionally computes the digest over downloaded ciphertext, then authenticates
+the encrypted snapshot's matching inner generation, owner, vault, and random
+key.
 
 The empty library still has a valid head and an encrypted snapshot envelope
 whose `books` member is `[]`; absence of `catalog-head` is an initialization
 or corruption error.
 
 Catalog metadata edits, ingest, delete, content-locator changes, and share
-state changes all advance `snapshot_generation`. Reading-state and bookmark mutations never
-do — see [catalog.md](catalog.md) for the exact republish list.
+state changes all advance `snapshot_generation`. Reading-state and bookmark
+mutations never do — see [catalog.md](catalog.md) for the exact republish list.
 
 ## `share_control`
 
@@ -475,6 +507,9 @@ Access: fixed Fastly share routes and offline administration only.
   "schema_version": 1,
   "share_id_hash": "base64url SHA-256",
   "object_path_hash": "base64url SHA-256",
+  "object_etag": "opaque R2 validator",
+  "object_length": 12345,
+  "ciphertext_sha256": "base64url SHA-256",
   "book_id": "book_K7c3...",
   "state": "active",
   "created_at": 1787356800000,
@@ -491,7 +526,9 @@ the library to find a hash match during reconciliation (see
 
 Only `active` entries may produce a shared URL. The raw share identifier and
 R2 path are carried in the authenticated share grant, not stored in plaintext
-control entries.
+control entries. The ETag/length/digest are nonsensitive integrity metadata;
+Fastly pins the ETag in a shared GET URL, and the recipient compares all three
+with the fragment before AEAD decryption.
 
 ### `path_{object_path_hash}` entry
 
@@ -508,17 +545,20 @@ control entries.
 
 Create the path reservation first, then the share entry, both as create-only
 writes, so that the exact R2 path a share resolves to is reserved before the
-share itself becomes visible. A failure between the two steps leaves an
-orphan reservation with no matching share; on the next attempt, or during
-administrative reconciliation, Fastly point-reads both entries: identical
-`object_path_hash` on both is the idempotent-retry case described in
-[auth_api.md](auth_api.md) `POST /v1/shares` (return a fresh grant, no
-write); a reservation with no matching share and an age past a short grace
-period is a safe-to-remove orphan; any other combination — a different
-`object_path_hash` for the same `share_id_hash`, or a `deleting`/absent
-counterpart — is the genuine 409. Deletion updates `active` to `deleting`,
-deletes the R2 object, then deletes both entries, path reservation last so an
-interrupted delete never leaves a share with no reservation.
+share itself becomes visible. A failure between the two steps leaves a
+reservation with no matching share. An exact retry point-reads that matching
+share/path-hash reservation and continues with the create-only share write; it
+does not wait for cleanup or create another reservation. If the share already
+exists, exact active state, `book_id`, hashes, and ETag/length/digest are the
+idempotent-retry case described in [auth_api.md](auth_api.md) `POST /v1/shares`
+(return a fresh grant, no write).
+
+Administrative reconciliation may remove a reservation with no share only
+after a short grace period and a second absence check. A different path hash
+for the same share hash or a `deleting` counterpart is a genuine conflict.
+Deletion updates `active` to `deleting`, deletes the R2 object, then deletes
+both entries, path reservation last so an interrupted delete never leaves a
+share with no reservation.
 
 ## `rate_limit_control`
 
@@ -553,10 +593,12 @@ negative cache protect a full window from repeated full-ring probe
 amplification. Provider throttling or an indeterminate create fails closed
 with 503, never by treating it as an occupied slot.
 
-Only after Firebase verification may an owner UID select its slot ring. For a
-public route, validate the cryptographic capability before touching its
-IP-keyed ring. Pre-authentication floods use a best-effort in-instance IP
-counter, so forged token claims cannot consume an owner's durable slots.
+Only after Firebase verification may an owner UID select its slot ring. For
+the public route, validate the cryptographic capability before touching the
+single deployment-global durable ring. A best-effort in-instance IP counter
+runs before expensive authentication. Keeping IP out of durable ring identity
+prevents rotating-source multiplication of Class A writes; the global cap is
+the free-tier cost boundary.
 
 This store also holds single-use possession-proof nonces (`kind: "nonce"`),
 created with a create-only write and a TTL just past the proof's expiry; see
@@ -568,19 +610,18 @@ it.
 
 ```text
 {db_prefix}/{txt_prefix}/{path}                       owner EPUB
-{db_prefix}/catalog/library.blob                      current library snapshot
+{db_prefix}/catalog/{random}                          immutable library snapshot
 {db_prefix}/shared/{share_prefix}/{share_path}        shared EPUB copy
 {db_prefix}/exports/{timestamp}-{random}.blob         optional control/data export
 ```
 
-EPUB, share, and export objects are immutable and created with
-`If-None-Match: *`. The catalog is the sole mutable exception: each publication
-overwrites the fixed key with `If-Match` against the current committed ETag
-(initial creation uses `If-None-Match: *`). R2 stores no prior catalog object.
-Reading state, bookmarks, and authoritative mutable owner records live in KV
-Store.
+Every object is immutable and created with `If-None-Match: *`. A catalog
+publication chooses a fresh random segment and never overwrites another
+generation. Reading state, bookmarks, and authoritative mutable owner records
+live in KV Store.
 
 The cleaner constructs the live set from all decrypted vault book entries, the
-fixed always-live catalog key, active/deleting server share entries, and
-retained exports. It never infers liveness from an R2 listing alone and has no
-catalog-generation retention list.
+decrypted current catalog-head pointer, active/deleting server share entries,
+and retained exports. Superseded/failed catalog objects are unreferenced
+cleanup candidates after the safety age; no older catalog generation is
+treated as live. It never infers liveness from an R2 listing alone.

@@ -62,7 +62,7 @@ requires the per-request P-521 possession proof defined in
 | `GET /v1/vault/books?cursor=...`      | no |
 | `POST /v1/vault/commit`               | yes |
 | `PUT /v1/vault/head`                  | yes |
-| `POST /v1/r2-token`                   | yes |
+| `POST /v1/r2-url`                     | yes |
 | `POST /v1/shares`                     | yes |
 | `DELETE /v1/shares`                   | yes |
 | `POST /v1/shared-url`                 | no (unauthenticated; capability is the authorization) |
@@ -102,9 +102,10 @@ slot. See the error contract below.
 - Return `Cache-Control: private, no-store` and `Vary: Origin, Authorization` on
   authenticated responses. Never allow Fastly cache lookup or storage for API
   routes, even when a response happens to be cacheable.
-- Never put credentials in query strings. Redact authorization headers, request
-  bodies, ciphertext, grants, R2 credentials, signatures, and signed URLs from
-  logs.
+- Never put Firebase tokens, KV bindings, or R2 API credentials in query
+  strings. A presigned R2 URL necessarily carries short-lived SigV4 bearer
+  material in its query, so redact the entire URL along with authorization
+  headers, request bodies, ciphertext, grants, credentials, and signatures.
 - Apply a subject-independent flood control (normalized client IP or a global
   counter) before spending CPU on Firebase signature verification or any other
   expensive cryptography. Apply the route's owner-subject-keyed rate limit only
@@ -238,13 +239,13 @@ requirements are route-specific in the table above.
 ### `POST /v1/vault/commit`
 
 Purpose: create, replace, or delete a book and advance `catalog-head` after the
-client has conditionally overwritten the one catalog R2 object. A book
-operation and a head operation are always both present: every accepted change
-to a book entry republishes the derived projection, including a content-path,
-catalog-metadata, or share change. There is no endpoint on which Fastly tries
-to distinguish those encrypted semantics.
+client has created a new immutable catalog object at a fresh random R2 path. A
+book operation and a head operation are always both present: every accepted
+change to a book entry republishes the derived projection, including a
+content-path, catalog-metadata, or share change. There is no endpoint on which
+Fastly tries to distinguish those encrypted semantics.
 
-Request shape:
+Request shape for create/replace; delete omits `book.entry` and `book.object`:
 
 ```json
 {
@@ -259,14 +260,19 @@ Request shape:
     "operation": "create | replace | delete",
     "id": "book_K7c3...",
     "generation": "required for replace/delete",
-    "entry": "required for create/replace; exact encrypted outer entry"
+    "entry": "required for create/replace; exact encrypted outer entry",
+    "object": {
+      "txt_prefix": "base64url 32 bytes",
+      "path": "base64url 32 bytes",
+      "object_etag": "opaque R2 validator",
+      "object_length": 12345,
+      "ciphertext_sha256": "base64url SHA-256"
+    }
   },
   "head": {
     "generation": "current head generation",
-    "snapshot_generation": 185,
-    "object_etag": "opaque ETag returned by the successful conditional R2 PUT",
-    "object_length": 12345,
-    "ciphertext_sha256": "base64url SHA-256"
+    "entry": "complete next catalog-head outer entry",
+    "object_key": "{db_prefix}/catalog/random"
   }
 }
 ```
@@ -279,23 +285,34 @@ version silently, and requires:
 - the body book ID matches the outer entry item ID; outer kind/schema/size are
   valid; create omits `generation`; and replace/delete carry the previously
   read `generation`;
-- the current head either exactly equals the requested head (an already-
-  applied retry), or `head.snapshot_generation` is exactly one greater than
-  its current value; ETag, length, and digest have strict bounded encodings;
-  and
-- a direct, uncached R2 `HEAD` of the configured fixed key
-  `{db_prefix}/catalog/library.blob` returns that exact ETag and length plus
-  `x-amz-meta-txt-sha256` equal to `head.ciphertext_sha256`. Fastly derives the
-  key from `owner_control`; the caller never supplies it.
+- create/replace supplies a strictly bounded `book.object` whose rendered
+  `txt_prefix`/`path` has the exact stored owner-prefix grammar, and a direct
+  uncached R2 `HEAD` returns its exact ETag/length/`x-amz-meta-txt-sha256`;
+- the current head either exactly equals `head.entry` (an already-applied
+  retry), or the entry's `snapshot_generation` is exactly one greater than its
+  current value; its outer ETag, length, digest, and encrypted pointer have
+  strict bounded encodings; and
+- `head.object_key` has the exact stored owner prefix and catalog/random-ID
+  grammar (32 random bytes in canonical base64url), and a direct uncached R2
+  `HEAD` of it returns the exact ETag/length/`x-amz-meta-txt-sha256` carried by
+  `head.entry`.
+
+Fastly uses the plaintext object locators only for that request and never
+persists or returns them separately. It cannot decrypt either outer entry, so
+it cannot prove a transient locator equals the encrypted book locator or head
+pointer. The browser/CLI must construct each pair from one value and reject any
+mismatch after decryption. A valid proof holder can make only this owner's own
+encrypted state inconsistent; repair rebuilds the catalog from authoritative
+books, while an inconsistent book locator requires explicit owner repair.
 
 R2 has
 [strong read-after-write consistency](https://developers.cloudflare.com/r2/reference/consistency/)
-for object updates. The direct `HEAD` therefore establishes that the bytes the
-head will pin are current; do not put a caching custom domain between Fastly
+for object creates. The direct `HEAD` therefore establishes that the new bytes
+exist before any KV write; do not put a caching custom domain between Fastly
 and the S3 endpoint.
 
-Fastly performs the direct R2 `HEAD` **before any KV write**, followed by the
-book operation and then the conditional `catalog-head` write. Cross-store and
+Fastly performs every required direct R2 `HEAD` **before any KV write**, then
+the book operation and conditional `catalog-head` write. Cross-store and
 cross-key atomicity is unavailable, so retries use postconditions:
 
 - if create reports that the key exists, point-read it and succeed only if its
@@ -305,16 +322,21 @@ cross-key atomicity is unavailable, so retries use postconditions:
 - if delete finds the key absent, treat it as already applied (book IDs are
   never reused); otherwise a generation mismatch is a conflict;
 - if the head write reports a generation mismatch, point-read and succeed only
-  if every persisted head field exactly equals the requested head.
+  if every persisted head field exactly equals `head.entry`.
 
 An eventually consistent point-read immediately following a write conflict
 may not yet reveal that postcondition. Return `503 commit_pending` with phase
 `propagation`; the caller retries the same semantic request with jitter and a
 fresh proof. Never convert uncertainty into an overwrite. Other failures name
-phase `snapshot`, `book`, or `head`, so a caller can distinguish a failed
-precondition from an already-applied partial commit. This makes retrying after
-a lost response or a successful book write safe and prevents the same
+phase `content`, `snapshot`, `book`, or `head`, so a caller can distinguish a
+failed precondition from an already-applied partial commit. This makes retrying
+after a lost response or a successful book write safe and prevents the same
 mutation being applied twice.
+
+An idempotent transport retry reuses the exact book/head outer-entry bytes and
+transient object fields from the first attempt and creates only a fresh proof.
+Re-encrypting the same plaintext produces different nonce/ciphertext bytes and
+therefore is a new publication attempt, not an exact postcondition retry.
 
 Replacing a book's content is **not** a replace of the existing `book_id`,
 because CFIs and bookmarks belong to the old document. Upload and commit the
@@ -332,17 +354,18 @@ outside `/v1/vault/commit`.
 Purpose: publish only a repaired catalog projection after a complete owner
 book scan. The proof-bearing request carries the current head `generation`
 and the same next head fields as `/v1/vault/commit`. Fastly performs the same
-direct R2 `HEAD`, one-step generation check, conditional write, and exact
-postcondition handling, but no book write. Normal book changes cannot use this
-route; it is for a projection of already-authoritative entries.
+catalog R2 `HEAD`, one-step generation check, conditional write, and exact
+postcondition handling, but no book write or owner EPUB check. Normal book
+changes cannot use this route; it is for a projection of already-authoritative
+entries.
 
 ### `PUT /v1/vault/reading/{book_id}`
 
 Purpose: write a book's reading position and bookmarks. The request contains
 `protocol_version`, the previous `generation` (omitted for the first write),
 and the complete next encrypted outer entry. It never contains an index
-sub-object. Fastly first point-reads the exact `{book_id}` key and rejects an absent
-book, then validates only the reading entry's outer ID/kind/schema/size.
+sub-object. Fastly first point-reads the exact `{book_id}` key and rejects an
+absent book, then validates only the reading entry's outer ID/kind/schema/size.
 
 An absent reading entry uses create-only semantics and requires a possession
 proof plus the durable reading-create admission slot. Replacing an existing
@@ -376,44 +399,108 @@ decrypt, merge, and retry the index without replaying the already-successful
 reading-state write. A stale or missing index is repairable and never rolls
 back authoritative reading state.
 
-## `POST /v1/r2-token`
+## `POST /v1/r2-url`
 
-Purpose: return short-lived direct R2 access for owner object reads —
-including EPUB content and the catalog snapshot — plus immutable uploads and
-cleanup, all under one prefix. The request contains `protocol_version`, the
-possession proof, and no client-supplied binding fields. Fastly obtains the
-owner/vault/prefix binding from the single stored owner entry.
+Purpose: issue one short-lived presigned R2 URL for one method on one exact
+object. The browser never receives an access key, secret, session token,
+prefix-wide permission, list permission, or DELETE URL. Cloudflare documents
+that a presigned URL binds an operation and object and must be treated as a
+bearer token in its
+[R2 presigned URL guide](https://developers.cloudflare.com/r2/api/s3/presigned-urls/).
+Use the R2 S3 API hostname directly; do not depend on custom-domain WAF/HMAC
+features or any paid Cloudflare/Fastly rate-limiting product.
 
-Fastly validates Firebase, verifies the v2 proof against this exact request,
-consumes `owner-r2-token`, reads the `owner` entry, validates its stored
-binding, and asks R2 for a 900-second temporary
-credential limited to the configured bucket and normalized `{db_prefix}/`. It
-returns only:
+Every request contains `protocol_version`, its exact-request v2 possession
+proof, and one of these allowlisted operation shapes:
+
+| Operation          | Additional request fields | Signed R2 result |
+| ------------------ | ------------------------- | ---------------- |
+| `catalog-get`      | current head KV `generation` and the decrypted/rendered random `catalog_id` | GET exact `{db_prefix}/catalog/{catalog_id}` with `If-Match: <head ETag>` |
+| `catalog-put`      | fresh random rendered `catalog_id`, current head KV `generation`, next logical generation, claimed byte length, ciphertext SHA-256, and MD5, all bounded | create-only PUT of that exact catalog key |
+| `owner-epub-get`   | `book_id`, rendered `txt_prefix`, rendered `path`, and expected ETag from the decrypted book entry | GET that exact owner EPUB key with signed `If-Match` |
+| `owner-epub-put`   | rendered `txt_prefix`, rendered `path`, claimed byte length, ciphertext SHA-256, and MD5, all bounded | create-only PUT of that exact owner EPUB key |
+| `share-put`        | rendered `share_prefix`, rendered `share_path`, claimed byte length, ciphertext SHA-256, and MD5, all bounded | create-only PUT of that exact share key |
+| `pending-get`      | object class plus the exact rendered random segments and expected length/SHA-256 from a just-attempted upload | GET only that exact immutable key, for lost-response recovery |
+
+The request encodes MD5 as canonical base64url; Fastly converts it to the
+standard Base64 required by the `Content-MD5` HTTP header. This MD5 is only
+R2's single-PUT transport integrity check, not an application security digest.
+Consumers still require the signed SHA-256 metadata and canonical AEAD.
+R2 documents `Content-MD5` and conditional PutObject headers as supported in
+its [S3 compatibility table](https://developers.cloudflare.com/r2/api/s3/api/).
+
+Fastly validates Firebase and proof, claims the replay nonce and
+`owner-r2-url` slot in that order, reads all binding values from
+`owner_control`, validates rendered path segments, and constructs the full key
+itself. For `owner-epub-get`, it also point-reads the exact `{book_id}` KV key
+to reject a nonexistent book. Because the locator is inside ciphertext,
+Fastly cannot prove that the requested R2 locator/ETag equals that book's inner
+metadata; the client must make that comparison after decryption. The proof and
+fixed class grammar prevent a bearer token alone from using this limitation to
+enumerate the prefix.
+
+`pending-get` exists because a create-only PUT may have succeeded even when
+the browser lost its response and ETag. It never lists or accepts a full raw
+key: Fastly constructs one exact catalog/owner/share key from the selected
+class grammar. The client must require the expected length, object metadata,
+computed SHA-256, and AEAD before treating the prior PUT as successful;
+otherwise it abandons that random path and uploads under a new one.
+
+For `catalog-get`, Fastly reads the head at the supplied KV generation and
+signs its ETag into `If-Match`; only the client can compare the supplied random
+ID with the pointer it decrypted. For `catalog-put`, Fastly requires a current
+head generation, the next logical generation, and a well-formed random ID,
+then signs `If-None-Match: *`; the precondition, not Fastly guessing entropy,
+enforces non-overwrite. Initial creation uses the same create-only rule through
+the offline administration operation.
+
+Every PUT URL signs and requires these exact headers:
+
+```text
+Content-Type: application/octet-stream
+Cache-Control: private, no-store
+Content-MD5: <standard Base64 MD5 of the complete bytes>
+x-amz-meta-txt-sha256: <canonical base64url SHA-256>
+If-None-Match: *                       # every immutable create
+```
+
+Do not sign `Content-Length`: browser JavaScript cannot set that forbidden
+header. Instead, cap the claimed length before signing, bind MD5 and SHA-256
+metadata into the signature, and require actual R2 length/digest metadata in
+the following commit or registration check. Limit uploads to the configured
+single-`PutObject` maximum; multipart authority is not exposed.
+
+The response is allowlisted. Its bearer URL necessarily contains the exact
+object key, but it contains no separately reusable prefix authority or
+credential:
 
 ```json
 {
   "protocol_version": 1,
-  "expires_at": "2026-08-23T00:15:00.000Z",
-  "r2": {
-    "endpoint": "https://account.r2.cloudflarestorage.com",
-    "bucket": "configured bucket",
-    "prefix": "{db_prefix}/",
-    "access_key_id": "temporary access key",
-    "secret_access_key": "temporary secret",
-    "session_token": "temporary session token"
+  "method": "GET | PUT",
+  "url": "https://<account>.r2.cloudflarestorage.com/<bucket>/<exact-key>?X-Amz-...",
+  "expires_at": "RFC 3339 timestamp within the operation's maximum lifetime",
+  "required_headers": {
+    "Header-Name": "exact signed value"
   }
 }
 ```
 
-No KV Store field or credential is present. The browser hard-codes the
-expected R2 endpoint/bucket/prefix, keeps the response in memory, and
-refreshes at most once near expiry or after one authorization failure.
-Cloudflare documents the credential mechanism at
-[R2 temporary credentials](https://developers.cloudflare.com/r2/api/s3/temporary-credentials/).
+GET URLs expire after 60 seconds and PUT URLs after at most five minutes. URLs
+are reusable until expiry, so retry a network failure only when the operation
+is safe: GET is safe; create-only or conditional PUT is safe. R2 omits CORS
+headers on expired presigned-URL errors, so the browser treats an opaque
+failure near expiry as expired and obtains one fresh exact URL; it never logs
+the URL or provider body. An R2 `412` means the signed ETag/create precondition
+lost and is handled as a catalog conflict or immutable-path collision; a
+`BadDigest` is a local integrity bug and is not retried unchanged. Reading
+state and bookmarks never use R2. See R2's
+[browser CORS behavior](https://developers.cloudflare.com/r2/buckets/cors/).
 
-Reading state and bookmarks never use this credential: they are written and
-read entirely through the `PUT`/`GET /v1/vault/reading/{book_id}` routes
-above, which touch only KV Store.
+Runtime Fastly never issues R2 list or delete authority. Share deletion stays
+inside its fixed Fastly saga. Owner-object inventory/deletion runs only in the
+isolated administration cleaner after its two-pass reference check, using a
+separate narrowly held R2 token that is never returned through an API.
 
 ## `POST /v1/shares`
 
@@ -422,22 +509,29 @@ for an identical active registration.
 
 The Firebase-authenticated request carries protocol version, the possession
 proof bound to this exact request, the owning `book_id`, raw share ID, and
-rendered share prefix/path. Fastly consumes `owner-share-write`, derives the
-binding from `owner_control`, constructs and normalizes exactly:
+rendered share prefix/path plus the uploaded object's ETag, length, and
+ciphertext SHA-256. Fastly consumes `owner-share-write`, derives the binding
+from `owner_control`, constructs and normalizes exactly:
 
 ```text
 {db_prefix}/shared/{share_prefix}/{share_path}
 ```
 
-It hashes the identifiers, checks that the immutable R2 object exists, and
-creates the path reservation followed by the share entry — which stores
-`book_id` in plaintext alongside the hashes, per
-[data_model.md](data_model.md) — in `share_control`, both as create-only
-writes. If the share create fails because
-`share_{share_id_hash}` already exists, Fastly reads the existing share and
-reservation entries: identical `object_path_hash` on both is the
-idempotent-retry case (return a fresh grant, no write); anything else is
-`409`. See [data_model.md](data_model.md) for the exact reconciliation rule.
+It hashes the identifiers and direct-HEADs the immutable R2 object, requiring
+exact ETag/length/`x-amz-meta-txt-sha256`, then creates the path reservation
+followed by the share entry — which stores `book_id` and integrity metadata in
+plaintext alongside the hashes, per [data_model.md](data_model.md) — in
+`share_control`, both as create-only writes.
+
+Each phase has an exact postcondition. If reservation creation reports a
+conflict or indeterminate result, Fastly point-reads it: the exact requested
+share/path hashes mean that phase already applied and creation continues;
+anything else is `409` or `503` if propagation prevents a decision. If share
+creation reports a conflict or indeterminate result, Fastly point-reads the
+share and reservation: exact active state, book ID, hashes, and integrity
+metadata are the idempotent-retry case (return a fresh grant, no write);
+anything different is `409`, and an undecidable propagation result is `503`.
+See [data_model.md](data_model.md) for the cleanup reconciliation rule.
 
 ```json
 {
@@ -453,14 +547,20 @@ Purpose: revoke one owner share and delete its R2 object.
 The Firebase-authenticated request contains protocol version, the possession
 proof bound to this exact request, raw share ID, and rendered share prefix/
 path. Fastly derives the binding from `owner_control`, reconstructs the exact
-key, recomputes every hash, and requires agreement with the registry. It:
+key, recomputes every hash, and requires agreement with every present control
+entry. It:
 
-1. conditionally changes `active` to `deleting`;
+1. conditionally changes `active` to `deleting`, or resumes an exact
+   already-`deleting` entry;
 2. deletes the exact R2 object, treating not-found as success on retry; and
 3. deletes the share entry, then the path-reservation entry.
 
-An already absent matching share is an idempotent 204. A mismatched identity or
-path is not treated as absent. A `deleting` entry never authorizes a new URL.
+If the share entry is absent, Fastly point-reads the exact path reservation. A
+matching share/path tuple resumes cleanup by deleting the object and
+reservation; an absent reservation deletes the exact unregistered orphan
+object and is otherwise an idempotent 204. Any present mismatched reservation,
+identity, or path is a conflict, not absence. A `deleting` entry never
+authorizes a new URL.
 
 ## `POST /v1/shared-url`
 
@@ -469,23 +569,27 @@ URL. No Firebase authentication or possession proof is used — a public
 recipient has neither. The bounded request carries only protocol version, raw
 share ID, and current encrypted grant. Fastly:
 
-1. consumes `public-share-url` by privacy-preserving client-IP hash;
+1. applies the best-effort in-instance IP prefilter;
 2. verifies and decrypts the grant;
 3. reads the share entry by ID hash from `share_control`;
-4. requires `active`, a matching object-path hash, and normalized path; and
-5. creates a 60-second URL allowing GET for exactly that object.
+4. requires `active`, a matching object-path hash, and normalized path;
+5. claims one deployment-global `public-share-url` durable slot; and
+6. creates a 60-second exact GET URL with signed `If-Match` for the stored
+   ETag and returns the stored length/SHA-256.
 
-The response is `Cache-Control: private, no-store` and contains no owner prefix
-or R2 list permission. Revocation affects the next exchange; an issued URL
-remains usable only for its short lifetime.
+The response is `Cache-Control: private, no-store` and contains the URL,
+required `If-Match` header, object ETag/length/SHA-256, and no credential or R2
+list permission. The recipient requires equality with the same integrity
+metadata in the URL fragment before downloading. Revocation affects the next
+exchange; an issued URL remains usable only for its short lifetime.
 
 ## Health endpoints
 
 - `/health/live` confirms that the deployed Compute package can serve requests.
 - `/health/ready` reads required config/secret entries and reads the
   fixed `schema_...` marker key from all four KV Stores (see
-  [data_model.md](data_model.md)). It must not write, read user data, or mint
-  R2 credentials.
+  [data_model.md](data_model.md)). It must not write, read user data, or
+  presign R2 URLs.
 - Health responses reveal no owner, KV Store, key, generation, or schema
   values.
 
@@ -501,11 +605,11 @@ self-contained. They use the create-only slot ledger in
 | Scope                | Limit            | Subject              |
 | --------------------- | ---------------- | --------------------- |
 | `owner-keys`          | 60 per hour      | owner UID            |
-| `owner-r2-token`      | 30 per hour      | owner UID            |
+| `owner-r2-url`        | 60 per hour      | owner UID            |
 | `owner-vault-scan`    | 12 per hour      | owner UID            |
 | `owner-vault-write`   | 100 per 10 min   | owner UID            |
 | `owner-share-write`   | 20 per 10 min    | owner UID            |
-| `public-share-url`    | 120 per minute   | normalized client IP |
+| `public-share-url`    | 60 per hour      | deployment-global    |
 
 `owner-vault-scan` covers `GET /v1/vault/books?cursor=...` only — the
 administrative repair/verification scan — deliberately far tighter than
@@ -514,14 +618,14 @@ repeatedly triggering it is a realistic way to burn the Class A/B budget
 documented in [README.md](README.md).
 
 `owner-vault-write` covers book/head commits, head-only repair, first-create
-or delete reading writes, and reading-index writes. For proof-bearing calls, Fastly
-validates Firebase and the proof, successfully claims the replay nonce, and
-only then probes the durable admission ring. A rejected replay therefore
+or delete reading writes, and reading-index writes. For proof-bearing calls,
+Fastly validates Firebase and the proof, successfully claims the replay nonce,
+and only then probes the durable admission ring. A rejected replay therefore
 cannot exhaust the owner's write budget.
 
-Two routes are deliberately **not** covered by a durable slot ledger, and instead
-rely on a best-effort, in-instance request counter that resets whenever a
-Compute instance is recycled and is not shared across Fastly points of
+Two route scopes are deliberately **not** covered by a durable slot ledger and
+instead rely on a best-effort in-instance request counter that resets whenever
+a Compute instance is recycled and is not shared across Fastly points of
 presence:
 
 - `owner-vault-read` (`GET /v1/vault/head`, `GET /v1/vault/books/{book_id}`,
@@ -538,10 +642,13 @@ two routes specifically, in exchange for not spending a KV Store write on
 every point read and every 15-second reading-position debounce; every other
 route's abuse potential is high enough that this tradeoff is not offered.
 
-Subject identifiers for durable limits are HMAC-SHA-256 with `RATE_LIMIT_KEY`;
-store only the digest in `rate_limit_control`, and only ever compute it from a
-**verified** Firebase subject or, after capability validation, a normalized
-client IP. Each accepted call consumes one create-only slot. Start probing at
+Subject identifiers for owner durable limits are HMAC-SHA-256 with
+`RATE_LIMIT_KEY`; store only the digest in `rate_limit_control`, and only ever
+compute it from a **verified** Firebase subject. The anonymous share route uses
+one HMAC'd deployment-global label after capability validation, so rotating IPs
+cannot multiply durable rings and exhaust free-tier Class A writes. Its cheap
+pre-verification flood control remains in-instance and IP-keyed. Each accepted
+durable call consumes one create-only slot. Start probing at
 a CSPRNG-random slot and walk at most the configured `N` slots; cache a known
 full ring in the current instance until the fixed window ends. An existing
 slot is an ordinary collision, but a provider error is 503. The configured

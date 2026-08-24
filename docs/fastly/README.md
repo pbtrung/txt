@@ -37,16 +37,16 @@ migration in [deployment_migration.md](deployment_migration.md) is complete.
   stay consistent is one write instead — see
   [Capacity target](#capacity-target).
 - Keep immutable encrypted EPUB and share objects in R2. Do not put EPUB bytes
-  in KV Store. Fastly continues to broker narrowly scoped R2 access.
-- Store the library catalog as a Brotli-compressed, encrypted snapshot at one
-  fixed R2 key and conditionally overwrite it on publication. KV Store holds
-  its ETag/length/digest/generation head. R2 keeps only the latest catalog
-  object; encrypted KV Store book entries remain authoritative and rebuild it.
+  in KV Store. Fastly returns only short-lived presigned URLs for one exact
+  operation/object — never an R2 credential or prefix-wide authority.
+- Store each Brotli-compressed encrypted catalog generation at a fresh random
+  immutable R2 key. KV Store encrypts the current object key inside
+  `catalog-head` and exposes only ETag/length/digest/generation metadata;
+  encrypted KV Store book entries remain authoritative and rebuild it.
 - Reading position and bookmarks are their own KV Store entry, separate from
   a book's identity/catalog entry, updated through a dedicated Fastly route.
-  R2 EPUBs, shared copies, and exports are immutable. The derived catalog is
-  the sole mutable R2 exception; authoritative mutable owner state lives in
-  KV Store.
+  R2 EPUBs, shared copies, catalog generations, and exports are immutable;
+  authoritative mutable owner state lives in KV Store.
 - Keep the current one-owner model. Anonymous share recipients remain read-only
   capability holders and never access KV Store.
 
@@ -58,7 +58,7 @@ Firebase Authentication -> Fastly Compute -> Fastly KV Store (native binding)
 
 ## Trust boundary
 
-Fastly Compute validates Firebase ID tokens and holds R2 credential-minting
+Fastly Compute validates Firebase ID tokens and holds R2 request-signing
 credentials and application control secrets in a linked Fastly Secret Store.
 KV Store access itself needs no secret at all: a Compute service reads and
 writes a KV Store it is linked to through the platform's resource-link
@@ -101,7 +101,7 @@ apply CORS to in the first place.
 | Exactly one Firebase-authenticated owner       | Fastly validates the Firebase token and exact owner UID before every owner route                              |
 | Root-key-only local decryption                 | Wrapped key hierarchy remains; plaintext root, master, content, and share keys never reach Fastly or KV Store  |
 | A stolen session alone cannot mutate/mint      | A per-request P-521 possession proof, not just a Firebase token, gates every route whose abuse is not self-contained |
-| Fast complete library load                     | One fixed encrypted R2 snapshot pinned by `catalog-head`, plus one small reading-index KV entry for recency/bookmark badges |
+| Fast complete library load                     | One encrypted random-path R2 snapshot selected by the encrypted `catalog-head` pointer, plus one reading-index KV entry |
 | Local full-text search                         | Search index is built in the browser from the decrypted snapshot; Fastly and KV Store never receive search text |
 | Immutable encrypted EPUB objects               | Unchanged R2 layout under the owner prefix                                                                    |
 | Reading-position qualification and throttling  | Preserved in the browser; qualified state is saved to a per-book KV Store reading-state entry through a dedicated Fastly route |
@@ -149,13 +149,21 @@ correctness:
   reading-state entry. Fastly first confirms the book exists, and the blast
   radius is that book's rebuildable reading state. First creation and every
   library-wide reading-index write require proof and durable admission;
+- each exact owner R2 URL costs one replay-nonce create and one admission-slot
+  create. Its 60/hour cap and measured URL volume belong in the Class A budget;
+  bulk migration uses the isolated administration path, not higher runtime
+  limits or reusable credentials;
 - the free-tier durable limiter never rewrites a shared counter. Each accepted
   protected request claims one create-only `slot_...` key in
   `rate_limit_control`, avoiding Fastly's one-write-per-second-per-item limit.
   `owner-vault-read`, by far the highest-volume read route, uses a
   best-effort in-instance counter instead of a durable KV write per call — see
   [auth_api.md](auth_api.md) for the admission algorithm and its bounded-probe
-  tradeoff; and
+  tradeoff;
+- anonymous share exchange uses one deployment-global 60/hour durable ring
+  after an in-instance IP prefilter and capability validation. A rotating-IP
+  attacker therefore cannot create a new durable ring per source or drive
+  more than 43,200 accepted-slot writes in a 30-day month;
 - the fixed vault scan used for repair remains deliberately far more
   rate-limited than point reads, since it is the one route whose cost scales
   with library size rather than being O(1).
