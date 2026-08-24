@@ -47,7 +47,7 @@ primitives in [deployment_migration.md](deployment_migration.md#rust-toolchain-a
   one shared module reused everywhere an entry is built or opened — never
   reimplemented per call site.
 - Fastly Compute: the Rust service skeleton on `wasm32-wasip1`, with the
-  pure-Rust crate selected and pinned for each of Fastly's own primitives —
+  WASI-compatible crate selected and pinned for each primitive —
   JWT verification, P-521 signature verification, SHA-256/512, HMAC, HKDF,
   XChaCha20-Poly1305, and SigV4 — each wired up but not yet exercised by a
   real route, and the `cargo audit`/`cargo deny` allowlist entry for the
@@ -83,6 +83,10 @@ primitives in [deployment_migration.md](deployment_migration.md#rust-toolchain-a
   `cargo test` on the host target is not sufficient evidence, since a
   crate's WASI behavior (especially anything touching `getrandom`) can
   differ from its native-target behavior.
+- Deploy two RS256 benchmark builds to staging, one with `jwt-simple` 0.13's
+  `wasi-crypto` feature and one forced to its pure-Rust fallback. Record valid
+  and invalid verification latency and CPU time. The feature remains enabled
+  in production even if Fastly currently falls back transparently.
 - KV Store fake conformance tests: create-only write against an existing key
   fails; conditional write against a stale generation fails; a TTL'd entry
   is treated as absent after expiry; list respects prefix and pagination
@@ -104,9 +108,9 @@ gives every later route its authorization primitives.
 
 **Builds:**
 
-- Firebase ID-token verification: JWKS fetch/cache honoring upstream
-  `Cache-Control`, `kid` selection, signature verification, claim checks,
-  clock-skew allowance.
+- Firebase ID-token verification: Google X.509 signing-certificate fetch/cache
+  honoring upstream `Cache-Control`, `kid` selection, signature verification,
+  claim checks, and clock-skew allowance.
 - The `owner_control` KV Store and the `owner` entry shape; `POST /v1/keys`.
 - The possession-proof canonical message construction, ECDSA-P521-SHA512
   verification, and the nonce anti-replay create-only write in
@@ -129,10 +133,10 @@ gives every later route its authorization primitives.
   token. Assert the exact rejection reason internally but the shared,
   non-distinguishing error externally.
 - Possession-proof vectors: correct proof accepted once; identical proof
-  replayed inside its validity window rejected; proof for the wrong
-  `route_name` rejected; proof with a client-supplied `owner_pk`/`vault_id`/
-  `db_prefix` that disagrees with Fastly's configured values rejected, even
-  when the signature itself is valid over the client's forged bytes.
+  replayed inside its validity window rejected; method, normalized path, or
+  any body field changed after signing rejected; noncanonical targets and
+  query strings rejected; client-supplied `owner_pk`/`vault_id`/`db_prefix`
+  fields rejected as unknown even when signed.
 - Concurrency test: fire more than N simultaneous requests against the same
   slot ring and assert exactly N create-only claims succeed, no key is
   rewritten, and all later calls receive 429. Run this against staging KV,

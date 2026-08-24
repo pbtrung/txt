@@ -12,7 +12,7 @@ migration in [deployment_migration.md](deployment_migration.md) is complete.
   writes Fastly KV Store directly through the platform's native KV Store
   binding — not through a signed HTTP call to an external database.
 - Build the Fastly Compute service in Rust, targeting `wasm32-wasip1`, using
-  only pure-Rust cryptographic crates — no crate that links a C or assembly
+  WASI-compatible cryptographic crates — no crate that links a C or assembly
   library (`ring`, OpenSSL, BoringSSL, `aws-lc-rs`). See
   [deployment_migration.md](deployment_migration.md#rust-toolchain-and-cryptographic-crates)
   for the exact crate per primitive and the caveats that go with each.

@@ -56,7 +56,7 @@ Fastly Compute is the only runtime component that reads or writes KV Store. It:
 - verifies the per-request P-521 possession-proof signature (using the
   owner's already-public signing key) on every route whose abuse is not
   self-contained — the exact list is in [auth_api.md](auth_api.md) — rejecting
-  a replayed or missing proof before any KV Store or R2 work;
+  a replayed or missing proof before state-changing vault/share or R2 work;
 - reads and writes KV Store directly through its linked resource binding —
   no request signing, account key, or external endpoint is involved;
 - fixes the target KV Store, key, and operation for each API route;

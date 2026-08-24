@@ -20,9 +20,15 @@ must verify the token before reading a secret or calling KV Store/R2:
 3. verify the signature;
 4. require `aud = FIREBASE_PROJECT_ID`;
 5. require `iss = https://securetoken.google.com/{FIREBASE_PROJECT_ID}`;
-6. validate `exp`, `iat`, and nonempty `sub` against current time with a small,
-   documented clock-skew allowance; and
+6. validate `exp`, `iat`, `auth_time`, and a bounded nonempty `sub` against
+   current time with a small, documented clock-skew allowance; and
 7. constant-time compare `sub` with `OWNER_FIREBASE_UID`.
+
+Firebase ID tokens use **RS256** (RSA PKCS#1 v1.5 with SHA-256). This is
+unrelated to the owner's P-521 key: RSA verifies Google's Firebase token;
+ECDSA P-521 verifies the separate request-possession proof. Never accept P-521,
+another JWT algorithm, or a key selected from an attacker-controlled URL for
+the Firebase token.
 
 Cache Google's signing keys only according to the upstream `Cache-Control`
 response and refetch once for an unknown `kid`; never accept a stale key beyond
@@ -69,8 +75,10 @@ in [catalog.md](catalog.md). Every other mutating or credential-minting route
 requires the proof, because those operations do not depend on breaking
 encryption to cause damage and are not confined the same way, so a stolen
 bearer token alone must not be sufficient. A request missing, failing, or
-replaying a required proof is rejected before any KV Store or R2 work; see the
-error contract below.
+replaying a required proof is rejected before any state-changing vault/share
+KV or R2 work. Verification necessarily reads the fixed `owner` entry; after
+signature validation, the only earlier writes are the route's admission-slot
+claim and the proof's create-only replay nonce. See the error contract below.
 
 ## Common requirements
 
@@ -81,6 +89,10 @@ error contract below.
 - Limit JSON body size, reject duplicate keys, validate canonical base64url,
   validate `generation` syntax as an opaque bounded string, and reject unknown
   fields.
+- On proof-bearing JSON routes, validate and canonicalize the body without its
+  top-level `possession_proof` exactly as defined in
+  [cryptography.md](cryptography.md). The verifier and route handler must use
+  the same already-parsed value; do not parse or normalize it a second time.
 - Construct `owner_pk`, `vault_id`, and `db_prefix` inputs from the single
   `owner_control` entry. A body copy, if a versioned legacy client sends one,
   is rejected as an unknown field rather than used for routing or binding.
@@ -233,7 +245,7 @@ Request shape:
 {
   "protocol_version": 1,
   "possession_proof": {
-    "route": "vault-commit",
+    "proof_version": 2,
     "nonce": "base64url 32 bytes",
     "expires_at": 0,
     "signature": "base64url raw P-521 signature"
@@ -523,7 +535,7 @@ This free-tier mechanism requires no Fastly Edge Rate Limiting product.
 | HTTP | Code                  | Meaning                                                                            |
 | ---- | --------------------- | ---------------------------------------------------------------------------------- |
 | 400  | `invalid_request`     | Invalid route shape, encoding, entry, or protocol version                         |
-| 401  | `unauthorized`        | Missing, invalid, expired, or wrong-owner Firebase token; invalid share capability; missing, invalid, expired, wrong-route, or replayed possession proof |
+| 401  | `unauthorized`        | Missing, invalid, expired, or wrong-owner Firebase token; invalid share capability; missing, invalid, expired, wrong-request, or replayed possession proof |
 | 403  | `binding_mismatch`    | Authenticated identity does not match owner/vault binding                          |
 | 404  | `not_found`           | Entry absent, or public share absent/inactive without state disclosure             |
 | 409  | `conflict`            | `generation` mismatch, share/path collision, incompatible state transition, or a `/v1/vault/commit` head whose R2 object failed the existence check |

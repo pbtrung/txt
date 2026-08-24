@@ -60,10 +60,12 @@ Target `wasm32-wasip1` — the toolchain Fastly's Compute Rust SDK (the
 crate version, and every crate below in the release manifest alongside the
 other pinned versions this directory already requires.
 
-Use only pure-Rust crates for cryptography — nothing that links a C or
-assembly library (`ring`, OpenSSL, BoringSSL, `aws-lc-rs`), since those either
-fail to cross-compile for `wasm32-wasip1` at all or require a WASI-aware C
-toolchain this design has no other reason to carry. Fastly itself never holds
+Use only WASI-compatible Rust crates for cryptography — nothing that links a C
+or assembly library (`ring`, OpenSSL, BoringSSL, `aws-lc-rs`), since those
+either fail to cross-compile for `wasm32-wasip1` at all or require a
+WASI-aware C toolchain this design has no other reason to carry. Host
+WASI-Crypto acceleration is allowed because the crate has a functional pure-Rust
+fallback. Fastly itself never holds
 `vault_master_key` and never decrypts a book/reading/reading-index/catalog-head
 ciphertext, so it never needs Ascon-Keccak AEAD, HKDF-SHA3-512, or the
 ML-KEM-1024+X448 composite KEM — those run only in the browser and CLI, using
@@ -72,7 +74,7 @@ cryptographic surface is narrower:
 
 | Operation                                                    | Crate                                                         |
 | -------------------------------------------------------------- | ---------------------------------------------------------------- |
-| Firebase RS256 JWT verification                               | `jwt-simple` with `default-features = false, features = ["pure-rust"]` — its own documentation states it builds for and is compatible with Fastly Compute out of the box |
+| Firebase RS256 JWT verification                               | `jwt-simple = { version = "0.13", features = ["wasi-crypto"] }`; RS256 is RSA/SHA-256 and is unrelated to the P-521 proof key |
 | Possession-proof ECDSA P-521 signature verification            | `p521` (RustCrypto) with its `ecdsa` feature, called directly — not through a JWT library, since the proof is a raw signature over a canonical byte string, not a JWT |
 | `vault_binding_hash` recomputation (SHA-512)                   | `sha2` (RustCrypto)                                            |
 | `share_id_hash`/`object_path_hash` computation (SHA-256)       | `sha2` (RustCrypto)                                            |
@@ -81,15 +83,32 @@ cryptographic surface is narrower:
 | Share-grant encrypt/decrypt (XChaCha20-Poly1305)                | `chacha20poly1305`, `XChaCha20Poly1305` type (RustCrypto)       |
 | Signing Fastly's own R2 API calls (existence checks, deletes, minting temporary credentials) | `aws-sigv4` — prefer this over a hand-rolled signer; the existing OpenResty gateway's own hand-rolled Lua SigV4 module has no test coverage and previously shipped a live canonical-request bug, a mistake not worth repeating here |
 
-The only place Fastly generates randomness is the fresh 32-byte salt and
-24-byte nonce for each newly minted share grant
+Fastly generates randomness for each admission-slot probe start and for the
+fresh 32-byte salt and 24-byte nonce in each newly minted share grant
 ([cryptography.md](cryptography.md)); `getrandom` supports `wasm32-wasip1`
 natively via the WASI `random_get` import, with no extra configuration.
-Firebase and possession-proof verification are pure computation and need no
-RNG at all.
+Firebase and possession-proof verification themselves need no RNG.
 
-Two caveats to track, not reasons to avoid these crates: the `rsa` crate
-(pulled in by `jwt-simple`'s pure-Rust build for RS256) carries an open,
+Keep `wasi-crypto` enabled in every target build. The library documents that
+it offloads RSA operations when the runtime exposes WASI-Crypto and otherwise
+transparently falls back to its in-module implementation. Its published
+WasmEdge RSA-2048 medians are context, not a Fastly latency promise:
+
+| Operation | Pure Rust | WASI-Crypto | Published speedup |
+| --------- | --------- | ----------- | ----------------- |
+| Key generation | ~45–140 s | ~80 ms | ~1000x |
+| Signing | ~2.2 s | ~21 ms | ~100x |
+| Verification | ~240 ms | ~1.6 ms | ~150x |
+
+This service only verifies Firebase signatures; it does not generate RSA keys
+or sign with RSA. Benchmark valid and invalid RS256 verification in a deployed
+Fastly staging service and set the request CPU budget from those results. A
+successful build proves compatibility, not that the production host actually
+provided the acceleration interface. See the upstream
+[`jwt-simple` WASI-Crypto documentation](https://github.com/jedisct1/rust-jwt-simple#faster-and-safer-crypto-on-wasi-with-wasi-crypto).
+
+Two caveats to track, not reasons to avoid these crates: the `rsa` crate used
+by `jwt-simple`'s RS256 fallback carries an open,
 unpatched RustSec advisory (Marvin Attack, RUSTSEC-2023-0071) — it is a
 private-key timing leak during signing/decryption, and Fastly only ever
 verifies with the public key, so the vulnerable code path is not exercised
@@ -434,7 +453,8 @@ throttling, stale backups, or control/data schema mismatch.
 Do not remove rqlite, Northflank, or legacy `db_path` until all checks pass:
 
 - canonical blob and record/snapshot/reading-index envelope, Firebase
-  claim/JWKS, possession-proof, and share-grant test vectors, all generating
+  claim/signing-certificate, possession-proof, and share-grant test vectors,
+  all generating
   identifiers/nonces with at least 256 bits of entropy;
 - ciphertext tamper fails AEAD authentication; entry splice, wrong key/kind/
   version, wrong owner, mismatched reading-state `book_id`, and snapshot
@@ -442,7 +462,7 @@ Do not remove rqlite, Northflank, or legacy `db_path` until all checks pass:
 - no browser bundle/response contains a KV Store binding, name, or key;
 - every vault/control route fixes its store, key, method, and allowed
   operation; a client-supplied store/key selection is rejected; every route
-  whose abuse is not self-contained rejects a missing, expired, wrong-route,
+  whose abuse is not self-contained rejects a missing, expired, wrong-request,
   or replayed possession proof even with a valid Firebase token;
 - every durable admission limit caps successful create-only slot claims across
   Fastly POPs and instances without rewriting any slot, and the owner-subject

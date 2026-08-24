@@ -1,10 +1,11 @@
 # Cryptography and record validation
 
-[The project cryptography contract](../crypto.md) is authoritative for every
-primitive, key size, blob byte layout, version rule, Encrypt/Decrypt step, and
-failure behavior used by this design. This document defines only how KV
-Store entries and R2 objects use that existing contract. It does not define a
-second encryption format.
+[The project cryptography contract](../crypto.md) is authoritative for the
+existing key hierarchy, wrapping procedures, canonical blob byte layout,
+Encrypt/Decrypt steps, version rules, and their failure behavior. This document
+is authoritative for the Fastly-specific possession-proof and share-grant
+protocols below. Those protocols do not redefine or replace the canonical blob
+format.
 
 This design uses the canonical versioned authenticated blob based on
 Ascon-Keccak AEAD and HKDF-SHA3-512 everywhere — for every KV Store entry and
@@ -240,11 +241,18 @@ Fastly verifies the signature with `sign_public_key` from `owner_control` — a
 public key, so this adds no new secret custody requirement for Fastly, unlike
 a shared-secret HMAC would.
 
-For proof version 1, the browser and Fastly construct these bytes exactly:
+Proof version 2 authorizes one exact HTTP request, not merely a route family.
+Before hashing, parse the bounded JSON body with duplicate-key rejection,
+validate its schema, remove the top-level `possession_proof` member, and
+serialize the remaining object with the project's canonical JSON procedure.
+The browser and Fastly then construct these bytes exactly:
 
 ```text
-UTF8("txt:possession-proof:v1") || 0x00 ||
-UTF8(route_name) || 0x00 ||
+UTF8("txt:fastly-possession-proof:v2") || 0x00 ||
+U32BE(2) ||
+u32be(len(http_method)) || ASCII(http_method) ||
+u32be(len(normalized_target)) || ASCII(normalized_target) ||
+SHA-256(canonical_body_without_possession_proof) ||
 u32be(len(owner_pk)) || UTF-8(owner_pk) ||
 u32be(len(vault_id)) || UTF-8(vault_id) ||
 u32be(len(db_prefix)) || UTF-8(db_prefix) ||
@@ -252,14 +260,32 @@ nonce_32 ||
 U64BE(expires_at_unix_seconds)
 ```
 
-`route_name` is one of `r2-token`, `vault-commit`, `vault-book-put`,
-`share-create`, `share-delete` — fixed short ASCII strings — so a signature
-minted for one route can never authorize another. `nonce_32` is 32 bytes
-(256 bits) from a cryptographic RNG, unique per proof. `expires_at` is at most
-60 seconds after Fastly's current time. Fastly reconstructs the same bytes
-using **its own** configured/stored `owner_pk`, `vault_id`, and `db_prefix` —
-never the client-supplied copies — so a forged binding cannot be smuggled in
-through the signed message.
+`http_method` is the uppercase method. `normalized_target` is the exact
+ASCII path after the router's single canonical normalization pass, including
+the validated canonical book ID where applicable. Proof-bearing routes do not
+accept a query string. Reject percent-encoded separators, dot segments,
+multiple encodings, a noncanonical identifier, or any target whose normalized
+form differs between the verifier and router. The body hash therefore binds
+every operation, generation, ciphertext, object locator, and transition in
+the request; changing a signed create into a delete, or swapping an entry,
+invalidates the proof. `nonce_32` is 32 bytes (256 bits) from a cryptographic
+RNG, unique per proof. `expires_at` is at most 60 seconds after Fastly's current
+time. Fastly reconstructs the identity fields from its one stored `owner`
+entry, never client-supplied copies.
+
+The top-level proof object is exactly:
+
+```json
+{
+  "proof_version": 2,
+  "nonce": "base64url 32 bytes",
+  "expires_at": 0,
+  "signature": "base64url raw P-521 signature"
+}
+```
+
+Unknown proof versions and fields fail closed. A retry that reuses a proof is
+always a replay; construct a new proof over the byte-identical retry body.
 
 The browser signs with:
 
@@ -268,12 +294,16 @@ crypto.subtle.sign({ name: "ECDSA", hash: "SHA-512" }, privateKey, canonicalProo
 ```
 
 raw IEEE P1363 `r || s`, 66 bytes each, 132 bytes total, not ASN.1 DER. Fastly
-verifies with `sign_public_key` imported as P-521 SPKI, checks `expires_at`
-against current time, and then — to prevent exact replay inside the validity
-window — attempts a create-only write of a `kind: "nonce"` entry keyed by
-`nonce_32` in `rate_limit_control`, with a TTL just past `expires_at`. If that
-create fails because the nonce already exists, the proof is rejected as a
-replay regardless of whether the signature itself still verifies.
+verifies with `sign_public_key` imported as P-521 SPKI and checks `expires_at`
+against current time. It then prevents exact replay inside the validity window
+by attempting a create-only write of a `kind: "nonce"` entry at
+`nonce_{base64url(nonce_32)}` in `rate_limit_control`, with a TTL just past
+`expires_at`. If that create fails because the nonce already exists, the proof
+is rejected as a replay regardless of whether the signature itself still
+verifies. Only the one request that claimed the nonce may then claim the
+route's admission slot, preventing a captured proof replay from consuming many
+slots concurrently. A rate-limited request has therefore consumed its proof;
+the client must generate a new nonce and signature for any retry.
 
 KV Store is eventually consistent for reads but evaluates every conditional
 and create-only write against the entry's true current state, so this
@@ -283,7 +313,8 @@ before cutover, since the proof's entire replay defense rests on it; the
 proof's own short (≤60 second) expiry window bounds the exposure of any gap
 between that assumption and reality.
 
-A missing, malformed, expired, wrong-route, replayed, or invalid-signature
+A missing, malformed, expired, wrong-method/target/body, replayed, or
+invalid-signature
 proof on a route that requires one is `401 unauthorized`, not `403`, so it is
 indistinguishable at the HTTP layer from a missing Firebase token — never
 reveal which check failed beyond the shared error contract in
