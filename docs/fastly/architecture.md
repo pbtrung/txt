@@ -62,7 +62,8 @@ Fastly Compute is the only runtime component that reads or writes KV Store. It:
 - fixes the target KV Store, key, and operation for each API route;
 - validates request shape, sizes, conditional-write generations, and KV Store
   response shape before returning an allowlisted response;
-- maintains share and durable rate-limit entries; and
+- maintains share entries, create-only rate-admission slots, and replay
+  nonces; and
 - mints narrowly scoped R2 credentials and exact-object URLs.
 
 A KV Store binding is a Compute service resource link, configured at deploy
@@ -95,7 +96,7 @@ credential, or control entry. Fastly validates the capability and returns a
 | --------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------ |
 | `owner_control`      | Fixed Fastly owner-bootstrap route only | Singleton owner identity, wrapped bootstrap keys, encrypted credentials, schema and migration markers |
 | `share_control`      | Fixed Fastly share routes only          | Public share registry and object-path reservations                                                    |
-| `rate_limit_control` | Fastly limiter/replay code only         | Durable rate-limit windows and possession-proof replay nonces, both with a native entry TTL           |
+| `rate_limit_control` | Fastly limiter/replay code only         | Create-only admission slots and possession-proof replay nonces, both with a native entry TTL          |
 | `vault`              | Fixed Fastly vault routes only          | End-to-end encrypted book/catalog entries, one catalog-head pointer, and per-book reading-state/index entries |
 
 A KV Store binding technically grants a Compute service access to every key in
@@ -110,15 +111,16 @@ parameters that have already been validated against the authenticated owner.
   material (including the P-521 signing keypair used for the possession
   proof), encrypted credential payload, stable vault binding, and control
   schema.
-- Each `vault:book:{book_id}` entry is authoritative for that book's content
+- Each `vault` key `book_{book_id}` is authoritative for that book's content
   locator, owner-side share state, and catalog metadata together.
-- Each `vault:reading:{book_id}` entry is authoritative for that one book's
+- Each `vault` key `reading_{book_id}` is authoritative for that one book's
   reading position and bookmarks. It is mutated far more often than a book's
   identity/catalog entry and is deliberately exempt from the possession proof
-  and from durable rate limiting — see [auth_api.md](auth_api.md).
-- The `vault:catalog-head` entry is authoritative for the current immutable R2
+  and, for existing-entry replacements, from durable rate limiting — see
+  [auth_api.md](auth_api.md).
+- The `vault` key `catalog-head` is authoritative for the current R2
   library snapshot.
-- The library snapshot and `vault:reading-index` are both derived, rebuildable
+- The library snapshot and `vault` key `reading-index` are both derived, rebuildable
   acceleration objects/entries. Neither is ever the sole copy of book,
   catalog, or reading state; the reading index has no generation dependency
   on the snapshot and is rebuilt directly from every book's reading-state
@@ -138,8 +140,8 @@ never their plaintext.
 
 1. The UI reads the local unlock file and signs in to Firebase.
 2. It calls `POST /v1/keys` with the Firebase ID token.
-3. Fastly validates the token and exact owner UID, applies the durable owner
-   rate limit, reads the `owner` entry from `owner_control`, and returns only
+3. Fastly validates the token and exact owner UID, claims a durable owner
+   admission slot, reads the `owner` entry from `owner_control`, and returns only
    the wrapped or encrypted bootstrap fields.
 4. The browser checks all returned owner identities, unwraps the user master
    key and credentials locally, and validates `vault_id`, `owner_pk`, and
@@ -170,8 +172,8 @@ No step allows the browser to select or directly query a control store.
 2. The UI submits the share capability and encrypted grant to
    `POST /v1/shared-url` at Fastly.
 3. Fastly hashes and validates the identifier against `share_control`, checks
-   the grant's exact path and active state, and applies the durable public
-   rate limit from `rate_limit_control`.
+   the grant's exact path and active state, and claims a public admission slot
+   in `rate_limit_control`.
 4. Fastly returns a 60-second R2 GET URL for exactly that shared object.
 5. The browser downloads and decrypts the independent shared copy. Recipient
    progress and bookmarks remain local.

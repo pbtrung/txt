@@ -14,9 +14,9 @@ every R2 object, with no other encryption mechanism anywhere in the system.
 
 | Stored value                                     | Encryption                                                                                              |
 | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `vault:book:{book_id}` entry                     | Canonical structured-payload blob from [docs/crypto.md](../crypto.md), using `vault_master_key` as IKM |
-| `vault:reading:{book_id}` entry                  | Canonical structured-payload blob using `vault_master_key` as IKM                                       |
-| `vault:reading-index` entry                      | Canonical structured-payload blob using `vault_master_key` as IKM                                       |
+| `vault` key `book_{book_id}`                     | Canonical structured-payload blob from [docs/crypto.md](../crypto.md), using `vault_master_key` as IKM |
+| `vault` key `reading_{book_id}`                  | Canonical structured-payload blob using `vault_master_key` as IKM                                       |
+| `vault` key `reading-index`                      | Canonical structured-payload blob using `vault_master_key` as IKM                                       |
 | R2 library snapshot                              | Canonical structured-payload blob using `vault_master_key` as IKM                                       |
 | R2 administrative export                         | Canonical structured-payload blob using independent `EXPORT_KEY` as IKM                                 |
 | Wrapped UMK/KEM/signing keys and credentials     | Existing wrapping/blob procedures in [docs/crypto.md](../crypto.md)                                     |
@@ -209,12 +209,14 @@ vault_binding_input =
 vault_binding_hash = SHA-512(vault_binding_input)
 ```
 
-Fastly reads the hash from `owner_control`. The encrypted credentials contain
-all three plaintext values. After local decryption, the browser recomputes and
-constant-time compares the hash before accepting bootstrap data or requesting
-R2 credentials. Fastly independently checks the supplied binding before
-`/v1/r2-token` succeeds. This equality check is deliberately not treated as a
-freshness or possession proof by itself — see the next section for that.
+Fastly reads `vault_id`, `owner_pk`, `db_prefix`, and the hash from the same
+`owner_control` entry. The encrypted credentials contain all three plaintext
+values. After local decryption, the browser recomputes and constant-time
+compares the hash before accepting bootstrap data. Fastly constructs every R2
+path and every proof input from its stored values; it never asks the client to
+supply an authoritative binding triple. This equality check is deliberately
+not treated as a freshness or possession proof by itself — see the next
+section for that.
 
 ## Possession proof
 

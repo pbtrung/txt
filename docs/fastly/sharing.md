@@ -7,7 +7,7 @@ effect for new signed-URL exchanges.
 
 ## Owner-side share record
 
-Each `vault:book:{book_id}` entry contains its shares as defined in
+Each `vault` key `book_{book_id}` contains its shares as defined in
 [data_model.md](data_model.md), alongside that book's content locator and
 catalog metadata. The R2 layout for a shared object is:
 

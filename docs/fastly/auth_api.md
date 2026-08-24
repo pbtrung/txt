@@ -81,6 +81,9 @@ error contract below.
 - Limit JSON body size, reject duplicate keys, validate canonical base64url,
   validate `generation` syntax as an opaque bounded string, and reject unknown
   fields.
+- Construct `owner_pk`, `vault_id`, and `db_prefix` inputs from the single
+  `owner_control` entry. A body copy, if a versioned legacy client sends one,
+  is rejected as an unknown field rather than used for routing or binding.
 - Return `Cache-Control: private, no-store` and `Vary: Origin, Authorization` on
   authenticated responses. Never allow Fastly cache lookup or storage for API
   routes, even when a response happens to be cacheable.
@@ -93,7 +96,7 @@ error contract below.
   after the Firebase token has been fully verified — never key a rate-limit
   bucket by an unverified token claim, or an attacker holding no valid token
   can exhaust the real owner's budget with forged-signature requests and lock
-  them out. Fail closed if a durable limiter cannot decide; a best-effort
+  them out. Fail closed if a durable slot claim cannot decide; a best-effort
   in-instance limiter failing open is an accepted property of being
   best-effort, not a bug — see Rate limits below.
 - Give each outbound fetch (Firebase certificate retrieval, R2 requests) a
@@ -178,14 +181,14 @@ Read the `catalog-head` entry. Return the allowlisted head fields from
 
 ### `GET /v1/vault/books/{book_id}`
 
-Validate the opaque ID and read the `book:{book_id}` entry. Require
+Validate the opaque ID and read the `book_{book_id}` entry. Require
 `kind = book`, the supported schema, and the correct `owner_pk` binding
 inside the decrypted envelope. Return the outer encrypted entry plus its
 `generation`; do not inspect or transform the ciphertext.
 
 ### `GET /v1/vault/reading/{book_id}`
 
-Validate the opaque ID and read the `reading:{book_id}` entry. An absent entry
+Validate the opaque ID and read the `reading_{book_id}` entry. An absent entry
 is not an error — it means the book has never been opened — and returns
 `{"present": false}` rather than a 404, since a missing reading entry is an
 expected steady state, not a fault. Otherwise return the outer encrypted
@@ -200,7 +203,7 @@ return the outer encrypted entry plus its `generation`.
 ### `GET /v1/vault/books?cursor=...`
 
 This fixed, owner-only scan exists solely for snapshot repair and administrative
-verification. Fastly lists `vault` keys under the `book:` prefix using KV
+verification. Fastly lists `vault` keys under the `book_` prefix using KV
 Store's native list operation, enforces a page-size and total-item ceiling,
 and wraps the KV Store list cursor in an authenticated opaque cursor. It never
 accepts query text, a client-supplied prefix, or a raw KV Store cursor. This
@@ -408,7 +411,7 @@ creates the path reservation followed by the share entry — which stores
 `book_id` in plaintext alongside the hashes, per
 [data_model.md](data_model.md) — in `share_control`, both as create-only
 writes. If the share create fails because
-`share:{share_id_hash}` already exists, Fastly reads the existing share and
+`share_{share_id_hash}` already exists, Fastly reads the existing share and
 reservation entries: identical `object_path_hash` on both is the
 idempotent-retry case (return a fresh grant, no write); anything else is
 `409`. See [data_model.md](data_model.md) for the exact reconciliation rule.
@@ -457,7 +460,7 @@ remains usable only for its short lifetime.
 
 - `/health/live` confirms that the deployed Compute package can serve requests.
 - `/health/ready` reads required config/secret entries and reads the
-  `schema:*` marker key from all four KV Stores (see
+  fixed `schema_...` marker key from all four KV Stores (see
   [data_model.md](data_model.md)). It must not write, read user data, or mint
   R2 credentials.
 - Health responses reveal no owner, KV Store, key, generation, or schema
@@ -468,24 +471,26 @@ client-supplied value can influence which store or key a route targets.
 
 ## Rate limits
 
-Durable, KV-backed limits apply to routes whose abuse is not self-contained:
+Durable, KV-backed admission limits apply to routes whose abuse is not
+self-contained. They use the create-only slot ledger in
+[data_model.md](data_model.md), not a mutable counter:
 
 | Scope                | Limit            | Subject              |
 | --------------------- | ---------------- | --------------------- |
 | `owner-keys`          | 60 per hour      | owner UID            |
 | `owner-r2-token`      | 30 per hour      | owner UID            |
 | `owner-vault-scan`    | 12 per hour      | owner UID            |
-| `owner-vault-write`   | 600 per hour     | owner UID            |
-| `owner-share-write`   | 120 per hour     | owner UID            |
+| `owner-vault-write`   | 100 per 10 min   | owner UID            |
+| `owner-share-write`   | 20 per 10 min    | owner UID            |
 | `public-share-url`    | 120 per minute   | normalized client IP |
 
 `owner-vault-scan` covers `GET /v1/vault/books?cursor=...` only — the
 administrative repair/verification scan — deliberately far tighter than
-ordinary reads, since each call lists across the whole `book:` key prefix and
+ordinary reads, since each call lists across the whole `book_` key prefix and
 repeatedly triggering it is a realistic way to burn the Class A/B budget
 documented in [README.md](README.md).
 
-Two routes are deliberately **not** covered by a durable counter, and instead
+Two routes are deliberately **not** covered by a durable slot ledger, and instead
 rely on a best-effort, in-instance request counter that resets whenever a
 Compute instance is recycled and is not shared across Fastly points of
 presence:
@@ -505,8 +510,13 @@ route's abuse potential is high enough that this tradeoff is not offered.
 
 Subject identifiers for durable limits are HMAC-SHA-256 with `RATE_LIMIT_KEY`;
 store only the digest in `rate_limit_control`, and only ever compute it from a
-**verified** Firebase subject or a normalized client IP, per the ordering rule
-in Common requirements above.
+**verified** Firebase subject or, after capability validation, a normalized
+client IP. Each accepted call consumes one create-only slot. Start probing at
+a CSPRNG-random slot and walk at most the configured `N` slots; cache a known
+full ring in the current instance until the fixed window ends. An existing
+slot is an ordinary collision, but a provider error is 503. The configured
+maximum is 120 slots per ring so an attacker cannot force an unbounded scan.
+This free-tier mechanism requires no Fastly Edge Rate Limiting product.
 
 ## Error contract
 
@@ -518,7 +528,7 @@ in Common requirements above.
 | 404  | `not_found`           | Entry absent, or public share absent/inactive without state disclosure             |
 | 409  | `conflict`            | `generation` mismatch, share/path collision, incompatible state transition, or a `/v1/vault/commit` head whose R2 object failed the existence check |
 | 413  | `too_large`           | Request, ciphertext entry, or page exceeds its fixed limit                         |
-| 429  | `rate_limited`        | A durable or best-effort limit was exceeded; include bounded `Retry-After`         |
+| 429  | `rate_limited`        | A durable slot ring or best-effort limit was exceeded; include bounded `Retry-After` |
 | 502  | `upstream_invalid`    | KV Store or R2 returned an invalid or unsupported response                         |
 | 503  | `control_unavailable` | Firebase keys, KV Store, limiter, secret, or R2 broker unavailable                  |
 

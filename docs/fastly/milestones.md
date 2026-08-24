@@ -111,8 +111,10 @@ gives every later route its authorization primitives.
 - The possession-proof canonical message construction, ECDSA-P521-SHA512
   verification, and the nonce anti-replay create-only write in
   `rate_limit_control`.
-- The durable rate limiter (read-modify-write loop against a window entry)
-  and the subject-independent pre-verification flood control.
+- The free-tier durable limiter (create-only admission slots, randomized
+  bounded probing, TTL, and full-ring negative cache) and the
+  subject-independent pre-verification flood control. Do not depend on
+  Fastly Edge Rate Limiting.
 - The administrative bootstrap path used only by `--init-owner`: this is
   the one place that needs broader-than-route access to KV Store, since no
   owner exists yet for a Firebase-authenticated route to gate on. Build and
@@ -131,10 +133,11 @@ gives every later route its authorization primitives.
   `route_name` rejected; proof with a client-supplied `owner_pk`/`vault_id`/
   `db_prefix` that disagrees with Fastly's configured values rejected, even
   when the signature itself is valid over the client's forged bytes.
-- Concurrency test: fire N simultaneous requests against the same rate-limit
-  window and assert the accepted count never exceeds the configured limit —
-  this must run against the real KV Store in staging, not only the fake,
-  because it is exactly the scenario eventual consistency could break.
+- Concurrency test: fire more than N simultaneous requests against the same
+  slot ring and assert exactly N create-only claims succeed, no key is
+  rewritten, and all later calls receive 429. Run this against staging KV,
+  not only the fake, because atomic create-only admission is the property the
+  limiter depends on under eventual read propagation.
 - Ordering test: forge a request with a plausible-looking but unverified
   Firebase claim and confirm the owner-subject-keyed limiter is never
   consulted before signature verification completes.
@@ -155,7 +158,7 @@ as a searchable list. Reading state and sharing are still out of scope.
 
 **Builds:**
 
-- `vault:book:{book_id}` CRUD via `POST /v1/vault/commit` and
+- `vault` key `book_{book_id}` CRUD via `POST /v1/vault/commit` and
   `PUT /v1/vault/books/{book_id}`, including the fixed write order (book,
   then R2 existence check, then head) and the two-step content-replacement
   sequence.
@@ -231,7 +234,7 @@ to getting the write-frequency accounting right.
 - The write-accounting test this milestone exists to get right: instrument
   a simulated multi-hour reading session and assert the *count* of KV
   writes matches the documented model exactly — one write per debounce for
-  `reading:{book_id}`, and a `reading-index` write **only** on the
+  `reading_{book_id}`, and a `reading-index` write **only** on the
   qualifying edge or a bookmark change, never on a CFI-only debounce. This
   is the empirical check behind the Class A savings claimed in
   [README.md](README.md#capacity-target) and must be a permanent regression
@@ -244,7 +247,7 @@ to getting the write-frequency accounting right.
   retry independent of the other.
 - Repair tests: delete the reading index directly in staging, rebuild it
   from the vault scan, and confirm every book's bookmarks and
-  `last_accessed` match its authoritative `reading:{book_id}` entry; delete
+  `last_accessed` match its authoritative `reading_{book_id}` entry; delete
   a book without its reading entry being cleaned up first, and confirm the
   cleanup step finds and removes the resulting orphan.
 - Security/self-containment tests confirming the deliberate exemptions: a

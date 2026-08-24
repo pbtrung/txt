@@ -27,6 +27,10 @@ migration in [deployment_migration.md](deployment_migration.md) is complete.
   Fastly KV Stores, one per role (`owner_control`, `vault`, `share_control`,
   `rate_limit_control`). Fastly fixes the store and key for every route
   instead of accepting a client-supplied store name or key.
+- Use only underscore-delimited KV keys (`book_...`, `reading_...`,
+  `slot_...`). Fastly allows `:` in a key but forbids it in a prefix query,
+  so colon-delimited keys cannot support the fixed repair scans in this
+  contract.
 - Give each book exactly **one** KV entry holding both its identity (content
   locator and shares) and its catalog metadata. A KV Store has no cross-key
   transaction, so an ingest or delete that would otherwise need two writes to
@@ -141,21 +145,22 @@ correctness:
   and negligible against a packaged account's 20,000,000. Track it anyway
   (see the metrics list in [catalog.md](catalog.md)) rather than assuming the
   estimate holds;
-- neither the possession proof nor the durable per-owner rate-limit counter —
-  each itself a KV write — applies to the reading-state route. This is not a
-  general reads-are-cheaper exemption: it holds specifically because a
+- neither the possession proof nor the durable per-owner admission slot —
+  each itself a KV write — applies to an existing reading-state replacement.
+  This is not a general reads-are-cheaper exemption: it holds specifically
+  because a
   corrupted or flooded reading-state/reading-index entry cannot delete a
   book, revoke a share, corrupt `catalog-head`, or mint an R2 credential —
   its blast radius is self-contained and repairable — so it gets the same
   best-effort, in-instance flood control as read routes instead of a durable
   counter write on top of its own write(s) per update;
-- the durable, KV-backed rate limiter is applied only to routes whose abuse is
-  not self-contained — `owner-keys`, `owner-r2-token`, `owner-vault-write`,
-  `owner-vault-scan`, and `owner-share-write` — plus the unauthenticated
-  `public-share-url`. `owner-vault-read`, by far the highest-volume read
-  route, uses a best-effort in-instance counter instead of a durable KV write
-  per call — see [auth_api.md](auth_api.md) for the exact tradeoff this
-  accepts; and
+- the free-tier durable limiter never rewrites a shared counter. Each accepted
+  protected request claims one create-only `slot_...` key in
+  `rate_limit_control`, avoiding Fastly's one-write-per-second-per-item limit.
+  `owner-vault-read`, by far the highest-volume read route, uses a
+  best-effort in-instance counter instead of a durable KV write per call — see
+  [auth_api.md](auth_api.md) for the admission algorithm and its bounded-probe
+  tradeoff; and
 - the fixed vault scan used for repair remains deliberately far more
   rate-limited than point reads, since it is the one route whose cost scales
   with library size rather than being O(1).

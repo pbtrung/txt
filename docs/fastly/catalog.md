@@ -106,10 +106,10 @@ small KV Store entry:
 ```
 
 Each entry's `bookmarks` is the complete array from that book's
-`reading:{book_id}` entry, not merely a count, so a library-wide "all
+`reading_{book_id}` entry, not merely a count, so a library-wide "all
 bookmarks" view and per-book bookmark-count badges both render from this one
 entry — neither needs a per-book fetch. Opening a book always fetches its own
-`reading:{book_id}` entry directly (see Initial load below), so the index is
+`reading_{book_id}` entry directly (see Initial load below), so the index is
 never consulted for that; `last_cfi` therefore stays out of it entirely. It
 changes on every debounced relocation, while `bookmarks` changes only when
 the owner explicitly adds or removes one — so this index is overwritten only
@@ -311,14 +311,14 @@ by opaque ID so a backup can be restored. Never omit an undecryptable entry
 and publish silent data loss.
 
 The reading index can be rebuilt independently and more cheaply: page the same
-scan for book IDs, fetch each `reading:{book_id}` entry that exists (a
+scan for book IDs, fetch each `reading_{book_id}` entry that exists (a
 missing one means the book has never been opened — record it as never-read,
 not an error), and overwrite the index conditional on its current
 `generation` (or with a create-only write if absent). This never touches a
 book's merged entry or `catalog-head`, and never blocks on the catalog
 snapshot's own repair.
 
-The same scan also finds orphaned reading entries: a `reading:{book_id}`
+The same scan also finds orphaned reading entries: a `reading_{book_id}`
 entry whose `book_id` does not appear in the current snapshot means the book
 was deleted without its reading entry being cleaned up. The administration CLI
 deletes it (KV Store deletes are free of Class A cost) after confirming the

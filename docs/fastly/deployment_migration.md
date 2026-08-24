@@ -40,7 +40,8 @@ Configure:
 - a linked Config Store for nonsecret IDs, origins, route limits, API versions,
   and backend names, with desired values tracked in deployment configuration;
 - a linked Secret Store for R2 credentials, the share-grant key, and the
-  rate-limit key — there is no KV Store account key to store, since KV Store
+  rate-limit subject-hashing key — there is no KV Store account key to store,
+  since KV Store
   access needs no secret;
 - no cache lookup/storage for `/v1/*` and health responses; and
 - redacted structured logging that never records request/response bodies or
@@ -48,7 +49,7 @@ Configure:
 
 Remove the rqlite process, OpenResty Lua API, operator proxy, Northflank
 service, persistent volume, and native rqlite backup job only after rollback
-retention. Fastly is request-driven and stateless; durable rate limits and
+retention. Fastly is request-driven and stateless; durable admission slots and
 share state live in KV Store, not Compute memory.
 
 ### Rust toolchain and cryptographic crates
@@ -260,9 +261,9 @@ Fastly target routes remain unavailable.
 Open the captured SQLCipher database locally with its current key. Validate the
 schema and constraints. For each `txt` row, produce two target objects:
 
-- a merged `book:{book_id}` entry: content key, prefix, path, catalog fields,
+- a merged `book_{book_id}` entry: content key, prefix, path, catalog fields,
   and ordered shares with IDs, keys, paths, states, and creation time; and
-- a `reading:{book_id}` entry: creation/last-access/last-CFI values and ordered
+- a `reading_{book_id}` entry: creation/last-access/last-CFI values and ordered
   bookmarks with uniqueness, optional page number, preview, creation time, and
   the 20-item cap.
 
@@ -310,8 +311,10 @@ published.
   set each target share entry's plaintext `book_id` from the target `book_id`
   its source row belongs to. Create one path reservation per row before its
   share entry, and fail on any collision/mismatch.
-- Import unexpired rate-limit windows with counts/boundaries so cutover cannot
-  reset abuse budgets. Expired windows may be omitted.
+- Convert each unexpired legacy rate-limit window into that many occupied
+  create-only admission slots with the original boundary, capped at the new
+  ring size, so cutover cannot reset abuse budgets. Do not import a mutable
+  counter entry. Expired windows may be omitted.
 - Create target schema markers and an incomplete encrypted migration report
   with source hashes/ETags, entry counts, generation, and opaque errors.
 
@@ -417,7 +420,7 @@ throttling, stale backups, or control/data schema mismatch.
   access needs no secret at all.
 - Rotate R2 broker credentials using overlap; minted 15-minute sessions
   expire.
-- Rotating `RATE_LIMIT_KEY` makes old subject buckets unreachable; perform a
+- Rotating `RATE_LIMIT_KEY` makes old subject slot rings unreachable; perform a
   bounded migration or conservative reset during maintenance.
 - Rotating `SHARE_GRANT_KEY` invalidates distributed links unless a versioned
   read keyring remains. Issue new grants with the current key while retaining
@@ -441,11 +444,11 @@ Do not remove rqlite, Northflank, or legacy `db_path` until all checks pass:
   operation; a client-supplied store/key selection is rejected; every route
   whose abuse is not self-contained rejects a missing, expired, wrong-route,
   or replayed possession proof even with a valid Firebase token;
-- every durable rate limit is atomic across Fastly POPs and instances, and the
-  owner-subject-keyed limiter only ever consumes on a verified Firebase
-  subject, never an unverified claim; the two best-effort, in-instance limits
-  are documented as approximate in the deployed configuration, not silently
-  assumed durable;
+- every durable admission limit caps successful create-only slot claims across
+  Fastly POPs and instances without rewriting any slot, and the owner-subject
+  ring is selected only from a verified Firebase subject, never an unverified
+  claim; the two best-effort, in-instance limits are documented as approximate
+  in the deployed configuration, not silently assumed durable;
 - private API responses bypass cache and carry the required no-store policy;
 - initial load is one R2 GET for the snapshot and one KV Store read for the
   reading index on cache miss, and local search and recency ordering match

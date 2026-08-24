@@ -12,7 +12,7 @@ unless a cited external algorithm fixes a different nonce size (XChaCha20-
 Poly1305's 24-byte nonce in [cryptography.md](cryptography.md) is the one
 exception, and is exempt because the cipher construction — not identifier
 collision resistance — fixes that size). This applies to book IDs, `share_id`,
-`object-path`/`prefix` segments, possession-proof nonces, and any future
+object-path/prefix segments, possession-proof nonces, and any future
 opaque token; a 128-bit floor is not sufficient.
 
 The 32-byte content/share prefix and path fields remain binary inside encrypted
@@ -43,6 +43,13 @@ entry carries a `generation` marker maintained by KV Store itself, used the
 same way throughout this directory: read it, act only while it still matches
 on the next write, and treat a mismatch as a conflict to reload and retry.
 
+Every KV key uses only ASCII letters, digits, `_`, and `-`. In particular,
+the type separator is `_`, never `:`: Fastly accepts a colon in an individual
+key but does not accept one in the `prefix` parameter used by list/repair
+operations. Recheck this restriction against Fastly's current
+[KV Store limits](https://docs.fastly.com/products/compute-resource-limits#kv-store)
+before provisioning.
+
 ## The whole picture
 
 Every section below shows one entry's complete shape: its outer, plaintext KV
@@ -56,14 +63,14 @@ rules once, generically, rather than repeating it per entry.
 Four KV Stores, plus R2 for immutable content:
 
 - `owner_control` holds one `owner` entry. Nothing else references it.
-- `vault` holds `book:{book_id}`, `reading:{book_id}`, `reading-index`, and
+- `vault` holds `book_{book_id}`, `reading_{book_id}`, `reading-index`, and
   `catalog-head`. A `book` and its `reading` entry share the same `book_id`;
   `book` projects its catalog fields and shares into the R2 library
   snapshot, `catalog-head` names that snapshot object, and `reading`
   projects its bookmarks into `reading-index`.
-- `share_control` holds `share:{share_id_hash}` (which carries a plaintext
-  `book_id` back-reference) and `path:{object_path_hash}`.
-- `rate_limit_control` holds TTL'd `window:...` and `nonce:...` entries,
+- `share_control` holds `share_{share_id_hash}` (which carries a plaintext
+  `book_id` back-reference) and `path_{object_path_hash}`.
+- `rate_limit_control` holds TTL'd `slot_...` and `nonce_...` entries,
   referenced by nothing else.
 - R2 holds the immutable owner EPUB (referenced by `book.content.path`), the
   library snapshot (named by `catalog-head`), and each shared EPUB copy
@@ -87,6 +94,7 @@ There is exactly one entry in this store holding owner identity, at key
   "user_handle_hash": "base64url SHA-256 digest",
   "vault_id": "vault_opaqueRandomValue",
   "owner_pk": "own_opaqueRandomValue",
+  "db_prefix": "52-character owner R2 prefix",
   "vault_binding_hash": "base64url SHA-512 digest",
   "wrapped_user_master_key": "base64url",
   "kem_public_key": "base64url",
@@ -135,7 +143,12 @@ owner EPUB, catalog, and shared R2 objects. The decrypted `vault_id`,
 `owner_pk`, and `db_prefix` must match the authenticated values or hashes
 returned by Fastly before the browser accepts a session.
 
-The owner entry contains no plaintext `user_handle` or display name. It is
+`db_prefix` is plaintext operational routing metadata. Fastly must know it to
+construct and authorize owner R2 keys and to bind possession proofs; a
+client-supplied prefix is never trusted. It is random rather than user
+metadata, must never be logged, and must match both `vault_binding_hash` and
+the decrypted credential value. The owner entry contains no plaintext
+`user_handle` or display name. It is
 safe for Fastly to return the wrapped/encrypted fields from `/v1/keys`, but
 the entry itself remains server-only.
 
@@ -145,10 +158,10 @@ Every store carries its own schema/migration marker key so `/health/ready`
 can validate all four independently:
 
 ```text
-owner_control:      schema:owner-control
-vault:              schema:vault
-share_control:      schema:share-control
-rate_limit_control: schema:rate-limit-control
+owner_control:      schema_owner-control
+vault:              schema_vault
+share_control:      schema_share-control
+rate_limit_control: schema_rate-limit-control
 ```
 
 ```json
@@ -160,7 +173,7 @@ rate_limit_control: schema:rate-limit-control
 ```
 
 Migration marker keys follow the same convention, for example
-`migration:initial-import:v1`. Only the deployment migrator may write these
+`migration_initial-import_v1`. Only the deployment migrator may write these
 keys. Runtime startup fails readiness if the supported and stored versions
 differ in any store.
 
@@ -169,7 +182,7 @@ differ in any store.
 Access: fixed Fastly vault routes and offline administration only. No browser
 credential can access this store.
 
-### `book:{book_id}` entry
+### `book_{book_id}` entry
 
 One entry holds a book's near-immutable identity — its content locator and
 owner-side share state — together with its catalog metadata, so that ingest
@@ -188,7 +201,7 @@ and delete each require exactly one vault write.
 
 `id` is a randomly generated, stable opaque identifier (`book_` followed by at
 least 256 bits of random data, canonically encoded), also used to derive the
-key `book:{id}`. `record_version` is incremented inside and outside the
+key `book_{id}`. `record_version` is incremented inside and outside the
 ciphertext on every accepted mutation; the values must match after
 decryption. It aids diagnosis but does not replace the KV Store `generation`
 for concurrency.
@@ -251,7 +264,7 @@ Editing catalog metadata, changing a content locator, and creating/removing a
 share all replace this same entry and republish the snapshot; none of them
 touch reading state.
 
-### `reading:{book_id}` entry
+### `reading_{book_id}` entry
 
 Reading position and bookmarks are the highest-frequency mutation associated
 with a book — a qualifying read updates `last_accessed` once per session, a
@@ -369,13 +382,13 @@ entry aggregates exactly that, and only that, across every book:
 ```
 
 Each entry's `bookmarks` array is the same complete array carried in that
-book's `reading:{book_id}` entry — not a count. A bookmark-count badge is
+book's `reading_{book_id}` entry — not a count. A bookmark-count badge is
 just `bookmarks.length`; a library-wide bookmarks view renders directly from
 this one entry instead of fetching every book's reading entry individually.
 
 `last_cfi` is deliberately excluded, and for a reason that is about write
 frequency, not read convenience: opening a book always fetches its own
-`reading:{book_id}` entry directly ([catalog.md](catalog.md)'s initial-load
+`reading_{book_id}` entry directly ([catalog.md](catalog.md)'s initial-load
 and open-book steps), so the index is never consulted to find a CFI, and
 excluding `last_cfi` costs nothing on the read side. `last_accessed` changes
 once per reading session (at the six-second qualification moment) and
@@ -388,7 +401,7 @@ reading-state write therefore updates this index **only when `last_accessed`
 first qualifies for the session or `bookmarks` changes**, never on a
 CFI-only debounce. This is the specific Class A operation saving described
 in [README.md](README.md#capacity-target): most debounced writes during a
-reading session cost exactly one KV write (`reading:{book_id}` alone), not
+reading session cost exactly one KV write (`reading_{book_id}` alone), not
 two.
 
 Like the catalog snapshot, the index is a **derived, rebuildable
@@ -463,11 +476,11 @@ do — see [catalog.md](catalog.md) for the exact republish list.
 
 Access: fixed Fastly share routes and offline administration only.
 
-### `share:{share_id_hash}` entry
+### `share_{share_id_hash}` entry
 
 ```json
 {
-  "id": "share:{share_id_hash}",
+  "id": "share_{share_id_hash}",
   "kind": "share",
   "schema_version": 1,
   "share_id_hash": "base64url SHA-256",
@@ -490,11 +503,11 @@ Only `active` entries may produce a shared URL. The raw share identifier and
 R2 path are carried in the authenticated share grant, not stored in plaintext
 control entries.
 
-### `path:{object_path_hash}` entry
+### `path_{object_path_hash}` entry
 
 ```json
 {
-  "id": "path:{object_path_hash}",
+  "id": "path_{object_path_hash}",
   "kind": "share-path-reservation",
   "schema_version": 1,
   "share_id_hash": "base64url SHA-256",
@@ -519,7 +532,7 @@ interrupted delete never leaves a share with no reservation.
 
 ## `rate_limit_control`
 
-Access: Fastly limiter code and offline administration only. Every window and
+Access: Fastly limiter code and offline administration only. Every slot and
 nonce entry is written with a KV Store TTL slightly longer than the window or
 proof it guards; KV Store TTL is a garbage-collection guarantee, not a precise
 expiry, so never rely on TTL alone to make an expired value unreadable a
@@ -527,27 +540,33 @@ security boundary — the application field below is authoritative for that.
 
 ```json
 {
-  "id": "window:owner-keys:{subject_hash}:1787356800",
-  "kind": "rate-limit",
+  "id": "slot_owner-keys_{subject_hash}_1787356800_0042",
+  "kind": "rate-limit-slot",
   "scope": "owner-keys",
   "subject_hash": "base64url HMAC-SHA-256",
   "window_start": 1787356800,
-  "count": 1,
-  "limit": 60
+  "slot": 42,
+  "expires_at": 1787360405
 }
 ```
 
-Fastly consumes a slot with a read-modify-write loop: read the window entry
-(or its absence) and its `generation`, then create it with count 1 or
-conditionally overwrite it with count incremented, using `if_generation_match`
-against the value just read. A generation mismatch means a concurrent request
-won the same window; re-read and retry, capped at a small number of attempts,
-treating exhaustion as rate-limited. KV Store unavailability fails closed for
-protected operations. Any pre-verification flood control (before a Firebase
-token is checked at all) must use a subject-independent bucket — normalized
-client IP or a global counter, never one keyed by an unverified token claim —
-so an attacker who does not hold a validly signed token cannot consume the
-owner-specific budget; see [auth_api.md](auth_api.md) for the exact ordering.
+A window with limit `N` has exactly `N` possible slot keys, numbered with a
+fixed-width decimal suffix. Fastly selects a CSPRNG-random starting slot and
+walks the ring, claiming candidates with a create-only write. The first
+successful create admits the request; an already-existing candidate advances
+to the next slot; all `N` occupied means 429. There is no read-modify-write
+counter and every accepted request mutates a distinct item exactly once, so
+the design respects Fastly's one-write-per-second-per-item limit. The
+create-only precondition, not an eventually consistent lookup, decides
+admission under concurrency. Cap `N` at 120; a small in-instance precheck and
+negative cache protect a full window from repeated full-ring probe
+amplification. Provider throttling or an indeterminate create fails closed
+with 503, never by treating it as an occupied slot.
+
+Only after Firebase verification may an owner UID select its slot ring. For a
+public route, validate the cryptographic capability before touching its
+IP-keyed ring. Pre-authentication floods use a best-effort in-instance IP
+counter, so forged token claims cannot consume an owner's durable slots.
 
 This store also holds single-use possession-proof nonces (`kind: "nonce"`),
 created with a create-only write and a TTL just past the proof's expiry; see
