@@ -574,7 +574,8 @@ share ID, and current encrypted grant. Fastly:
 2. verifies and decrypts the grant;
 3. reads the share entry by ID hash from `share_control`;
 4. requires `active`, a matching object-path hash, and normalized path;
-5. claims one deployment-global `public-share-url` durable slot; and
+5. claims one `public-share-url` durable slot from the ring keyed by this
+   share's own `share_id_hash`; and
 6. creates a 60-second exact GET URL with signed `If-Match` for the stored
    ETag and returns the stored length/SHA-256.
 
@@ -610,7 +611,7 @@ self-contained. They use the create-only slot ledger in
 | `owner-vault-scan`    | 12 per hour      | owner UID            |
 | `owner-vault-write`   | 100 per 10 min   | owner UID            |
 | `owner-share-write`   | 20 per 10 min    | owner UID            |
-| `public-share-url`    | 20 per hour      | deployment-global    |
+| `public-share-url`    | 20 per hour      | `share_id_hash`      |
 
 `owner-vault-scan` covers `GET /v1/vault/books?cursor=...` only — the
 administrative repair/verification scan — deliberately far tighter than
@@ -647,9 +648,14 @@ route's abuse potential is high enough that this tradeoff is not offered.
 
 Subject identifiers for owner durable limits are HMAC-SHA-256 with
 `RATE_LIMIT_KEY`; store only the digest in `rate_limit_control`, and only ever
-compute it from a **verified** Firebase subject. The anonymous share route uses
-one HMAC'd deployment-global label after capability validation, so rotating IPs
-cannot multiply durable rings and exhaust free-tier Class A writes. Its cheap
+compute it from a **verified** Firebase subject. The anonymous share route
+selects its ring only after capability validation succeeds, keyed by the
+share's own `share_id_hash` — not by requester IP and not by one deployment-
+wide label — so a rotating-IP attacker still cannot multiply durable rings and
+exhaust free-tier Class A writes: minting a new `share_id` requires the
+authenticated, already-rate-limited `owner-share-write` route, not an
+anonymous request, and exhausting one share's ring cannot deny redemption of
+any other active share. Its cheap
 pre-verification flood control remains in-instance and IP-keyed. Each accepted
 durable call consumes one create-only slot. Start probing at
 a CSPRNG-random slot and walk at most the configured `N` slots; cache a known

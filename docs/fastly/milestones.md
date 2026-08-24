@@ -323,11 +323,12 @@ before cutover begins.
   reservation or return the existing active registration without another
   write, while any tuple mismatch remains a conflict.
 - Grant/capability tests: a grant for one share/path cannot authorize
-  another; a `deleting` share cannot exchange for a URL; public rate
-  limiting holds under concurrent requests distributed across simulated
-  points of presence, and rotating IPs still share the one global durable
-  ring. Any ETag/length/SHA-256 mismatch among fragment, registry, and R2
-  blocks download before AEAD plaintext is released.
+  another; a `deleting` share cannot exchange for a URL; each share's
+  `public-share-url` ring holds under concurrent requests distributed across
+  simulated points of presence and rotating IPs, and exhausting one share's
+  ring never throttles redemption of a second, unrelated active share. Any
+  ETag/length/SHA-256 mismatch among fragment, registry, and R2 blocks
+  download before AEAD plaintext is released.
 - Backup/restore drill: export, wipe a scratch account's KV Stores, restore,
   and diff every entry plus the catalog head and pointed-to immutable snapshot
   against the pre-wipe state. This drill must succeed before the milestone

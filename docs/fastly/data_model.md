@@ -594,12 +594,16 @@ amplification. Provider throttling or an indeterminate create fails closed
 with 503, never by treating it as an occupied slot.
 
 Only after Firebase verification may an owner UID select its slot ring. For
-the public route, validate the cryptographic capability before touching the
-single deployment-global durable ring. A best-effort in-instance IP counter
-runs before expensive authentication. Keeping IP out of durable ring identity
-prevents rotating-source multiplication of Class A writes; the global cap
-reserves a bounded portion of the free-tier budget rather than claiming the
-entire monthly allowance.
+the public route, validate the cryptographic capability before selecting that
+share's own durable ring, keyed by `share_id_hash` rather than by a requester
+IP or one counter shared across every share. A best-effort in-instance IP
+counter runs before expensive authentication. Keeping IP out of durable ring
+identity prevents rotating-source multiplication of Class A writes — minting a
+new `share_id` still requires the authenticated, already-rate-limited
+`owner-share-write` route — and keying by share rather than a single
+deployment-wide counter confines an abused share's cost, and any resulting
+429s, to that one share instead of denying redemption of every other active
+share.
 
 This store also holds single-use possession-proof nonces (`kind: "nonce"`),
 created with a create-only write and a TTL just past the proof's expiry; see

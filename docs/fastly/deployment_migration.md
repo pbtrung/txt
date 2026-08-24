@@ -483,6 +483,16 @@ fail-closed behavior before cutover.
   book, reading, reading-index, catalog-head pointer, and current snapshot
   object under maintenance; never
   treat it as incidental schema migration.
+- Rotating the P-521 possession-proof signing keypair — needed if the
+  unwrapped private key is ever suspected compromised, since it is the sole
+  per-request write-authorization credential in this design — requires
+  generating a fresh keypair locally, wrapping the new private half with the
+  current `user_master_key`, and replacing `sign_public_key`/
+  `wrapped_sign_private_key` in the `owner` entry under maintenance. Every
+  proof-bearing request in flight at rotation time fails verification against
+  the old key and must be retried after the browser/CLI re-fetches `/v1/keys`;
+  there is no overlap window, unlike R2 credential rotation, because Fastly
+  verifies each proof against the single current `sign_public_key` value.
 
 ## Release gate
 

@@ -160,10 +160,17 @@ correctness:
   best-effort in-instance counter instead of a durable KV write per call — see
   [auth_api.md](auth_api.md) for the admission algorithm and its bounded-probe
   tradeoff;
-- anonymous share exchange uses one deployment-global 20/hour durable ring
-  after an in-instance IP prefilter and capability validation. A rotating-IP
-  attacker therefore cannot create a new durable ring per source or drive
-  more than 14,400 accepted-slot writes in a 30-day month;
+- anonymous share exchange uses a 20/hour durable ring keyed by the validated
+  `share_id_hash` — never by requester IP or one shared deployment-wide
+  counter — after an in-instance IP prefilter and capability validation.
+  Keying by the share itself, rather than IP, still stops a rotating-IP
+  attacker from creating a new ring per source, because minting a new
+  `share_id` at all requires the authenticated, proof-gated, already-rate-
+  limited `owner-share-write` route, not an anonymous request; unlike a single
+  global ring, exhausting one share's ring cannot deny redemption of any other
+  active share. Its total monthly cost therefore scales with the count of
+  concurrently active shares rather than one fixed number — track it in the
+  metrics list in [catalog.md](catalog.md);
 - the fixed vault scan used for repair remains deliberately far more
   rate-limited than point reads, since it is the one route whose cost scales
   with library size rather than being O(1).

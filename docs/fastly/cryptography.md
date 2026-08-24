@@ -272,8 +272,11 @@ every operation, generation, ciphertext, object locator, and transition in
 the request; changing a signed create into a delete, or swapping an entry,
 invalidates the proof. `nonce_32` is 32 bytes (256 bits) from a cryptographic
 RNG, unique per proof. `expires_at` is at most 60 seconds after Fastly's current
-time. Fastly reconstructs the identity fields from its one stored `owner`
-entry, never client-supplied copies.
+time, and Fastly additionally rejects an `expires_at` already in the past,
+allowing only the same small, documented clock-skew tolerance used for the
+Firebase token's `exp`/`iat` in [auth_api.md](auth_api.md) — not a separate,
+looser allowance. Fastly reconstructs the identity fields from its one stored
+`owner` entry, never client-supplied copies.
 
 The top-level proof object is exactly:
 

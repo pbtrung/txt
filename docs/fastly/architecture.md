@@ -175,8 +175,8 @@ No step allows the browser to select or directly query a control store.
 2. The UI submits the share capability and encrypted grant to
    `POST /v1/shared-url` at Fastly.
 3. Fastly applies the in-instance IP prefilter, hashes and validates the
-   identifier/grant against `share_control`, then claims one deployment-global
-   public admission slot in `rate_limit_control`.
+   identifier/grant against `share_control`, then claims one admission slot
+   from that share's own durable ring in `rate_limit_control`.
 4. Fastly returns a 60-second R2 GET URL for exactly that shared object.
 5. The browser downloads and decrypts the independent shared copy. Recipient
    progress and bookmarks remain local.

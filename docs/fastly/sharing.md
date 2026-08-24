@@ -84,7 +84,9 @@ attention.
    `POST /v1/shared-url`.
 3. Fastly applies the best-effort in-instance IP prefilter, authenticates the
    grant, reads the server-only hashed registry entry, requires `active` plus
-   an exact path-hash match, and claims the deployment-global durable slot.
+   an exact path-hash match, and claims a durable slot from that share's own
+   `share_id_hash`-keyed ring — so exhausting one share's ring cannot deny
+   redemption of any other active share.
 4. It returns a 60-second R2 URL granting GET for one object, signed
    `If-Match`, and the registry's expected integrity metadata.
 5. The browser requires registry and fragment ETag/length/SHA-256 equality,
@@ -208,6 +210,9 @@ the proof-bearing delete route to remove the exact R2 object and reservation.
 - Delete retries survive R2 404, a `generation` conflict, browser crash at
   every saga boundary, and an expired Firebase ID token or presigned URL.
 - Public rate limiting is durable across Fastly POPs and Compute instances.
+- Exhausting one share's `public-share-url` ring returns 429 for that share
+  only; a concurrent redemption of a second, unrelated active share still
+  succeeds.
 - A grant for one path/share cannot authorize another.
 - Fragment/registry/R2 ETag, length, or SHA-256 disagreement blocks download
   before decryption.
