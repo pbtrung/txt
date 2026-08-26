@@ -49,6 +49,14 @@ describe("cryptoBlob (real sqlcipher.wasm)", () => {
     await expect(decrypt(blob, ikm)).rejects.toThrow(/bad magic/);
   });
 
+  it("rejects a blob with an unsupported major version", async () => {
+    const ikm = crypto.getRandomValues(new Uint8Array(128));
+    const blob = await encrypt(new TextEncoder().encode("secret"), ikm);
+    blob[2] = 0x02;
+
+    await expect(decrypt(blob, ikm)).rejects.toThrow(/unsupported major version/);
+  });
+
   it("round-trips a JSON payload (matching cred_store.content's shape)", async () => {
     const ikm = crypto.getRandomValues(new Uint8Array(128));
     const payload = {

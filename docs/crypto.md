@@ -155,3 +155,34 @@ provisioning. It does not currently wrap encapsulation or decapsulation, and no
 persisted application record or browser/API flow invokes those operations.
 Public sharing instead creates an independent 128-byte symmetric content key and
 places it only in the URL fragment and the owner's encrypted SQLCipher database.
+
+## Share Grant Envelope
+
+The gateway encrypts each share's object path with a second, independent
+primitive stack—libsodium's XChaCha20-Poly1305, not the Ascon-Keccak Blob
+Format above. This envelope only ever holds the object path string
+(`docs/sharing.md`); it never touches key material, plaintext content, or the
+owner's blob-format payloads.
+
+| Field   | Size     | Value                                          |
+| ------- | -------- | ----------------------------------------------- |
+| version | 1 byte   | `0x01`                                         |
+| salt    | 32 bytes | random per grant, HMAC input salt              |
+| nonce   | 24 bytes | random per grant, XChaCha20-Poly1305 nonce     |
+| sealed  | variable | ciphertext followed by a 16-byte Poly1305 tag  |
+
+The envelope is base64url-encoded end to end. Given `SHARE_GRANT_KEY` (a
+32-byte secret independent of every key in the Blob Format above) and the
+share's `id_hash`:
+
+1. Generate a random 32-byte `salt` and 24-byte `nonce`.
+2. Derive `prk = HMAC-SHA-256(salt, SHARE_GRANT_KEY)`, then
+   `key = HMAC-SHA-256(prk, "txt:share-grant-key:v1" || id_hash || 0x01)`.
+3. Seal the object path with XChaCha20-Poly1305 under `key`/`nonce`, with
+   additional data `"txt:share-grant:v1" || id_hash` binding the ciphertext to
+   that specific share.
+4. Assemble and base64url-encode `version || salt || nonce || sealed`.
+
+Decryption reverses this exactly and rejects a grant whose version byte,
+length, or AEAD tag doesn't match; a grant decrypted under a different
+`id_hash` fails tag verification because the AAD no longer matches.

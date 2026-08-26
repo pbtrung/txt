@@ -50,6 +50,14 @@ def test_bad_magic_rejected(blob):
         blob.decrypt(bytes(encrypted), ikm)
 
 
+def test_unsupported_major_version_rejected(blob):
+    ikm = secrets.token_bytes(256)
+    encrypted = bytearray(blob.encrypt(b"payload", ikm))
+    encrypted[2] = 0x02
+    with pytest.raises(ValueError):
+        blob.decrypt(bytes(encrypted), ikm)
+
+
 def test_json_round_trip(blob):
     ikm = secrets.token_bytes(256)
     payload = {"display_name": "Trung", "db_master_key": secrets.token_bytes(256).hex()}
