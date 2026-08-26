@@ -134,13 +134,16 @@ end
 function M.mark_deleting(id, path)
   local params = {
     share_id_hash = bytes(share_hash(id)),
+    object_path_hash = bytes(share_hash(path)),
     now = math.floor(ngx.now() * 1000),
   }
   local results, err = rqlite.request({
     {
       [[
 UPDATE shares SET state = 'deleting', updated_at = :now
-WHERE share_id_hash = :share_id_hash AND state = 'active'
+WHERE share_id_hash = :share_id_hash
+  AND object_path_hash = :object_path_hash
+  AND state = 'active'
 ]],
       params,
     },

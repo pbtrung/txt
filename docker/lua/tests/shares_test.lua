@@ -158,6 +158,54 @@ t.test("share deletion revokes in rqlite before deleting the R2 object", functio
 end)
 
 t.test(
+  "share deletion with a mismatched path never flips the row to deleting",
+  function()
+    local events = {}
+    local stored_hash = "hash:" .. object_path
+    local rqlite = {
+      request = function(statements)
+        events[#events + 1] = "mark-deleting"
+        local params = statements[1][2]
+        local state = params.object_path_hash == stored_hash and "deleting" or "active"
+        return {
+          {},
+          {
+            columns = { "object_path_hash", "state" },
+            values = { { stored_hash, state } },
+          },
+        }
+      end,
+      first_row = function(result)
+        return { object_path_hash = result.values[1][1], state = result.values[1][2] }
+      end,
+      execute = function()
+        events[#events + 1] = "remove-row"
+        return {}
+      end,
+    }
+    local aws = {
+      delete = function()
+        events[#events + 1] = "delete-object"
+        return true
+      end,
+    }
+    local old_ngx = ngx
+    ngx = {
+      now = function()
+        return 1
+      end,
+    }
+    t.with_stubs("txt.shares", stubs(rqlite, aws), function(shares)
+      local ok, err = shares.delete(raw_id, "not/" .. object_path)
+      t.falsy(ok)
+      t.equal(err, "object path mismatch")
+      t.equal(table.concat(events, ","), "mark-deleting")
+    end)
+    ngx = old_ngx
+  end
+)
+
+t.test(
   "active_object rejects a resupplied path that doesn't match the registered hash",
   function()
     local rqlite = {
