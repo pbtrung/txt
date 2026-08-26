@@ -69,18 +69,27 @@ class DbCleaner:
         uid, _umk, payload = self.owner.load_current_owner()
         account = parse_storage_account(uid, payload)
         remote = self._download(account)
-        if remote is not None:
-            self._clean_sqlcipher(account, remote)
-        else:
-            self.logger.verbose(f"[{uid}] no database at {account.db_path} yet.")
-            self._log_summary(uid, 0, Counter(), 0)
-        self._vacuum_control(uid)
+        control_removed = self._clean(account, remote)
+        self._vacuum_control(uid, control_removed)
 
     def _download(self, account: StorageAccount) -> R2Object | None:
         self.logger.verbose(f"[{account.uid}] downloading {account.db_path} from R2...")
         return self.r2.get_object_with_etag(account.db_path)
 
-    def _clean_sqlcipher(self, account: StorageAccount, remote: R2Object) -> None:
+    def _clean(self, account: StorageAccount, remote: R2Object | None) -> int:
+        if remote is None:
+            self.logger.verbose(
+                f"[{account.uid}] no database at {account.db_path} yet."
+            )
+            return self._clean_orphans_only(account)
+        return self._clean_sqlcipher(account, remote)
+
+    def _clean_orphans_only(self, account: StorageAccount) -> int:
+        orphan_count = self._clean_orphan_control_rows(account.uid, set())
+        self._log_summary(account.uid, 0, Counter(), orphan_count)
+        return orphan_count
+
+    def _clean_sqlcipher(self, account: StorageAccount, remote: R2Object) -> int:
         with open_database(
             account.db_master_key,
             remote.body,
@@ -88,24 +97,28 @@ class DbCleaner:
             configure=configure_page_size,
         ) as engine:
             if table_exists(engine, "txt_shares"):
-                self._clean_shares(account, engine)
+                control_removed = self._clean_shares(account, engine)
             else:
                 self.logger.verbose(f"[{account.uid}] no txt_shares table yet.")
-                self._log_summary(account.uid, 0, Counter(), 0)
+                control_removed = self._clean_orphans_only(account)
             self._vacuum_sqlcipher(account, engine, remote)
+        return control_removed
 
-    def _clean_shares(self, account: StorageAccount, engine: SqliteEngine) -> None:
+    def _clean_shares(self, account: StorageAccount, engine: SqliteEngine) -> int:
         local_hashes = self._local_share_hashes(engine)
         control_by_id = self._control_rows_by_share_id()
         stale = self._stale_local_shares(account, engine)
-        outcomes = Counter(
+        results = [
             self._clean_one(
                 account.uid, engine, share, control_by_id.get(share.share_id_hash)
             )
             for share in stale
-        )
+        ]
+        outcomes = Counter(outcome for outcome, _ in results)
+        matched_removed = sum(1 for _, control_removed in results if control_removed)
         orphan_count = self._clean_orphan_control_rows(account.uid, local_hashes)
         self._log_summary(account.uid, len(stale), outcomes, orphan_count)
+        return matched_removed + orphan_count
 
     def _log_summary(
         self, uid: str, stale_count: int, outcomes: Counter, orphan_count: int
@@ -155,12 +168,11 @@ class DbCleaner:
 
     def _clean_one(
         self, uid: str, engine: SqliteEngine, share: StaleShare, control: dict | None
-    ) -> str:
+    ) -> tuple[str, bool]:
         if share.state == "creating" and self._is_active(control):
             self._heal_local_share(uid, engine, share)
-            return "healed"
-        self._remove_share(uid, engine, share, control)
-        return "removed"
+            return "healed", False
+        return "removed", self._remove_share(uid, engine, share, control)
 
     def _is_active(self, control: dict | None) -> bool:
         return control is not None and control["state"] == "active"
@@ -181,18 +193,23 @@ class DbCleaner:
 
     def _remove_share(
         self, uid: str, engine: SqliteEngine, share: StaleShare, control: dict | None
-    ) -> None:
+    ) -> bool:
+        control_matches = self._control_matches(control, share)
         verb = "Would remove" if self.dry_run else "Removing"
         self.logger.verbose(f"[{uid}] {verb} stale share at {share.object_path}...")
         if self.dry_run:
-            return
+            return control_matches
         self.r2.delete_keys([share.object_path])
-        if (
-            control is not None
-            and control["object_path_hash"] == share.object_path_hash
-        ):
+        if control_matches:
             self._delete_control_row(share.share_id_hash, share.object_path_hash)
         engine.execute("DELETE FROM txt_shares WHERE id = ?", [share.row_id])
+        return control_matches
+
+    def _control_matches(self, control: dict | None, share: StaleShare) -> bool:
+        return (
+            control is not None
+            and control["object_path_hash"] == share.object_path_hash
+        )
 
     def _delete_control_row(
         self, share_id_hash: bytes, object_path_hash: bytes
@@ -236,10 +253,14 @@ class DbCleaner:
             f"({len(data)} byte(s))."
         )
 
-    def _vacuum_control(self, uid: str) -> None:
+    def _vacuum_control(self, uid: str, removed: int) -> None:
         self.logger.verbose(f"[{uid}] vacuuming control database...")
         self.rqlite.vacuum()
-        self.logger.info(f"[{uid}] control database vacuumed.")
+        verb = "would be" if self.dry_run else "were"
+        self.logger.info(
+            f"[{uid}] control database vacuumed ({removed} stale row(s) {verb} "
+            "removed from it)."
+        )
 
 
 def _object_path(db_prefix: str, share_prefix: bytes, share_path: bytes) -> str:

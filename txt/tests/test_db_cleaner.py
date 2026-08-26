@@ -336,7 +336,9 @@ def test_vacuums_both_databases_even_with_nothing_stale(tmp_path, creds_path):
 
     assert FakeR2Client.put_calls == [(db_path, '"v1"', False)]
     assert FakeOwnerInitializer.rqlite.vacuum_calls == 1
-    assert "No stale share rows found." in "\n".join(logger.messages)
+    output = "\n".join(logger.messages)
+    assert "No stale share rows found." in output
+    assert "control database vacuumed (0 stale row(s) were removed from it)." in output
 
 
 def test_summary_reports_counts_of_removed_healed_and_orphaned_rows(
@@ -372,6 +374,7 @@ def test_summary_reports_counts_of_removed_healed_and_orphaned_rows(
 
     output = "\n".join(logger.messages)
     assert "3 stale share row(s) found: 2 were removed, 1 were healed." in output
+    assert "control database vacuumed (1 stale row(s) were removed from it)." in output
 
 
 def test_skips_sqlcipher_cleanup_when_no_database_exists_yet(tmp_path, creds_path):
@@ -382,6 +385,23 @@ def test_skips_sqlcipher_cleanup_when_no_database_exists_yet(tmp_path, creds_pat
 
     assert db_path not in FakeR2Client.objects
     assert FakeR2Client.put_calls == []
+
+
+def test_removes_orphaned_control_rows_even_with_no_local_database_yet(
+    tmp_path, creds_path
+):
+    db_master_key, db_path = secrets.token_bytes(256), "d" * 52
+    _set_owner(OWNER_UID, db_master_key, db_path)
+    orphan = _control_row(secrets.token_bytes(32), "some/orphaned/path", "deleting")
+    FakeOwnerInitializer.rqlite = FakeRqliteClient([orphan])
+    logger = CaptureLogger()
+
+    _cleaner(creds_path, tmp_path, logger=logger).run()
+
+    assert FakeOwnerInitializer.rqlite.rows == []
+    output = "\n".join(logger.messages)
+    assert "1 stale share row(s) found: 1 were removed, 0 were healed." in output
+    assert "control database vacuumed (1 stale row(s) were removed from it)." in output
     assert FakeOwnerInitializer.rqlite.vacuum_calls == 1
 
 
