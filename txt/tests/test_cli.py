@@ -79,6 +79,60 @@ def test_update_db_without_local_db_dir_is_a_usage_error(tmp_path):
     assert "--local-db-dir" in result.output
 
 
+def test_clean_db_without_local_db_dir_is_a_usage_error(tmp_path):
+    creds_path = tmp_path / "creds.json"
+    creds_path.write_text("{}")
+    result = CliRunner().invoke(cli, ["--clean-db", str(creds_path)])
+    assert result.exit_code != 0
+    assert "--local-db-dir" in result.output
+
+
+def test_clean_db_passes_local_db_dir_dry_run_and_verbose_to_cleaner(
+    monkeypatch, tmp_path
+):
+    captured = {}
+
+    class FakeCleaner:
+        def __init__(self, creds, creds_path, local_db_dir, logger, dry_run):
+            captured.update(
+                creds=creds,
+                creds_path=creds_path,
+                local_db_dir=local_db_dir,
+                logger=logger,
+                dry_run=dry_run,
+            )
+
+        def run(self):
+            captured["ran"] = True
+
+    creds_path = tmp_path / "creds.json"
+    creds_path.write_text("{}")
+    local_db_dir = tmp_path / "data"
+    creds = object()
+    monkeypatch.setattr(cli_module, "load_owner_creds", lambda path: creds)
+    monkeypatch.setattr(cli_module, "DbCleaner", FakeCleaner)
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--clean-db",
+            str(creds_path),
+            "--local-db-dir",
+            str(local_db_dir),
+            "--verbose",
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["creds"] is creds
+    assert captured["creds_path"] == str(creds_path)
+    assert captured["local_db_dir"] == local_db_dir
+    assert captured["logger"].verbose_enabled is True
+    assert captured["dry_run"] is True
+    assert captured["ran"] is True
+
+
 def test_clean_bucket_passes_dry_run_and_verbose_to_cleaner(monkeypatch, tmp_path):
     captured = {}
 
@@ -136,11 +190,11 @@ def test_update_rql_loads_creds_and_runs_updater(monkeypatch, tmp_path):
     assert captured["ran"] is True
 
 
-def test_dry_run_without_clean_bucket_is_a_usage_error():
+def test_dry_run_without_clean_bucket_or_clean_db_is_a_usage_error():
     result = CliRunner().invoke(cli, ["--dry-run"])
 
     assert result.exit_code != 0
-    assert "--dry-run requires --clean-bucket" in result.output
+    assert "--dry-run requires --clean-bucket or --clean-db" in result.output
 
 
 def test_rejects_multiple_primary_commands(tmp_path):

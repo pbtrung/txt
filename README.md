@@ -134,6 +134,16 @@ txt --clean-bucket owner_creds.json --verbose --dry-run
 txt --clean-bucket owner_creds.json --verbose
 ```
 
+Preview and remove stale (`creating`/`deleting`) share rows from both the
+owner's SQLCipher database and rqlite's control database; a `creating` row
+that actually registered is healed to `active` instead of removed.
+`--dry-run` skips the removal but the databases are vacuumed regardless:
+
+```sh
+txt --clean-db owner_creds.json --local-db-dir ./data --verbose --dry-run
+txt --clean-db owner_creds.json --local-db-dir ./data --verbose
+```
+
 ## Development checks
 
 ```sh

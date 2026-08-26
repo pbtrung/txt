@@ -5,6 +5,7 @@ import click
 
 from .bucket_cleaner import BucketCleaner
 from .creds import load_owner_creds
+from .db_cleaner import DbCleaner
 from .db_updater import DbUpdater
 from .edit_epub import EpubEditor
 from .ingest import TxtIngester
@@ -73,6 +74,16 @@ from .rqlite_updater import RqliteUpdater
     help="Delete R2 objects not referenced by the singleton owner's database",
 )
 @click.option(
+    "--clean-db",
+    "clean_db_creds_path",
+    metavar="CREDS_JSON",
+    help=(
+        "Remove stale-state share rows from the control and SQLCipher "
+        "databases (needs --local-db-dir); vacuums both regardless of "
+        "--dry-run"
+    ),
+)
+@click.option(
     "--update-rql",
     "update_rql_creds_path",
     metavar="CREDS_JSON",
@@ -81,7 +92,7 @@ from .rqlite_updater import RqliteUpdater
 @click.option(
     "--dry-run",
     is_flag=True,
-    help="Report bucket changes without deleting anything",
+    help="Report changes without deleting anything (--clean-bucket or --clean-db)",
 )
 @click.option(
     "--log-file",
@@ -119,8 +130,9 @@ def _cleanup_log(opts: dict) -> Path | None:
 
 
 def _validate_options(opts: dict) -> None:
-    if opts["dry_run"] and not opts["clean_bucket_creds_path"]:
-        raise click.UsageError("--dry-run requires --clean-bucket")
+    dry_run_target = opts["clean_bucket_creds_path"] or opts["clean_db_creds_path"]
+    if opts["dry_run"] and not dry_run_target:
+        raise click.UsageError("--dry-run requires --clean-bucket or --clean-db")
     if len(_selected_commands(opts)) > 1:
         raise click.UsageError("choose only one primary command")
 
@@ -158,6 +170,12 @@ def _dispatch_clean_bucket(opts: dict, logger: Logger) -> None:
     _run_clean_bucket(opts["clean_bucket_creds_path"], opts["dry_run"], logger)
 
 
+def _dispatch_clean_db(opts: dict, logger: Logger) -> None:
+    _run_clean_db(
+        opts["clean_db_creds_path"], opts["local_db_dir"], opts["dry_run"], logger
+    )
+
+
 def _dispatch_update_rql(opts: dict, logger: Logger) -> None:
     _run_update_rql(opts["update_rql_creds_path"], logger)
 
@@ -169,6 +187,7 @@ COMMAND_HANDLERS = (
     ("ingest_src_dir", _dispatch_ingest),
     ("update_db_creds_path", _dispatch_update_db),
     ("clean_bucket_creds_path", _dispatch_clean_bucket),
+    ("clean_db_creds_path", _dispatch_clean_db),
     ("update_rql_creds_path", _dispatch_update_rql),
 )
 
@@ -209,6 +228,15 @@ def _run_update_db(creds_path: str, local_db_dir: str | None, logger: Logger) ->
 def _run_clean_bucket(creds_path: str, dry_run: bool, logger: Logger) -> None:
     creds = load_owner_creds(creds_path)
     BucketCleaner(creds, creds_path, logger, dry_run=dry_run).run()
+
+
+def _run_clean_db(
+    creds_path: str, local_db_dir: str | None, dry_run: bool, logger: Logger
+) -> None:
+    if not local_db_dir:
+        raise click.UsageError("--clean-db requires --local-db-dir DIR")
+    creds = load_owner_creds(creds_path)
+    DbCleaner(creds, creds_path, Path(local_db_dir), logger, dry_run=dry_run).run()
 
 
 def _run_update_rql(creds_path: str, logger: Logger) -> None:

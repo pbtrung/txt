@@ -120,20 +120,23 @@ class BucketCleaner:
         self.logger.verbose(f"[{uid}] downloading db_path={db_path} from R2...")
         data = self.r2.get_object(db_path)
         if data is None:
-            self.logger.verbose(
-                f"[{uid}] db_path={db_path} does not exist; "
-                "no content objects are referenced yet"
-            )
-            self.logger.info(
-                f"[{uid}] no database found at {db_path}; every bucket object "
-                "outside the shared/control-backup prefixes will be treated as "
-                "stale. If --ingest has already uploaded content, run "
-                "--update-db first so those references are known."
-            )
+            self._warn_no_database(uid, db_path)
             return None
         if not data:
             raise ValueError(f"Account uid={uid} has an empty database at {db_path}")
         return data
+
+    def _warn_no_database(self, uid: str, db_path: str) -> None:
+        self.logger.verbose(
+            f"[{uid}] db_path={db_path} does not exist; "
+            "no content objects are referenced yet"
+        )
+        self.logger.info(
+            f"[{uid}] no database found at {db_path}; every bucket object "
+            "outside the shared/control-backup prefixes will be treated as "
+            "stale. If --ingest has already uploaded content, run "
+            "--update-db first so those references are known."
+        )
 
     def _content_rows(self, engine: SqliteEngine) -> list:
         if not table_exists(engine, "txt"):

@@ -209,6 +209,13 @@ A failed upload or registration leaves a visible `creating` row that can be
 retried or cleaned up. The owner cannot delete the source book while a share row
 references it.
 
+`txt --clean-db owner_creds.json --local-db-dir DIR` removes stale `creating`
+and `deleting` rows from both the owner's `txt_shares` table and rqlite's
+`shares` table: a `creating` row whose registration actually completed is
+healed back to `active` instead of deleted; every other stale row, along with
+its shared R2 object, is removed. `--dry-run` reports what it would remove
+without changing anything; either way it vacuums both databases.
+
 ## 6. Recipient flow
 
 1. The recipient opens the public URL. The fragment stays out of the navigation
