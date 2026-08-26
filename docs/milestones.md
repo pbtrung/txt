@@ -36,100 +36,79 @@ forces (or enables) a genuine design change.
 ## Milestone 0 — Resolve the architecture before writing code
 
 This migration was proposed as "private serverless container, gated by an
-`X-Auth-Token`, so an attack can't hit the API — remove rate limiting." That
-premise does not hold as stated, for a specific, verifiable reason, and this
-milestone exists to fix the premise before any Rust is written.
+`X-Auth-Token`, so an attack can't hit the API — remove rate limiting." The
+premise turns out to be right, once the pieces are arranged correctly — the
+first pass at arranging them (below) missed one, and the corrected version
+is the design the rest of this document assumes.
 
-### Finding: private containers and the public surface are incompatible on Scaleway
+### Finding: Scaleway's private mode and a custom domain are incompatible — on Scaleway
 
 Scaleway Serverless Containers' private mode checks the `X-Auth-Token`
 against IAM **at Scaleway's own edge**, before the request reaches the
 container — so a caller without that secret cannot reach a private container
 at all, full stop. That is real, effective protection. But **Scaleway
-requires `privacy = public` to attach a custom domain** — private mode and a
-custom domain (needed to sit behind Cloudflare, or to have a stable API
-origin at all) are mutually exclusive on this platform. There is no
-Scaleway-native API Gateway/WAF product to front a container either; their
+requires `privacy = public` to attach a custom domain to the container
+itself.** There is no Scaleway-native API Gateway/WAF product either; their
 own docs describe "public container + your own CDN" as the pattern.
 
-That collides with this system's actual traffic, which is not
-one-caller-holds-a-shared-secret: `docs/auth.md` and `docs/sharing.md`
-require this gateway to accept requests from three distinct kinds of
-caller that don't share one Scaleway IAM secret:
+That constraint is about attaching a domain *to Scaleway*. It says nothing
+about attaching a domain to something else entirely and pointing that at
+Scaleway's own default (non-custom) hostname as an ordinary reverse-proxy
+origin — which is exactly what a CDN does for any backend, and is the way
+out.
 
-1. **The owner's browser**, authenticated per-request by a Firebase ID
-   token, a ticket, or a P-521 proof — **resolved below.**
-2. **An anonymous share recipient's browser** (`docs/sharing.md` §6),
-   authenticated by nothing but possession of a 256-bit capability. This
-   is the one surface that must accept a cold, unauthenticated request from
-   literally any browser on the internet, by design — **deliberately left
-   open for now.** Whatever serves `/v1/shared-url` cannot require a secret
-   of any kind, so it needs its own resolution independent of caller 1; do
-   not assume it inherits caller 1's answer.
-3. **The Python CLI's operator**, today via the Basic-authenticated
-   `/operator/rqlite/` route, tomorrow via a direct, admin-scoped Turso
-   connection from the operator's own machine — this one *can* legitimately
-   be a private, secret-gated call, since it has no browser in the loop, and
-   needs no further design work here.
+### Decision: one public domain, on Cloudflare, in front of one private container
 
-### Decision: caller 1 (the owner's browser) gets the private container after all
+- The public custom domain (`api.example.com`) lives entirely on
+  **Cloudflare**, proxied (orange-cloud), pointed at the Scaleway
+  container's own default `*.functions.fnc.<region>.scw.cloud`-style
+  hostname as its origin. Scaleway never gets a custom domain, so its
+  private-mode restriction never comes into play.
+- A Cloudflare **Transform Rule** (no Worker needed unless later logic wants
+  one) adds the container's `X-Auth-Token` to **every** request forwarded to
+  that origin, unconditionally — including the CORS preflight `OPTIONS`
+  request a browser sends ahead of any cross-origin call with a custom
+  header. The browser never sees, holds, or sends this token itself; it
+  isn't in the unlock file, `creds.json`, or any application code. It is
+  configured once, in Cloudflare (the Transform Rule) and Scaleway (the
+  container's IAM check), and nowhere else.
+- The Scaleway container is genuinely private: reachable only from
+  Cloudflare's edge, never directly from the internet, for every request —
+  the owner's browser, an anonymous share recipient's browser, both. One
+  container, one domain, one rule: the earlier idea of splitting owner-only
+  traffic from public traffic into two containers added an isolation
+  boundary nothing here actually requires, since the Origin/Firebase/
+  ticket/capability checks inside the app already distinguish the two
+  caller classes, same as today.
+- This makes the original proposal's claim literally true, for real, for
+  every caller: an attacker cannot hit the API, because the API has no
+  public address at all — only Cloudflare's edge does, which is exactly
+  the kind of traffic Cloudflare's network exists to absorb.
 
-The owner's unlock file already hands the browser a secret of equivalent
-weight for the same reason: `rqlite_admin_password` today, kept only in page
-memory, never persisted, never sent anywhere but the operator route
-(`docs/auth.md` §1, §8). There is exactly one authenticated principal in this
-whole system — the owner — so adding one more secret to that same file
-doesn't widen any existing trust boundary.
+This also resolves the concern that motivated the original split into three
+callers: the Python CLI's operator still connects with a direct,
+admin-scoped Turso token from the operator's own machine, no browser and no
+gateway involved, exactly as before — unaffected by any of this.
 
-**Decision:** add a `SCALEWAY_AUTH_TOKEN` field (naming TBD) to the owner's
-unlock JSON, sourced the same way `rqlite_admin_password` is today. The
-browser calls the owner-only container's **default Scaleway domain directly
-(no custom domain, so no conflict with private mode)**, with that token in
-the `X-Auth-Token` header. Scaleway's edge rejects anyone without it before
-the request reaches the Rust gateway at all — genuinely private, not merely
-application-checked, for every owner-only endpoint (`/v1/keys`,
-`/v1/r2-token`, `/v1/shares` create/delete, `/v1/owner-row`). No Cloudflare
-involved in this path.
+### Decision: rate limiting moves to Cloudflare for the public path, stays at the gateway for the owner-scoped ones
 
-**Open, must-verify-before-Milestone-1:** Scaleway's IAM check happens at
-its edge, ahead of your code. A browser precedes any cross-origin request
-carrying a custom header with a CORS **preflight** (`OPTIONS`, no
-`X-Auth-Token` on it by spec). If Scaleway's edge applies the same IAM gate
-to that preflight, it 403s before the browser ever gets to send the real
-request — no secret, correct or not, would matter, and this whole approach
-fails regardless of what's in the unlock file. Test this against a real
-private container before committing further design to it. If it does block
-preflights, the fallback is a one-endpoint public shim (same shape as
-whatever caller 2 ends up needing) that forwards to the private container
-with the header attached server-side — worth keeping in mind while caller 2
-gets resolved, since the two problems may end up sharing a solution.
+With every caller now unified onto one Cloudflare-fronted domain,
+`docker/lua/txt/rate_limit.lua`'s four scopes split by *why* they exist, not
+by which container they happen to reach:
 
-### Caller 2 remains unresolved — do not silently default it to caller 1's answer
-
-No decision recorded here yet. `/v1/shared-url` still needs *some* path with
-zero credential requirement, and Milestone 5's abuse-control work is blocked
-on that decision, not on caller 1's. Revisit before Milestone 4 reaches this
-endpoint.
-
-### Decision: rate limiting narrows for owner-scoped calls, stays open for the public one
-
-`docker/lua/txt/rate_limit.lua`'s four scopes split differently now that
-caller 1 is IAM-gated:
-
-- **`owner-keys`, `owner-r2-token`, `owner-share-write`**: these already sat
+- **`public-share-url`**: the one scope that protects a genuinely
+  unauthenticated, internet-reachable surface. Implement its budget (the
+  current 120-requests-per-minute-per-peer figure, or a revised one — see
+  Milestone 5) as a Cloudflare rate-limiting rule on the domain, enforced
+  before Scaleway compute is invoked, let alone billed for. This is the
+  concrete form of "let Cloudflare's edge absorb traffic that never needed
+  to reach compute."
+- **`owner-keys`, `owner-r2-token`, `owner-share-write`**: already sit
   behind Firebase auth or an owner ticket, where the limiter was
-  defense-in-depth, not the only control. They now *also* sit behind
-  Scaleway's IAM gate, so the realistic attacker has to have compromised the
-  owner's unlock file (already close to full compromise on its own) before
-  either check matters. **Decision: keep them anyway** — ported directly
-  from `rate_limit.lua`, backed by Turso — since they're cheap, already
-  built, and still catch a buggy retry loop or a partially-leaked secret
-  that hasn't yet been rotated.
-- **`public-share-url`**: unresolved, tracked under caller 2 above. Whatever
-  container/path ends up serving it, Milestone 5 still applies the same
-  reasoning already recorded there — Scaleway's only native cost bound
-  (`max-scale`) fails closed, so *some* abuse control has to exist on that
-  path; which layer provides it depends on caller 2's answer.
+  defense-in-depth, not the only control. **Decision: keep them anyway** —
+  ported directly from `rate_limit.lua`, backed by Turso, at the gateway —
+  since they're cheap, already built, and still catch a buggy retry loop or
+  a compromised Firebase session independent of anything Cloudflare sees.
 
 ### Decision: stop handing the browser a raw-SQL-capable credential
 
@@ -158,15 +137,14 @@ the operator's own machine, never the browser — the same trust boundary
 
 ### Open questions to close out before Milestone 1
 
-- [ ] **Blocking, test first:** confirm whether Scaleway's private-container
-      IAM gate lets a CORS preflight (`OPTIONS`, no custom headers) through
-      to the point where the container's own CORS response can be returned,
-      or whether the gate 403s the preflight itself. This decides whether
-      the caller-1 decision above is viable at all as designed.
-- [ ] **Blocking, not yet decided:** how caller 2 (`/v1/shared-url`) is
-      exposed — deliberately deferred above, but Milestone 4 cannot port
-      that endpoint and Milestone 5 cannot design its abuse control until
-      this is answered.
+- [ ] **Blocking, test first:** confirm a Cloudflare Transform Rule can add a
+      static header to every request forwarded to the origin — including an
+      `OPTIONS` preflight — on the plan tier this deployment will actually
+      use. If Transform Rules can't reach preflights specifically (unlikely,
+      but unverified against Cloudflare's own current docs), a small Worker
+      doing the same unconditional header injection is the fallback; either
+      way, verify against a real private Scaleway container before trusting
+      the design further.
 - [ ] Confirm Turso's actual request timeout / max response size limits for
       `turso_serverless` against Scaleway's own container timeout, so
       neither silently truncates the other.
@@ -184,9 +162,8 @@ the operator's own machine, never the browser — the same trust boundary
 
 **Exit criteria:** this section's decisions are reviewed and accepted (or
 explicitly revised) by the owner before any Rust code is written. Milestones
-1–9 assume caller 1's and caller 3's resolutions above; every place they
-touch caller 2 says so explicitly and is blocked on it, not on an assumed
-answer.
+1–9 assume the single-domain, single-container, Cloudflare-fronted topology
+above for every caller.
 
 ## Milestone 1 — Rust workspace and a parity test harness
 
@@ -335,9 +312,8 @@ migration-apply flow both work end to end.
 
 Port each endpoint, replay Milestone 1's golden fixtures against it, and add
 the edge cases below before moving to the next endpoint — not all at once at
-the end. The first five rows below live on the owner-only, IAM-gated
-container (Milestone 0); the last row's container is still an open question
-there — port it once that's resolved, not before.
+the end. All six rows below live on the same single Cloudflare-fronted,
+IAM-gated container (Milestone 0); nothing here is topology-dependent.
 
 | Endpoint | Source | Notes |
 | --- | --- | --- |
@@ -346,7 +322,7 @@ there — port it once that's resolved, not before.
 | `POST /v1/keys` | `owner_keys.lua` | UID triple-check (Firebase, configured, row), ticket minting |
 | `POST /v1/r2-token` | `owner_r2_credentials.lua` | ticket + proof verification, then the two-credential mint from Milestone 2 |
 | `POST /v1/shares`, `DELETE /v1/shares` | `create_share.lua`, `delete_share.lua` | idempotent create; conditional-delete with the path-hash fix noted in Milestone 3 |
-| `POST /v1/shared-url` | `shared_object_url.lua` | the one endpoint reachable with no Firebase/ticket credential at all — its container and abuse control are Milestone 0's open caller-2 question, not decided yet |
+| `POST /v1/shared-url` | `shared_object_url.lua` | the one endpoint reachable with no Firebase/ticket credential at all — gets its abuse control from the Cloudflare rate-limiting rule in Milestone 0/5, not from anything gateway-side |
 
 **Security & edge-case checklist, applied to every endpoint above:**
 
@@ -391,55 +367,67 @@ endpoint-specific checklist items above each have a named test.
 
 ## Milestone 5 — Abuse control
 
-### Owner-scoped limits — settled by Milestone 0, build this now
+### `public-share-url` at the edge
+
+Configure a Cloudflare rate-limiting rule on the shared domain for
+`POST /v1/shared-url`, matching (or deliberately revising, with a written
+reason) the current 120-requests-per-minute-per-peer budget. Confirm what
+client identity Cloudflare rate-limits by default (its own connecting-IP,
+not a spoofable header) — this is the equivalent of `request.lua`'s explicit
+refusal to trust `X-Forwarded-For`, just enforced at the edge instead of the
+origin; re-verify this specifically once Milestone 0's Transform-Rule-vs-
+Worker choice is settled, since a Worker that itself forwards requests can
+change what "connecting IP" means by the time Cloudflare's rate limiter sees
+it. Add a WAF rule (or Cloudflare's managed ruleset) on the same domain as
+cheap, additional defense-in-depth.
+
+### Owner-scoped limits at the gateway
 
 Keep the three Turso-backed rate-limit scopes (`owner-keys`,
-`owner-r2-token`, `owner-share-write`) in the gateway, ported directly from
-`rate_limit.lua`'s atomic upsert-then-check, verified against Milestone 3's
-concurrency tests. These run behind the private, IAM-gated container from
-Milestone 0 — no Cloudflare involved.
+`owner-r2-token`, `owner-share-write`) in the gateway itself, ported directly
+from `rate_limit.lua`'s atomic upsert-then-check, verified against
+Milestone 3's concurrency tests — independent of, and in addition to,
+whatever Cloudflare does for `public-share-url`.
 
-Set Scaleway `max-scale` on that container deliberately, as the cost
-backstop for the scenario Milestone 0 already named (a leaked unlock-file
-secret): Scaleway's own autoscaling docs confirm `max-scale` is the only
-native cost bound, and it fails closed (503) rather than open. Document the
-chosen ceiling and the worst-case bill it implies even under that scenario.
+### Cost backstop, either way
 
-### `public-share-url` — blocked on Milestone 0's open caller-2 decision
+Set Scaleway `max-scale` on the container deliberately, as the cost backstop
+for the case some abuse gets past Cloudflare's rules before they're tuned
+correctly, or the case of a compromised owner Firebase session: Scaleway's
+own autoscaling docs confirm `max-scale` is the only native cost bound, and
+it fails closed (503) rather than open. Document the chosen ceiling and the
+worst-case bill it implies.
 
-Nothing here can be finalized until Milestone 0's caller-2 question is
-answered. Once it is, this milestone still needs, regardless of which
-topology wins:
+**Security & edge-case checklist:**
 
-- A rate limit on this path matching (or deliberately revising, with a
-  written reason) the current 120-requests-per-minute-per-peer budget,
-  enforced by whichever layer ends up in front of it.
-- A `max-scale` ceiling on whatever container serves it, sized independently
-  from the owner-only container's — this path is reachable by anyone, so its
-  worst-case cost model is different.
-- If the answer involves an edge/CDN layer: confirm what client identity it
-  rate-limits by *before* relying on it — this replaces `request.lua`'s
-  explicit refusal to trust a spoofable `X-Forwarded-For` with an equivalent
-  guarantee, and that guarantee has to be re-verified for whatever sits in
-  front, not assumed.
-- Confirm the `Origin` check still runs at the gateway regardless of any
-  edge layer in front of it — an edge/CDN protects against volume, not
-  against a same-origin-policy bypass from a malicious third-party page; the
-  two checks are complementary, not redundant, whichever topology is chosen.
+- [ ] Confirm Cloudflare's rate-limit action returns a response the shared-
+      reader UI can distinguish from a genuine `429` from the gateway (or
+      make them identical on purpose) so its error handling doesn't need two
+      code paths.
+- [ ] Load-test `public-share-url` specifically: burst well above the
+      configured rate limit and confirm requests are rejected at Cloudflare
+      before Scaleway compute is invoked at all (check Scaleway's own
+      request/invocation metrics during the test, not just Cloudflare's).
+- [ ] Confirm the `Origin` check still runs at the gateway even though
+      Cloudflare is in front for every request — Cloudflare protects against
+      volume, not against a same-origin-policy bypass from a malicious
+      third-party page; the two checks are complementary, not redundant.
 
-**Exit criteria:** owner-scoped limits pass Milestone 3's concurrency tests
-under the private container; `public-share-url`'s abuse control is fully
-specified and load-tested once Milestone 0's caller-2 decision lands, with
-`max-scale` on both containers never reached during that test.
+**Exit criteria:** a scripted load test demonstrates the `public-share-url`
+rate limit holds at Cloudflare's edge, `max-scale` is never reached during
+that test, owner-scoped limits pass Milestone 3's concurrency tests, and
+every scope's budget matches its documented value or a recorded, deliberate
+revision.
 
 ## Milestone 6 — Deployment pipeline
 
 - Build a minimal Rust container image (distroless or `scratch`-based;
   the current OpenResty image is already minimal by comparison — don't
-  regress that). Whether this is one image serving one namespace or two
-  (owner-only private container, plus whatever caller 2 needs) depends on
-  Milestone 0's still-open caller-2 decision; the steps below apply per
-  container either way.
+  regress that) and configure it as Scaleway's own default hostname only —
+  no custom domain attached to Scaleway (Milestone 0).
+- Configure Cloudflare: the public custom domain, proxied to that default
+  hostname as origin, plus the Transform Rule (or Worker) injecting
+  `X-Auth-Token` on every forwarded request.
 - Push to **Scaleway's own Container Registry**, not a directly-referenced
   external registry — Scaleway's own docs recommend against pulling
   directly from Docker Hub/GHCR/etc. in production ("uncontrolled rate
@@ -450,11 +438,10 @@ specified and load-tested once Milestone 0's caller-2 decision lands, with
   today, not yet integrated with a dedicated secret manager on Scaleway;
   treat them with the same operational care `docs/deployment.md` §2
   describes for Northflank's equivalents.
-- Tune the owner-only container's `min-scale` against the owner-unlock
-  flow's latency sensitivity — a cold start on `/v1/keys` during the
-  owner's own unlock is a worse regression than the equivalent cost of one
-  warm instance, unlike the always-on Northflank container which never
-  cold-starts at all today.
+- Tune `min-scale` against the owner-unlock flow's latency sensitivity — a
+  cold start on `/v1/keys` during the owner's own unlock is a worse
+  regression than the equivalent cost of one warm instance, unlike the
+  always-on Northflank container which never cold-starts at all today.
 - Wire `/health/live` and `/health/ready` to Scaleway's own health-check
   configuration, preserving `readiness.lua`'s "works before the first
   schema exists" property from Milestone 4.
@@ -514,10 +501,9 @@ zero open findings from the security review pass.
 
 ## Milestone 8 — Parallel cutover
 
-- Stand up the full new stack (Scaleway containers per Milestone 0's
-  final topology + Turso) independently of the live Northflank/rqlite
-  deployment, reachable at whatever origin(s) Milestone 0 settled on for
-  callers 1 and 2 — separate from, and not yet linked to, production.
+- Stand up the full new stack (Cloudflare-fronted Scaleway container +
+  Turso, per Milestone 0) independently of the live Northflank/rqlite
+  deployment, on a separate subdomain — not yet linked to production.
 - Migrate (not copy-paste) the current rqlite control database into the new
   Turso database via a one-time export/import, then verify row-for-row
   parity (`owner_control`'s singleton row, every `shares` row's state and
@@ -526,12 +512,10 @@ zero open findings from the security review pass.
   backend, exercise the full owner flow (unlock, read, write, bookmark,
   share create, share delete, share redemption from a real anonymous
   session) against production R2 data, for a deliberate soak period.
-- Flip the UI's configured API origin(s) — `rqlite_db_url`/API base is
-  confirmed in the "what does not change" section to be a pure runtime
-  value, no UI rebuild required, but confirm whether the unlock file now
-  needs to carry *two* origins (the owner-only container plus whatever
-  caller 2 resolved to) or one, once Milestone 0 is closed out — for real
-  users only after the canary soak is clean.
+- Flip the UI's configured API origin (`rqlite_db_url`/API base — confirmed
+  in the "what does not change" section to be a pure runtime value, no UI
+  rebuild required) to the new Cloudflare domain, for real users only after
+  the canary soak is clean.
 - Keep the Northflank/rqlite stack warm and reachable for a defined rollback
   window after the flip — not decommissioned — given Milestone 3's accepted
   pre-1.0-engine risk on Turso; a same-day rollback path must exist and be
