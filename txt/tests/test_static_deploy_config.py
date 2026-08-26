@@ -22,4 +22,4 @@ def test_headers_csp_restricts_script_execution():
         line for line in headers.splitlines() if "Content-Security-Policy" in line
     )
     assert "default-src 'none'" in csp
-    assert "script-src 'self'" in csp
+    assert "script-src 'self' 'wasm-unsafe-eval'" in csp
