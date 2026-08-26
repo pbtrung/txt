@@ -14,3 +14,12 @@ def test_deploy_script_uses_the_pages_command():
     script = (ROOT / "scripts/deploy.sh").read_text()
     assert 'wrangler pages deploy dist --project-name "$CF_PROJECT_NAME"' in script
     assert "CF_PROJECT_NAME is required" in script
+
+
+def test_headers_csp_restricts_script_execution():
+    headers = (ROOT / "ui/_headers").read_text()
+    csp = next(
+        line for line in headers.splitlines() if "Content-Security-Policy" in line
+    )
+    assert "default-src 'none'" in csp
+    assert "script-src 'self'" in csp
