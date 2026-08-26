@@ -51,7 +51,7 @@ mkdir -p "$DATA_DIR" "$(dirname "$RQLITE_ADMIN_HTPASSWD")" \
   /tmp/client-body /tmp/proxy
 chown -R rqlite:rqlite "$(dirname "$DATA_DIR")" /tmp/client-body /tmp/proxy
 printf '%s' "$RQLITE_ADMIN_PASSWORD" | \
-  htpasswd -ic "$RQLITE_ADMIN_HTPASSWD" "$RQLITE_ADMIN_USERNAME"
+  htpasswd -iBc "$RQLITE_ADMIN_HTPASSWD" "$RQLITE_ADMIN_USERNAME"
 
 rendered_nginx=/tmp/txt-nginx.conf
 export DNS_RESOLVER RQLITE_ADMIN_HTPASSWD UI_ORIGIN

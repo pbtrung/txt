@@ -42,6 +42,11 @@ def test_nginx_workers_drop_to_the_non_root_rqlite_user():
     assert config.startswith("user rqlite rqlite;\n")
 
 
+def test_entrypoint_hashes_the_operator_password_with_bcrypt():
+    entrypoint = (ROOT / "docker/entrypoint.sh").read_text()
+    assert "htpasswd -iBc" in entrypoint
+
+
 def test_entrypoint_prepares_nginx_temp_dirs_for_the_non_root_user():
     entrypoint = (ROOT / "docker/entrypoint.sh").read_text()
     assert "mkdir -p" in entrypoint
