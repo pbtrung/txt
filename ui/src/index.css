@@ -184,6 +184,17 @@
   opacity: 1;
 }
 
+/* Match the reader page-input's focus ring (border-color + box-shadow, no
+   outline) instead of daisyUI's default input-secondary focus style, so
+   focusing the search field itself reads consistently with the rest of the
+   app. The focus target is the inner Input, so this listens for
+   :focus-within on the styled wrapper div. */
+.search-box:focus-within {
+  outline: none;
+  border-color: color-mix(in srgb, var(--color-primary) 30%, transparent);
+  box-shadow: 0 0 0 0.125rem color-mix(in srgb, var(--color-primary) 30%, transparent);
+}
+
 .reader-page-input {
   --input-focus-color: color-mix(in srgb, var(--color-primary) 30%, transparent);
 }
@@ -200,8 +211,7 @@
    on the search box too, instead of the box looking unfocused while its
    own button group is the part actually active. */
 .library-search-group:has(.library-book-actions :focus) .search-box {
-  outline: 0.125rem solid
-    color-mix(in srgb, var(--color-primary) 30%, transparent);
+  outline: 0.125rem solid color-mix(in srgb, var(--color-primary) 30%, transparent);
   outline-offset: 0.125rem;
 }
 
@@ -486,11 +496,10 @@
     .reader-bookmark-menu,
     .reader-drawer-overlay
   )
-  :is(button, .btn):not(
-    :disabled,
-    [data-disabled],
-    [aria-disabled="true"]
-  ):is(:hover, [data-hovered]) {
+  :is(button, .btn):not(:disabled, [data-disabled], [aria-disabled="true"]):is(
+    :hover,
+    [data-hovered]
+  ) {
   border-color: var(--color-primary);
   background-color: color-mix(in srgb, var(--color-primary) 14%, var(--color-base-100));
   color: var(--color-base-content);
