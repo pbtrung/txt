@@ -4,6 +4,8 @@ import logging
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+import defusedxml.ElementTree as DefusedET
+
 logger = logging.getLogger(__name__)
 
 _EPUB_SUFFIX = ".epub"
@@ -89,7 +91,7 @@ def parse_opf_metadata(opf_path: Path) -> dict:
     role/file-as); <meta name=".." content=".."/> becomes {name: content};
     repeated tags collapse into a list.
     """
-    root = ET.parse(opf_path).getroot()
+    root = DefusedET.parse(opf_path).getroot()
     metadata_el = _metadata_element(root)
     if metadata_el is None:
         logger.warning("%s: no <metadata> element found", opf_path)

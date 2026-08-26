@@ -116,3 +116,17 @@ def test_throws_on_malformed_xml(tmp_path):
     </metadata></package>""")
     with pytest.raises(ET.ParseError):
         parse_opf_metadata(opf_path)
+
+
+def test_rejects_a_billion_laughs_entity_expansion(tmp_path):
+    opf_path = tmp_path / "bomb.opf"
+    opf_path.write_text("""<?xml version='1.0'?>
+    <!DOCTYPE package [
+      <!ENTITY a "lol">
+      <!ENTITY b "&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;">
+    ]>
+    <package><metadata xmlns:dc="urn:dc">
+        <dc:title>&b;</dc:title>
+    </metadata></package>""")
+    with pytest.raises(ValueError):
+        parse_opf_metadata(opf_path)
