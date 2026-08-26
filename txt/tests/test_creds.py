@@ -1,5 +1,7 @@
 import base64
 import json
+import os
+import stat
 
 import pytest
 
@@ -121,3 +123,9 @@ def test_ensure_user_root_key_never_overwrites(owner_creds_path):
         owner_creds_path, load_owner_creds(owner_creds_path)
     ).user_root_key
     assert first == second
+
+
+def test_ensure_user_root_key_writes_owner_only_permissions(owner_creds_path):
+    os.chmod(owner_creds_path, 0o644)
+    ensure_user_root_key(owner_creds_path, load_owner_creds(owner_creds_path))
+    assert stat.S_IMODE(os.stat(owner_creds_path).st_mode) == 0o600

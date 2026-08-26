@@ -1,5 +1,6 @@
 import base64
 import json
+import os
 import secrets
 from dataclasses import dataclass
 from urllib.parse import urlsplit
@@ -110,6 +111,8 @@ def _read_json(path: str) -> dict:
 
 
 def _write_json(path: str, data: dict) -> None:
-    with open(path, "w") as f:
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "w") as f:
         json.dump(data, f, indent=2)
         f.write("\n")
