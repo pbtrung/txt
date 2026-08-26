@@ -47,8 +47,9 @@ for value in "$RQLITE_ADMIN_USERNAME" "$RQLITE_ADMIN_PASSWORD"; do
   esac
 done
 
-mkdir -p "$DATA_DIR" "$(dirname "$RQLITE_ADMIN_HTPASSWD")"
-chown -R rqlite:rqlite "$(dirname "$DATA_DIR")"
+mkdir -p "$DATA_DIR" "$(dirname "$RQLITE_ADMIN_HTPASSWD")" \
+  /tmp/client-body /tmp/proxy
+chown -R rqlite:rqlite "$(dirname "$DATA_DIR")" /tmp/client-body /tmp/proxy
 printf '%s' "$RQLITE_ADMIN_PASSWORD" | \
   htpasswd -ic "$RQLITE_ADMIN_HTPASSWD" "$RQLITE_ADMIN_USERNAME"
 
