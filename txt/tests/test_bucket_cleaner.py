@@ -271,6 +271,9 @@ def test_missing_database_means_prefix_has_no_referenced_content(monkeypatch):
         "no content objects are referenced yet" in message
         for message in cleaner.logger.verbose_messages
     )
+    assert any(
+        "run --update-db first" in message for message in cleaner.logger.info_messages
+    )
 
 
 def test_database_without_txt_table_references_no_content(monkeypatch):

@@ -124,6 +124,12 @@ class BucketCleaner:
                 f"[{uid}] db_path={db_path} does not exist; "
                 "no content objects are referenced yet"
             )
+            self.logger.info(
+                f"[{uid}] no database found at {db_path}; every bucket object "
+                "outside the shared/control-backup prefixes will be treated as "
+                "stale. If --ingest has already uploaded content, run "
+                "--update-db first so those references are known."
+            )
             return None
         if not data:
             raise ValueError(f"Account uid={uid} has an empty database at {db_path}")
