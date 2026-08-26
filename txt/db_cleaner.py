@@ -22,6 +22,7 @@ removal/healing itself.
 """
 
 import hashlib
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -72,6 +73,7 @@ class DbCleaner:
             self._clean_sqlcipher(account, remote)
         else:
             self.logger.verbose(f"[{uid}] no database at {account.db_path} yet.")
+            self._log_summary(uid, 0, Counter(), 0)
         self._vacuum_control(uid)
 
     def _download(self, account: StorageAccount) -> R2Object | None:
@@ -89,15 +91,36 @@ class DbCleaner:
                 self._clean_shares(account, engine)
             else:
                 self.logger.verbose(f"[{account.uid}] no txt_shares table yet.")
+                self._log_summary(account.uid, 0, Counter(), 0)
             self._vacuum_sqlcipher(account, engine, remote)
 
     def _clean_shares(self, account: StorageAccount, engine: SqliteEngine) -> None:
         local_hashes = self._local_share_hashes(engine)
         control_by_id = self._control_rows_by_share_id()
-        for share in self._stale_local_shares(account, engine):
-            control = control_by_id.get(share.share_id_hash)
-            self._clean_one(account.uid, engine, share, control)
-        self._clean_orphan_control_rows(account.uid, local_hashes)
+        stale = self._stale_local_shares(account, engine)
+        outcomes = Counter(
+            self._clean_one(
+                account.uid, engine, share, control_by_id.get(share.share_id_hash)
+            )
+            for share in stale
+        )
+        orphan_count = self._clean_orphan_control_rows(account.uid, local_hashes)
+        self._log_summary(account.uid, len(stale), outcomes, orphan_count)
+
+    def _log_summary(
+        self, uid: str, stale_count: int, outcomes: Counter, orphan_count: int
+    ) -> None:
+        total = stale_count + orphan_count
+        if total == 0:
+            self.logger.info(f"[{uid}] No stale share rows found.")
+            return
+        removed = outcomes.get("removed", 0) + orphan_count
+        healed = outcomes.get("healed", 0)
+        verb = "would be" if self.dry_run else "were"
+        self.logger.info(
+            f"[{uid}] {total} stale share row(s) found: "
+            f"{removed} {verb} removed, {healed} {verb} healed."
+        )
 
     def _local_share_hashes(self, engine: SqliteEngine) -> set[bytes]:
         rows = engine.query("SELECT share_id FROM txt_shares")
@@ -132,11 +155,12 @@ class DbCleaner:
 
     def _clean_one(
         self, uid: str, engine: SqliteEngine, share: StaleShare, control: dict | None
-    ) -> None:
+    ) -> str:
         if share.state == "creating" and self._is_active(control):
             self._heal_local_share(uid, engine, share)
-            return
+            return "healed"
         self._remove_share(uid, engine, share, control)
+        return "removed"
 
     def _is_active(self, control: dict | None) -> bool:
         return control is not None and control["state"] == "active"
@@ -179,18 +203,15 @@ class DbCleaner:
             {"share_id_hash": share_id_hash, "object_path_hash": object_path_hash},
         )
 
-    def _clean_orphan_control_rows(self, uid: str, local_hashes: set[bytes]) -> None:
+    def _clean_orphan_control_rows(self, uid: str, local_hashes: set[bytes]) -> int:
         rows = self.rqlite.query(
             "SELECT share_id_hash, object_path_hash FROM shares "
             "WHERE state = 'deleting'"
         )
         orphans = [row for row in rows if row["share_id_hash"] not in local_hashes]
-        if orphans:
-            self.logger.verbose(
-                f"[{uid}] {len(orphans)} orphaned control-only stale share row(s)."
-            )
         for row in orphans:
             self._clean_orphan_row(uid, row)
+        return len(orphans)
 
     def _clean_orphan_row(self, uid: str, row: dict) -> None:
         verb = "Would remove" if self.dry_run else "Removing"

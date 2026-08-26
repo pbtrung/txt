@@ -330,11 +330,48 @@ def test_vacuums_both_databases_even_with_nothing_stale(tmp_path, creds_path):
     db_master_key, db_path = secrets.token_bytes(256), "d" * 52
     _set_owner(OWNER_UID, db_master_key, db_path)
     FakeR2Client.objects[db_path] = _build_db(db_master_key, [])
+    logger = CaptureLogger()
 
-    _cleaner(creds_path, tmp_path).run()
+    _cleaner(creds_path, tmp_path, logger=logger).run()
 
     assert FakeR2Client.put_calls == [(db_path, '"v1"', False)]
     assert FakeOwnerInitializer.rqlite.vacuum_calls == 1
+    assert "No stale share rows found." in "\n".join(logger.messages)
+
+
+def test_summary_reports_counts_of_removed_healed_and_orphaned_rows(
+    tmp_path, creds_path
+):
+    db_master_key, db_path = secrets.token_bytes(256), "d" * 52
+    _set_owner(OWNER_UID, db_master_key, db_path)
+    removed_id, removed_prefix, removed_path = (
+        secrets.token_bytes(32),
+        secrets.token_bytes(32),
+        secrets.token_bytes(32),
+    )
+    healed_id, healed_prefix, healed_path = (
+        secrets.token_bytes(32),
+        secrets.token_bytes(32),
+        secrets.token_bytes(32),
+    )
+    FakeR2Client.objects[db_path] = _build_db(
+        db_master_key,
+        [
+            (removed_id, removed_prefix, removed_path, "deleting"),
+            (healed_id, healed_prefix, healed_path, "creating"),
+        ],
+    )
+    healed_path_str = _object_path(healed_prefix, healed_path)
+    orphan = _control_row(secrets.token_bytes(32), "some/orphaned/path", "deleting")
+    FakeOwnerInitializer.rqlite = FakeRqliteClient(
+        [_control_row(healed_id, healed_path_str, "active"), orphan]
+    )
+    logger = CaptureLogger()
+
+    _cleaner(creds_path, tmp_path, logger=logger).run()
+
+    output = "\n".join(logger.messages)
+    assert "3 stale share row(s) found: 2 were removed, 1 were healed." in output
 
 
 def test_skips_sqlcipher_cleanup_when_no_database_exists_yet(tmp_path, creds_path):
