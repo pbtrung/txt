@@ -1,0 +1,50 @@
+# Throwaway image for Milestone 0's blocking test: does a Cloudflare
+# Transform Rule reach a private Scaleway Serverless Container, including
+# the CORS OPTIONS preflight? Not part of the deployed system — delete once
+# the open question in docs/milestones.md is resolved.
+#
+# Build & push to Scaleway's container registry, then deploy as a
+# Serverless Container with privacy=private:
+#   docker build -f docs/Dockerfile.scw.test -t rg.<region>.scw.cloud/<namespace>/echo-test .
+#   docker push rg.<region>.scw.cloud/<namespace>/echo-test
+#
+# Then curl it three ways per the plan in docs/milestones.md:
+#   1. Scaleway's own default hostname directly -> expect rejected (no token)
+#   2. The Cloudflare custom domain, normal GET -> response JSON should show
+#      X-Auth-Token among "headers"
+#   3. The Cloudflare custom domain, OPTIONS preflight
+#      (curl -X OPTIONS -H "Origin: https://example.com" \
+#            -H "Access-Control-Request-Method: POST") -> same check
+#
+# syntax=docker/dockerfile:1.7
+FROM python:3.12-alpine
+
+COPY <<'PY' /app.py
+import json
+import os
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+
+class EchoHandler(BaseHTTPRequestHandler):
+    def _handle(self):
+        body = json.dumps(
+            {"method": self.command, "path": self.path, "headers": dict(self.headers)},
+            indent=2,
+        ).encode()
+        print(body.decode(), flush=True)
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    do_GET = do_POST = do_PUT = do_DELETE = do_OPTIONS = do_HEAD = _handle
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", "8080"))
+    ThreadingHTTPServer(("0.0.0.0", port), EchoHandler).serve_forever()
+PY
+
+EXPOSE 8080
+CMD ["python3", "/app.py"]
