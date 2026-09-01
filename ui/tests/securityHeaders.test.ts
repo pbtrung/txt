@@ -9,7 +9,7 @@ const policy = headers
 
 describe("static security headers", () => {
   it("allows HTTPS connections to the configured API, Firebase, and R2", () => {
-    expect(policy).toContain("connect-src 'self' https://*.code.run https:;");
+    expect(policy).toContain("connect-src 'self' https:;");
   });
 
   it("blocks external resources from inherited EPUB frame policies", () => {
