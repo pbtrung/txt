@@ -20,6 +20,17 @@ function sqlcipherJsIntegrity(): string {
   return `sha512-${createHash("sha512").update(bytes).digest("base64")}`;
 }
 
+// The browser's SRI `integrity` attribute only covers a fetch a <script>
+// element itself triggers, not sqlcipher.js's own internal fetch of its
+// .wasm binary. sqlcipherLoader.ts fetches sqlcipher.wasm itself and
+// checks its digest against this before handing it to the Emscripten
+// factory as `wasmBinary`, so a compromise of just the .wasm asset (with
+// sqlcipher.js left byte-identical) doesn't go undetected.
+function sqlcipherWasmIntegrity(): string {
+  const bytes = readFileSync(join(SQLCIPHER_DIR, "sqlcipher.wasm"));
+  return createHash("sha512").update(bytes).digest("base64");
+}
+
 export default defineConfig({
   // Explicit, not left to default to process.cwd(): there's a single
   // package.json at the repo root (no ui/package.json, no npm workspaces),
@@ -34,6 +45,7 @@ export default defineConfig({
   publicDir: SQLCIPHER_DIR,
   define: {
     __SQLCIPHER_JS_INTEGRITY__: JSON.stringify(sqlcipherJsIntegrity()),
+    __SQLCIPHER_WASM_INTEGRITY__: JSON.stringify(sqlcipherWasmIntegrity()),
   },
   build: {
     outDir: DIST_DIR,

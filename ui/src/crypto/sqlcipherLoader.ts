@@ -16,10 +16,15 @@
 // sqlcipher.wasm next to sqlcipher.js, so no `locateFile` override is
 // needed.
 import { isBrowser } from "../env";
+import { toBase64 } from "../util/base64";
 
 // Baked in by vite.config.ts's `define` (a SHA-512 of sqlcipher/sqlcipher.js
 // computed at build time).
 declare const __SQLCIPHER_JS_INTEGRITY__: string;
+// Baked in by vite.config.ts's `define` (a base64 SHA-512 of
+// sqlcipher/sqlcipher.wasm computed at build time, checked against a
+// runtime digest in fetchVerifiedWasmBinary() below).
+declare const __SQLCIPHER_WASM_INTEGRITY__: string;
 
 export interface SqlcipherWasmModule {
   HEAPU8: Uint8Array;
@@ -168,11 +173,34 @@ async function loadNodeFactory(): Promise<SqlcipherFactory> {
   return factory;
 }
 
+// sqlcipher.js's own internal fetch of its .wasm binary isn't covered by
+// the <script> tag's SRI `integrity` attribute (that only guards the
+// fetch the browser makes for the script element itself), so fetch and
+// verify it here and hand it to the Emscripten factory as `wasmBinary`,
+// which skips the factory's own unchecked fetch.
+async function fetchVerifiedWasmBinary(): Promise<ArrayBuffer> {
+  const response = await fetch("/sqlcipher.wasm");
+  if (!response.ok) throw new Error("failed to load /sqlcipher.wasm");
+  const bytes = await response.arrayBuffer();
+  const digest = toBase64(new Uint8Array(await crypto.subtle.digest("SHA-512", bytes)));
+  if (digest !== __SQLCIPHER_WASM_INTEGRITY__) {
+    throw new Error("sqlcipher.wasm failed integrity verification");
+  }
+  return bytes;
+}
+
 let modulePromise: Promise<SqlcipherWasmModule> | null = null;
 
 async function loadModule(): Promise<SqlcipherWasmModule> {
-  const factory = isBrowser() ? await loadBrowserFactory() : await loadNodeFactory();
-  return factory();
+  if (!isBrowser()) {
+    const factory = await loadNodeFactory();
+    return factory();
+  }
+  const [factory, wasmBinary] = await Promise.all([
+    loadBrowserFactory(),
+    fetchVerifiedWasmBinary(),
+  ]);
+  return factory({ wasmBinary });
 }
 
 /** Resolves once sqlcipher.wasm is instantiated -- the module handle every
