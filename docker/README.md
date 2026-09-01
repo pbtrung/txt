@@ -19,9 +19,25 @@ docker run --rm \
   -p 8080:8080 \
   -e RQLITE_ADMIN_USERNAME=operator \
   -e RQLITE_ADMIN_PASSWORD='replace-me' \
+  -e OWNER_FIREBASE_UID='replace-me' \
+  -e FIREBASE_PROJECT_ID='replace-me' \
+  -e UI_ORIGIN='https://reader.example.com' \
+  -e R2_ENDPOINT='https://<account-id>.r2.cloudflarestorage.com' \
+  -e R2_BUCKET='replace-me' \
+  -e R2_REGION='auto' \
+  -e R2_READ_WRITE_ACCESS_KEY_ID='replace-me' \
+  -e R2_READ_WRITE_SECRET_ACCESS_KEY='replace-me' \
+  -e R2_TICKET_SECRET='replace-me-32+-random-bytes-base64' \
+  -e RATE_LIMIT_KEY='replace-me-32+-random-bytes-base64' \
+  -e SHARE_GRANT_KEY='replace-me-32+-random-bytes-base64' \
   -v txt-rqlite:/rqlite/file \
   txt-control
 ```
+
+Every variable above is required — the container's `init_by_lua_block` (see
+`nginx.conf`) validates them at startup and the process exits immediately if
+any are missing. See "Required Northflank variables and secrets" below for
+what each one must contain.
 
 Keep `NODE_ID`, `HTTP_ADV_ADDR`, and `RAFT_ADV_ADDR` stable after the first
 start. In Northflank, mount the persistent volume at `/rqlite/file`, expose
