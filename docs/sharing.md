@@ -153,9 +153,13 @@ bearer token and the `db_binding_hash` check are the authorization:
 
 The API re-derives the object path, checks its hash against the row selected by
 `SHA-256(share_id)`, and atomically changes the row from `active` to
-`deleting`, which immediately blocks new presigned URLs. It then deletes the
-exact R2 object. An R2 `404` is treated as success. After successful deletion,
-it removes the rqlite row and returns `204`.
+`deleting`, which immediately blocks new presigned URLs. No row for that
+`share_id` is treated as already deleted — `204` with no further action. A
+path that doesn't match a row that does exist, or a row that isn't `active`
+(e.g. already `deleting`), returns `409` rather than the `503` used for an
+actual rqlite/R2 outage. Once the row is `deleting`, the API deletes the exact
+R2 object. An R2 `404` is treated as success. After successful deletion, it
+removes the rqlite row and returns `204`.
 
 If R2 deletion fails, the row remains `deleting`: the share remains revoked and
 the owner can retry deletion. A URL issued before revocation can remain usable
