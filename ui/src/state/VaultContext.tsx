@@ -7,6 +7,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -144,30 +145,45 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   const [progress, setProgress] = useState<VaultProgress | null>(null);
   useEffect(() => () => void session?.database.close(), [session]);
 
+  // Guards against unlock()/lock() overlap: each call claims the next
+  // generation, and an unlock() whose generation was superseded by a later
+  // unlock()/lock() call before it resolved discards its result instead of
+  // reviving a session the user already moved past (or stranding status at
+  // "locked" while an old session stays open underneath it).
+  const generation = useRef(0);
+
   const unlock = useCallback(async (file: File) => {
+    const myGeneration = ++generation.current;
     setStatus("unlocking");
     setError(null);
     try {
-      const onPhase = (index: number) =>
+      const onPhase = (index: number) => {
+        if (generation.current !== myGeneration) return;
         setProgress({ label: PHASES[index], step: index + 1, total: PHASES.length });
+      };
       const resolved = await new SessionResolver(file, onPhase).resolve();
+      if (generation.current !== myGeneration) {
+        void resolved.database.close();
+        return;
+      }
       setSession(resolved);
       setStatus("unlocked");
     } catch (err) {
+      if (generation.current !== myGeneration) return;
       setError(errorMessage(err));
       setStatus("locked");
     } finally {
-      setProgress(null);
+      if (generation.current === myGeneration) setProgress(null);
     }
   }, []);
 
   const lock = useCallback(() => {
-    void session?.database.close();
+    generation.current += 1;
     setSession(null);
     setStatus("locked");
     setError(null);
     setProgress(null);
-  }, [session]);
+  }, []);
 
   const value = useMemo(
     () => ({ status, session, error, progress, unlock, lock }),
