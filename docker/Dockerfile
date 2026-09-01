@@ -1,6 +1,6 @@
 FROM alpine:edge
 
-ARG RQLITE_VERSION=10.2.7
+ARG RQLITE_VERSION=10.3.0
 
 RUN apk update && \
       apk --no-cache upgrade
@@ -35,8 +35,5 @@ COPY migrations /opt/txt/migrations
 RUN chmod 0755 /opt/txt/entrypoint.sh
 
 EXPOSE 8080 4002
-
-HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD wget -q -O /dev/null http://127.0.0.1:14001/readyz || exit 1
 
 ENTRYPOINT ["/opt/txt/entrypoint.sh"]
