@@ -66,8 +66,46 @@ describe("signIn", () => {
     const [url, init] = fetchMock.mock.calls[1];
     expect(url).toContain("securetoken.googleapis.com");
     expect(String(init.body)).toContain("refresh_token=old-refresh");
-    expect(init.signal).toBe(signal);
     await expect(session.getIdToken()).resolves.toBe("new-token");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("isolates each caller's cancellation from a shared in-flight refresh", async () => {
+    let resolveRefresh!: (value: unknown) => void;
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          localId: "owner-uid",
+          idToken: "old-token",
+          refreshToken: "old-refresh",
+          expiresIn: "1",
+        }),
+      })
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveRefresh = resolve;
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const session = await signIn("api key", "reader@example.com", "pw");
+    const aborting = new AbortController();
+    const patient = session.getIdToken(false, aborting.signal);
+    const bystander = session.getIdToken();
+    aborting.abort();
+    await expect(patient).rejects.toThrow();
+
+    resolveRefresh({
+      ok: true,
+      json: async () => ({
+        id_token: "new-token",
+        refresh_token: "new-refresh",
+        expires_in: "3600",
+      }),
+    });
+    await expect(bystander).resolves.toBe("new-token");
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 

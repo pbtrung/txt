@@ -26,15 +26,20 @@ export class FirebaseSession implements FirebaseTokenProvider {
     if (!forceRefresh && Date.now() + REFRESH_SKEW_MS < this.expiresAt) {
       return this.idToken;
     }
+    // A refresh started here is shared by every concurrent caller, so no
+    // single caller's AbortSignal drives the underlying fetch -- one
+    // caller unmounting must not cancel the token another caller is still
+    // waiting on. Each caller races its own wait against its own signal
+    // instead.
     if (!this.refreshInFlight) {
-      this.refreshInFlight = this.refresh(signal).finally(() => {
+      this.refreshInFlight = this.refresh().finally(() => {
         this.refreshInFlight = null;
       });
     }
-    return this.refreshInFlight;
+    return awaitWithSignal(this.refreshInFlight, signal);
   }
 
-  private async refresh(signal?: AbortSignal): Promise<string> {
+  private async refresh(): Promise<string> {
     const body = new URLSearchParams({
       grant_type: "refresh_token",
       refresh_token: this.refreshToken,
@@ -45,7 +50,6 @@ export class FirebaseSession implements FirebaseTokenProvider {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body,
-        signal,
       },
     );
     if (!response.ok) {
@@ -80,6 +84,22 @@ export async function signIn(
     stringField(data, "refreshToken", "Firebase sign-in response"),
     expiryFromNow(data, "Firebase sign-in response", "expiresIn"),
   );
+}
+
+function awaitWithSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(abortError(signal));
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(abortError(signal));
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(resolve, reject).finally(() => {
+      signal.removeEventListener("abort", onAbort);
+    });
+  });
+}
+
+function abortError(signal: AbortSignal): unknown {
+  return signal.reason ?? new DOMException("Aborted", "AbortError");
 }
 
 function expiryFromNow(
