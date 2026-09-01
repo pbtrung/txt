@@ -146,10 +146,7 @@ export function BookmarkMenu({
                 onRemove,
                 onRetry,
               }}
-              onBookmark={() => {
-                onBookmark();
-                close();
-              }}
+              onBookmark={onBookmark}
               onNavigate={(cfi) => {
                 void renderer?.display(cfi);
                 close();

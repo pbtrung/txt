@@ -31,6 +31,7 @@ export function LibraryContent({
   onClearAccess,
   onDeleteBookmark,
   shares,
+  sharesError,
 }: {
   books: LibraryBook[];
   view: LibraryView;
@@ -43,6 +44,7 @@ export function LibraryContent({
   onClearAccess: (txtId: number) => void;
   onDeleteBookmark: (txtId: number, cfi: string) => void;
   shares: BookShare[];
+  sharesError: string | null;
 }) {
   const search = useMemo(() => createBookSearch(books), [books]);
   const filteredBooks = useMemo(
@@ -55,7 +57,9 @@ export function LibraryContent({
       {view.kind === "recent" ? (
         <RecentBooks {...{ books, onClearAccess, onDeleteBookmark }} />
       ) : view.kind === "shares" ? (
-        <SharesList {...{ books, shares, query, selectedShareId, onSelectShare }} />
+        <SharesList
+          {...{ books, shares, sharesError, query, selectedShareId, onSelectShare }}
+        />
       ) : view.kind === "entries" ? (
         <EntriesList {...{ books, query, onNavigate }} dimension={view.dimension} />
       ) : (
@@ -73,12 +77,14 @@ export function LibraryContent({
 function SharesList({
   books,
   shares,
+  sharesError,
   query,
   selectedShareId,
   onSelectShare,
 }: {
   books: LibraryBook[];
   shares: BookShare[];
+  sharesError: string | null;
   query: string;
   selectedShareId: number | null;
   onSelectShare: (shareId: number | null) => void;
@@ -98,6 +104,8 @@ function SharesList({
   const visibleShares = matchingBookIds
     ? shares.filter((share) => matchingBookIds.has(share.txtId))
     : shares;
+  if (sharesError)
+    return <EmptyStateContainer message={`Could not load shares: ${sharesError}`} />;
   if (!shares.length) return <EmptyStateContainer message="No shared books yet." />;
   if (!visibleShares.length) return <EmptyStateContainer message="No shares match." />;
   return (

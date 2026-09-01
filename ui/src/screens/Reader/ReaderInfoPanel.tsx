@@ -68,7 +68,9 @@ function MetadataGroup({
   return (
     <div className="mb-3">
       <dt className="font-normal text-base-content/60">{label}</dt>
-      <dd className="mb-0">{html ? <TruncatedHtml html={value} /> : value}</dd>
+      <dd className="mb-0">
+        {html ? <TruncatedHtml key={value} html={value} /> : value}
+      </dd>
     </div>
   );
 }

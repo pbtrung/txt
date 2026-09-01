@@ -311,6 +311,7 @@ export function LibraryScreen() {
                 }
               }}
               shares={shared.shares}
+              sharesError={shared.error}
             />
             <UNSAFE_PortalProvider getContainer={() => libraryRightPane.current}>
               <LibraryToastRegion />
