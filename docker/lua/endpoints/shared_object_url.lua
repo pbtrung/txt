@@ -8,14 +8,6 @@ local shares = require("txt.shares")
 if not request.require_method("POST") then
   return response.preflight("POST")
 end
-local body = request.json(512)
-local id, object_path
-if body then
-  id, object_path = shares.parse_object_request(body)
-end
-if not id then
-  return response.error(400, "malformed_share")
-end
 
 local allowed, limit_err =
   rate_limit.allow("public-share-url", request.client_address())
@@ -25,6 +17,15 @@ if allowed == nil then
 end
 if not allowed then
   return response.error(429, "rate_limit_exceeded")
+end
+
+local body = request.json(512)
+local id, object_path
+if body then
+  id, object_path = shares.parse_object_request(body)
+end
+if not id then
+  return response.error(400, "malformed_share")
 end
 
 local active, err = shares.active_object(id, object_path)

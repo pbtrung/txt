@@ -36,6 +36,9 @@ end
 
 local deleted, err = shares.delete(input.id, input.object_path)
 if not deleted then
+  if err == "object path mismatch" or err == "invalid share state" then
+    return response.error(409, "share_state_conflict")
+  end
   ngx.log(ngx.ERR, "share deletion failed: ", err)
   return response.error(503, "share_deletion_unavailable")
 end
