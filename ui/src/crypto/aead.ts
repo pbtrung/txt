@@ -16,24 +16,51 @@ let handlePromise: Promise<AeadHandle> | null = null;
 
 function getAead(): Promise<AeadHandle> {
   if (!handlePromise) {
-    handlePromise = getSqlcipherModule().then((mod) => ({
-      mod,
-      keySize: mod._lc_wasm_key_size(),
-      nonceSize: mod._lc_wasm_nonce_size(),
-      tagSize: mod._lc_wasm_tag_size(),
-    }));
+    handlePromise = getSqlcipherModule()
+      .then((mod) => ({
+        mod,
+        keySize: mod._lc_wasm_key_size(),
+        nonceSize: mod._lc_wasm_nonce_size(),
+        tagSize: mod._lc_wasm_tag_size(),
+      }))
+      .catch((error: unknown) => {
+        // Don't strand every future call behind one transient failure (a
+        // flaky wasm load, say) -- let the next getAead() retry from
+        // scratch instead of replaying this same rejection forever.
+        handlePromise = null;
+        throw error;
+      });
   }
   return handlePromise;
 }
 
-function writeBytes(mod: SqlcipherWasmModule, bytes: Uint8Array): number {
-  const ptr = mod._malloc(bytes.length || 1);
-  mod.HEAPU8.set(bytes, ptr);
-  return ptr;
-}
-
 function readBytes(mod: SqlcipherWasmModule, ptr: number, len: number): Uint8Array {
   return mod.HEAPU8.slice(ptr, ptr + len);
+}
+
+// Tracks every pointer allocated through it so a throw partway through a
+// multi-buffer setup (e.g. _malloc failing on a later buffer) still frees
+// whatever was already allocated, instead of leaking wasm linear memory.
+class WasmArena {
+  private readonly pointers: number[] = [];
+
+  constructor(private readonly mod: SqlcipherWasmModule) {}
+
+  malloc(size: number): number {
+    const ptr = this.mod._malloc(size);
+    this.pointers.push(ptr);
+    return ptr;
+  }
+
+  write(bytes: Uint8Array): number {
+    const ptr = this.malloc(bytes.length || 1);
+    this.mod.HEAPU8.set(bytes, ptr);
+    return ptr;
+  }
+
+  free(): void {
+    for (const ptr of this.pointers) this.mod._free(ptr);
+  }
 }
 
 class AeadError extends Error {
@@ -70,11 +97,12 @@ export async function hkdfSha3_512(
 ): Promise<Uint8Array> {
   requireOutputLength(length);
   const { mod } = await getAead();
-  const ikmPtr = writeBytes(mod, ikm);
-  const saltPtr = writeBytes(mod, salt);
-  const infoPtr = writeBytes(mod, info);
-  const outPtr = mod._malloc(length || 1);
+  const arena = new WasmArena(mod);
   try {
+    const ikmPtr = arena.write(ikm);
+    const saltPtr = arena.write(salt);
+    const infoPtr = arena.write(info);
+    const outPtr = arena.malloc(length || 1);
     const rc = mod._lc_wasm_hkdf_sha3_512(
       ikmPtr,
       ikm.length,
@@ -88,10 +116,7 @@ export async function hkdfSha3_512(
     check(rc, "lc_wasm_hkdf_sha3_512");
     return readBytes(mod, outPtr, length);
   } finally {
-    mod._free(ikmPtr);
-    mod._free(saltPtr);
-    mod._free(infoPtr);
-    mod._free(outPtr);
+    arena.free();
   }
 }
 
@@ -110,13 +135,14 @@ export async function aeadEncrypt(
   const { mod, keySize, nonceSize, tagSize } = await getAead();
   requireSize(key, keySize, "AEAD key");
   requireSize(nonce, nonceSize, "AEAD nonce");
-  const keyPtr = writeBytes(mod, key);
-  const noncePtr = writeBytes(mod, nonce);
-  const aadPtr = writeBytes(mod, aad);
-  const ptPtr = writeBytes(mod, plaintext);
-  const ctPtr = mod._malloc(plaintext.length || 1);
-  const tagPtr = mod._malloc(tagSize);
+  const arena = new WasmArena(mod);
   try {
+    const keyPtr = arena.write(key);
+    const noncePtr = arena.write(nonce);
+    const aadPtr = arena.write(aad);
+    const ptPtr = arena.write(plaintext);
+    const ctPtr = arena.malloc(plaintext.length || 1);
+    const tagPtr = arena.malloc(tagSize);
     const rc = mod._lc_wasm_aead_encrypt(
       keyPtr,
       keySize,
@@ -136,12 +162,7 @@ export async function aeadEncrypt(
       tag: readBytes(mod, tagPtr, tagSize),
     };
   } finally {
-    mod._free(keyPtr);
-    mod._free(noncePtr);
-    mod._free(aadPtr);
-    mod._free(ptPtr);
-    mod._free(ctPtr);
-    mod._free(tagPtr);
+    arena.free();
   }
 }
 
@@ -157,13 +178,14 @@ export async function aeadDecrypt(
   requireSize(key, keySize, "AEAD key");
   requireSize(nonce, nonceSize, "AEAD nonce");
   requireSize(tag, tagSize, "AEAD tag");
-  const keyPtr = writeBytes(mod, key);
-  const noncePtr = writeBytes(mod, nonce);
-  const aadPtr = writeBytes(mod, aad);
-  const ctPtr = writeBytes(mod, ciphertext);
-  const tagPtr = writeBytes(mod, tag);
-  const ptPtr = mod._malloc(ciphertext.length || 1);
+  const arena = new WasmArena(mod);
   try {
+    const keyPtr = arena.write(key);
+    const noncePtr = arena.write(nonce);
+    const aadPtr = arena.write(aad);
+    const ctPtr = arena.write(ciphertext);
+    const tagPtr = arena.write(tag);
+    const ptPtr = arena.malloc(ciphertext.length || 1);
     const rc = mod._lc_wasm_aead_decrypt(
       keyPtr,
       keySize,
@@ -180,11 +202,6 @@ export async function aeadDecrypt(
     check(rc, "lc_wasm_aead_decrypt");
     return readBytes(mod, ptPtr, ciphertext.length);
   } finally {
-    mod._free(keyPtr);
-    mod._free(noncePtr);
-    mod._free(aadPtr);
-    mod._free(ctPtr);
-    mod._free(tagPtr);
-    mod._free(ptPtr);
+    arena.free();
   }
 }

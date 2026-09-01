@@ -176,10 +176,16 @@ async function loadModule(): Promise<SqlcipherWasmModule> {
 }
 
 /** Resolves once sqlcipher.wasm is instantiated -- the module handle every
- * other crypto/data module needs. Cached: only ever instantiated once. */
+ * other crypto/data module needs. Cached on success, so it's only ever
+ * instantiated once; a failed load (e.g. a flaky script fetch) is not
+ * cached, so the next call retries instead of replaying the same
+ * rejection for the rest of the page's life. */
 export function getSqlcipherModule(): Promise<SqlcipherWasmModule> {
   if (!modulePromise) {
-    modulePromise = loadModule();
+    modulePromise = loadModule().catch((error: unknown) => {
+      modulePromise = null;
+      throw error;
+    });
   }
   return modulePromise;
 }
