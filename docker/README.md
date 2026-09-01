@@ -13,7 +13,7 @@ is not a user-management API.
 ## Build and run
 
 ```sh
-docker build --build-arg RQLITE_VERSION=10.2.7 -t txt-control docker/
+docker build --build-arg RQLITE_VERSION=10.3.0 -t txt-control docker/
 docker run --rm \
   --hostname txt-control-1 \
   -p 8080:8080 \

@@ -49,7 +49,11 @@ done
 
 mkdir -p "$DATA_DIR" "$(dirname "$RQLITE_ADMIN_HTPASSWD")" \
   /tmp/client-body /tmp/proxy
-chown -R rqlite:rqlite "$(dirname "$DATA_DIR")" /tmp/client-body /tmp/proxy
+data_root=$(dirname "$DATA_DIR")
+if [ "$(stat -c '%U' "$data_root" 2>/dev/null)" != "rqlite" ]; then
+  chown -R rqlite:rqlite "$data_root"
+fi
+chown rqlite:rqlite /tmp/client-body /tmp/proxy
 printf '%s' "$RQLITE_ADMIN_PASSWORD" | \
   htpasswd -iBc "$RQLITE_ADMIN_HTPASSWD" "$RQLITE_ADMIN_USERNAME"
 
@@ -73,4 +77,14 @@ if [ -n "${RQLITE_BACKUP_CONF:-}" ]; then
   set -- "$@" -auto-backup "$RQLITE_BACKUP_CONF"
 fi
 
-exec su-exec rqlite "$@" "$DATA_DIR"
+su-exec rqlite "$@" "$DATA_DIR" &
+rqlite_pid=$!
+
+shutdown() {
+  nginx -c "$rendered_nginx" -s quit 2>/dev/null || true
+  kill -TERM "$rqlite_pid" 2>/dev/null || true
+  wait "$rqlite_pid"
+}
+trap shutdown TERM INT
+
+wait "$rqlite_pid"
