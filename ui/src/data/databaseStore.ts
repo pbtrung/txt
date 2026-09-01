@@ -131,13 +131,23 @@ export class LibraryDatabaseStore {
         return;
       } catch (error) {
         if (error instanceof R2ConflictError && attempt < MAX_CONFLICT_ATTEMPTS) {
-          await this.reload();
-          continue;
+          try {
+            await this.reload();
+            continue;
+          } catch {
+            // Reload failed too; fall through to the same failure handling
+            // as any other persist failure instead of leaking this reload
+            // error unhandled and leaving status stuck at pending.
+          }
         }
         if (mutationApplied) this.failedMutations = mutations;
         await this.reloadAfterFailure();
         const message = error instanceof Error ? error.message : String(error);
-        this.emit({ pending: false, unsaved: mutationApplied, error: message });
+        this.emit({
+          pending: false,
+          unsaved: this.failedMutations.length > 0,
+          error: message,
+        });
         throw error;
       }
     }

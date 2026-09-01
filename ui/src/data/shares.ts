@@ -128,8 +128,12 @@ function insertShare(txtId: number, value: ShareMaterial): DatabaseMutation {
   return {
     description: "create share",
     apply: (db) =>
+      // OR IGNORE makes this replay-safe: a lost-then-retried R2 write can
+      // resend the same insertShare mutation against a database that
+      // already has this exact share_id from the write that actually
+      // landed (docs/data_model.md §2 UNIQUE(share_id)).
       db.execute(
-        "INSERT INTO txt_shares " +
+        "INSERT OR IGNORE INTO txt_shares " +
           "(txt_id, share_id, share_content_key, share_prefix, share_path, state, created_at) " +
           "VALUES (?, ?, ?, ?, ?, 'creating', ?)",
         [txtId, value.shareId, value.contentKey, value.prefix, value.path, Date.now()],
