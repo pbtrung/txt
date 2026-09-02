@@ -47,7 +47,7 @@ rather than one undifferentiated prefix grant:
 - a 15-minute read-write credential for `{db_prefix}/documents/*` and
   `{db_prefix}/shared/*`;
 - a separate 15-minute read-only credential for `{db_prefix}/catalog/*`
-  — the browser only ever needs to *read* the catalog object (only
+  — the browser only ever needs to _read_ the catalog object (only
   ingestion tooling writes it), so a blanket read-write grant would give
   the browser more than it needs.
 

@@ -2,18 +2,12 @@
 
 ## Primitives
 
-| Primitive | leancrypto API                                                                    | Parameters                                                                            |
-| --------- | --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| AEAD      | Ascon-Keccak (`lc_ak_alloc_taglen`)                                               | 64-byte key, 64-byte IV, 64-byte tag                                                  |
-| KDF       | HKDF-SHA3-512 (`lc_hkdf_*`)                                                       | produces 128 bytes of OKM (64-byte AEAD key + 64-byte IV)                             |
-| KEM       | ML-KEM-1024 + X448 (Curve448) hybrid (`lc_kyber_1024_x448_keypair`/`_enc`/`_dec`) | see Composite KEM Key Sizes below                                                     |
-| Signature | Web Crypto ECDSA P-521 with SHA-512                                               | signing-suite v1, owner-proof protocol v1; approximately 256-bit classical security   |
-
-The AEAD/KDF/KEM primitives above (this document, except §"Sharing content
-encryption") are the general-purpose scheme used for every wrapped key and
-row-level blob in D1 (`docs/data_model.md`). The shared EPUB copy that a
-public recipient downloads uses a separate, native Web Crypto scheme
-instead — see "Sharing content encryption" below.
+| Primitive | leancrypto API                                                                    | Parameters                                                                          |
+| --------- | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| AEAD      | Ascon-Keccak (`lc_ak_alloc_taglen`)                                               | 64-byte key, 64-byte IV, 64-byte tag                                                |
+| KDF       | HKDF-SHA3-512 (`lc_hkdf_*`)                                                       | produces 128 bytes of OKM (64-byte AEAD key + 64-byte IV)                           |
+| KEM       | ML-KEM-1024 + X448 (Curve448) hybrid (`lc_kyber_1024_x448_keypair`/`_enc`/`_dec`) | see Composite KEM Key Sizes below                                                   |
+| Signature | Web Crypto ECDSA P-521 with SHA-512                                               | signing-suite v1, owner-proof protocol v1; approximately 256-bit classical security |
 
 ### Composite KEM Key Sizes
 
@@ -44,7 +38,7 @@ above. The active signing suite is stored with the key and authenticated
 by the API-signed ticket.
 
 | version | algorithm                | public-key encoding      | private-key encoding         | signature encoding                                                              |
-| ------: | ------------------------ | ------------------------ | ----------------------------- | ------------------------------------------------------------------------------- |
+| ------: | ------------------------ | ------------------------ | ---------------------------- | ------------------------------------------------------------------------------- |
 |       1 | ECDSA P-521 with SHA-512 | SubjectPublicKeyInfo DER | PKCS#8 DER, wrapped by `umk` | Web Crypto raw signature: 66-byte `r` followed by 66-byte `s` (132 bytes total) |
 
 Signing suite 1 is the only accepted suite. P-521 offers approximately
@@ -105,7 +99,7 @@ magic (2) || version (2) || salt (64) || ciphertext (var) || tag (64)
 ```
 
 | Field      | Size     | Value                                                                          |
-| ---------- | -------- | ------------------------------------------------------------------------------- |
+| ---------- | -------- | ------------------------------------------------------------------------------ |
 | magic      | 2 bytes  | `0x54 0x58` ("TX")                                                             |
 | version    | 2 bytes  | major · minor (e.g. `0x01 0x00` = v1.0)                                        |
 | salt       | 64 bytes | random per blob, HKDF input salt                                               |
@@ -189,51 +183,56 @@ owner provisioning. It does not currently wrap encapsulation or
 decapsulation, and no persisted application record or browser/Worker flow
 invokes those operations. Public sharing instead creates an independent
 128-byte symmetric content key and places it only in the URL fragment and
-the owner's D1 database (`docs/data_model.md`).
+the owner's D1 database (`docs/data_model.md`); the shared EPUB copy
+itself is encrypted with the same Blob Format above, client-side, and
+uploaded directly to R2 by the browser — the Worker never receives the
+plaintext EPUB or `share_content_key` (`docs/sharing.md`).
 
-## Sharing content encryption
+## Share grant envelope
 
-The shared EPUB copy a public recipient downloads (`docs/sharing.md`) is
-encrypted with a separate, native Web Crypto scheme instead of the Blob
-Format above — no leancrypto/WASM involvement for this one operation,
-since the anonymous redemption path should be able to decrypt using only
-the browser's built-in `crypto.subtle`, without loading the leancrypto
-module at all: AES-256-GCM AEAD, HKDF-SHA-256 key derivation, and a fresh
-random salt and nonce on every call.
+The Worker encrypts each share's exact R2 object path with a second,
+independent primitive stack — native Web Crypto AES-256-GCM/HKDF-SHA-256,
+not the Ascon-Keccak Blob Format above — so the exact path can travel
+from the Worker to a share URL and back without ever being written to D1
+in the clear. This envelope only ever holds the object path string
+(`docs/sharing.md`); it never touches key material, plaintext content, or
+the owner's Blob-Format payloads.
 
 ```
-magic (2) || version (2) || salt (32) || nonce (12) || ciphertext‖tag (var)
+version (1) || salt (32) || nonce (12) || sealed (var)
 ```
 
-| Field | Size | Value |
-| --- | --- | --- |
-| magic | 2 bytes | `0x53 0x48` ("SH") — deliberately different from the Blob Format's `0x54 0x58`, so the two formats can never be cross-decoded |
-| version | 2 bytes | major · minor, `0x01 0x00` |
-| salt | 32 bytes | random per call, HKDF salt |
-| nonce | 12 bytes | random per call, AES-GCM IV |
-| ciphertext‖tag | variable | AES-256-GCM output (Web Crypto appends the 16-byte tag) |
+| Field   | Size     | Value                                    |
+| ------- | -------- | ---------------------------------------- |
+| version | 1 byte   | `0x01`                                   |
+| salt    | 32 bytes | random per grant, HKDF salt              |
+| nonce   | 12 bytes | random per grant, AES-GCM IV             |
+| sealed  | variable | ciphertext followed by a 16-byte GCM tag |
 
-Minimum valid length: 2 + 2 + 32 + 12 + 16 = 64 bytes.
+The envelope is base64url-encoded end to end. Given `SHARE_GRANT_KEY` (a
+32-byte secret held only by the Worker, independent of every key in the
+Blob Format above) and the share's `id_hash = SHA-256(raw share_id)`:
 
-**Encrypt**, given the EPUB plaintext and IKM = `share_content_key` (128
-random bytes, `docs/data_model.md`):
-
-1. Generate a random 32-byte `salt` and a random 12-byte `nonce`,
-   independently, with `crypto.getRandomValues`.
+1. Generate a random 32-byte `salt` and a random 12-byte `nonce`.
 2. Derive a 256-bit AES key: `crypto.subtle.deriveKey({ name: "HKDF",
-   hash: "SHA-256", salt, info: new Uint8Array(0) }, ikmKey, { name:
-   "AES-GCM", length: 256 }, false, ["encrypt"])`.
-3. Set `magic = 0x53 0x48`, `version = 0x01 0x00`, `AD = magic || version
-   || salt`.
-4. `crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce, additionalData:
-   AD, tagLength: 128 }, key, plaintext)`, producing `ciphertext‖tag`.
-5. Assemble `magic || version || salt || nonce || ciphertext‖tag`.
+hash: "SHA-256", salt, info: UTF8("txt:share-grant-key:v1") ||
+id_hash }, ikmKey, { name: "AES-GCM", length: 256 }, false,
+["encrypt"])` — binding the derived key to this specific `share_id`,
+   via HKDF's `info`, without needing a separate stored key per share.
+3. Seal the object path with AES-256-GCM under that key and nonce, with
+   additional data `UTF8("txt:share-grant:v1") || id_hash` (binding the
+   ciphertext to that specific share too, so it cannot be replayed
+   against a different one).
+4. Assemble and base64url-encode `version || salt || nonce || sealed`.
 
-**Decrypt** reverses this exactly: parse the fixed-offset fields, verify
-`magic == 0x53 0x48` and the version major byte, rebuild `AD`, derive the
-same key via HKDF-SHA-256 with the parsed `salt`, and call
-`crypto.subtle.decrypt` with the parsed `nonce` and `AD`. If the tag
-doesn't verify, `decrypt` rejects and no plaintext is returned.
+Decryption reverses this exactly and rejects a grant whose version byte,
+length, or AEAD tag doesn't match; a grant decrypted under a different
+`id_hash` fails tag verification because the additional data no longer
+matches.
 
-The API sees neither the plaintext EPUB nor `share_content_key`; it
-returns only a short-lived exact-object R2 URL (`docs/sharing.md`).
+Only the Worker (holding `SHARE_GRANT_KEY`) can produce or open a grant.
+Decrypting it recovers the object path, which the Worker then re-hashes
+and compares against the `shares` row's `object_path_hash` before doing
+anything with it — the grant proves the caller was handed a real object
+path by the Worker, and the hash check proves that path is still the one
+currently registered and `active` for this `share_id` (`docs/sharing.md`).

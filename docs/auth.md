@@ -27,7 +27,7 @@ by anonymous recipients redeeming a share.
 Static assets (the SPA shell — `index.html` and its JS/CSS bundle) are
 never gated by Access, for anyone. They carry no confidential data, and
 the owner's authenticated app and the public shared-reading page are
-served from the *same* single-page bundle: gating asset paths would also
+served from the _same_ single-page bundle: gating asset paths would also
 block the shared-reading page's own JS/CSS from loading for a recipient
 who was never meant to pass Access in the first place, since a browser
 that fetches `/shared#...` still has to fetch its script and style assets
@@ -71,7 +71,7 @@ the verified email as the authenticated identity embedded in the owner
 binding ticket (§4.1).
 
 **Why Access alone isn't enough for a mutation.** Access establishes that
-*this browser session* logged in as the owner and is authorized to reach
+_this browser session_ logged in as the owner and is authorized to reach
 `/v1/*` at all. It says nothing about whether the caller also possesses
 `user_root_key` and the resulting unwrapped P-521 signing key — material
 that never leaves unlocked browser memory and that Access never sees. A
@@ -80,7 +80,7 @@ from the Worker's perspective, just a bearer credential: without also
 stealing the unlock file's `user_root_key` and completing the unwrap, an
 attacker holding only the Access session cannot produce a valid proof
 (§4) and therefore cannot obtain R2 write credentials or mutate any row
-in D1. Every D1-*mutating* `/v1/*` endpoint and R2 credential minting
+in D1. Every D1-_mutating_ `/v1/*` endpoint and R2 credential minting
 require proof of possession, not just a valid Access session; reads stay
 behind the Access JWT alone, since a read only ever returns opaque
 per-row ciphertext (`docs/data_model.md` §1) and an attacker without
@@ -131,12 +131,12 @@ returning the owner's wrapped key material plus a 24-hour HS256 ticket:
 }
 ```
 
-| Status | Condition |
-| --- | --- |
-| `200` | Wrapped owner material and ticket returned |
-| `401` | Missing or invalid Access session |
-| `403` | Verified email is not the configured `OWNER_EMAIL` |
-| `429` | Rate limit exceeded (`docs/deployment.md` §2.3) |
+| Status | Condition                                          |
+| ------ | -------------------------------------------------- |
+| `200`  | Wrapped owner material and ticket returned         |
+| `401`  | Missing or invalid Access session                  |
+| `403`  | Verified email is not the configured `OWNER_EMAIL` |
+| `429`  | Rate limit exceeded (`docs/deployment.md` §2.3)    |
 
 ### 4.2 Proof of possession
 
@@ -187,14 +187,14 @@ unwrapped private key; the `db_binding_hash` check proves the caller also
 knows the raw `db_prefix`, which only unwrapping the credential payload
 (§3) can reveal.
 
-| Status | Condition |
-| --- | --- |
-| `200`/`204` | Mutation applied, or R2 credential returned |
-| `400` | Malformed ticket, proof, or request body |
-| `401` | Ticket invalid, expired, or proof expiry exceeded |
-| `403` | Owner subject, binding, or signature mismatch |
-| `412` | `documents.access_version` conflict (`docs/data_model.md` §4) |
-| `429` | Rate limit exceeded |
+| Status      | Condition                                                     |
+| ----------- | ------------------------------------------------------------- |
+| `200`/`204` | Mutation applied, or R2 credential returned                   |
+| `400`       | Malformed ticket, proof, or request body                      |
+| `401`       | Ticket invalid, expired, or proof expiry exceeded             |
+| `403`       | Owner subject, binding, or signature mismatch                 |
+| `412`       | `documents.access_version` conflict (`docs/data_model.md` §4) |
+| `429`       | Rate limit exceeded                                           |
 
 ### 4.3 Endpoint scope
 
@@ -265,10 +265,11 @@ the library.
 
 ## 8. Incident response
 
-| Event | Response |
-| --- | --- |
-| Access session compromised | Revoke the session in the Access dashboard; every ticket/proof still requires `user_root_key`, which the session alone doesn't grant |
-| Signing private key exposed | Re-provision the signing key; existing tickets referencing the old `sign_public_key` stop verifying once the `owner` row is updated |
-| Temporary R2 credential exposed | It expires after at most 15 minutes |
-| `user_root_key` lost | Restore from the protected owner credential backup; the server cannot reconstruct it |
-| D1 export leaked | No usable plaintext, capability, or unwrapped key is exposed — rotate `user_root_key` and re-wrap if the leak's scope is uncertain |
+| Event                           | Response                                                                                                                             |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Access session compromised      | Revoke the session in the Access dashboard; every ticket/proof still requires `user_root_key`, which the session alone doesn't grant |
+| Signing private key exposed     | Re-provision the signing key; existing tickets referencing the old `sign_public_key` stop verifying once the `owner` row is updated  |
+| Temporary R2 credential exposed | It expires after at most 15 minutes                                                                                                  |
+| `SHARE_GRANT_KEY` exposed       | Rotate it and redeploy; every outstanding grant stops decrypting and any copied share URL must be re-copied (`docs/sharing.md`)      |
+| `user_root_key` lost            | Restore from the protected owner credential backup; the server cannot reconstruct it                                                 |
+| D1 export leaked                | No usable plaintext, capability, or unwrapped key is exposed — rotate `user_root_key` and re-wrap if the leak's scope is uncertain   |

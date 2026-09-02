@@ -28,13 +28,17 @@ Worker environment/bindings:
 OWNER_EMAIL
 CF_ACCESS_TEAM_DOMAIN
 CF_ACCESS_AUD
+SHARE_GRANT_KEY
 ```
 
 plus the D1 binding (`DB`) and R2 bucket binding declared in
 `wrangler.jsonc`. `OWNER_EMAIL` and `CF_ACCESS_AUD` back the Worker's
-independent verification of the Access JWT (`docs/auth.md` §2). Cloudflare
-terminates TLS and runs Access at its own edge; there is no gateway TLS
-certificate or origin CA bundle to manage.
+independent verification of the Access JWT (`docs/auth.md` §2).
+`SHARE_GRANT_KEY` is an independent 32-byte secret (`openssl rand -base64
+32`) used only to encrypt/decrypt share-object-path grants (`docs/crypto.md`
+§"Share grant envelope", `docs/sharing.md`). Cloudflare terminates TLS and
+runs Access at its own edge; there is no gateway TLS certificate or origin
+CA bundle to manage.
 
 ## 3. Owner initialization
 
@@ -98,7 +102,7 @@ for document or shared-copy objects.
 Before exposing a deployment, verify:
 
 1. `/v1/*` is unreachable without a valid Access session, except `POST
-   /v1/shared-url`.
+/v1/shared-url`.
 2. Static assets, including the shared-reading page's own JS/CSS, load
    without any Access session.
 3. Owner login through Access, ticket issuance, proof-of-possession
@@ -123,14 +127,14 @@ Before exposing a deployment, verify:
 Confirm current figures against the Cloudflare dashboard before
 deploying — free-tier allowances change — but at design time:
 
-| Resource | Free allowance | Fit for a single-owner app |
-| --- | --- | --- |
-| Workers requests | 100,000 / day | Comfortable; one owner plus occasional anonymous share reads |
-| Workers CPU time | 10 ms / invocation | JWT/HMAC/P-521 verification and small D1 queries are well under this; profile the mutating-endpoint class specifically, since every one of them verifies a P-521 proof |
-| D1 storage | 5 GB | Metadata and wrapped keys only — content stays in R2 |
-| D1 rows read | 5,000,000 / day | Comfortable at personal-library scale |
-| D1 rows written | 100,000 / day | Comfortable even with `key_store`'s extra write per new row (two for a new `documents` row) |
-| D1 free-tier enforcement | Hard failure once a daily cap is hit | No headroom for a runaway loop — the rate-limiting rule bounds this |
-| Workers static assets | 20,000 files | Far more than this UI's build output |
-| Cloudflare Access seats | 50 users | One owner uses one seat |
-| WAF rate-limiting rules | 1 custom rule | Allocated in `docs/auth.md` §6 |
+| Resource                 | Free allowance                       | Fit for a single-owner app                                                                                                                                             |
+| ------------------------ | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Workers requests         | 100,000 / day                        | Comfortable; one owner plus occasional anonymous share reads                                                                                                           |
+| Workers CPU time         | 10 ms / invocation                   | JWT/HMAC/P-521 verification and small D1 queries are well under this; profile the mutating-endpoint class specifically, since every one of them verifies a P-521 proof |
+| D1 storage               | 5 GB                                 | Metadata and wrapped keys only — content stays in R2                                                                                                                   |
+| D1 rows read             | 5,000,000 / day                      | Comfortable at personal-library scale                                                                                                                                  |
+| D1 rows written          | 100,000 / day                        | Comfortable even with `key_store`'s extra write per new row (two for a new `documents` row)                                                                            |
+| D1 free-tier enforcement | Hard failure once a daily cap is hit | No headroom for a runaway loop — the rate-limiting rule bounds this                                                                                                    |
+| Workers static assets    | 20,000 files                         | Far more than this UI's build output                                                                                                                                   |
+| Cloudflare Access seats  | 50 users                             | One owner uses one seat                                                                                                                                                |
+| WAF rate-limiting rules  | 1 custom rule                        | Allocated in `docs/auth.md` §6                                                                                                                                         |

@@ -103,37 +103,46 @@ INSERT` trigger catches it before the `FOREIGN KEY` constraint even
 
 ## Milestone 2 — Crypto module
 
-Two independent, small modules, each usable from both the Worker and the
-browser UI without a build-time fork:
+Two independent pieces on opposite sides of the trust boundary
+(`docs/auth.md` §7) — not both "usable from both the Worker and the
+browser," which was this milestone's original, wrong framing:
 
 1. **Blob Format** (`docs/crypto.md` — Ascon-Keccak/HKDF-SHA3-512):
-   unchanged from what exists today. Confirm it still works when called
-   from a Worker (not just a browser) — the leancrypto WASM module needs
-   to load correctly in the Workers runtime, which is not the same
-   environment as a browser tab or Node; test this explicitly rather
-   than assuming parity.
-2. **Sharing content encryption** (`docs/crypto.md` §"Sharing content
-   encryption" — AES-256-GCM/HKDF-SHA-256): new, pure `crypto.subtle`,
-   no WASM.
+   unchanged from what exists today (`ui/src/crypto/{aead,cryptoBlob}.ts`),
+   browser-only — nothing to build here. This is what still encrypts the
+   shared EPUB copy itself (`docs/sharing.md` §4 step 4), uploaded
+   directly to R2 by the browser; the Worker never touches EPUB bytes or
+   `share_content_key`. Two earlier drafts of this milestone got this
+   wrong in opposite directions: one asked to confirm the Blob Format's
+   leancrypto WASM loads inside the Workers runtime (it does, but the
+   Worker has no legitimate reason to decrypt row data at all, so this
+   didn't belong here); the other moved the shared-EPUB encryption itself
+   to a new browser-side AES-256-GCM module, when the design never called
+   for changing how EPUB content is encrypted — only for encrypting the
+   object _path_ differently, which is a Worker-side concern, below.
+2. **Share grant envelope** (`docs/crypto.md` §"Share grant envelope" —
+   AES-256-GCM/HKDF-SHA-256, replacing the XChaCha20-Poly1305 scheme this
+   design's predecessor used): new, pure `crypto.subtle`, no WASM, in the
+   Worker (`worker/`) — this is genuinely Worker-side, unlike the Blob
+   Format, because the Worker is the only party that holds
+   `SHARE_GRANT_KEY` and the only party that ever encrypts or decrypts a
+   grant (`docs/sharing.md` §3.1/§3.2).
 
-**Test, for both modules:**
+**Test, for the share grant envelope:**
 
-- Round-trip: encrypt then decrypt recovers the exact original plaintext,
-  for empty, small, and multi-megabyte (EPUB-sized) payloads.
-- Tamper detection: flip one bit anywhere in `ciphertext‖tag`, in
-  `salt`, or in `magic`/`version` → decrypt rejects, every time, for
-  both formats independently.
-- **Cross-format rejection**: feed a Blob Format ciphertext into the
-  sharing-format decoder and vice versa → rejected on the magic-byte
-  check before ever touching key material. This is the reason the two
-  formats use different magic bytes (`0x54 0x58` vs `0x53 0x48`) — test
-  that the distinction actually does its job, not just that it exists.
-- Nonce/salt uniqueness: encrypt the same plaintext under the same IKM
-  twice → different salts, different nonces, different ciphertexts.
-- Known-answer tests: pin at least one fixed IKM/plaintext/expected-blob
-  triple per format as a regression test, generated once and committed,
-  so a future refactor that silently changes byte layout gets caught
-  immediately instead of only in an integration test.
+- Round-trip: encrypt then decrypt recovers the exact object path string.
+- Tamper detection: flip one bit anywhere in `sealed`, in `salt`, or in
+  `version` → decrypt rejects, every time.
+- A grant produced for one `share_id` (`id_hash`) is rejected when
+  decryption is attempted under a different `id_hash` — the additional-data
+  binding `docs/crypto.md` describes, tested directly rather than assumed.
+- Nonce/salt uniqueness: encrypt the same object path under the same
+  `SHARE_GRANT_KEY`/`id_hash` twice → different salts, different nonces,
+  different envelopes.
+- Known-answer test: pin at least one fixed `SHARE_GRANT_KEY`/`id_hash`/
+  path/expected-envelope tuple as a regression test, generated once and
+  committed, so a future refactor that silently changes byte layout gets
+  caught immediately instead of only in an integration test.
 
 ## Milestone 3 — Access-gated Worker skeleton
 
