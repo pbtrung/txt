@@ -14,10 +14,10 @@ See [authentication](docs/auth.md), [data model](docs/data_model.md),
 [cryptography](docs/crypto.md), [deployment](docs/deployment.md), and the
 [implementation plan](docs/milestones.md) for the complete design. The design
 is decided; implementation is in progress per `docs/milestones.md`. The
-Python CLI's `--init-owner` and `--ingest` target the Cloudflare/D1 design
-described here; `--update-db`, `--clean-bucket`, and `--clean-db` still
-target the design's predecessor (rqlite) and aren't reachable from the CLI
-until they're rewritten. The UI still targets the predecessor too.
+Python CLI's `--init-owner` and `--ingest`, and the browser UI, target the
+Cloudflare/D1 design described here; `--update-db`, `--clean-bucket`, and
+`--clean-db` still target the design's predecessor (rqlite) and aren't
+reachable from the CLI until they're rewritten.
 
 ## Architecture
 

@@ -146,18 +146,18 @@ browser," which was this milestone's original, wrong framing:
 
 ## Milestone 3 — Access-gated Worker skeleton
 
-**Status: code and tests done; live-deployment verification still
-pending.** `worker/access.ts` verifies the Access JWT (signature via a
-real RSA keypair in tests, `aud`, `iss`, `exp`, `email`); `worker/api.ts`
-gates every `/v1/*` route except `POST /v1/shared-url` behind it, with a
-`requireVar()` check that refuses to run against an unsubstituted
-`replace-me-*` placeholder rather than silently comparing against it.
-The second bullet below — configuring a _real_ Cloudflare Access
-application against a live deployment — is a real, visible
-infrastructure change (Zero Trust org config, a live URL) and hasn't
-been done in this pass; it needs an explicit decision to actually deploy
-and configure Access before it can be checked off. The UI-side Access
-challenge handling (third bullet) is UI work, not yet started.
+**Status: code and tests done, including the UI-side Access challenge
+handling; live-deployment verification of the Access application itself
+is confirmed working by the operator.** `worker/access.ts` verifies the
+Access JWT (signature via a real RSA keypair in tests, `aud`, `iss`,
+`exp`, `email`); `worker/api.ts` gates every `/v1/*` route except `POST
+/v1/shared-url` behind it, with a `requireVar()` check that refuses to
+run against an unsubstituted `replace-me-*` placeholder rather than
+silently comparing against it. `ui/src/data/apiClient.ts` treats a
+non-JSON response or a `fetch()`-level failure from a gated path as a
+distinct `AccessRequiredError`, and `VaultContext.tsx`/`UnlockScreen.tsx`
+surface it as a "log in with Cloudflare Access" prompt rather than a
+parse error.
 
 - Route `/v1/*` (minus `/v1/shared-url`) through Access JWT verification
   (`docs/auth.md` §2): signature against the team domain's JWKS, `aud`,
@@ -182,15 +182,14 @@ Worker crash.
 
 ## Milestone 4 — Owner ticket and proof of possession
 
-**Status: Worker side (ticket issuance, `GET /v1/owner`, proof
-verification) done and tested; client-side signing not started.**
-`worker/ownerTicket.ts` issues and verifies the HS256 ticket;
-`worker/ownerProof.ts` builds and verifies the canonical proof bytes and
-is exported so a future client-side signer reuses the exact same
-construction; `worker/ownerEndpoint.ts` wires `GET /v1/owner` to the D1
-`owner` row. The client-side signing bullet below is UI work, deferred
-to when a mutating endpoint (Milestone 5) actually needs to send a
-proof.
+**Status: done, Worker and client sides both.** `worker/ownerTicket.ts`
+issues and verifies the HS256 ticket; `worker/ownerProof.ts` builds and
+verifies the canonical proof bytes; `worker/ownerEndpoint.ts` wires `GET
+/v1/owner` to the D1 `owner` row. `ui/src/data/ownerProof.ts` builds and
+signs the same canonical bytes client-side with `crypto.subtle.sign`
+(P-521/SHA-512), independently implemented from the Worker's verifier
+but cross-checked by both sides' test suites against the same
+`docs/crypto.md` construction.
 
 - Implement ticket issuance (`docs/auth.md` §4.1) and proof verification
   (`docs/auth.md` §4.2) exactly per the canonical-bytes construction in
@@ -216,18 +215,19 @@ the layer standing between "past Access" and "can mutate the library":**
 
 ## Milestone 5 — Document and reading-state endpoints
 
-**Status: Worker endpoints done and tested; the UI-side migration off the
-local SQLCipher-via-WASM engine is deliberately deferred to its own pass.**
-`GET /v1/documents` returns the N+1-avoiding join; `PATCH
-/v1/documents/:id/access` implements the `access_version` optimistic-
-concurrency update; `GET`/`POST`/`DELETE /v1/bookmarks` cover listing,
-creation, and deletion. Re-bookmarking the same CFI is enforced
-client-side (a real gap in this doc's earlier text, fixed above) — the
-Worker never holds an unwrapped key to decrypt `bookmark_blob` itself.
-The second bullet below — replacing the UI's local engine — is a large,
-separate change to currently-working UI code and was scoped out of this
-pass by explicit decision, to be picked up later rather than bundled with
-the Worker-side endpoint work.
+**Status: done, Worker and client sides both.** `GET /v1/documents`
+returns the N+1-avoiding join; `PATCH /v1/documents/:id/access`
+implements the `access_version` optimistic-concurrency update;
+`GET`/`POST`/`DELETE /v1/bookmarks` and `GET /v1/bookmarks/summary` (a
+later addition, for the Library screen's bookmark badges without an
+N+1 fetch per book) cover listing, creation, and deletion. Re-bookmarking
+the same CFI is enforced client-side (a real gap in this doc's earlier
+text, fixed above) — the Worker never holds an unwrapped key to decrypt
+`bookmark_blob` itself. `ui/src/data/libraryStore.ts` replaced the local
+SQLCipher-via-WASM engine entirely for this data: there is no local
+database file anymore, and `ui/src/data/sqlite.ts`/`schema.ts`/
+`databaseStore.ts`/`libraryDb.ts` were removed once nothing referenced
+them.
 
 - Worker endpoints for library listing (join `documents`↔`key_store`,
   §"avoiding N+1", `docs/data_model.md` §3), reading-state updates
@@ -286,8 +286,7 @@ than no comment at all.
 
 ## Milestone 7 — Sharing
 
-**Status: Worker endpoints done and tested; the UI creation/recipient
-flow is deferred to its own pass, same scoping decision as Milestone 5.**
+**Status: done, Worker and client sides both.**
 `worker/sharesEndpoint.ts` implements `GET`/`POST`/`DELETE /v1/shares`;
 `worker/sharedUrlEndpoint.ts` implements `POST /v1/shared-url`, minting a
 single-object 60-second R2 credential through the same Cloudflare API
@@ -307,8 +306,16 @@ row's decrypted `owner_blob`" — both impossible, since the Worker never
 holds an unwrapped key. Both endpoints now take an already-encrypted
 `owner_blob` plus a plaintext `share_path` the Worker can hash and
 compare directly, matching the trust boundary the rest of the design
-already follows. The "Bundle-size or import-graph assertion" test below
-is UI-scoped and deferred along with the rest of the UI work.
+already follows. `ui/src/data/shares.ts` implements the creation flow
+(§4) and `ui/src/data/sharedReader.ts`/`useSharedReaderDocument.ts`/
+`useSharedReadingState.ts` implement the recipient flow (§5); the
+shared-reading page's bookmark/reading-state persistence stays entirely
+in `localStorage`, keyed by the capability, and never touches the
+owner's D1 rows. The "Bundle-size or import-graph assertion" test below
+was not written — the shared-reading route's independence from the
+leancrypto/WASM module is a property of `sharedReader.ts` never
+importing `crypto/aead.ts`, not something enforced by an automated
+check.
 
 - Implement `POST /v1/shares`, `POST /v1/shared-url`, `DELETE
 /v1/shares` per `docs/sharing.md` §3, using the grant envelope
