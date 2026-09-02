@@ -32,3 +32,10 @@ dist/
 creds/
 replaced_txt_*/
 docker/backup.conf.json
+
+# --local-db-dir: README's own example location, plus the checkpoint
+# files and downloaded SQLCipher database copies --ingest/--migrate-rql
+# write there under any directory name.
+/data/
+*.ingest-checkpoint.json
+*.migrate-checkpoint.json

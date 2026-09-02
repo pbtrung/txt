@@ -16,11 +16,27 @@ function jsonResponse(status: number, body: unknown): Response {
   } as Response;
 }
 
-function htmlResponse(): Response {
+function accessChallengeResponse(): Response {
   return {
     ok: true,
     status: 200,
+    redirected: true,
+    url: "https://team.cloudflareaccess.com/cdn-cgi/access/login",
     headers: new Headers({ "content-type": "text/html" }),
+    json: async () => {
+      throw new Error("not json");
+    },
+  } as Response;
+}
+
+function workerPlainTextErrorResponse(status: number, body: string): Response {
+  return {
+    ok: false,
+    status,
+    redirected: false,
+    url: "http://localhost/v1/owner",
+    headers: new Headers({ "content-type": "text/plain;charset=UTF-8" }),
+    text: async () => body,
     json: async () => {
       throw new Error("not json");
     },
@@ -43,8 +59,8 @@ async function testSigning(): Promise<OwnerSigningIdentity> {
 }
 
 describe("ApiClient Access-challenge detection", () => {
-  it("treats a non-JSON response as AccessRequiredError", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(htmlResponse()));
+  it("treats a redirected non-JSON response as AccessRequiredError", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(accessChallengeResponse()));
     await expect(new ApiClient().fetchOwner()).rejects.toBeInstanceOf(
       AccessRequiredError,
     );
@@ -54,6 +70,23 @@ describe("ApiClient Access-challenge detection", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
     await expect(new ApiClient().fetchOwner()).rejects.toBeInstanceOf(
       AccessRequiredError,
+    );
+  });
+
+  // Regression: requireProof.ts and other Worker error paths respond with
+  // a plain-text body, never JSON -- that must never be mistaken for a
+  // missing Access session (it previously was, masking the real error).
+  it("does not treat a same-origin, non-redirected plain-text error as AccessRequiredError", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          workerPlainTextErrorResponse(403, "signature verification failed"),
+        ),
+    );
+    await expect(new ApiClient().fetchOwner()).rejects.toThrow(
+      /could not fetch owner record: 403/,
     );
   });
 });

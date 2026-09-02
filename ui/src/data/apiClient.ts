@@ -13,10 +13,15 @@ const PROOF_HEADER = "X-Owner-Proof";
 
 /** docs/auth.md §1: an unauthenticated request to a gated /v1/* path never
  * reaches the Worker -- Access intercepts it with its own login
- * challenge, either a non-JSON redirect response or (if fetch() follows
- * the redirect cross-origin) a network-level failure. Both surface here
- * as "not logged in, prompt to authenticate" rather than a decodable API
- * error. */
+ * challenge, either a redirect response (to a different, Access-owned
+ * origin) or, if fetch() tries to follow that redirect cross-origin, a
+ * network-level failure. Both surface here as "not logged in, prompt to
+ * authenticate" rather than a decodable API error. A same-origin,
+ * non-redirected response is never an Access challenge, even when its
+ * body isn't JSON -- that's the Worker's own plain-text error response
+ * (e.g. requireProof.ts's `new Response(message, {status})`), and must
+ * surface as the real error instead of being mistaken for a missing
+ * Access session. */
 export class AccessRequiredError extends Error {
   constructor() {
     super("Cloudflare Access session required");
@@ -103,14 +108,26 @@ async function fetchSameOrigin(path: string, init: RequestInit): Promise<Respons
     // A cross-origin failure following Access's own redirect surfaces as a
     // generic fetch TypeError, indistinguishable from a transient network
     // error at this layer -- docs/auth.md §1 treats it the same as the
-    // non-JSON-body case below.
+    // redirect case below.
     throw new AccessRequiredError();
   }
-  const contentType = response.headers.get("content-type") ?? "";
-  if (!contentType.includes("application/json")) {
+  if (isAccessChallenge(response)) {
     throw new AccessRequiredError();
   }
   return response;
+}
+
+/** True only for a response that actually left this origin (a redirect,
+ * or a final URL on a different origin) and isn't JSON -- the shape of
+ * Access's own login challenge, per docs/auth.md §1. A same-origin,
+ * non-redirected response is always the Worker's own, whatever its
+ * content-type or status. */
+function isAccessChallenge(response: Response): boolean {
+  const contentType = response.headers.get("content-type") ?? "";
+  if (contentType.includes("application/json")) return false;
+  if (response.redirected) return true;
+  if (typeof window === "undefined") return false;
+  return new URL(response.url, window.location.href).origin !== window.location.origin;
 }
 
 export class ApiClient {
