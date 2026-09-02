@@ -216,9 +216,14 @@ rather than reducing to owner-facing bookkeeping alone.
 ### 2.1 `catalog`
 
 A fixed, flat shape — just what the Library screen needs to search and
-browse without opening every document. `catalog.catalog_blob`'s plaintext
-wraps a brotli-compressed JSON array, `[{document_id, catalog}, ...]`,
-where each `catalog` entry is:
+browse without opening every document. The `catalog` row holds no
+document data itself, only a pointer: its `catalog_blob` plaintext is
+`{catalog_key, catalog_path}` (a fresh 128-byte content key and R2 path
+segment, the same indirection `documents.content_blob` uses for EPUB
+content). The actual list lives as its own R2 object at
+`{db_prefix}/catalog/{catalog_path}` (`docs/storage_layout.md`),
+encrypted under `catalog_key`: a brotli-compressed JSON array,
+`[{document_id, catalog}, ...]`, where each `catalog` entry is:
 
 ```json
 {
@@ -243,6 +248,12 @@ to make the Library screen's initial browse/search list fast: fetching
 and decrypting one object that already holds every document's display
 fields is strictly cheaper than N D1 rows and N per-row decrypts.
 
+**Written by** the Python ingestion tool (`txt --ingest`) directly, over
+D1's own HTTP query API (`txt/d1_client.py`) — not the Worker's
+ticket/proof-gated `/v1/*` endpoints, which are designed for ephemeral
+browser sessions rather than a long-running batch tool carrying its own
+Cloudflare API token. Read directly by the browser.
+
 **Write order and recovery.** The `documents` row (D1) and the catalog
 object (R2) are two independent stores with no cross-system transaction.
 Ingestion inserts the new `documents`/`key_store` rows into D1 _first_,
@@ -256,6 +267,18 @@ a `document_id` that doesn't exist in D1 yet, which the Library screen
 would show and then fail to open. Ingestion re-runs are idempotent for
 this reason: each run reconciles by checking for any `documents` row not
 yet represented in the current catalog object and adding it.
+
+A `documents` row alone can't say what to write into its catalog entry —
+`name` is the original filename, never stored in D1 or R2 outside the
+catalog itself. Ingestion keeps a local JSON checkpoint
+(`{db_prefix}.ingest-checkpoint.json`, `--local-db-dir`) mapping
+`{filename: document_id}`, written immediately after each successful D1
+insert and before the catalog rewrite, so a run interrupted between the
+two steps resumes from the checkpoint without re-uploading or
+re-inserting. The catalog is also checked by filename first on every
+run, independent of the checkpoint, so a lost checkpoint file causes at
+worst a duplicate `documents` row on retry — never a skipped or
+corrupted catalog entry.
 
 **Scaling assumption.** Because catalog is one object holding _every_
 document's display metadata, adding a single new book means fully

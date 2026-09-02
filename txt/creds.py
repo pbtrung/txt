@@ -3,16 +3,12 @@ import json
 import os
 import secrets
 from dataclasses import dataclass
-from urllib.parse import urlsplit
 
 OWNER_REQUIRED_FIELDS = [
-    "rqlite_admin_username",
-    "rqlite_admin_password",
-    "rqlite_operator_url",
-    "rqlite_control_backup",
-    "firebase_email",
-    "firebase_password",
-    "firebase_api_key",
+    "owner_email",
+    "cf_account_id",
+    "cf_d1_database_id",
+    "cf_d1_api_token",
     "display_name",
     "r2_config",
     "user_root_key",
@@ -30,13 +26,10 @@ class R2Config:
 
 @dataclass
 class OwnerCreds:
-    rqlite_admin_username: str
-    rqlite_admin_password: str
-    rqlite_operator_url: str
-    rqlite_control_backup: str
-    firebase_email: str
-    firebase_password: str
-    firebase_api_key: str
+    owner_email: str
+    cf_account_id: str
+    cf_d1_database_id: str
+    cf_d1_api_token: str
     display_name: str
     r2_config: R2Config
     user_root_key: str
@@ -48,8 +41,9 @@ def load_owner_creds(path: str) -> OwnerCreds:
     if missing:
         raise ValueError(f"Missing fields in creds.json: {', '.join(missing)}")
     values = {key: data[key] for key in OWNER_REQUIRED_FIELDS if key != "r2_config"}
-    values["rqlite_operator_url"] = _operator_url(values["rqlite_operator_url"])
-    values["rqlite_control_backup"] = _r2_prefix(values["rqlite_control_backup"])
+    values["owner_email"] = _require_owner_email(values["owner_email"])
+    for field in ("cf_account_id", "cf_d1_database_id", "cf_d1_api_token"):
+        values[field] = _require_nonempty(field, values[field])
     return OwnerCreds(**values, r2_config=_require_r2_config(data["r2_config"]))
 
 
@@ -62,36 +56,15 @@ def _require_r2_config(value: object) -> R2Config:
     return R2Config(**{name: value[name] for name in R2Config.__annotations__})
 
 
-def _operator_url(value: object) -> str:
-    if not isinstance(value, str):
-        raise ValueError("rqlite_operator_url must be a valid operator URL")
-    parsed = urlsplit(value)
-    _validate_operator_location(parsed)
-    if parsed.username is not None or parsed.password is not None:
-        raise ValueError("rqlite_operator_url must not contain embedded credentials")
-    if parsed.query or parsed.fragment:
-        raise ValueError("rqlite_operator_url must not contain a query or fragment")
+def _require_owner_email(value: object) -> str:
+    if not isinstance(value, str) or "@" not in value or value != value.strip():
+        raise ValueError("owner_email must be a valid email address")
     return value
 
 
-def _validate_operator_location(parsed) -> None:
-    local = parsed.hostname in {"127.0.0.1", "localhost"}
-    secure = parsed.scheme == "https" or (local and parsed.scheme == "http")
-    valid_path = parsed.path.rstrip("/") == "/operator/rqlite"
-    if secure and parsed.netloc and valid_path:
-        return
-    raise ValueError(
-        "rqlite_operator_url must use HTTPS and end with /operator/rqlite; "
-        "localhost HTTP is allowed for development"
-    )
-
-
-def _r2_prefix(value: object) -> str:
-    if not isinstance(value, str) or not value.strip() or value.startswith("/"):
-        raise ValueError(
-            "rqlite_control_backup must be a non-empty R2 object-key prefix "
-            "relative to the bucket"
-        )
+def _require_nonempty(name: str, value: object) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{name} must be a non-empty string")
     return value
 
 

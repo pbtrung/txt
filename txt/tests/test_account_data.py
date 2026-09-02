@@ -1,45 +1,43 @@
 import base64
-import hashlib
 
 import pytest
 
-from txt.account_data import parse_storage_account, storage_binding
+from txt.account_data import parse_owner_account
 
-UID = "uid-user"
-DB_PATH = "a" * 52
 DB_PREFIX = "b" * 52
-DB_MASTER_KEY = b"k" * 256
+USER_HANDLE = b"h" * 32
 
 
 def payload() -> dict:
     return {
-        "db_master_key": base64.b64encode(DB_MASTER_KEY).decode(),
-        "db_path": DB_PATH,
         "db_prefix": DB_PREFIX,
+        "user_handle": base64.b64encode(USER_HANDLE).decode(),
+        "display_name": "Owner",
     }
 
 
-def test_parses_and_binds_valid_storage_account():
-    account = parse_storage_account(UID, payload())
+def test_parses_valid_owner_account():
+    account = parse_owner_account(payload())
 
-    assert account.db_master_key == DB_MASTER_KEY
-    expected = hashlib.sha512((DB_PATH + DB_PREFIX).encode()).digest()
-    assert storage_binding(account) == expected
+    assert account.db_prefix == DB_PREFIX
+    assert account.user_handle == USER_HANDLE
+    assert account.display_name == "Owner"
 
 
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("db_master_key", "not base64!"),
-        ("db_master_key", base64.b64encode(b"short").decode()),
-        ("db_path", "a" * 51),
-        ("db_path", "u" * 52),
+        ("db_prefix", "b" * 51),
         ("db_prefix", "B" * 52),
+        ("user_handle", "not base64!"),
+        ("user_handle", base64.b64encode(b"short").decode()),
+        ("display_name", ""),
+        ("display_name", 5),
     ],
 )
-def test_rejects_invalid_storage_fields(field, value):
+def test_rejects_invalid_fields(field, value):
     invalid = payload()
     invalid[field] = value
 
     with pytest.raises(ValueError, match=field):
-        parse_storage_account(UID, invalid)
+        parse_owner_account(invalid)

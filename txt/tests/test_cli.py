@@ -71,130 +71,46 @@ def test_ingest_without_local_db_dir_or_creds_is_a_usage_error(tmp_path):
     assert "--local-db-dir" in result.output
 
 
-def test_update_db_without_local_db_dir_is_a_usage_error(tmp_path):
-    creds_path = tmp_path / "creds.json"
-    creds_path.write_text("{}")
-    result = CliRunner().invoke(cli, ["--update-db", str(creds_path)])
-    assert result.exit_code != 0
-    assert "--local-db-dir" in result.output
-
-
-def test_clean_db_without_local_db_dir_is_a_usage_error(tmp_path):
-    creds_path = tmp_path / "creds.json"
-    creds_path.write_text("{}")
-    result = CliRunner().invoke(cli, ["--clean-db", str(creds_path)])
-    assert result.exit_code != 0
-    assert "--local-db-dir" in result.output
-
-
-def test_clean_db_passes_local_db_dir_dry_run_and_verbose_to_cleaner(
-    monkeypatch, tmp_path
-):
+def test_ingest_loads_creds_and_runs_ingester(monkeypatch, tmp_path):
     captured = {}
+    creds = object()
 
-    class FakeCleaner:
-        def __init__(self, creds, creds_path, local_db_dir, logger, dry_run):
+    class FakeIngester:
+        def __init__(self, src_dir, local_db_dir, loaded, path, logger):
             captured.update(
-                creds=creds,
-                creds_path=creds_path,
+                src_dir=src_dir,
                 local_db_dir=local_db_dir,
+                creds=loaded,
+                path=path,
                 logger=logger,
-                dry_run=dry_run,
             )
 
         def run(self):
             captured["ran"] = True
 
+    src = tmp_path / "src"
+    src.mkdir()
+    local = tmp_path / "local"
     creds_path = tmp_path / "creds.json"
     creds_path.write_text("{}")
-    local_db_dir = tmp_path / "data"
-    creds = object()
-    monkeypatch.setattr(cli_module, "load_owner_creds", lambda path: creds)
-    monkeypatch.setattr(cli_module, "DbCleaner", FakeCleaner)
+    monkeypatch.setattr(cli_module, "load_owner_creds", lambda value: creds)
+    monkeypatch.setattr(cli_module, "TxtIngester", FakeIngester)
 
     result = CliRunner().invoke(
         cli,
         [
-            "--clean-db",
-            str(creds_path),
+            "--ingest",
+            str(src),
             "--local-db-dir",
-            str(local_db_dir),
-            "--verbose",
-            "--dry-run",
+            str(local),
+            "--creds",
+            str(creds_path),
         ],
     )
 
     assert result.exit_code == 0
     assert captured["creds"] is creds
-    assert captured["creds_path"] == str(creds_path)
-    assert captured["local_db_dir"] == local_db_dir
-    assert captured["logger"].verbose_enabled is True
-    assert captured["dry_run"] is True
     assert captured["ran"] is True
-
-
-def test_clean_bucket_passes_dry_run_and_verbose_to_cleaner(monkeypatch, tmp_path):
-    captured = {}
-
-    class FakeCleaner:
-        def __init__(self, creds, creds_path, logger, dry_run):
-            captured.update(
-                creds=creds, creds_path=creds_path, logger=logger, dry_run=dry_run
-            )
-
-        def run(self):
-            captured["ran"] = True
-
-    creds_path = tmp_path / "creds.json"
-    creds_path.write_text("{}")
-    creds = object()
-    monkeypatch.setattr(cli_module, "load_owner_creds", lambda path: creds)
-    monkeypatch.setattr(cli_module, "BucketCleaner", FakeCleaner)
-    monkeypatch.chdir(tmp_path)
-
-    result = CliRunner().invoke(
-        cli,
-        ["--clean-bucket", str(creds_path), "--verbose", "--dry-run"],
-    )
-
-    assert result.exit_code == 0
-    assert captured["creds"] is creds
-    assert captured["creds_path"] == str(creds_path)
-    assert captured["logger"].verbose_enabled is True
-    assert captured["dry_run"] is True
-    assert captured["ran"] is True
-    assert "Logging bucket cleanup to run.log" in (tmp_path / "run.log").read_text()
-
-
-def test_update_rql_loads_creds_and_runs_updater(monkeypatch, tmp_path):
-    captured = {}
-
-    class FakeUpdater:
-        def __init__(self, creds, logger):
-            captured.update(creds=creds, logger=logger)
-
-        def run(self):
-            captured["ran"] = True
-
-    creds_path = tmp_path / "creds.json"
-    creds_path.write_text("{}")
-    creds = object()
-    monkeypatch.setattr(cli_module, "load_owner_creds", lambda path: creds)
-    monkeypatch.setattr(cli_module, "RqliteUpdater", FakeUpdater)
-
-    result = CliRunner().invoke(cli, ["--update-rql", str(creds_path), "--verbose"])
-
-    assert result.exit_code == 0
-    assert captured["creds"] is creds
-    assert captured["logger"].verbose_enabled is True
-    assert captured["ran"] is True
-
-
-def test_dry_run_without_clean_bucket_or_clean_db_is_a_usage_error():
-    result = CliRunner().invoke(cli, ["--dry-run"])
-
-    assert result.exit_code != 0
-    assert "--dry-run requires --clean-bucket or --clean-db" in result.output
 
 
 def test_rejects_multiple_primary_commands(tmp_path):

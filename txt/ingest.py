@@ -1,66 +1,53 @@
+"""--ingest: uploads each new *.epub in a directory as an encrypted R2
+object and writes its documents/key_store rows directly to D1
+(txt/d1_client.py) -- not through the Worker's ticket/proof-gated
+endpoints, which are designed for ephemeral browser sessions rather than
+a long-running batch tool with its own Cloudflare API token
+(docs/data_model.md §2.1).
+
+Recovery: a local JSON checkpoint (`{db_prefix}.ingest-checkpoint.json`
+in --local-db-dir) records `{filename: document_id}` for every file whose
+D1 rows have been written, saved immediately after that insert and
+before the catalog rewrite. A run killed between the two steps resumes
+from the checkpoint without re-uploading or re-inserting; the catalog
+itself is also checked against by filename first, so a lost checkpoint
+still can't silently skip files whose catalog entry already exists.
+"""
+
+import base64
 import json
 import secrets
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import brotli
 
-from .account_data import StorageAccount, parse_storage_account
+from .account_data import parse_owner_account
 from .creds import OwnerCreds
 from .crypto_blob import CryptoBlob
-from .database_schema import ensure_database_schema
+from .d1_client import D1Client
+from .leancrypto_wasm import LeancryptoEngine
 from .logger import Logger
 from .opf import catalog_fields, find_opf_sidecar, parse_opf_metadata
 from .owner_init import OwnerInitializer
-from .r2_client import R2Client, R2DownloadError
+from .r2_client import R2Client
 from .random_token import to_base32_crockford
-from .sqlite_engine import SqliteEngine
 
-DOWNLOAD_ATTEMPTS = 3
-DOWNLOAD_PROGRESS_INTERVAL = 1
-DOWNLOAD_READ_TIMEOUT = 15
-DOWNLOAD_RETRY_DELAYS = (1, 2)
+CATALOG_QUERY = "SELECT key_id, catalog_blob FROM catalog WHERE singleton = 1"
 
 
-class DownloadProgressLogger:
-    def __init__(self, logger: Logger, attempt: int):
-        self.logger = logger
-        self.attempt = attempt
-        self.started = time.monotonic()
-        self.last_progress = self.started
-        self.reported_body = False
+@dataclass
+class CatalogState:
+    existing_key_id: int | None
+    row_key: bytes
+    catalog_key: bytes
+    catalog_path: str
+    entries: list[dict]
+    covered_ids: set = field(default_factory=set)
 
-    def __call__(self, downloaded: int, total: int | None) -> None:
-        now = time.monotonic()
-        elapsed = now - self.started
-        if downloaded == 0:
-            self.logger.verbose(self._response_message(total))
-            return
-        if not self._should_report(downloaded, total, now):
-            return
-        self.logger.verbose(self._progress_message(downloaded, total, elapsed))
-        self.reported_body = True
-        self.last_progress = now
-
-    def _should_report(self, downloaded: int, total: int | None, now: float) -> bool:
-        complete = total is not None and downloaded >= total
-        return (
-            not self.reported_body
-            or complete
-            or now - self.last_progress >= DOWNLOAD_PROGRESS_INTERVAL
-        )
-
-    def _response_message(self, total: int | None) -> str:
-        size = _format_bytes(total) if total is not None else "unknown size"
-        return f"Current db download attempt {self.attempt}: response received, {size}."
-
-    def _progress_message(self, downloaded: int, total: int | None, elapsed) -> str:
-        amount = _download_amount(downloaded, total)
-        rate = _format_bytes(downloaded / elapsed) if elapsed > 0 else "unknown"
-        return (
-            f"Current db download attempt {self.attempt}: {amount} in "
-            f"{elapsed:.1f}s ({rate}/s)."
-        )
+    def __post_init__(self):
+        self.covered_ids = {entry["document_id"] for entry in self.entries}
 
 
 class TxtIngester:
@@ -71,142 +58,192 @@ class TxtIngester:
         creds: OwnerCreds,
         creds_path: str,
         logger: Logger,
+        *,
+        engine: LeancryptoEngine | None = None,
+        d1: D1Client | None = None,
+        r2: R2Client | None = None,
     ):
-        self.src_dir, self.local_db_dir = src_dir, local_db_dir
-        self.logger = logger
-        self.owner = OwnerInitializer(creds, creds_path, logger)
-        self.r2 = R2Client(creds.r2_config, read_timeout=DOWNLOAD_READ_TIMEOUT)
-        self.engine = SqliteEngine()
-        self.blob = CryptoBlob(self.engine)
-        self._reset_run_state()
+        self.src_dir, self.local_db_dir, self.logger = src_dir, local_db_dir, logger
+        self._set_services(creds, creds_path, logger, engine, d1, r2)
 
-    def _reset_run_state(self) -> None:
-        self.account: StorageAccount | None = None
-        self.local_path: Path | None = None
-        self.db_etag: str | None = None
-        self.db_exists = False
-        self.dirty = False
+    def _set_services(self, creds, creds_path, logger, engine, d1, r2) -> None:
+        self.engine = engine or LeancryptoEngine()
+        self.owner = OwnerInitializer(
+            creds, creds_path, logger, engine=self.engine, d1=d1
+        )
+        self.r2 = r2 or R2Client(creds.r2_config)
+        self.blob = CryptoBlob(self.engine)
+        self.d1: D1Client = self.owner.d1
+        self.umk = self.account = self.checkpoint_path = None
+        self.checkpoint = {}
 
     def run(self) -> None:
         self._prepare_run()
-        self._open_local_db()
-        try:
-            self._ingest_open_database()
-        finally:
-            self.engine.close()
-        self.logger.info(f"Ingest complete: db_path={self.account.db_path}")
+        self._ingest_all()
+        self.logger.info(f"Ingest complete: db_prefix={self.account.db_prefix}")
 
     def _prepare_run(self) -> None:
-        uid, _umk, payload = self.owner.load_current_owner()
-        self.account = parse_storage_account(uid, payload)
+        self.umk, payload = self.owner.load_current_owner()
+        self.account = parse_owner_account(payload)
         self.local_db_dir.mkdir(parents=True, exist_ok=True)
-        self.local_path = self.local_db_dir / self.account.db_path
+        self.checkpoint_path = (
+            self.local_db_dir / f"{self.account.db_prefix}.ingest-checkpoint.json"
+        )
+        self.checkpoint = _load_checkpoint(self.checkpoint_path)
         self.logger.info(
-            f"db_path={self.account.db_path} db_prefix={self.account.db_prefix} "
-            f"local={self.local_path}"
+            f"db_prefix={self.account.db_prefix} local={self.local_db_dir}"
         )
-
-    def _ingest_open_database(self) -> None:
-        self._ensure_schema()
-        self._ingest_all()
-        self._finish()
-
-    def _open_local_db(self) -> None:
-        initial_bytes = self._load_initial_bytes()
-        self.engine.open(self.account.db_master_key, initial_bytes=initial_bytes)
-
-    def _load_initial_bytes(self) -> bytes | None:
-        remote = self._download_current_db()
-        self.db_exists = remote is not None
-        self.db_etag = remote.etag if remote is not None else None
-        self.dirty = remote is None
-        self.logger.verbose(
-            f"Downloaded current db: {_format_bytes(len(remote.body))}, "
-            f"etag={remote.etag}."
-            if remote
-            else "No remote db, starting fresh."
-        )
-        return remote.body if remote is not None else None
-
-    def _download_current_db(self):
-        key = self.account.db_path
-        for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
-            self.logger.verbose(
-                f"Downloading current db {key} from R2 "
-                f"(attempt {attempt}/{DOWNLOAD_ATTEMPTS}, "
-                f"{DOWNLOAD_READ_TIMEOUT}s read timeout)..."
-            )
-            try:
-                return self.r2.get_object_with_etag(
-                    key, on_progress=DownloadProgressLogger(self.logger, attempt)
-                )
-            except R2DownloadError as error:
-                self._retry_download(error, attempt)
-
-    def _retry_download(self, error: R2DownloadError, attempt: int) -> None:
-        if attempt == DOWNLOAD_ATTEMPTS:
-            raise RuntimeError(
-                f"Downloading current db failed after {DOWNLOAD_ATTEMPTS} attempts: "
-                f"{error}"
-            ) from error
-        delay = DOWNLOAD_RETRY_DELAYS[attempt - 1]
-        self.logger.info(f"{error}; retrying in {delay}s...")
-        time.sleep(delay)
-
-    def _ensure_schema(self) -> None:
-        self.dirty = ensure_database_schema(self.engine) or self.dirty
-
-    def _existing_names(self) -> set:
-        return {
-            json.loads(brotli.decompress(row[0]))["name"]
-            for row in self.engine.query("SELECT catalog FROM txt")
-        }
 
     def _ingest_all(self) -> None:
-        existing = self._existing_names()
+        state = self._load_catalog_state()
+        to_process = self._files_to_process(state)
+        total = len(list(self.src_dir.glob("*.epub")))
+        changed = self._process_files(to_process, total, state)
+        if changed:
+            self._publish_catalog(state)
+        else:
+            self.logger.verbose(
+                "Catalog already reflects every document; no upload needed."
+            )
+
+    def _files_to_process(self, state: CatalogState) -> list[Path]:
+        existing_names = {entry["catalog"]["name"] for entry in state.entries}
         all_paths = sorted(self.src_dir.glob("*.epub"))
-        to_process = [p for p in all_paths if p.name not in existing]
-        total = len(all_paths)
+        to_process = [p for p in all_paths if p.name not in existing_names]
         self.logger.info(
-            f"{len(to_process)} file(s) to ingest, {total - len(to_process)} "
-            f"already done, {total} total"
+            f"{len(to_process)} file(s) to ingest, "
+            f"{len(all_paths) - len(to_process)} already done, {len(all_paths)} total"
         )
+        return to_process
+
+    def _process_files(
+        self, to_process: list[Path], total: int, state: CatalogState
+    ) -> bool:
+        changed = False
         processed = total - len(to_process)
         for epub_path in to_process:
             processed += 1
-            self._ingest_file(epub_path, processed, total)
+            document_id = self._ensure_document(epub_path, processed, total)
+            if document_id not in state.covered_ids:
+                self._add_catalog_entry(state, document_id, epub_path)
+                changed = True
+        return changed
 
-    def _ingest_file(self, epub_path: Path, processed: int, total: int) -> None:
-        data = epub_path.read_bytes()
-        txt_key = secrets.token_bytes(128)
-        txt_prefix, path = secrets.token_bytes(32), secrets.token_bytes(32)
-        key = self._object_key(txt_prefix, path)
-        self.r2.put_object(key, self.blob.encrypt(data, txt_key))
-        self._insert_txt_row(epub_path, txt_key, txt_prefix, path)
-        self.dirty = True
-        self.local_path.write_bytes(self.engine.to_bytes())
-        self.logger.info(
-            f"[{processed}/{total}] {epub_path.name} ({len(data)} byte(s)) -> {key} "
-            f"db_path={self.account.db_path} db_prefix={self.account.db_prefix}"
-        )
-
-    def _object_key(self, txt_prefix: bytes, path: bytes) -> str:
-        return (
-            f"{self.account.db_prefix}/{to_base32_crockford(txt_prefix)}"
-            f"/{to_base32_crockford(path)}"
-        )
-
-    def _insert_txt_row(
-        self, epub_path: Path, txt_key: bytes, txt_prefix: bytes, path: bytes
+    def _add_catalog_entry(
+        self, state: CatalogState, document_id: int, epub_path: Path
     ) -> None:
-        now = int(time.time() * 1000)
-        payload = self._catalog_payload(epub_path)
-        catalog = brotli.compress(json.dumps(payload).encode())
-        self.engine.execute(
-            "INSERT INTO txt (txt_key, txt_prefix, path, catalog, last_accessed, "
-            "created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            [txt_key, txt_prefix, path, catalog, 0, now],
+        state.entries.append(
+            {"document_id": document_id, "catalog": self._catalog_payload(epub_path)}
         )
+        state.covered_ids.add(document_id)
+
+    def _ensure_document(self, epub_path: Path, processed: int, total: int) -> int:
+        name = epub_path.name
+        if name in self.checkpoint:
+            self.logger.verbose(
+                f"[{processed}/{total}] {name}: already in D1, "
+                "reconciling catalog only."
+            )
+            return self.checkpoint[name]
+        document_id = self._insert_new_document(epub_path, processed, total)
+        self.checkpoint[name] = document_id
+        _save_checkpoint(self.checkpoint_path, self.checkpoint)
+        return document_id
+
+    def _insert_new_document(self, epub_path: Path, processed: int, total: int) -> int:
+        data = epub_path.read_bytes()
+        content_key = secrets.token_bytes(128)
+        path = to_base32_crockford(secrets.token_bytes(32))
+        object_key = self._upload_content(path, data, content_key)
+        document_id = self._insert_document_and_keys(path, content_key)
+        self.logger.info(
+            f"[{processed}/{total}] {epub_path.name} ({len(data)} byte(s)) -> "
+            f"{object_key} document_id={document_id}"
+        )
+        return document_id
+
+    def _upload_content(self, path: str, data: bytes, content_key: bytes) -> str:
+        object_key = f"{self.account.db_prefix}/documents/{path}"
+        self.r2.put_object(
+            object_key, self.blob.encrypt(data, content_key), if_none_match=True
+        )
+        return object_key
+
+    def _insert_document_and_keys(self, path: str, content_key: bytes) -> int:
+        content_row_key = secrets.token_bytes(128)
+        access_row_key = secrets.token_bytes(128)
+        content_key_id, access_key_id = self._insert_row_keys(
+            content_row_key, access_row_key
+        )
+        content_blob = self._content_blob(path, content_key, content_row_key)
+        access_blob = self.blob.encrypt_json(
+            {"last_accessed": 0, "last_cfi": None}, access_row_key
+        )
+        return self._insert_document_row_or_cleanup(
+            content_key_id, content_blob, access_key_id, access_blob
+        )
+
+    def _insert_row_keys(
+        self, content_row_key: bytes, access_row_key: bytes
+    ) -> tuple[int, int]:
+        content_key_id = self._insert_key(
+            "content_key", self.blob.encrypt(content_row_key, self.umk)
+        )
+        access_key_id = self._insert_key(
+            "access_key", self.blob.encrypt(access_row_key, self.umk)
+        )
+        return content_key_id, access_key_id
+
+    def _content_blob(
+        self, path: str, content_key: bytes, content_row_key: bytes
+    ) -> bytes:
+        return self.blob.encrypt_json(
+            {"content_key": base64.b64encode(content_key).decode(), "path": path},
+            content_row_key,
+        )
+
+    def _insert_document_row_or_cleanup(
+        self,
+        content_key_id: int,
+        content_blob: bytes,
+        access_key_id: int,
+        access_blob: bytes,
+    ) -> int:
+        try:
+            return self._insert_document_row(
+                content_key_id, content_blob, access_key_id, access_blob
+            )
+        except Exception:
+            self._delete_key(content_key_id)
+            self._delete_key(access_key_id)
+            raise
+
+    def _insert_key(self, purpose: str, wrapped_key: bytes) -> int:
+        result = self.d1.execute(
+            f"INSERT INTO key_store (purpose, wrapped_key, created_at) "
+            f"VALUES (?, unhex(?), {_now_ms()})",
+            [purpose, wrapped_key],
+        )
+        return result["meta"]["last_row_id"]
+
+    def _insert_document_row(
+        self,
+        content_key_id: int,
+        content_blob: bytes,
+        access_key_id: int,
+        access_blob: bytes,
+    ) -> int:
+        result = self.d1.execute(
+            "INSERT INTO documents "
+            "(created_at, content_key_id, content_blob, access_key_id, access_blob) "
+            f"VALUES ({_now_ms()}, {content_key_id}, unhex(?), "
+            f"{access_key_id}, unhex(?))",
+            [content_blob, access_blob],
+        )
+        return result["meta"]["last_row_id"]
+
+    def _delete_key(self, key_id: int) -> None:
+        self.d1.execute(f"DELETE FROM key_store WHERE id = {key_id}")
 
     def _catalog_payload(self, epub_path: Path) -> dict:
         """{name, title, authors, subjects, publisher} -- just what the
@@ -218,40 +255,99 @@ class TxtIngester:
         opf_metadata = parse_opf_metadata(opf_path) if opf_path is not None else {}
         return {"name": epub_path.name, **catalog_fields(opf_metadata, epub_path.name)}
 
-    def _finish(self) -> None:
-        data = self._final_database_bytes()
-        self.local_path.write_bytes(data)
-        self._upload_database(data)
+    def _load_catalog_state(self) -> CatalogState:
+        row = self.d1.query_one(CATALOG_QUERY)
+        if row is None:
+            return CatalogState(
+                None,
+                secrets.token_bytes(128),
+                secrets.token_bytes(128),
+                _new_path(),
+                [],
+            )
+        return self._load_existing_catalog_state(row)
 
-    def _final_database_bytes(self) -> bytes:
-        if self.dirty:
-            self.logger.verbose("Vacuuming local db...")
-            self.engine.vacuum()
-        return self.engine.to_bytes()
+    def _load_existing_catalog_state(self, row: dict) -> CatalogState:
+        row_key = self._unwrap_key(row["key_id"])
+        pointer = self.blob.decrypt_json(row["catalog_blob"], row_key)
+        catalog_key = base64.b64decode(pointer["catalog_key"])
+        catalog_path = pointer["catalog_path"]
+        entries = self._download_catalog_entries(catalog_path, catalog_key)
+        return CatalogState(row["key_id"], row_key, catalog_key, catalog_path, entries)
 
-    def _upload_database(self, data: bytes) -> None:
-        if not self.dirty:
-            self.logger.verbose("Database unchanged; no upload needed.")
-            return
-        self.logger.verbose(f"Uploading local db to {self.account.db_path}...")
-        self.r2.put_object(
-            self.account.db_path,
-            data,
-            if_match=self.db_etag if self.db_exists else None,
-            if_none_match=not self.db_exists,
+    def _download_catalog_entries(
+        self, catalog_path: str, catalog_key: bytes
+    ) -> list[dict]:
+        object_key = f"{self.account.db_prefix}/catalog/{catalog_path}"
+        data = self.r2.get_object(object_key)
+        if data is None:
+            return []
+        return json.loads(brotli.decompress(self.blob.decrypt(data, catalog_key)))
+
+    def _unwrap_key(self, key_id: int) -> bytes:
+        row = self.d1.query_one(
+            f"SELECT wrapped_key FROM key_store WHERE id = {key_id}"
+        )
+        return self.blob.decrypt(row["wrapped_key"], self.umk)
+
+    def _publish_catalog(self, state: CatalogState) -> None:
+        self._upload_catalog_object(state)
+        catalog_blob = self._catalog_pointer_blob(state)
+        if state.existing_key_id is None:
+            self._create_catalog_row(state, catalog_blob)
+        else:
+            self._update_catalog_row(state.existing_key_id, catalog_blob)
+
+    def _upload_catalog_object(self, state: CatalogState) -> None:
+        object_key = f"{self.account.db_prefix}/catalog/{state.catalog_path}"
+        data = self.blob.encrypt(
+            brotli.compress(json.dumps(state.entries).encode()), state.catalog_key
+        )
+        self.logger.verbose(
+            f"Uploading catalog ({len(state.entries)} entries) to {object_key}..."
+        )
+        self.r2.put_object(object_key, data)
+
+    def _catalog_pointer_blob(self, state: CatalogState) -> bytes:
+        return self.blob.encrypt_json(
+            {
+                "catalog_key": base64.b64encode(state.catalog_key).decode(),
+                "catalog_path": state.catalog_path,
+            },
+            state.row_key,
+        )
+
+    def _create_catalog_row(self, state: CatalogState, catalog_blob: bytes) -> None:
+        key_id = self._insert_key(
+            "catalog_key", self.blob.encrypt(state.row_key, self.umk)
+        )
+        self.d1.execute(
+            "INSERT INTO catalog (singleton, key_id, catalog_blob, updated_at) "
+            f"VALUES (1, {key_id}, unhex(?), {_now_ms()})",
+            [catalog_blob],
+        )
+
+    def _update_catalog_row(self, key_id: int, catalog_blob: bytes) -> None:
+        self.d1.execute(
+            f"UPDATE catalog SET catalog_blob = unhex(?), updated_at = {_now_ms()} "
+            f"WHERE singleton = 1 AND key_id = {key_id}",
+            [catalog_blob],
         )
 
 
-def _download_amount(downloaded: int, total: int | None) -> str:
-    if total is None:
-        return f"{_format_bytes(downloaded)} downloaded"
-    percent = downloaded / total * 100 if total else 100
-    return f"{_format_bytes(downloaded)}/{_format_bytes(total)} ({percent:.1f}%)"
+def _now_ms() -> int:
+    return int(time.time() * 1000)
 
 
-def _format_bytes(value: int | float) -> str:
-    if value >= 1024 * 1024:
-        return f"{value / (1024 * 1024):.1f} MiB"
-    if value >= 1024:
-        return f"{value / 1024:.1f} KiB"
-    return f"{value:.0f} B"
+def _new_path() -> str:
+    return to_base32_crockford(secrets.token_bytes(32))
+
+
+def _load_checkpoint(path: Path) -> dict[str, int]:
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text())
+
+
+def _save_checkpoint(path: Path, checkpoint: dict[str, int]) -> None:
+    path.write_text(json.dumps(checkpoint, indent=2) + "\n")

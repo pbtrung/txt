@@ -8,13 +8,10 @@ import pytest
 from txt.creds import ensure_user_root_key, load_owner_creds
 
 VALID_OWNER = {
-    "rqlite_admin_username": "operator",
-    "rqlite_admin_password": "secret",
-    "rqlite_operator_url": "https://api.example.com/operator/rqlite",
-    "rqlite_control_backup": "private/rqlite/",
-    "firebase_email": "a@b.com",
-    "firebase_password": "pw",
-    "firebase_api_key": "key",
+    "owner_email": "owner@example.com",
+    "cf_account_id": "acct123",
+    "cf_d1_database_id": "db456",
+    "cf_d1_api_token": "token789",
     "display_name": "Owner",
     "r2_config": {
         "endpoint": "https://account.r2.cloudflarestorage.com",
@@ -36,17 +33,17 @@ def owner_creds_path(tmp_path):
 
 def test_load_owner_creds_rejects_missing_fields(tmp_path):
     path = tmp_path / "owner_creds.json"
-    path.write_text(json.dumps({"firebase_email": "a@b.com"}))
+    path.write_text(json.dumps({"owner_email": "a@b.com"}))
     with pytest.raises(ValueError):
         load_owner_creds(str(path))
 
 
-def test_load_owner_creds_reads_operator_and_deployment_fields(owner_creds_path):
+def test_load_owner_creds_reads_owner_and_d1_fields(owner_creds_path):
     creds = load_owner_creds(owner_creds_path)
-    assert creds.firebase_email == "a@b.com"
-    assert creds.rqlite_admin_username == "operator"
-    assert creds.rqlite_operator_url.endswith("/operator/rqlite")
-    assert creds.rqlite_control_backup == "private/rqlite/"
+    assert creds.owner_email == "owner@example.com"
+    assert creds.cf_account_id == "acct123"
+    assert creds.cf_d1_database_id == "db456"
+    assert creds.cf_d1_api_token == "token789"
 
 
 def test_load_owner_creds_ignores_legacy_extra_fields(tmp_path):
@@ -61,28 +58,22 @@ def test_load_owner_creds_ignores_legacy_extra_fields(tmp_path):
     assert not hasattr(creds.r2_config, "read_only_access_key_id")
 
 
-def test_load_owner_creds_rejects_service_origin_without_operator_route(tmp_path):
+def test_load_owner_creds_rejects_malformed_owner_email(tmp_path):
     path = tmp_path / "owner_creds.json"
-    path.write_text(
-        json.dumps({**VALID_OWNER, "rqlite_operator_url": "https://api.example.com"})
-    )
+    path.write_text(json.dumps({**VALID_OWNER, "owner_email": "not-an-email"}))
 
-    with pytest.raises(ValueError, match="end with /operator/rqlite"):
+    with pytest.raises(ValueError, match="owner_email"):
         load_owner_creds(str(path))
 
 
 @pytest.mark.parametrize(
-    "url",
-    [
-        "http://api.example.com/operator/rqlite",
-        "https://user:password@api.example.com/operator/rqlite",
-    ],
+    "field", ["cf_account_id", "cf_d1_database_id", "cf_d1_api_token"]
 )
-def test_load_owner_creds_rejects_unsafe_operator_urls(tmp_path, url):
+def test_load_owner_creds_rejects_empty_cloudflare_fields(tmp_path, field):
     path = tmp_path / "owner_creds.json"
-    path.write_text(json.dumps({**VALID_OWNER, "rqlite_operator_url": url}))
+    path.write_text(json.dumps({**VALID_OWNER, field: "  "}))
 
-    with pytest.raises(ValueError, match="rqlite_operator_url"):
+    with pytest.raises(ValueError, match=field):
         load_owner_creds(str(path))
 
 
@@ -90,15 +81,6 @@ def test_load_owner_creds_rejects_incomplete_r2_config(tmp_path):
     path = tmp_path / "owner_creds.json"
     path.write_text(json.dumps({**VALID_OWNER, "r2_config": {"bucket": "books"}}))
     with pytest.raises(ValueError, match="Missing r2_config fields"):
-        load_owner_creds(str(path))
-
-
-@pytest.mark.parametrize("prefix", ["", "   ", "/control-backups/"])
-def test_load_owner_creds_rejects_invalid_control_backup_prefix(tmp_path, prefix):
-    path = tmp_path / "owner_creds.json"
-    path.write_text(json.dumps({**VALID_OWNER, "rqlite_control_backup": prefix}))
-
-    with pytest.raises(ValueError, match="rqlite_control_backup"):
         load_owner_creds(str(path))
 
 

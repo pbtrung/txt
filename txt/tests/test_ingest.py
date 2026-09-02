@@ -1,129 +1,126 @@
 import base64
 import json
-import secrets
-import xml.etree.ElementTree as ET
-import zipfile
+import re
 
 import brotli
 import pytest
 
-import txt.database_schema as schema_module
-import txt.ingest as ingest_module
-from txt.account_data import StorageAccount
 from txt.creds import OwnerCreds, R2Config
+from txt.crypto_blob import CryptoBlob
 from txt.ingest import TxtIngester
-from txt.r2_client import R2DownloadError, R2Object, R2PreconditionFailed
-from txt.sqlite_engine import SqliteEngine
+from txt.owner_init import OwnerInitializer
+
+OWNER_EMAIL = "owner@example.com"
+
+# Matches owner_init.py's _insert_owner() positional param order.
+OWNER_PARAM_FIELDS = [
+    "owner_email_hash",
+    "db_prefix_hash",
+    "user_handle_hash",
+    "wrapped_umk",
+    "kem_public_key",
+    "wrapped_kem_private_key",
+    "sign_algorithm",
+    "sign_public_key",
+    "wrapped_sign_private_key",
+    "encrypted_credentials",
+]
 
 
 class NullLogger:
-    def verbose(self, message):
+    def verbose(self, _message):
         pass
 
-    def info(self, message):
+    def info(self, _message):
         pass
 
 
-class RecordingLogger:
+class FakeD1:
+    """A minimal in-memory stand-in matching exactly the SQL shapes
+    owner_init.py and ingest.py issue -- not a general SQL engine."""
+
     def __init__(self):
-        self.verbose_messages = []
-        self.info_messages = []
+        self.owner = None
+        self.key_store = {}
+        self.documents = {}
+        self.catalog = None
+        self._next_id = 1
 
-    def verbose(self, message):
-        self.verbose_messages.append(message)
+    def _alloc_id(self) -> int:
+        id_ = self._next_id
+        self._next_id += 1
+        return id_
 
-    def info(self, message):
-        self.info_messages.append(message)
+    def query_one(self, sql, _params=None):
+        if "FROM owner" in sql:
+            return self.owner
+        if sql.startswith("SELECT key_id, catalog_blob FROM catalog"):
+            return self.catalog
+        if sql.startswith("SELECT wrapped_key FROM key_store"):
+            key_id = int(re.search(r"id = (\d+)", sql).group(1))
+            row = self.key_store.get(key_id)
+            return {"wrapped_key": row["wrapped_key"]} if row else None
+        raise AssertionError(f"unexpected query_one: {sql}")
 
-
-ACCOUNT = StorageAccount(
-    uid="uid-123",
-    db_master_key=secrets.token_bytes(256),
-    db_path="d" * 52,
-    db_prefix="p" * 52,
-)
-
-ACCOUNT_PAYLOAD = {
-    "user_handle": base64.b64encode(secrets.token_bytes(32)).decode(),
-    "display_name": "Trung",
-    "db_master_key": base64.b64encode(ACCOUNT.db_master_key).decode(),
-    "db_path": ACCOUNT.db_path,
-    "db_prefix": ACCOUNT.db_prefix,
-}
-
-
-class FakeOwnerInitializer:
-    def __init__(self, creds, creds_path, logger):
-        pass
-
-    def load_current_owner(self):
-        return ACCOUNT.uid, b"u" * 128, ACCOUNT_PAYLOAD
+    def execute(self, sql, params=None):
+        sql = sql.strip()
+        if sql.startswith("INSERT INTO owner"):
+            self.owner = dict(zip(OWNER_PARAM_FIELDS, params, strict=True))
+            self.owner["sign_version"] = 1
+            return {"meta": {}}
+        if sql.startswith("INSERT INTO key_store"):
+            purpose, wrapped_key = params
+            id_ = self._alloc_id()
+            self.key_store[id_] = {"purpose": purpose, "wrapped_key": wrapped_key}
+            return {"meta": {"last_row_id": id_}}
+        if sql.startswith("DELETE FROM key_store"):
+            key_id = int(re.search(r"id = (\d+)", sql).group(1))
+            self.key_store.pop(key_id, None)
+            return {"meta": {}}
+        if sql.startswith("INSERT INTO documents"):
+            content_blob, access_blob = params
+            match = re.search(
+                r"VALUES \(\d+, (\d+), unhex\(\?\), (\d+), unhex\(\?\)\)", sql
+            )
+            id_ = self._alloc_id()
+            self.documents[id_] = {
+                "content_key_id": int(match.group(1)),
+                "content_blob": content_blob,
+                "access_key_id": int(match.group(2)),
+                "access_blob": access_blob,
+            }
+            return {"meta": {"last_row_id": id_}}
+        if sql.startswith("INSERT INTO catalog"):
+            (catalog_blob,) = params
+            key_id = int(re.search(r"VALUES \(1, (\d+),", sql).group(1))
+            self.catalog = {"key_id": key_id, "catalog_blob": catalog_blob}
+            return {"meta": {}}
+        if sql.startswith("UPDATE catalog"):
+            (catalog_blob,) = params
+            self.catalog["catalog_blob"] = catalog_blob
+            return {"meta": {}}
+        raise AssertionError(f"unexpected execute: {sql}")
 
 
 class FakeR2Client:
-    objects = {}
-    versions = {}
-    conflict_keys = set()
-    download_failures = 0
-
-    def __init__(self, config, read_timeout=None):
+    def __init__(self, _config, read_timeout=None):
         self.read_timeout = read_timeout
+        self.objects = {}
         self.put_calls = []
-        self.put_conditions = []
-
-    def get_object_with_etag(self, key, on_progress=None):
-        if key not in self.objects:
-            return None
-        body = self.objects[key]
-        if on_progress is not None:
-            on_progress(0, len(body))
-        if self.download_failures:
-            FakeR2Client.download_failures -= 1
-            raise R2DownloadError(key, 0, len(body), TimeoutError("slow response"))
-        version = self.versions.setdefault(key, 1)
-        if on_progress is not None:
-            on_progress(len(body), len(body))
-        return R2Object(body, f'"v{version}"')
 
     def get_object(self, key):
         return self.objects.get(key)
 
     def put_object(self, key, body, *, if_match=None, if_none_match=False):
-        if key in self.conflict_keys:
-            self.conflict_keys.remove(key)
-            self.versions[key] = self.versions.get(key, 1) + 1
-        current = self.objects.get(key)
-        current_etag = (
-            f'"v{self.versions.setdefault(key, 1)}"' if current is not None else None
-        )
-        if if_match is not None and if_match != current_etag:
-            raise R2PreconditionFailed("conflicted with a newer object")
-        if if_none_match and current is not None:
-            raise R2PreconditionFailed("conflicted with a newer object")
         self.put_calls.append((key, body))
-        self.put_conditions.append((key, if_match, if_none_match))
         self.objects[key] = body
-        self.versions[key] = self.versions.get(key, 0) + 1
-
-
-@pytest.fixture(autouse=True)
-def patch_clients(monkeypatch):
-    monkeypatch.setattr(ingest_module, "OwnerInitializer", FakeOwnerInitializer)
-    monkeypatch.setattr(ingest_module, "R2Client", FakeR2Client)
-    FakeR2Client.objects = {}
-    FakeR2Client.versions = {}
-    FakeR2Client.conflict_keys = set()
-    FakeR2Client.download_failures = 0
 
 
 CREDS = OwnerCreds(
-    rqlite_admin_username="operator",
-    rqlite_admin_password="secret",
-    rqlite_operator_url="https://api.example.com/operator/rqlite",
-    rqlite_control_backup="control-backups/",
-    firebase_email="a@b.com",
-    firebase_password="pw",
-    firebase_api_key="key",
+    owner_email=OWNER_EMAIL,
+    cf_account_id="acct123",
+    cf_d1_database_id="db456",
+    cf_d1_api_token="token789",
     display_name="Trung",
     r2_config=R2Config(
         endpoint="https://account.r2.cloudflarestorage.com",
@@ -132,95 +129,56 @@ CREDS = OwnerCreds(
         region="auto",
         bucket="books",
     ),
-    user_root_key="ignored-by-fake-initializer",
+    user_root_key=base64.b64encode(b"k" * 256).decode(),
 )
 CREDS_PATH = "unused-creds-path.json"
 
 
+@pytest.fixture
+def d1(engine):
+    fake = FakeD1()
+    OwnerInitializer(CREDS, CREDS_PATH, NullLogger(), engine=engine, d1=fake).run()
+    return fake
+
+
 def _write_epub(path, content=b"epub bytes"):
-    with zipfile.ZipFile(path, "w") as zf:
-        zf.writestr("mimetype", "application/epub+zip")
-        zf.writestr("content.opf", "<package><metadata/></package>")
-    path.write_bytes(path.read_bytes() + content)  # pad so different epubs differ
+    path.write_bytes(b"PK\x03\x04mimetypeapplication/epub+zip" + content)
 
 
-def _reopen(local_path):
-    # run() closes its own engine at the end, so verification reopens a
-    # fresh, independent engine rather than reusing it. SQLCipher's page-1
-    # salt overwrites the bytes SQLite would otherwise auto-detect the page
-    # size from, so the pragma must be reissued (matching ingest.py's own
-    # _ensure_schema, which does this on every run) before any other read.
-    engine = SqliteEngine()
-    engine.open(ACCOUNT.db_master_key, initial_bytes=local_path.read_bytes())
-    engine.exec_sql(schema_module.SET_PAGE_SIZE_SQL)
-    return engine
+def _ingester(src, local, d1, r2, engine, logger=None):
+    return TxtIngester(
+        src,
+        local,
+        CREDS,
+        CREDS_PATH,
+        logger or NullLogger(),
+        engine=engine,
+        d1=d1,
+        r2=r2,
+    )
 
 
-def _txt_rows_from_disk(local_path):
-    engine = _reopen(local_path)
-    try:
-        return [
-            json.loads(brotli.decompress(row[0]))
-            for row in engine.query("SELECT catalog FROM txt")
-        ]
-    finally:
-        engine.close()
-
-
-def test_fresh_database_gets_16kib_page_size(tmp_path):
-    src, local = tmp_path / "src", tmp_path / "local"
-    src.mkdir()
-    _write_epub(src / "a.epub")
-
-    ingester = TxtIngester(src, local, CREDS, CREDS_PATH, NullLogger())
-    ingester.run()
-
-    engine = _reopen(local / ACCOUNT.db_path)
-    try:
-        assert int(engine.query("PRAGMA page_size")[0][0]) == 16384
-        assert "last_cfi" in {row[1] for row in engine.query("PRAGMA table_info(txt)")}
-        bookmark_columns = {
-            row[1] for row in engine.query("PRAGMA table_info(txt_bookmarks)")
-        }
-        assert "cfi" in bookmark_columns
-        assert "page_number" in bookmark_columns
-        assert "line" not in bookmark_columns
-        [(bookmark_sql,)] = engine.query(
-            "SELECT sql FROM sqlite_master "
-            "WHERE type = 'table' AND name = 'txt_bookmarks'"
-        )
-        assert "AUTOINCREMENT" in bookmark_sql
-        assert "<= 100" in bookmark_sql
-        [(last_accessed, created_at)] = engine.query(
-            "SELECT last_accessed, created_at FROM txt"
-        )
-        assert last_accessed == 0
-        assert created_at > 0
-        assert engine.query("SELECT name FROM txt_schema_migrations") == [
-            ("reset_initial_last_accessed",)
-        ]
-    finally:
-        engine.close()
-
-
-def test_ingest_fresh_directory(tmp_path):
+def test_ingest_fresh_directory(tmp_path, d1, engine):
     src, local = tmp_path / "src", tmp_path / "local"
     src.mkdir()
     _write_epub(src / "a.epub", b"one")
     _write_epub(src / "b.epub", b"two")
+    r2 = FakeR2Client(CREDS.r2_config)
 
-    ingester = TxtIngester(src, local, CREDS, CREDS_PATH, NullLogger())
+    ingester = _ingester(src, local, d1, r2, engine)
     ingester.run()
 
-    local_path = local / ACCOUNT.db_path
-    assert local_path.exists()
-    assert ingester.r2.put_calls  # at least the content objects + final db upload
+    assert len(d1.documents) == 2
+    content_puts = [k for k, _ in r2.put_calls if "/documents/" in k]
+    assert len(content_puts) == 2
+    catalog_puts = [k for k, _ in r2.put_calls if "/catalog/" in k]
+    assert len(catalog_puts) == 1
 
-    names = {p["name"] for p in _txt_rows_from_disk(local_path)}
+    names = {entry["catalog"]["name"] for entry in _decode_catalog(d1, r2, ingester)}
     assert names == {"a.epub", "b.epub"}
 
 
-def test_ingest_records_opf_sidecar_catalog_fields(tmp_path):
+def test_ingest_records_opf_sidecar_catalog_fields(tmp_path, d1, engine):
     src, local = tmp_path / "src", tmp_path / "local"
     src.mkdir()
     _write_epub(src / "a.epub")
@@ -230,155 +188,110 @@ def test_ingest_records_opf_sidecar_catalog_fields(tmp_path):
         "<dc:publisher>Ace</dc:publisher>"
         "</metadata></package>"
     )
+    r2 = FakeR2Client(CREDS.r2_config)
 
-    ingester = TxtIngester(src, local, CREDS, CREDS_PATH, NullLogger())
+    ingester = _ingester(src, local, d1, r2, engine)
     ingester.run()
 
-    payloads = _txt_rows_from_disk(local / ACCOUNT.db_path)
-    assert payloads == [
-        {
-            "name": "a.epub",
-            "title": "Hello",
-            "authors": ["Frank Herbert"],
-            "subjects": [],
-            "publisher": "Ace",
-        }
-    ]
+    [entry] = _decode_catalog(d1, r2, ingester)
+    assert entry["catalog"] == {
+        "name": "a.epub",
+        "title": "Hello",
+        "authors": ["Frank Herbert"],
+        "subjects": [],
+        "publisher": "Ace",
+    }
 
 
-def test_ingest_collects_repeated_authors_and_subjects(tmp_path):
-    src, local = tmp_path / "src", tmp_path / "local"
-    src.mkdir()
-    _write_epub(src / "a.epub")
-    (src / "a.opf").write_text(
-        '<package><metadata xmlns:dc="urn:dc">'
-        "<dc:creator>Terry Pratchett</dc:creator>"
-        "<dc:creator>Neil Gaiman</dc:creator>"
-        "<dc:subject>Fantasy</dc:subject>"
-        "<dc:subject>Humor</dc:subject>"
-        "</metadata></package>"
-    )
-
-    ingester = TxtIngester(src, local, CREDS, CREDS_PATH, NullLogger())
-    ingester.run()
-
-    [payload] = _txt_rows_from_disk(local / ACCOUNT.db_path)
-    assert payload["authors"] == ["Terry Pratchett", "Neil Gaiman"]
-    assert payload["subjects"] == ["Fantasy", "Humor"]
-    assert payload["publisher"] is None
-    assert payload["title"] == "a.epub"  # no dc:title -> falls back to the filename
-
-
-def test_ingest_uploads_one_object_per_epub_plus_final_db(tmp_path):
+def test_second_run_is_a_no_op_for_unchanged_source(tmp_path, d1, engine):
     src, local = tmp_path / "src", tmp_path / "local"
     src.mkdir()
     _write_epub(src / "a.epub", b"one")
-    _write_epub(src / "b.epub", b"two")
+    r2 = FakeR2Client(CREDS.r2_config)
+    _ingester(src, local, d1, r2, engine).run()
+    documents_after_first = dict(d1.documents)
+    puts_after_first = len(r2.put_calls)
 
-    ingester = TxtIngester(src, local, CREDS, CREDS_PATH, NullLogger())
-    ingester.run()
+    _ingester(src, local, d1, r2, engine).run()
 
-    content_puts = [k for k, _ in ingester.r2.put_calls if k != ACCOUNT.db_path]
-    db_puts = [k for k, _ in ingester.r2.put_calls if k == ACCOUNT.db_path]
-    assert len(content_puts) == 2
-    assert len(db_puts) == 1
-    assert all(k.startswith(f"{ACCOUNT.db_prefix}/") for k in content_puts)
-    assert (ACCOUNT.db_path, None, True) in ingester.r2.put_conditions
+    assert d1.documents == documents_after_first
+    assert len(r2.put_calls) == puts_after_first
 
 
-def test_second_run_skips_already_ingested_files(tmp_path):
+def test_second_run_ingests_only_the_new_file(tmp_path, d1, engine):
     src, local = tmp_path / "src", tmp_path / "local"
     src.mkdir()
     _write_epub(src / "a.epub", b"one")
-
-    TxtIngester(src, local, CREDS, CREDS_PATH, NullLogger()).run()
+    r2 = FakeR2Client(CREDS.r2_config)
+    _ingester(src, local, d1, r2, engine).run()
 
     _write_epub(src / "b.epub", b"two")
-    second = TxtIngester(src, local, CREDS, CREDS_PATH, NullLogger())
+    second = _ingester(src, local, d1, r2, engine)
     second.run()
 
-    names = {p["name"] for p in _txt_rows_from_disk(local / ACCOUNT.db_path)}
+    assert len(d1.documents) == 2
+    names = {entry["catalog"]["name"] for entry in _decode_catalog(d1, r2, second)}
     assert names == {"a.epub", "b.epub"}
-    content_puts = [k for k, _ in second.r2.put_calls if k != ACCOUNT.db_path]
-    assert len(content_puts) == 1  # only b.epub uploaded this run
 
 
-def test_downloads_r2_even_when_a_local_checkpoint_exists(tmp_path):
+def test_crash_between_d1_write_and_catalog_rewrite_is_recovered_on_retry(
+    tmp_path, d1, engine
+):
     src, local = tmp_path / "src", tmp_path / "local"
     src.mkdir()
     _write_epub(src / "a.epub", b"one")
-    TxtIngester(src, local, CREDS, CREDS_PATH, NullLogger()).run()
+    r2 = FakeR2Client(CREDS.r2_config)
 
-    third = TxtIngester(src, local, CREDS, CREDS_PATH, NullLogger())
-    monkeypatch_calls = []
-    real_get_object = FakeR2Client.get_object_with_etag
+    # Simulate a crash right after the D1 row lands but before the catalog
+    # is ever touched: run the document-insert half of the pipeline
+    # directly and write the checkpoint, without publishing a catalog.
+    ingester = _ingester(src, local, d1, r2, engine)
+    ingester._prepare_run()
+    document_id = ingester._ensure_document(src / "a.epub", 1, 1)
+    assert d1.catalog is None
+    assert document_id in ingester.checkpoint.values()
 
-    def spy_get_object(self, key, on_progress=None):
-        monkeypatch_calls.append(key)
-        return real_get_object(self, key, on_progress)
+    # Retry: a fresh ingester picks up the checkpoint and only has to
+    # reconcile the catalog -- no duplicate documents/key_store rows.
+    retry = _ingester(src, local, d1, r2, engine)
+    retry.run()
 
-    third.r2.get_object_with_etag = spy_get_object.__get__(third.r2, FakeR2Client)
-    third.run()
-    assert monkeypatch_calls == [ACCOUNT.db_path]
-    assert not [key for key, _ in third.r2.put_calls if key == ACCOUNT.db_path]
+    assert len(d1.documents) == 1
+    names = {entry["catalog"]["name"] for entry in _decode_catalog(d1, r2, retry)}
+    assert names == {"a.epub"}
 
 
-def test_retries_interrupted_db_download_and_logs_progress(tmp_path, monkeypatch):
+def test_invalid_document_id_leaves_no_orphaned_key_store_rows(tmp_path, d1, engine):
     src, local = tmp_path / "src", tmp_path / "local"
     src.mkdir()
     _write_epub(src / "a.epub")
-    TxtIngester(src, local, CREDS, CREDS_PATH, NullLogger()).run()
-    FakeR2Client.download_failures = 1
-    delays = []
-    monkeypatch.setattr(ingest_module.time, "sleep", delays.append)
-    logger = RecordingLogger()
+    r2 = FakeR2Client(CREDS.r2_config)
+    ingester = _ingester(src, local, d1, r2, engine)
+    ingester._prepare_run()
 
-    ingester = TxtIngester(src, local, CREDS, CREDS_PATH, logger)
-    ingester.run()
+    real_execute = d1.execute
 
-    assert delays == [1]
-    assert ingester.r2.read_timeout == 15
-    assert any("attempt 1/3" in message for message in logger.verbose_messages)
-    assert any("attempt 2/3" in message for message in logger.verbose_messages)
-    assert any("100.0%" in message for message in logger.verbose_messages)
-    assert any("retrying in 1s" in message for message in logger.info_messages)
+    def failing_documents_insert(sql, params=None):
+        if sql.startswith("INSERT INTO documents"):
+            raise RuntimeError("simulated D1 failure")
+        return real_execute(sql, params)
 
+    d1.execute = failing_documents_insert
 
-def test_vacuum_runs_before_final_upload(tmp_path):
-    src, local = tmp_path / "src", tmp_path / "local"
-    src.mkdir()
-    _write_epub(src / "a.epub")
+    with pytest.raises(RuntimeError, match="simulated D1 failure"):
+        ingester._insert_new_document(src / "a.epub", 1, 1)
 
-    ingester = TxtIngester(src, local, CREDS, CREDS_PATH, NullLogger())
-    ingester.run()
-
-    uploaded = dict(ingester.r2.put_calls)[ACCOUNT.db_path]
-    assert uploaded == (local / ACCOUNT.db_path).read_bytes()
+    assert d1.key_store == {}
 
 
-def test_conditional_db_upload_preserves_a_concurrent_browser_change(tmp_path):
-    src, local = tmp_path / "src", tmp_path / "local"
-    src.mkdir()
-    _write_epub(src / "a.epub", b"one")
-    TxtIngester(src, local, CREDS, CREDS_PATH, NullLogger()).run()
-    remote_before = FakeR2Client.objects[ACCOUNT.db_path]
-
-    _write_epub(src / "b.epub", b"two")
-    FakeR2Client.conflict_keys.add(ACCOUNT.db_path)
-    with pytest.raises(R2PreconditionFailed, match="newer object"):
-        TxtIngester(src, local, CREDS, CREDS_PATH, NullLogger()).run()
-
-    assert FakeR2Client.objects[ACCOUNT.db_path] == remote_before
-
-
-def test_closes_database_when_ingestion_fails(tmp_path):
-    src, local = tmp_path / "src", tmp_path / "local"
-    src.mkdir()
-    _write_epub(src / "broken.epub")
-    (src / "broken.opf").write_text("<not-valid-xml")
-    ingester = TxtIngester(src, local, CREDS, CREDS_PATH, NullLogger())
-
-    with pytest.raises(ET.ParseError):
-        ingester.run()
-
-    assert ingester.engine.db == 0
+def _decode_catalog(d1_client, r2, ingester):
+    engine = ingester.engine
+    blob = CryptoBlob(engine)
+    row_key = blob.decrypt(
+        d1_client.key_store[d1_client.catalog["key_id"]]["wrapped_key"], ingester.umk
+    )
+    pointer = blob.decrypt_json(d1_client.catalog["catalog_blob"], row_key)
+    catalog_key = base64.b64decode(pointer["catalog_key"])
+    object_key = f"{ingester.account.db_prefix}/catalog/{pointer['catalog_path']}"
+    data = r2.objects[object_key]
+    return json.loads(brotli.decompress(blob.decrypt(data, catalog_key)))

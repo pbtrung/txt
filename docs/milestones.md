@@ -352,6 +352,29 @@ WAF rules aren't something `wrangler dev` simulates locally.
 
 ## Milestone 9 — Ingestion tooling
 
+**Status: `--init-owner` and `--ingest` done and tested against the D1
+design; `--update-db`/`--clean-bucket`/`--clean-db` deferred to their own
+pass.** Decided the Worker-endpoints-vs-D1-HTTP-API question in favor of
+D1's own HTTP query API (`txt/d1_client.py`) — the Worker's ticket/proof
+protocol is designed for ephemeral browser sessions, not a long-running
+CLI carrying its own Cloudflare API token, matching how `r2_client.py`
+already holds a real, standing R2 credential rather than going through a
+Worker endpoint. `txt/owner_init.py` was rewritten around a D1 `owner`
+row (schema installation is now Worker-managed, via `wrangler d1
+migrations`, not this tool's job); `txt/ingest.py` was rewritten to write
+`documents`/`key_store` rows directly and reconcile the R2-hosted catalog
+object via a local checkpoint file (`docs/data_model.md` §2.1 documents
+why a checkpoint is required — a `documents` row alone can't say what its
+catalog entry should contain). `txt/rqlite_client.py`,
+`rqlite_schema.py`, `rqlite_updater.py`, and `firebase_auth.py` had no
+remaining callers once this landed and were removed entirely.
+`ingest.py`'s own rewrite no longer uses `sqlite_engine.py` at all, but
+that module stays: `db_updater.py`, `bucket_cleaner.py`, and
+`db_cleaner.py` still target the rqlite-era design (a whole downloaded
+SQLCipher file, `self.owner.rqlite`) and still need it. Those three
+aren't wired into `cli.py` until they get the same D1 rewrite — their
+tests skip themselves at import time rather than fail.
+
 - The Python maintenance CLI's ingestion path (`txt --ingest`,
   `txt --update-db`) needs to write to D1 and the R2 catalog object
   instead of a local SQLCipher file — decide whether it calls the

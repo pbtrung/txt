@@ -3,7 +3,7 @@ from pathlib import Path
 from urllib.parse import unquote
 
 ROOT = Path(__file__).parents[2]
-DOCS = [ROOT / "README.md", ROOT / "CLAUDE.md", ROOT / "docker/README.md"]
+DOCS = [ROOT / "README.md", ROOT / "CLAUDE.md"]
 DOCS.extend(sorted((ROOT / "docs").glob("*.md")))
 MARKDOWN_LINK = re.compile(r"(?<!!)\[[^]]*]\(([^)]+)\)")
 

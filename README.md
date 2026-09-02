@@ -13,9 +13,11 @@ See [authentication](docs/auth.md), [data model](docs/data_model.md),
 [storage layout](docs/storage_layout.md), [sharing](docs/sharing.md),
 [cryptography](docs/crypto.md), [deployment](docs/deployment.md), and the
 [implementation plan](docs/milestones.md) for the complete design. The design
-is decided; implementation is in progress per `docs/milestones.md` — the
-Python CLI and UI referenced below still target the design's predecessor
-(rqlite/Firebase/SQLCipher) until each milestone lands.
+is decided; implementation is in progress per `docs/milestones.md`. The
+Python CLI's `--init-owner` and `--ingest` target the Cloudflare/D1 design
+described here; `--update-db`, `--clean-bucket`, and `--clean-db` still
+target the design's predecessor (rqlite) and aren't reachable from the CLI
+until they're rewritten. The UI still targets the predecessor too.
 
 ## Architecture
 
@@ -64,66 +66,67 @@ npm install
 
 ## Owner provisioning
 
-**Pending implementation** ([`docs/milestones.md`](docs/milestones.md)): the
-commands below still target the design's predecessor (rqlite/Firebase) and
-will not work against a Cloudflare deployment until the Worker, D1 schema,
-and CLI rewrite land. They're kept here as a description of the current CLI's
-actual behavior, not of `docs/deployment.md`'s design.
+`creds.json` holds the owner's Cloudflare credentials and R2 access. Leave
+`user_root_key` empty on the first run; `--init-owner` generates a 256-byte
+base64 key and writes it back to the file:
 
-Provisioning is a one-time, idempotent operation. `rqlite_operator_url` is
-the externally reachable Basic-auth operator route,
-for example `https://api.example.com/operator/rqlite`; it is not rqlite's
-loopback listener. Leave `user_root_key` empty on the first run. Provisioning
-generates a 256-byte base64 key and writes it back to the file.
-
-```sh
-txt --init-owner rqlite_creds.json --verbose
+```json
+{
+  "owner_email": "owner@example.com",
+  "cf_account_id": "...",
+  "cf_d1_database_id": "...",
+  "cf_d1_api_token": "...",
+  "display_name": "Owner",
+  "r2_config": {
+    "endpoint": "https://<account_id>.r2.cloudflarestorage.com",
+    "read_write_access_key_id": "...",
+    "read_write_secret_access_key": "...",
+    "region": "auto",
+    "bucket": "..."
+  },
+  "user_root_key": ""
+}
 ```
 
-The command creates exactly one `owner_control` row. A second, different
-Firebase UID is rejected rather than added.
+`owner_email` must exactly match the Worker's configured `OWNER_EMAIL`
+(`docs/deployment.md`). `cf_d1_api_token` is a Cloudflare API token with D1
+edit permission for `cf_d1_database_id` — separate from the Worker's own
+`R2_PARENT_API_TOKEN`/`TICKET_SIGNING_KEY`/`SHARE_GRANT_KEY` secrets, and
+never shared with the Worker. Provisioning is a one-time, idempotent
+operation: a second run against an already-provisioned database validates
+the existing owner row instead of creating a second one, and a mismatched
+`owner_email` or `user_root_key` is rejected rather than silently proceeding.
+
+```sh
+txt --init-owner creds.json --verbose
+```
 
 ## Browser unlock file
 
 Unlock the deployed UI with a separate owner-only JSON file containing exactly
-the browser fields:
+the browser's own secret:
 
 ```json
 {
-  "rqlite_admin_username": "operator",
-  "rqlite_admin_password": "...",
-  "rqlite_db_url": "https://api.example.com/operator/rqlite",
-  "firebase_email": "owner@example.com",
-  "firebase_password": "...",
-  "firebase_api_key": "...",
   "user_root_key": "<generated padded base64>"
 }
 ```
 
-`rqlite_db_url` is the same OpenResty operator route called
-`rqlite_operator_url` in the provisioning file. The UI retains the selected
-file's credentials and all decrypted material only in page memory; lock or
-reload before leaving the device. Do not commit or upload this file.
+Cloudflare Access supplies the identity check on login; this file only needs
+to carry the one secret nothing else can derive (`docs/auth.md` §3). The UI
+retains the selected file's credentials and all decrypted material only in
+page memory; lock or reload before leaving the device. Do not commit or
+upload this file.
 
-Apply pending rqlite schema migrations (from the migration directory, not yet
-recorded in `schema_migrations`) to an already-provisioned instance — this
-command's migration source directory was removed with `docker/` in this
-branch and needs a new source before it works again:
+## Ingesting EPUBs
 
-```sh
-txt --update-rql rqlite_creds.json --verbose
-```
-
-Migrate the owner's encrypted SQLCipher database when its local schema changes:
+Uploads each new `*.epub` in a directory as an encrypted R2 object and writes
+its rows directly to D1 (`docs/data_model.md`). `--local-db-dir` holds a
+small local recovery checkpoint, not a database file — R2 and D1 are always
+the source of truth:
 
 ```sh
-txt --update-db owner_creds.json --local-db-dir ./data --verbose
-```
-
-Ingest EPUB files:
-
-```sh
-txt --ingest ./books --local-db-dir ./data --creds owner_creds.json --verbose
+txt --ingest ./books --local-db-dir ./data --creds creds.json --verbose
 ```
 
 Prepare EPUBs or replace their images:
@@ -133,24 +136,11 @@ txt --edit-epub ./source ./edited --verbose
 txt --replace-images ./source ./without-images
 ```
 
-Preview and remove unreferenced owner content objects. The cleaner always
-preserves gateway-owned shared objects and the server-only control-backup
-prefix configured by `rqlite_control_backup`:
-
-```sh
-txt --clean-bucket owner_creds.json --verbose --dry-run
-txt --clean-bucket owner_creds.json --verbose
-```
-
-Preview and remove stale (`creating`/`deleting`) share rows from both the
-owner's SQLCipher database and rqlite's control database; a `creating` row
-that actually registered is healed to `active` instead of removed.
-`--dry-run` skips the removal but the databases are vacuumed regardless:
-
-```sh
-txt --clean-db owner_creds.json --local-db-dir ./data --verbose --dry-run
-txt --clean-db owner_creds.json --local-db-dir ./data --verbose
-```
+**Not yet available** ([`docs/milestones.md`](docs/milestones.md)
+Milestone 9): migrating the catalog/reading-state schema (`--update-db`) and
+cleaning up unreferenced R2 objects or stale share rows (`--clean-bucket`,
+`--clean-db`) still target the design's predecessor (rqlite) internally and
+aren't currently reachable from the CLI, pending their own rewrite for D1.
 
 ## Development checks
 
