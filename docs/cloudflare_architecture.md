@@ -51,7 +51,16 @@ of `sub.domain.com` is configured with exactly one policy: `Include: emails
 equals OWNER_EMAIL`, using either the One-Time PIN login method (an emailed
 code, no external identity provider) or a Google login restricted to that one
 address — both are available on Access's free plan, which covers up to 50
-authenticated seats at no cost; this app uses one. This mirrors the current
+authenticated seats at no cost; this app uses one. Use the Google option only
+if that Google account already has a passkey or hardware security key
+enrolled: without one, Google login is single-factor (password) just like
+One-Time PIN, and a bare password on a heavily phished account is arguably
+worse than an emailed code, not better — the security gain from choosing
+Google over One-Time PIN comes entirely from the phishing-resistant second
+factor, not from the provider name. If that isn't already true of the
+account, One-Time PIN is the simpler, self-contained choice: it doesn't tie
+this app's front door to a separately managed third-party account's security
+posture drifting over time. This mirrors the current
 design's actual invariant ("there is exactly one authenticated principal")
 more directly than comparing a UID in application code: nobody without a
 successful Access login for `OWNER_EMAIL` can reach the gated paths at all,
@@ -80,8 +89,31 @@ attacker holding only the Access session cannot produce a valid proof and
 therefore cannot obtain R2 write credentials for the library. Dropping proof-
 of-possession because "Access already authenticated the request" would make a
 stolen session cookie alone sufficient to mint full read-write R2 access to
-the whole library — strictly weaker than today. The owner binding ticket and
-P-521 proof protocol in `docs/auth.md`/`docs/crypto.md` carry over unchanged.
+the whole library — strictly weaker than today.
+
+**Proof-of-possession now has to cover every D1 mutation, not only R2
+credentials.** In the current shipped design, a Firebase bearer token alone
+(no proof) is already enough to call endpoints like `POST`/`DELETE
+/v1/shares`, because the only thing reachable that way is hash-only
+control-plane bookkeeping in rqlite — the owner's actual library stays in a
+whole-file SQLCipher database that only the unlocked browser ever opens, and
+proof-of-possession was scoped narrowly to the one endpoint that hands out
+R2 write credentials. That scoping doesn't carry over safely here: §4 puts
+the owner's real library — reading state, bookmarks, share grants — directly
+into D1, mutated through Worker endpoints. Leaving those endpoints gated by
+the Access JWT alone would mean anyone who gets past Access — a stolen
+session cookie, without ever touching `user_root_key` — could still tamper
+with or destroy that state (delete bookmarks, revoke shares, corrupt reading
+position) even though they could never decrypt it. So this proposal extends
+the same ticket-and-proof protocol to every D1-*mutating* `/v1/*` endpoint
+(reading-state updates, bookmark writes, share create/delete), not only
+`/v1/r2-token`: each such request must carry a fresh proof, built exactly as
+`docs/crypto.md` specifies, with the canonical proof bytes extended by one
+more bound field — a hash of the operation name and request body — so a
+captured proof for one mutation can't be replayed against a different one.
+Reads stay behind the Access JWT alone: a read only ever returns opaque
+per-row ciphertext (§4.1), so an attacker without `umk` gains nothing
+exploitable from it, unlike a write.
 
 ## 4. Unified D1 database
 
@@ -151,19 +183,19 @@ CREATE TABLE schema_migrations (
 ) STRICT;
 
 CREATE TABLE owner_control (
-    singleton                 INTEGER PRIMARY KEY CHECK (singleton = 1),
+    singleton                INTEGER PRIMARY KEY CHECK (singleton = 1),
     created_at                INTEGER NOT NULL,
-    owner_email                TEXT    NOT NULL,
-    db_prefix_hash              BLOB    NOT NULL CHECK (length(db_prefix_hash) = 64), -- SHA-512(db_prefix)
-    user_handle_hash            BLOB    NOT NULL CHECK (length(user_handle_hash) = 32),
-    wrapped_umk                 BLOB    NOT NULL,
-    sign_version                 INTEGER NOT NULL CHECK (sign_version = 1),
-    sign_algorithm               TEXT    NOT NULL CHECK (sign_algorithm = 'ECDSA-P521-SHA512'),
-    sign_public_key              BLOB    NOT NULL,
-    wrapped_sign_private_key     BLOB    NOT NULL,  -- Blob Format, IKM = umk
-    kem_public_key               BLOB    NOT NULL,  -- provisioned, unused by sharing today (docs/crypto.md)
-    wrapped_kem_private_key      BLOB    NOT NULL,  -- Blob Format, IKM = umk
-    encrypted_credentials        BLOB    NOT NULL   -- {user_handle, display_name, db_prefix}
+    owner_email_hash          BLOB    NOT NULL CHECK (length(owner_email_hash) = 32), -- SHA-256(owner_email)
+    db_prefix_hash            BLOB    NOT NULL CHECK (length(db_prefix_hash) = 32),   -- SHA-256(db_prefix)
+    user_handle_hash          BLOB    NOT NULL CHECK (length(user_handle_hash) = 32), -- SHA-256(user_handle)
+    wrapped_umk               BLOB    NOT NULL,
+    sign_version              INTEGER NOT NULL CHECK (sign_version = 1),
+    sign_algorithm            TEXT    NOT NULL CHECK (sign_algorithm = 'ECDSA-P521-SHA512'),
+    sign_public_key           BLOB    NOT NULL,
+    wrapped_sign_private_key  BLOB    NOT NULL,  -- Blob Format, IKM = umk
+    kem_public_key            BLOB    NOT NULL,  -- provisioned, unused by sharing today (docs/crypto.md)
+    wrapped_kem_private_key   BLOB    NOT NULL,  -- Blob Format, IKM = umk
+    encrypted_credentials     BLOB    NOT NULL   -- {user_handle, display_name, db_prefix}
 ) STRICT;
 
 -- Singleton, like owner_control. Points at the one R2 catalog object (§4.3);
@@ -220,12 +252,26 @@ CREATE TABLE shares (
 ) STRICT;
 ```
 
-`txt.id` and `txt_bookmarks.id` are plain `AUTOINCREMENT` integers rather
-than non-enumerable tokens: every read and write already goes through an
-authenticated Worker route scoped to the one owner (§2), so there is no
-untrusted caller in a position to guess or care about an id. This also gives
-the bookmark cap trigger free, clock-skew-immune insertion ordering (`ORDER
-BY id DESC`), unaffected by which fields are encrypted.
+`txt.id`, `txt_bookmarks.id`, and `key_store.id` are plain `AUTOINCREMENT`
+integers rather than 32-byte random base32-Crockford tokens like `db_prefix`,
+`path`, and `share_path` (the R2 object-key segments, §5): every read and
+write of these ids already goes through an authenticated Worker route scoped
+to the one owner (§2), so there is no untrusted caller in a position to
+guess or care about an id — unlike those object-key segments, which exist
+because they're addressed directly in an R2 request. (`share_id`, the public
+bearer capability carried in a share URL fragment, is a different token
+again — 32 random bytes but base64url per `docs/sharing.md` §3, not
+base32-Crockford; it identifies a `shares` row, not an R2 key segment.)
+Random ids here would also cost something concrete for no offsetting
+benefit: `INTEGER PRIMARY KEY` is a rowid alias in SQLite/D1, so it's free
+and requires no separate index, while a 32-byte token needs a real one and
+doubles the size of every foreign key referencing it (`txt_id`,
+`*_key_id`) across `txt_bookmarks`, `key_store`, and `shares`. Sequential
+integers also give the bookmark cap trigger free, clock-skew-immune
+insertion ordering (`ORDER BY id DESC`) — a random token has no inherent
+order, so sorting would fall back to the client-supplied `created_at`
+timestamp, reintroducing exactly the clock-skew problem `docs/data_model.md`
+§2.2 uses `AUTOINCREMENT` to avoid today.
 
 `shares` keeps `object_path_hash` and `state` alongside the per-row-key
 pattern, rather than reducing to owner-facing bookkeeping alone: `POST
@@ -323,6 +369,11 @@ s3://{bucket}/{db_prefix}/shared/{share_path}
 s3://{bucket}/{db_prefix}/catalog/{path}
 ```
 
+`db_prefix`, `path`, and `share_path` are each independent 32-byte random
+values rendered as 52 lowercase base32-Crockford characters, the same
+encoding `docs/storage_layout.md` and `txt/random_token.py` already use for
+this kind of R2 object-key segment.
+
 This replaces `docs/storage_layout.md`'s current two-random-segment layout
 (`{db_prefix}/{txt_prefix}/{path}` for owner content, `{db_prefix}/shared/
 {share_prefix}/{share_path}` for shared copies) and drops the whole-file
@@ -349,27 +400,31 @@ before a request reaches the Worker or D1 at all, which is also better for
 the 100,000-request daily Workers budget (§7) than a Worker-side counter
 would be.
 
-Recommended rule:
+Configured rule (set directly in the Cloudflare dashboard, not automated —
+consistent with this app's single-operator, low-change-frequency deployment
+style):
 
 - Match: `starts_with(http.request.uri.path, "/v1/")`
 - Counting characteristics: `ip.src` and URI Path (so each endpoint gets its
   own counter per client IP)
-- Period / threshold: 60 seconds / 120 requests
+- Period / threshold: 10 seconds / 20 requests
 - Action: Block (or Managed Challenge, if a soft block is preferred for the
   public endpoint)
 
 One rule means one threshold and one period shared by every bucket it
 creates — this is the real trade-off against the four independently
 calibrated numbers the current design uses (`docs/auth.md` §6: 60/hour,
-30/hour, 120/hour, 120/minute). 120 requests per 60 seconds is an exact match
-for the current `public-share-url` budget, the one scope that faces
-unauthenticated internet traffic and needs burst-level (not just hourly)
-protection. Applied to the three owner scopes, the same number is
-numerically looser than today's hourly caps (up to 7,200/hour instead of
-30–120/hour) — but those three are now behind Cloudflare Access (§3), so the
-threat model they defend against has already narrowed from "anyone holding a
-stolen bearer token" to "a compromised or malfunctioning owner session," and
-a per-minute burst cap still stops a runaway loop quickly. If usage ever
+30/hour, 120/hour, 120/minute). 20 requests per 10 seconds is the same
+average rate as the current `public-share-url` budget (120/minute) but in a
+shorter window, so it catches a burst faster rather than letting it run for
+up to a minute before tripping — a tighter fit for the one scope that faces
+unauthenticated internet traffic. Applied to the three owner scopes, the
+same rule is still numerically looser than today's hourly caps in absolute
+terms (up to 7,200/hour instead of 30–120/hour) — but those three are now
+behind Cloudflare Access (§3), so the threat model they defend against has
+already narrowed from "anyone holding a stolen bearer token" to "a
+compromised or malfunctioning owner session," and a 10-second burst cap
+stops a runaway loop faster than an hourly counter ever could. If usage ever
 shows that looser owner-endpoint ceiling is a real problem, a per-scope cap
 can be reintroduced later as a small Workers KV counter — cheaper to add
 than a D1 counter table, since it wouldn't need relational structure.
@@ -411,8 +466,10 @@ receives only wrapped or encrypted owner material and hashes, never
 plaintext content or an unwrapped key — rate limiting now lives entirely at
 Cloudflare's edge (§6), so D1 holds no counter state either. R2 is trusted for object
 durability but not plaintext confidentiality. Cloudflare Access is trusted to
-gate request arrival to the one configured owner identity, but — per §3 — is
-not treated as a substitute for proof-of-possession. The Worker does not hold
+gate request arrival to the one configured owner identity, which is
+sufficient on its own for reads; per §3, it is never treated as a substitute
+for proof-of-possession on any endpoint that mutates D1 or mints R2
+credentials. The Worker does not hold
 `user_root_key`, `umk` unwrapped, any per-row key from `key_store` unwrapped,
 the raw P-521 or KEM private keys, or any share content key; a compromised
 Worker can authorize R2 access (it is inside the trusted computing base, as
@@ -422,9 +479,10 @@ the API is today) but a copied D1 export alone cannot decrypt the library.
 
 These are not resolved by this proposal:
 
-- One-Time PIN versus a Google-restricted login as the Access identity
-  method — both fit the free tier; the choice is about recipient experience
-  and whether a Google account for `OWNER_EMAIL` already exists.
+- Whether the owner's Google account already has a passkey or hardware
+  security key enrolled — §3 gives a decision rule (Google login only if so,
+  One-Time PIN otherwise) but not the answer, which is specific to that
+  account.
 - A migration path for existing R2-hosted SQLCipher data into D1 rows plus
   the R2 catalog object (§4.3), and whether the Python maintenance CLI
   (`txt/`) is ported to call the Worker's D1 binding or rewritten around
