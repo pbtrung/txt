@@ -98,9 +98,16 @@ export async function handlePostR2Credentials(
         BROWSER_CREDENTIAL_TTL_SECONDS,
       ),
     ]);
-  } catch {
+  } catch (error) {
     // The Cloudflare API call itself failed -- not a client error, so none
-    // of docs/auth.md §4.2's client-facing statuses apply.
+    // of docs/auth.md §4.2's client-facing statuses apply. Server-side
+    // only: log the real reason (a missing R2_PARENT_API_TOKEN/
+    // R2_PARENT_ACCESS_KEY_ID secret -- requireVar() throws for those the
+    // same way it does for vars -- or the real Cloudflare API call
+    // itself failing) so `wrangler tail` can distinguish them.
+    console.error(
+      `POST /v1/r2-credentials: mintCredential failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return new Response("failed to mint R2 credentials", { status: 502 });
   }
 
