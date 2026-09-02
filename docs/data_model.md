@@ -294,11 +294,15 @@ A manual bookmark stores the current page-start CFI, the current display
 page number, and a short nearby plain-text preview (capped at 100 UTF-8
 bytes). Re-bookmarking the same CFI on the same document updates its page
 number, preview, and display timestamp rather than adding a duplicate,
-via `bookmarks`' `(document_id, cfi)` semantic identity — enforced by the
-Worker comparing decrypted CFIs, since `cfi` itself is inside
-`bookmark_blob` and not queryable in D1. Bookmark creation and deletion
-are uploaded immediately. `trg_bookmarks_cap` keeps at most 20 bookmarks
-per document, deleting the oldest by `id`.
+via `bookmarks`' `(document_id, cfi)` semantic identity. This is enforced
+client-side, not by the Worker: `cfi` is inside `bookmark_blob`, and the
+Worker never holds an unwrapped key to decrypt it (`docs/auth.md`'s trust
+boundary). The client already has every bookmark's decrypted CFI from its
+last listing fetch, so before creating a new bookmark it checks for a
+matching CFI on the same document and, if found, deletes the old row
+first. Bookmark creation and deletion are uploaded immediately.
+`trg_bookmarks_cap` keeps at most 20 bookmarks per document, deleting the
+oldest by `id`.
 
 The EPUB content object referenced by a `documents` row is immutable.
 That makes a structural CFI sufficient even when the renderer does not

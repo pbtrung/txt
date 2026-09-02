@@ -7,6 +7,7 @@
 // construction, and should, rather than risk two independently-written
 // implementations drifting apart.
 import type { TicketClaims } from "./ownerTicket";
+import { base64Decode, base64UrlDecode, base64UrlEncode } from "./base64";
 
 export interface ProofEnvelope {
   version: 1;
@@ -26,25 +27,6 @@ export class ProofVerificationError extends Error {
     super(message);
     this.name = "ProofVerificationError";
   }
-}
-
-function base64Decode(value: string): Uint8Array {
-  const binary = atob(value);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes;
-}
-
-function base64UrlDecode(segment: string): Uint8Array {
-  const padded = segment.replace(/-/g, "+").replace(/_/g, "/");
-  const pad = padded.length % 4 === 0 ? "" : "=".repeat(4 - (padded.length % 4));
-  return base64Decode(padded + pad);
-}
-
-function base64UrlEncode(bytes: Uint8Array): string {
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
 function concat(...parts: Uint8Array[]): Uint8Array {

@@ -2,6 +2,8 @@
 // Cf-Access-Jwt-Assertion header independently rather than trusting the
 // edge unconditionally -- signature against the team domain's JWKS, `aud`,
 // `iss`, `exp`, and `email` equal to the configured OWNER_EMAIL.
+import { base64UrlDecode } from "./base64";
+
 export interface AccessJwtClaims {
   email: string;
   aud: string | string[];
@@ -25,15 +27,6 @@ export class AccessVerificationError extends Error {
     super(message);
     this.name = "AccessVerificationError";
   }
-}
-
-function base64UrlDecode(segment: string): Uint8Array {
-  const padded = segment.replace(/-/g, "+").replace(/_/g, "/");
-  const pad = padded.length % 4 === 0 ? "" : "=".repeat(4 - (padded.length % 4));
-  const binary = atob(padded + pad);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes;
 }
 
 function decodeJsonSegment(segment: string): unknown {

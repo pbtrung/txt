@@ -3,6 +3,8 @@
 // don't each need a fresh D1 read of the owner row -- the ticket carries
 // what proof verification needs, authenticated by the Worker's own
 // signature over it.
+import { base64UrlDecode, base64UrlEncode } from "./base64";
+
 export interface TicketClaims {
   v: 1;
   aud: "r2-token";
@@ -22,21 +24,6 @@ export class TicketVerificationError extends Error {
     super(message);
     this.name = "TicketVerificationError";
   }
-}
-
-function base64UrlEncode(bytes: Uint8Array): string {
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-function base64UrlDecode(segment: string): Uint8Array {
-  const padded = segment.replace(/-/g, "+").replace(/_/g, "/");
-  const pad = padded.length % 4 === 0 ? "" : "=".repeat(4 - (padded.length % 4));
-  const binary = atob(padded + pad);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes;
 }
 
 async function hmacKey(signingKey: Uint8Array): Promise<CryptoKey> {

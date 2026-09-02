@@ -3,21 +3,37 @@
 // -- today, only `POST /v1/shared-url` (docs/sharing.md). Access itself
 // already blocks an unauthenticated request from ever reaching the Worker
 // in production; the check here is the Worker's own defense-in-depth
-// verification, not the primary gate.
+// verification, not the primary gate. Routes marked `requiresProof` also
+// need a verified ticket and proof of possession (docs/auth.md §4.2/§4.3)
+// on top of that.
 import { verifyAccessJwt } from "./access";
 import type { AccessJwtClaims } from "./access";
 import { handleGetOwner } from "./ownerEndpoint";
+import { requireProof, ProofRequiredError } from "./requireProof";
+import type { ProofContext } from "./requireProof";
+import { handleGetDocuments, handlePatchDocumentAccess } from "./documentsEndpoint";
+import {
+  handleGetBookmarks,
+  handlePostBookmark,
+  handleDeleteBookmark,
+} from "./bookmarksEndpoint";
+
+export interface RequestContext {
+  access: AccessJwtClaims | undefined;
+  params: Record<string, string>;
+  proof?: ProofContext;
+}
 
 type Handler = (
   request: Request,
   env: Env,
-  url: URL,
-  access: AccessJwtClaims | undefined,
+  ctx: RequestContext,
 ) => Promise<Response> | Response;
 
 interface Route {
   handler: Handler;
   public?: boolean;
+  requiresProof?: boolean;
 }
 
 const ROUTES: Record<string, Partial<Record<string, Route>>> = {
@@ -25,9 +41,32 @@ const ROUTES: Record<string, Partial<Record<string, Route>>> = {
     GET: { handler: () => Response.json({ status: "ok" }) },
   },
   "/v1/owner": {
-    // `access` is always defined here: this route isn't `public`, so
+    // `ctx.access` is always defined here: this route isn't `public`, so
     // handleApi() has already verified it before invoking the handler.
-    GET: { handler: (_request, env, _url, access) => handleGetOwner(env, access!) },
+    GET: { handler: (_request, env, ctx) => handleGetOwner(env, ctx.access!) },
+  },
+  "/v1/documents": {
+    GET: { handler: (_request, env) => handleGetDocuments(env) },
+  },
+  "/v1/documents/:id/access": {
+    PATCH: {
+      requiresProof: true,
+      handler: (_request, env, ctx) =>
+        handlePatchDocumentAccess(env, ctx.params.id, ctx.proof!),
+    },
+  },
+  "/v1/bookmarks": {
+    GET: { handler: (request, env) => handleGetBookmarks(env, new URL(request.url)) },
+    POST: {
+      requiresProof: true,
+      handler: (_request, env, ctx) => handlePostBookmark(env, ctx.proof!),
+    },
+  },
+  "/v1/bookmarks/:id": {
+    DELETE: {
+      requiresProof: true,
+      handler: (_request, env, ctx) => handleDeleteBookmark(env, ctx.params.id),
+    },
   },
   // Placeholder: the real handler (docs/sharing.md §3.2) lands in
   // Milestone 7. Declared now, and marked public, so the Access-gating
@@ -87,16 +126,51 @@ async function requireAccess(request: Request, env: Env): Promise<AccessJwtClaim
   });
 }
 
+// A route pattern's dynamic segments (e.g. "/v1/bookmarks/:id") are the
+// only templating this app needs -- one param per segment, no wildcards.
+function matchPattern(
+  pathname: string,
+  pattern: string,
+): Record<string, string> | null {
+  const pathParts = pathname.split("/");
+  const patternParts = pattern.split("/");
+  if (pathParts.length !== patternParts.length) {
+    return null;
+  }
+  const params: Record<string, string> = {};
+  for (let i = 0; i < patternParts.length; i++) {
+    const part = patternParts[i];
+    if (part.startsWith(":")) {
+      params[part.slice(1)] = pathParts[i];
+    } else if (part !== pathParts[i]) {
+      return null;
+    }
+  }
+  return params;
+}
+
+function findRoute(
+  pathname: string,
+): { methods: Partial<Record<string, Route>>; params: Record<string, string> } | null {
+  for (const [pattern, methods] of Object.entries(ROUTES)) {
+    const params = matchPattern(pathname, pattern);
+    if (params) {
+      return { methods, params };
+    }
+  }
+  return null;
+}
+
 export async function handleApi(
   request: Request,
   env: Env,
   url: URL,
 ): Promise<Response> {
-  const routesForPath = ROUTES[url.pathname];
-  if (!routesForPath) {
+  const found = findRoute(url.pathname);
+  if (!found) {
     return new Response("Not Found", { status: 404 });
   }
-  const route = routesForPath[request.method];
+  const route = found.methods[request.method];
   if (!route) {
     return new Response("Method Not Allowed", { status: 405 });
   }
@@ -113,5 +187,17 @@ export async function handleApi(
     }
   }
 
-  return route.handler(request, env, url, access);
+  let proof: ProofContext | undefined;
+  if (route.requiresProof) {
+    try {
+      proof = await requireProof(request, env, url);
+    } catch (error) {
+      if (error instanceof ProofRequiredError) {
+        return new Response(error.message, { status: error.status });
+      }
+      throw error;
+    }
+  }
+
+  return route.handler(request, env, { access, params: found.params, proof });
 }

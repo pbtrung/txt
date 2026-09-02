@@ -216,6 +216,19 @@ the layer standing between "past Access" and "can mutate the library":**
 
 ## Milestone 5 — Document and reading-state endpoints
 
+**Status: Worker endpoints done and tested; the UI-side migration off the
+local SQLCipher-via-WASM engine is deliberately deferred to its own pass.**
+`GET /v1/documents` returns the N+1-avoiding join; `PATCH
+/v1/documents/:id/access` implements the `access_version` optimistic-
+concurrency update; `GET`/`POST`/`DELETE /v1/bookmarks` cover listing,
+creation, and deletion. Re-bookmarking the same CFI is enforced
+client-side (a real gap in this doc's earlier text, fixed above) — the
+Worker never holds an unwrapped key to decrypt `bookmark_blob` itself.
+The second bullet below — replacing the UI's local engine — is a large,
+separate change to currently-working UI code and was scoped out of this
+pass by explicit decision, to be picked up later rather than bundled with
+the Worker-side endpoint work.
+
 - Worker endpoints for library listing (join `documents`↔`key_store`,
   §"avoiding N+1", `docs/data_model.md` §3), reading-state updates
   (`docs/data_model.md` §4), and bookmark create/delete.

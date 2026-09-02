@@ -4,26 +4,13 @@
 // never anything unwrapped.
 import { issueTicket } from "./ownerTicket";
 import type { AccessJwtClaims } from "./access";
-
-function base64Encode(bytes: ArrayBuffer | Uint8Array): string {
-  const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-  let binary = "";
-  for (const byte of view) binary += String.fromCharCode(byte);
-  return btoa(binary);
-}
-
-function base64UrlEncode(bytes: ArrayBuffer | Uint8Array): string {
-  return base64Encode(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
+import { base64Decode, base64Encode, base64UrlEncode } from "./base64";
 
 /** Decodes a standard-base64 secret string (the convention every `wrangler
  * secret put` value in this app uses, matching `openssl rand -base64 32`'s
  * own output) into raw bytes. */
 export function decodeBase64Secret(value: string): Uint8Array {
-  const binary = atob(value);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes;
+  return base64Decode(value);
 }
 
 interface OwnerRow {
