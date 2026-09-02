@@ -20,7 +20,7 @@ This repo holds the txt document-storage system's design docs, a single-owner Cl
   - `firebase_auth.py` — Firebase email/password sign-in, returns the uid.
   - `rqlite_client.py` — Basic-auth client for the external OpenResty operator route, including named parameters, BLOB arrays, transactional batches, and a dedicated non-transactional `vacuum()` (SQLite forbids `VACUUM` inside a transaction).
   - `rqlite_schema.py` — the idempotent current-schema snapshot installed automatically when owner initialization reaches an empty rqlite database, including migration markers for every change represented by the snapshot.
-  - `rqlite_updater.py` — `RqliteUpdater`, the `--update-rql` implementation: applies every `docker/migrations/NNNN_*.sql` file not yet recorded in `schema_migrations` to an already-provisioned instance, in order, then vacuums.
+  - `rqlite_updater.py` — `RqliteUpdater`, the `--update-rql` implementation: applies every migration file not yet recorded in `schema_migrations` to an already-provisioned instance, in order, then vacuums. Targets rqlite; pending the D1 rewrite in `docs/milestones.md`.
   - `random_token.py` — base32-Crockford encoding, used for `db_path`/`db_prefix`/per-document key segments.
   - `leancrypto_wasm.py` — wasmtime binding to `sqlcipher/sqlcipher.wasm`'s bundled leancrypto build (AEAD, HKDF, KEM).
   - `crypto_blob.py` — docs/crypto.md's wrap/unwrap blob format, built on `leancrypto_wasm`.
@@ -38,10 +38,9 @@ This repo holds the txt document-storage system's design docs, a single-owner Cl
 - `txt/tests/` — pytest. Crypto and SQLCipher tests run against the real wasm engine (`txt/tests/conftest.py`'s session-scoped `engine` fixture); everything else fakes only the network boundary (Firebase, rqlite, R2) — never the crypto itself.
 - `sqlcipher/` — the prebuilt SQLCipher+leancrypto wasm module `leancrypto_wasm.py`/`sqlite_engine.py` load. Not built from source in this repo.
 - `creds/` — local, gitignored credential files. Never commit these. Never run a command against a real one yourself — hand it to the user to run.
-- `docker/` — the deployable OpenResty and rqlite container. `lua/endpoints/` contains HTTP entry points, `lua/txt/` contains reusable gateway modules, `lua/tests/` contains the dependency-light test suite, and `migrations/` owns the control database schema.
-- `ui/src/data/rqlite.ts` — the browser's fixed singleton owner query through the Basic-auth operator proxy; `ui/src/data/apiClient.ts` owns Firebase-authenticated tickets, temporary R2 credentials, and share API calls.
+- `ui/src/data/rqlite.ts` — the browser's fixed singleton owner query through the Basic-auth operator proxy; `ui/src/data/apiClient.ts` owns Firebase-authenticated tickets, temporary R2 credentials, and share API calls. Both target the rqlite/Firebase design; pending the Worker/Access rewrite in `docs/milestones.md`.
 - `ui/tests/` — vitest, mirroring the UI source tree rather than living beside source files.
-- `wrangler.jsonc`, `package.json`, `scripts/deploy.sh` — Cloudflare Pages configuration and deployment of the freshly built `dist/` static UI. Wrangler does not run an API service.
+- `wrangler.jsonc`, `package.json`, `scripts/deploy.sh` — still Cloudflare Pages configuration and deployment of the freshly built `dist/` static UI, pending Milestone 0 in `docs/milestones.md` (one Worker serving `/v1/*` and `dist/` together, with D1 and R2 bindings, replacing the Pages-only config).
 - `ui/_headers` — Cloudflare Pages response headers copied into `dist/` by `npm run ui:build`.
 
 ## Conventions
@@ -51,6 +50,5 @@ This repo holds the txt document-storage system's design docs, a single-owner Cl
 - UI TypeScript is formatted with Prettier at 88 columns (`.prettierrc.json`); run `npm run format` before committing UI changes. `.prettierignore` excludes generated/vendored files and the Python tree.
 - The Python tree is linted and formatted with ruff (`[tool.ruff]` in `pyproject.toml`, 88 columns to match the TS side): `python3 -m ruff check .` and `python3 -m ruff format .` before committing.
 - `ui/` is linted with ESLint (`eslint.config.js`): `npm run lint` before committing UI changes.
-- OpenResty Lua targets the current LuaJIT language supported by the container. Run `npm run lua:format` and `npm run lua:check` before committing Lua changes.
 - The project's own TypeScript is 7.x (`typescript7`, aliased since typescript-eslint doesn't support TS 7 yet); a plain `typescript@6.0.3` devDependency exists solely to satisfy typescript-eslint's own peer range. `npm run tsc` (used by every `*:typecheck`/`ui:build` script) always resolves to the real 7.x compiler, never the 6.x one — the alias exists only so both can coexist under `node_modules` without conflict.
 - Docs (this file, README, docs/*) describe current behavior and supported migration inputs only — no commit hashes or narrated development history.

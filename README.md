@@ -1,56 +1,57 @@
 # txt
 
-`txt` is a single-owner encrypted EPUB library. The React application keeps the
-library database and book contents encrypted in R2, while an OpenResty Lua API
-and a loopback-only rqlite database run in one container on Northflank. There is
-exactly one authenticated owner. There are no registrations, invitations,
-roles, or account-management screens.
+`txt` is a single-owner encrypted EPUB library. One Cloudflare Worker serves
+both the API (`/v1/*`) and the static React UI, backed by D1 and R2, gated by
+Cloudflare Access. There is exactly one authenticated owner. There are no
+registrations, invitations, roles, or account-management screens.
 
 The owner can create public read-only links. A recipient does not become an
 account: the link is a bearer capability that lets the recipient request a
 short-lived, exact-object R2 URL and decrypt that shared copy in the browser.
 
-See [authentication](docs/auth.md), [control database](docs/control_database.md),
-[data model](docs/data_model.md), [storage layout](docs/storage_layout.md),
-[sharing](docs/sharing.md), [cryptography](docs/crypto.md), and
-[deployment](docs/deployment.md) for the complete design.
+See [authentication](docs/auth.md), [data model](docs/data_model.md),
+[storage layout](docs/storage_layout.md), [sharing](docs/sharing.md),
+[cryptography](docs/crypto.md), [deployment](docs/deployment.md), and the
+[implementation plan](docs/milestones.md) for the complete design. The design
+is decided; implementation is in progress per `docs/milestones.md` — the
+Python CLI and UI referenced below still target the design's predecessor
+(rqlite/Firebase/SQLCipher) until each milestone lands.
 
 ## Architecture
 
 ```text
-Browser ── HTTPS ─┬─> OpenResty /v1 Lua API ───┬─> rqlite
-                  │                              └─> Cloudflare R2
-                  ├─> OpenResty /operator/rqlite/ ──> rqlite
-                  └─> Cloudflare R2 encrypted objects
+Browser ── HTTPS ─┬─> Worker /v1/* (Access-gated, except /v1/shared-url) ─┬─> D1
+                  │                                                       └─> R2 (credential minting only)
+                  └─> Worker static assets (dist/, ungated)
+                  └─> Cloudflare R2 encrypted objects (direct, via minted credentials)
 ```
 
-- The owner signs in with Firebase; the API accepts only the configured owner
-  UID.
-- The owner's SQLCipher library database is one conditionally updated R2
-  object.
+- Cloudflare Access authenticates the owner at the edge; the Worker accepts
+  only the configured `OWNER_EMAIL`.
+- The owner's library — catalog metadata, reading state, bookmarks, and share
+  grants — lives in D1, row-by-row encrypted.
 - Every EPUB is a separate immutable encrypted R2 object.
-- The browser performs EPUB encryption and decryption. The API never receives
-  plaintext books or share content keys.
-- During unlock, the owner browser reads wrapped singleton material through the
-  Basic-authenticated rqlite operator proxy and obtains an R2 binding ticket
-  through the Firebase-authenticated API. All three owner UIDs must agree.
-- rqlite is the only server-side database. It stores the singleton owner control
-  record, the share registry, schema versions, and rate-limit counters.
+- The browser performs EPUB encryption and decryption. The Worker never
+  receives plaintext books or share content keys.
+- Every D1-mutating endpoint and R2 credential minting require proof of
+  possession of the owner's P-521 signing key, on top of the Access session.
 - Shared EPUB downloads go directly from R2 to the recipient through a
-  short-lived presigned URL; EPUB bytes do not pass through Northflank.
+  short-lived presigned URL; EPUB bytes do not pass through the Worker.
 
 ## Main features
 
-- One in-memory unlocked owner session with locally opened SQLCipher data.
+- One in-memory unlocked owner session, backed by D1 through the Worker
+  rather than a locally opened database file.
 - Searchable catalog metadata, reading position, CFI bookmarks, and responsive
   EPUB rendering.
-- P-521 proof of possession before the API signs temporary owner R2 access.
-- Exact-path and prefix-scoped R2 authorization with conditional database
-  updates.
+- P-521 proof of possession on every mutation and before the Worker signs
+  temporary owner R2 access.
+- Exact-path and prefix-scoped R2 authorization with optimistic-concurrency
+  reading-state updates.
 - Owner-created, independently encrypted, revocable public shares.
 - Direct R2 downloads through 60-second exact-object presigned URLs.
-- A loopback-only single-node rqlite control database with durable storage and
-  native hot backups to private R2 storage.
+- D1's built-in point-in-time recovery for the database; R2 retention/
+  versioning for object durability.
 
 ## Install
 
@@ -63,9 +64,14 @@ npm install
 
 ## Owner provisioning
 
-Provisioning is a one-time, idempotent operation. The exact credential-file
-shape and field descriptions are in [the deployment guide](docs/deployment.md#3-owner-initialization).
-`rqlite_operator_url` is the externally reachable Basic-auth operator route,
+**Pending implementation** ([`docs/milestones.md`](docs/milestones.md)): the
+commands below still target the design's predecessor (rqlite/Firebase) and
+will not work against a Cloudflare deployment until the Worker, D1 schema,
+and CLI rewrite land. They're kept here as a description of the current CLI's
+actual behavior, not of `docs/deployment.md`'s design.
+
+Provisioning is a one-time, idempotent operation. `rqlite_operator_url` is
+the externally reachable Basic-auth operator route,
 for example `https://api.example.com/operator/rqlite`; it is not rqlite's
 loopback listener. Leave `user_root_key` empty on the first run. Provisioning
 generates a 256-byte base64 key and writes it back to the file.
@@ -99,8 +105,10 @@ the browser fields:
 file's credentials and all decrypted material only in page memory; lock or
 reload before leaving the device. Do not commit or upload this file.
 
-Apply pending rqlite schema migrations (`docker/migrations/NNNN_*.sql` not yet
-recorded in `schema_migrations`) to an already-provisioned instance:
+Apply pending rqlite schema migrations (from the migration directory, not yet
+recorded in `schema_migrations`) to an already-provisioned instance — this
+command's migration source directory was removed with `docker/` in this
+branch and needs a new source before it works again:
 
 ```sh
 txt --update-rql rqlite_creds.json --verbose
@@ -154,9 +162,8 @@ npm run ui:test
 npm run ui:typecheck
 npm run lint
 npm run format:check
-npm run lua:check
 npm run ui:build
 ```
 
-Deployment configuration, rqlite initialization, R2 CORS, backups, and
-end-to-end verification are specified in [docs/deployment.md](docs/deployment.md).
+Deployment configuration and release verification are specified in
+[docs/deployment.md](docs/deployment.md).

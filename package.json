@@ -8,11 +8,6 @@
   },
   "scripts": {
     "tsc": "node node_modules/typescript7/bin/tsc",
-    "lua:format": "sh scripts/lua-tools.sh format",
-    "lua:format:check": "sh scripts/lua-tools.sh format-check",
-    "lua:lint": "sh scripts/lua-tools.sh lint",
-    "lua:test": "sh scripts/lua-tools.sh test",
-    "lua:check": "sh scripts/lua-tools.sh check",
     "ui:dev": "vite --config ui/vite.config.ts",
     "ui:typecheck": "npm run tsc -- -b ui/tsconfig.json",
     "ui:build": "npm run tsc -- -b ui/tsconfig.json && vite build --config ui/vite.config.ts && rm -rf dist/test-* dist/sqlcipher.js.symbols dist/*.mjs dist/package.json ui/node_modules && cp ui/_headers dist/_headers",
