@@ -10,6 +10,7 @@ npm-debug.log*
 *.tsbuildinfo
 .wrangler/
 .lua-tools/
+worker/worker-configuration.d.ts
 
 # Python
 __pycache__/

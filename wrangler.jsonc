@@ -1,6 +1,56 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "txt",
+  "main": "worker/index.ts",
   "compatibility_date": "2026-08-21",
-  "pages_build_output_dir": "./dist"
+  // One Worker serves both /v1/* and the static UI (docs/deployment.md §1).
+  // ASSETS is served by worker/index.ts explicitly delegating non-/v1/*
+  // requests to it, not by Wrangler's default asset-first routing --
+  // see worker/index.ts for why.
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "txt-dev",
+      "database_id": "1706cb6d-568c-4e66-9d0f-8a1842483690",
+      "migrations_dir": "worker/migrations"
+    }
+  ],
+  // The real bucket name is never committed here -- scripts/deploy.sh
+  // substitutes it from the required BUCKET_NAME environment variable
+  // before deploying. The placeholder is left as-is for local `wrangler
+  // dev`/tests: Miniflare's local R2 emulation doesn't validate that a
+  // bucket by this name actually exists, so it works fine as a local,
+  // harmless storage key.
+  "r2_buckets": [
+    {
+      "binding": "BUCKET",
+      "bucket_name": "replace-me-bucket-name"
+    }
+  ],
+  // Bindings for `wrangler <cmd> --env ci` (e.g. verifying migrations apply
+  // cleanly against a real, shared D1 instance in a CI job) -- distinct
+  // from the ephemeral, per-run local D1/R2 that worker/vitest.config.ts
+  // configures for the actual test suite (docs/milestones.md Milestone 1).
+  "env": {
+    "ci": {
+      "assets": {
+        "directory": "./dist",
+        "binding": "ASSETS",
+        "not_found_handling": "single-page-application"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "txt-ci",
+          "database_id": "9b0c2cf4-2eb8-43c7-b08d-c8383bec0580",
+          "migrations_dir": "worker/migrations"
+        }
+      ]
+    }
+  }
 }

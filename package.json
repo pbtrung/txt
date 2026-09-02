@@ -12,10 +12,14 @@
     "ui:typecheck": "npm run tsc -- -b ui/tsconfig.json",
     "ui:build": "npm run tsc -- -b ui/tsconfig.json && vite build --config ui/vite.config.ts && rm -rf dist/test-* dist/sqlcipher.js.symbols dist/*.mjs dist/package.json ui/node_modules && cp ui/_headers dist/_headers",
     "ui:test": "vitest run --config ui/vite.config.ts",
+    "worker:types": "wrangler types worker/worker-configuration.d.ts",
+    "worker:dev": "npm run worker:types && wrangler dev",
+    "worker:typecheck": "npm run worker:types && npm run tsc -- -p worker/tsconfig.json",
+    "worker:test": "npm run worker:types && vitest run --config worker/vitest.config.ts",
     "deploy": "sh scripts/deploy.sh",
     "format": "prettier --write \"**/*.{ts,tsx,js}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js}\"",
-    "lint": "eslint ui"
+    "lint": "eslint ui worker"
   },
   "dependencies": {
     "@fontsource/inter": "^5.3.0",
@@ -35,6 +39,8 @@
     "react-router-dom": "^7.18.3"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.22.0",
+    "@cloudflare/workers-types": "^5.20260902.1",
     "@eslint/js": "^10.0.1",
     "@johnnymorganz/stylua-bin": "^2.5.2",
     "@tailwindcss/vite": "^4.3.3",

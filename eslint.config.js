@@ -18,7 +18,7 @@ export default tseslint.config(
     ],
   },
   {
-    files: ["ui/**/*.{ts,tsx}"],
+    files: ["ui/**/*.{ts,tsx}", "worker/**/*.ts"],
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     languageOptions: {
       globals: { ...globals.browser, ...globals.node },
