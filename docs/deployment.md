@@ -47,8 +47,17 @@ BUCKET_NAME
 ```
 
 `OWNER_EMAIL`, `CF_ACCESS_AUD`, and `CF_ACCESS_TEAM_DOMAIN` (used to build
-both the JWKS URL and the expected `iss`) back the Worker's independent
-verification of the Access JWT. `CF_ACCOUNT_ID` and `BUCKET_NAME` back the
+both the JWKS URL, `https://{CF_ACCESS_TEAM_DOMAIN}/cdn-cgi/access/certs`,
+and the expected `iss`) back the Worker's independent verification of the
+Access JWT. `CF_ACCESS_TEAM_DOMAIN` is the **full team domain** —
+`<team-name>.cloudflareaccess.com` (visible in the Zero Trust dashboard's
+URL, and in the `redirect_url` Access itself sends an unauthenticated
+browser to) — not just `<team-name>` alone; the bare team name resolves
+to nothing, so the Worker's own JWKS fetch fails with a non-2xx status
+and every session — even a genuinely valid one — gets rejected uniformly
+as `401` (docs/auth.md §2), logged server-side only as `Access
+verification failed: failed to fetch Access JWKS: <status>`
+(`wrangler tail`). `CF_ACCOUNT_ID` and `BUCKET_NAME` back the
 R2 temporary-credentials calls (`docs/storage_layout.md` §"Credentials")
 — `BUCKET_NAME` here is a plain runtime string the Worker's own code
 reads, distinct from the R2 binding's `bucket_name` config field below,
