@@ -39,15 +39,29 @@ One Worker serves the whole `sub.domain.com` host:
   document content, preserving the current design's rule that large binary
   transfers bypass the API process.
 
-A Cloudflare Access application gates `sub.domain.com` at the edge, before any
-request reaches the Worker (§3). Two paths are excluded from that gate: the
-public share-redemption route (the shared-reading UI and `POST
-/v1/shared-url`) stays reachable by anonymous recipients, exactly as today.
+A Cloudflare Access application gates only `/v1/*` at the edge, before any
+request reaches the Worker (§3) — not the whole `sub.domain.com` host. The
+one exclusion within `/v1/*` is `POST /v1/shared-url`, which stays reachable
+by anonymous recipients redeeming a share, exactly as today's `/v1/*`-wide
+origin check already carves out.
+
+Static assets (the SPA shell — `index.html` and its JS/CSS bundle) are never
+gated by Access at all, for anyone. They carry no confidential data, and the
+owner's authenticated app and the public shared-reading page are served from
+the *same* single-page bundle: gating the asset paths would also block the
+shared-reading page's own JS/CSS from loading for a recipient who was never
+meant to pass Access in the first place, since a browser that fetches
+`/shared#...` still has to fetch its script and style assets from other,
+unrelated paths before it can render anything. What actually needs
+protecting — the wrapped key material and the ability to mutate the
+library — lives entirely behind `/v1/*`, which the static bundle can reach
+or fail to reach depending on whether the visitor has a valid Access
+session; the bundle itself is safe to hand to anyone.
 
 ## 3. Identity: Cloudflare Access replaces Firebase
 
 Firebase Authentication is removed. A Cloudflare Access application in front
-of `sub.domain.com` is configured with exactly one policy: `Include: emails
+of `/v1/*` (§2) is configured with exactly one policy: `Include: emails
 equals OWNER_EMAIL`, using either the One-Time PIN login method (an emailed
 code, no external identity provider) or a Google login restricted to that one
 address — both are available on Access's free plan, which covers up to 50
@@ -109,11 +123,19 @@ the same ticket-and-proof protocol to every D1-*mutating* `/v1/*` endpoint
 (reading-state updates, bookmark writes, share create/delete), not only
 `/v1/r2-token`: each such request must carry a fresh proof, built exactly as
 `docs/crypto.md` specifies, with the canonical proof bytes extended by one
-more bound field — a hash of the operation name and request body — so a
-captured proof for one mutation can't be replayed against a different one.
-Reads stay behind the Access JWT alone: a read only ever returns opaque
-per-row ciphertext (§4.1), so an attacker without `umk` gains nothing
-exploitable from it, unlike a write.
+more bound field — `SHA-256(UTF8(method) || 0x00 || UTF8(path) || 0x00 ||
+body)`, covering the exact HTTP method, full request path, and body, not
+just an "operation name." Binding the *path* matters as much as binding the
+body: a target id such as a bookmark or share id typically travels in the
+URL (e.g. `DELETE /v1/bookmarks/{id}`) rather than in an otherwise-empty
+body, so a proof that only hashed the body would look identical for two
+different targets of the same operation — a captured proof for "delete
+bookmark #5" could then be replayed against bookmark #7. Hashing the full
+method-and-path together with the body closes that: a captured proof
+verifies only against the exact request it was signed for. Reads stay behind
+the Access JWT alone: a read only ever returns opaque per-row ciphertext
+(§4.1), so an attacker without `umk` gains nothing exploitable from it,
+unlike a write.
 
 ## 4. Unified D1 database
 
@@ -155,13 +177,25 @@ per-row key doesn't defend against is a caller who can also rewrite the
 foreign key alongside the blob, which needs D1 write access — i.e. a
 compromised Worker, already inside the trusted computing base (§8).
 
-Deleting a bookmark or a share must delete its `key_store` row in the same
-D1 transaction — the foreign key points from the data row to `key_store`,
-not the reverse, so nothing does this automatically; leaving it out doesn't
-leak anything (the orphaned row is still only wrapped ciphertext) but lets
-`key_store` grow unbounded. `key_store` roughly doubles the row-write count
-of every mutation (one data row plus one key row); at this app's volume that
-is still a trivial fraction of D1's free-tier write budget (§7).
+The foreign key points from a data row to its `key_store` row, not the
+reverse, so deleting a bookmark or a share doesn't automatically delete the
+`key_store` row it protects unless something arranges that — including when
+the *bookmark cap trigger* evicts a row automatically, which the caller
+can't easily anticipate (it doesn't know in advance which row `ORDER BY id
+DESC LIMIT 20` will evict). The unified schema (§4.2) handles this with an
+`AFTER DELETE` trigger per table (`trg_txt_delete_keys`, `trg_txt_bookmarks_
+delete_key`, `trg_shares_delete_key`) rather than relying on caller
+discipline: each fires on any deletion of its owning row — explicit or
+cap-trigger-driven — and removes the corresponding `key_store` row in the
+same statement's execution, so an orphan is never created in the first
+place. Leaving one out wouldn't leak anything (the orphaned row is still
+only wrapped ciphertext), but would let `key_store` grow unbounded.
+
+`key_store` adds one extra write per new bookmark or share row (one data row
+plus one key row), and *two* extra writes per new `txt` row, since it
+references two independent per-row keys (`content_key_id` and
+`access_key_id`); at this app's volume that is still a trivial fraction of
+D1's free-tier write budget (§7).
 
 ### 4.2 Schema
 
@@ -217,11 +251,22 @@ CREATE TABLE txt (
     created_at     INTEGER NOT NULL,
     content_key_id INTEGER NOT NULL REFERENCES key_store(id),
     content_blob   BLOB    NOT NULL,  -- Blob Format, IKM = content_key_id's unwrapped key
-                                       -- plaintext: {content_key, path}
+                                       -- plaintext: {content_key (128 random bytes), path}
     access_key_id  INTEGER NOT NULL REFERENCES key_store(id),
-    access_blob    BLOB    NOT NULL   -- Blob Format, IKM = access_key_id's unwrapped key
+    access_blob    BLOB    NOT NULL,  -- Blob Format, IKM = access_key_id's unwrapped key
                                        -- plaintext: {last_accessed, last_cfi}
+    access_version INTEGER NOT NULL DEFAULT 0  -- optimistic-concurrency counter for access_blob, §4.5
 ) STRICT;
+CREATE TRIGGER trg_txt_delete_keys AFTER DELETE ON txt
+BEGIN
+  DELETE FROM key_store WHERE id = OLD.content_key_id OR id = OLD.access_key_id;
+END;
+CREATE TRIGGER trg_txt_key_purpose BEFORE INSERT ON txt
+WHEN (SELECT purpose FROM key_store WHERE id = NEW.content_key_id) != 'txt_content_key'
+   OR (SELECT purpose FROM key_store WHERE id = NEW.access_key_id) != 'txt_access_key'
+BEGIN
+  SELECT RAISE(ABORT, 'key_store purpose mismatch for txt row');
+END;
 
 CREATE TABLE txt_bookmarks (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -239,6 +284,18 @@ BEGIN
     ORDER BY id DESC LIMIT 20
   );
 END;
+-- Fires for both the cap eviction above and any explicit application delete,
+-- so an evicted or deleted bookmark's key_store row never has to be tracked
+-- and cleaned up by caller code (§4.1).
+CREATE TRIGGER trg_txt_bookmarks_delete_key AFTER DELETE ON txt_bookmarks
+BEGIN
+  DELETE FROM key_store WHERE id = OLD.key_id;
+END;
+CREATE TRIGGER trg_txt_bookmarks_key_purpose BEFORE INSERT ON txt_bookmarks
+WHEN (SELECT purpose FROM key_store WHERE id = NEW.key_id) != 'txt_bookmark_key'
+BEGIN
+  SELECT RAISE(ABORT, 'key_store purpose mismatch for txt_bookmarks row');
+END;
 
 CREATE TABLE shares (
     share_id_hash     BLOB    PRIMARY KEY CHECK (length(share_id_hash) = 32),
@@ -246,12 +303,54 @@ CREATE TABLE shares (
     object_path_hash  BLOB    NOT NULL CHECK (length(object_path_hash) = 32),
     key_id            INTEGER NOT NULL REFERENCES key_store(id),
     owner_blob        BLOB    NOT NULL,  -- Blob Format, IKM = key_id's unwrapped key
-                                          -- plaintext: {share_id, share_content_key, share_path}
+                                          -- plaintext: {share_id, share_content_key
+                                          --             (128 random bytes), share_path}
     state             TEXT    NOT NULL CHECK (state IN ('creating', 'active', 'deleting')),
     created_at        INTEGER NOT NULL,
     UNIQUE (object_path_hash)
 ) STRICT;
+CREATE TRIGGER trg_shares_delete_key AFTER DELETE ON shares
+BEGIN
+  DELETE FROM key_store WHERE id = OLD.key_id;
+END;
+CREATE TRIGGER trg_shares_key_purpose BEFORE INSERT ON shares
+WHEN (SELECT purpose FROM key_store WHERE id = NEW.key_id) != 'txt_share_key'
+BEGIN
+  SELECT RAISE(ABORT, 'key_store purpose mismatch for shares row');
+END;
+CREATE TRIGGER trg_catalog_key_purpose BEFORE INSERT ON catalog
+WHEN (SELECT purpose FROM key_store WHERE id = NEW.key_id) != 'txt_catalog_key'
+BEGIN
+  SELECT RAISE(ABORT, 'key_store purpose mismatch for catalog row');
+END;
 ```
+
+Without them, nothing would stop a caller from referencing the wrong
+`key_store` row for a column — a `CHECK` constraint can only validate a
+single table's own columns, not cross-reference another table's, so this
+pairing would otherwise be an unenforced, application-level-only invariant.
+The purpose-check triggers guard `BEFORE INSERT` only, matching that every
+row here is written once and never has its `*_key_id` reassigned afterward;
+they turn that silent, undetectable mismatch into an immediate
+`RAISE(ABORT)`. The delete-cascading triggers (`trg_txt_
+delete_keys`, `trg_txt_bookmarks_delete_key`, `trg_shares_delete_key`) mean
+`key_store` rows are cleaned up automatically by SQLite/D1 itself whenever
+their owning row is deleted — including the bookmark-cap trigger's automatic
+eviction above, which the Worker has no direct visibility into (it doesn't
+know in advance which row `ORDER BY id DESC LIMIT 20` will evict), so
+handling this at the trigger level rather than in application code is not
+just more convenient but the only reliable place to catch it.
+
+Before relying on `txt_bookmarks.txt_id ON DELETE CASCADE` or `shares.txt_id
+ON DELETE RESTRICT` actually firing, confirm D1 enforces `FOREIGN KEY`
+constraints on every connection it uses for these statements: SQLite's
+`foreign_keys` pragma is off by default per connection unless explicitly
+turned on, and if D1's Workers binding doesn't enable it for every query
+path, those two declarative behaviors — and the `REFERENCES` existence
+checks generally — would silently not apply. The `key_store`
+cleanup/purpose-check triggers above aren't affected by this: plain
+`CREATE TRIGGER` objects fire on the `INSERT`/`DELETE` event itself,
+independent of the `foreign_keys` pragma, so they're reliable either way.
 
 `txt.id`, `txt_bookmarks.id`, and `key_store.id` are plain `AUTOINCREMENT`
 integers rather than 32-byte random base32-Crockford tokens like `db_prefix`,
@@ -310,6 +409,33 @@ N D1 rows and N per-row decrypts.
   `{db_prefix}/*` credential (§2/§5) — no Worker involvement in serving the
   object's bytes.
 
+**Write order and recovery.** The `txt` row (D1) and the catalog object (R2)
+are two independent stores with no cross-system transaction — unlike today,
+where the catalog entry and its `txt` row are part of the same whole-file
+object uploaded atomically in one conditional `PUT` (`docs/data_model.md`
+§1). Ingestion must insert the new `txt`/`key_store` rows into D1 *first*,
+then rewrite the catalog object second. That ordering makes an interruption
+between the two steps a safe, self-correcting state rather than a broken
+one: a `txt` row that exists but isn't in the catalog is simply invisible in
+the Library screen's list until the next ingestion run — it isn't lost, and
+isn't reachable through a dangling reference either. The reverse order would
+be worse: a catalog entry could reference a `txt_id` that doesn't exist in
+D1 yet, which the Library screen would show and then fail to open. Ingestion
+re-runs are idempotent for this reason: each run should reconcile by
+checking for any `txt` row not yet represented in the current catalog object
+and adding it, rather than assuming the previous run's catalog rewrite
+necessarily completed.
+
+**Scaling assumption.** Because catalog is one object holding *every*
+document's display metadata, adding a single new book means fully
+downloading, decrypting, re-encrypting, and re-uploading the entire catalog
+object, not just appending an entry. This is deliberately traded for the
+Library screen's single-fetch simplicity (§4.3's opening paragraph) and
+holds up fine at personal-library scale (hundreds to low thousands of
+documents); a library large enough for that whole-object rewrite to become
+slow or costly would need per-document catalog entries instead, giving up
+the single-object-fetch benefit for incremental updates.
+
 ### 4.4 Plaintext encoding: MessagePack, not JSON, and never brotli-compressed
 
 Every `plaintext: {...}` payload in §4.2's row-level blobs — `content_blob`,
@@ -344,20 +470,49 @@ locally, and re-uploads it with a conditional R2 `PUT` (`docs/data_model.md`
 §1). D1 has no equivalent whole-file access; the browser instead sends
 individual, already-encrypted field values to purpose-built `/v1/*`
 endpoints, which the Worker writes as parameterized D1 statements inside a
-D1 transaction. This drops the local wasm SQLCipher engine and the ETag
-conflict-retry loop for metadata entirely — D1's own transactional
-consistency replaces optimistic whole-file concurrency.
+D1 transaction. This drops the local wasm SQLCipher engine entirely.
+
+**D1's transactions are not a drop-in replacement for the ETag
+conflict-retry loop, though.** A D1 transaction guarantees one statement or
+batch is atomic and consistent; it says nothing about two *different*
+requests, from two devices, each independently reading then overwriting the
+same row — the exact race the ETag mechanism exists to catch. `txt.
+access_blob` is the row most exposed to this: two devices syncing reading
+position near-simultaneously could otherwise silently lose whichever
+update loses the race to land last, with no error raised. `txt.
+access_version` (§4.2) exists specifically to close this: every update to
+`access_blob` is a conditional statement, `UPDATE txt SET access_blob = ?,
+access_version = access_version + 1 WHERE id = ? AND access_version = ?`,
+using the version number the client's own read returned. `access_key_id`
+itself never changes on these updates — the same per-row key encrypts every
+successive `access_blob` for that row, with a fresh salt and nonce each time
+per the Blob Format (`docs/crypto.md`); rotating it here would mint a new
+`key_store` row on every coalesced 15-second reading-state write with no
+trigger positioned to clean up the old one, since the delete-cascading
+triggers (§4.2) fire on row *deletion*, not on an in-place `*_key_id`
+change. Zero rows affected means another
+write landed first — the same signal a `412` gives today — and the client
+re-fetches the row and reapplies its semantic mutation, exactly as
+`docs/data_model.md` §1 step 7 already does for the whole file. Bookmark and
+share rows don't need this: they're created and deleted, not read-modified-
+and-written-back in place, so there's no analogous lost-update window for
+them.
 
 Because `access_blob` encrypts `last_accessed` and `last_cfi` together, D1
 cannot `ORDER BY` reading state — the Library screen's recency sort happens
 client-side, after one request returns every `txt` row plus the catalog
-object (§4.3) for the browser to decrypt and sort locally. That's the same
-trade the current design already accepts by keeping this data behind
-`db_master_key` today; it also means reading the library requires a round
-trip to the Worker rather than opening a fully offline local copy, a real
-behavior change worth confirming is acceptable before adopting this
-proposal. EPUB content itself is unaffected: it stays in R2, fetched and
-decrypted client-side exactly as today.
+object (§4.3) for the browser to decrypt and sort locally. That request
+should `JOIN txt` against `key_store` (on both `content_key_id` and
+`access_key_id`) rather than fetch each row's keys with a separate query per
+row — an N+1 pattern here would multiply D1's per-query overhead across the
+whole library on every Library-screen load, working against the same
+free-tier read/CPU budgets (§7) this design is trying to stay comfortably
+under. That's the same trade the current design already accepts by keeping
+this data behind `db_master_key` today; it also means reading the library
+requires a round trip to the Worker rather than opening a fully offline
+local copy, a real behavior change worth confirming is acceptable before
+adopting this proposal. EPUB content itself is unaffected: it stays in R2,
+fetched and decrypted client-side exactly as today.
 
 ## 5. R2 usage
 
@@ -367,13 +522,18 @@ for the catalog object (§4.3):
 ```text
 s3://{bucket}/{db_prefix}/txt/{path}
 s3://{bucket}/{db_prefix}/shared/{share_path}
-s3://{bucket}/{db_prefix}/catalog/{path}
+s3://{bucket}/{db_prefix}/catalog/{catalog_path}
 ```
 
-`db_prefix`, `path`, and `share_path` are each independent 32-byte random
-values rendered as 52 lowercase base32-Crockford characters, the same
-encoding `docs/storage_layout.md` and `txt/random_token.py` already use for
-this kind of R2 object-key segment.
+`db_prefix`, `path`, `share_path`, and `catalog_path` are each independent
+32-byte random values rendered as 52 lowercase base32-Crockford characters,
+the same encoding `docs/storage_layout.md` and `txt/random_token.py` already
+use for this kind of R2 object-key segment. The third line's segment is
+named `catalog_path` rather than reusing `path`, matching the field name
+`catalog.catalog_blob`'s own plaintext already uses for it (§4.2) — `path`
+in `txt.content_blob`'s plaintext is a different, independently random value
+for a different object, and giving them the same placeholder name here would
+suggest otherwise.
 
 This replaces `docs/storage_layout.md`'s current two-random-segment layout
 (`{db_prefix}/{txt_prefix}/{path}` for owner content, `{db_prefix}/shared/
@@ -387,6 +547,20 @@ CORS configuration and presigned-URL minting are otherwise unchanged from
 the current design: the Worker still never proxies EPUB bytes, only mints
 short-lived scoped credentials or presigned URLs for direct browser-to-R2
 transfer, exactly as the current API does today.
+
+**Scope the browser's credential narrower than the current design's single
+prefix grant.** Today, the whole-file database object gets its own exact-
+object credential, separate from the broader prefix credential used for
+EPUB content (`docs/auth.md` §4.2) — two credentials, not one, deliberately
+limiting what a single grant can reach. Folding `catalog/` into the same
+general `{db_prefix}/*` read-write credential the browser already gets for
+`txt/` and `shared/` would lose that separation: per §4.3, the browser
+should only ever need to *read* `catalog/*` (only the maintenance tooling
+writes it), so a blanket read-write grant gives the browser more than it
+needs and reintroduces exactly the kind of unnecessarily broad credential
+the current design avoids. Mint the browser's credential as read-write on
+`{db_prefix}/txt/*` and `{db_prefix}/shared/*`, but read-only on
+`{db_prefix}/catalog/*`, rather than one undifferentiated prefix grant.
 
 ## 6. Rate limiting
 
@@ -444,10 +618,10 @@ free-tier allowances change — but as of this proposal:
 | Resource                        | Free allowance                                              | Fit for a single-owner app                                    |
 | -------------------------------- | ------------------------------------------------------------- | ---------------------------------------------------------------- |
 | Workers requests                 | 100,000 / day                                                 | Comfortable; one owner plus occasional anonymous share reads     |
-| Workers CPU time                 | 10 ms / invocation                                             | JWT/HMAC/P-521 verification and small D1 queries are well under this; profile before relying on it for the crypto-heaviest handler |
+| Workers CPU time                 | 10 ms / invocation                                             | JWT/HMAC/P-521 verification and small D1 queries are well under this; profile before relying on it — P-521 proof verification now runs on every mutating `/v1/*` handler (§3), not only `/v1/r2-token`, so profile that whole class, not just one endpoint |
 | D1 storage                       | 5 GB                                                            | Metadata and wrapped keys only — content stays in R2              |
 | D1 rows read                     | 5,000,000 / day                                                 | Comfortable at personal-library scale                             |
-| D1 rows written                  | 100,000 / day                                                   | Comfortable even with `key_store`'s roughly 2x write multiplier (§4.1); reading-state writes stay coalesced as in `docs/data_model.md` §2.2 |
+| D1 rows written                  | 100,000 / day                                                   | Comfortable even with `key_store`'s extra write per new row (two for a new `txt` row, §4.1); reading-state writes stay coalesced as in `docs/data_model.md` §2.2 |
 | D1 free-tier enforcement         | Hard failure once a daily cap is hit (in effect since 2026-09-01) | No headroom for a runaway loop — keep the rate limit in §6        |
 | Workers static assets            | 20,000 files                                                    | Far more than this UI's build output                              |
 | Cloudflare Access seats           | 50 users                                                         | One owner uses one seat                                           |
@@ -491,10 +665,6 @@ These are not resolved by this proposal:
 - Whether D1's native migration tooling (`wrangler d1 migrations`) replaces
   the bespoke `schema_migrations` tracking this proposal keeps for parity
   with the current design.
-- A cleanup pass for orphaned `key_store` rows left behind by a bookmark or
-  share deletion that didn't also delete its key row in the same
-  transaction (§4.1) — analogous to today's `db_cleaner.py`, but scoped to
-  `key_store` rather than `txt_shares`/`shares`.
 - Confirming current Access, D1, and Workers free-tier figures against
   Cloudflare's dashboard immediately before implementation, since §7's
   figures can change.
