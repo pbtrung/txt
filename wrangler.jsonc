@@ -12,6 +12,16 @@
     "binding": "ASSETS",
     "not_found_handling": "single-page-application"
   },
+  // Non-secret, deployment-specific config (docs/auth.md §2). Real values
+  // are never committed here, matching the R2 bucket_name pattern below --
+  // scripts/deploy.sh substitutes them from required environment variables.
+  // The placeholders work as-is for local `wrangler dev`/tests, which use
+  // their own fixed test values (worker/vitest.config.ts).
+  "vars": {
+    "OWNER_EMAIL": "replace-me-owner-email",
+    "CF_ACCESS_TEAM_DOMAIN": "replace-me-team-domain",
+    "CF_ACCESS_AUD": "replace-me-access-aud"
+  },
   "d1_databases": [
     {
       "binding": "DB",

@@ -22,21 +22,37 @@ persistent volume to provision.
 
 ## 2. Configuration
 
-Worker environment/bindings:
+Non-secret, deployment-specific `vars` (`docs/auth.md` §2):
 
 ```text
 OWNER_EMAIL
 CF_ACCESS_TEAM_DOMAIN
 CF_ACCESS_AUD
+```
+
+`OWNER_EMAIL`, `CF_ACCESS_AUD`, and `CF_ACCESS_TEAM_DOMAIN` (used to build
+both the JWKS URL and the expected `iss`) back the Worker's independent
+verification of the Access JWT. `wrangler.jsonc` never commits their real
+values — only `replace-me-*` placeholders the Worker's own `requireVar()`
+check deliberately refuses to run with. `scripts/deploy.sh` requires all
+three (alongside `BUCKET_NAME`, `docs/storage_layout.md`) as environment
+variables and substitutes them into a throwaway config copy before calling
+`wrangler deploy`; running `npm run deploy` without one set fails fast with
+a clear error instead of deploying a broken or placeholder configuration.
+
+Secrets, set once per deployment with `wrangler secret put <NAME>` (never
+committed, never passed through `scripts/deploy.sh`):
+
+```text
 SHARE_GRANT_KEY
 ```
 
-plus the D1 binding (`DB`) and R2 bucket binding declared in
-`wrangler.jsonc`. `OWNER_EMAIL` and `CF_ACCESS_AUD` back the Worker's
-independent verification of the Access JWT (`docs/auth.md` §2).
 `SHARE_GRANT_KEY` is an independent 32-byte secret (`openssl rand -base64
 32`) used only to encrypt/decrypt share-object-path grants (`docs/crypto.md`
-§"Share grant envelope", `docs/sharing.md`). Cloudflare terminates TLS and
+§"Share grant envelope", `docs/sharing.md`).
+
+Plus the D1 binding (`DB`) and R2 bucket binding declared in
+`wrangler.jsonc`. Cloudflare terminates TLS and
 runs Access at its own edge; there is no gateway TLS certificate or origin
 CA bundle to manage.
 

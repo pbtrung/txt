@@ -22,7 +22,16 @@ export default defineConfig({
     cloudflareTest({
       wrangler: { configPath: join(REPO_ROOT, "wrangler.jsonc") },
       miniflare: {
-        bindings: { TEST_MIGRATIONS: migrations },
+        bindings: {
+          TEST_MIGRATIONS: migrations,
+          // Override wrangler.jsonc's committed "replace-me-*" placeholders
+          // (which worker/api.ts's requireVar() deliberately rejects, since
+          // seeing one for real would mean a deploy forgot to substitute it)
+          // with fixed, realistic test values.
+          OWNER_EMAIL: "owner@example.com",
+          CF_ACCESS_TEAM_DOMAIN: "test-team.cloudflareaccess.com",
+          CF_ACCESS_AUD: "test-access-application-aud",
+        },
       },
     }),
   ],

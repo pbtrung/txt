@@ -146,6 +146,19 @@ browser," which was this milestone's original, wrong framing:
 
 ## Milestone 3 — Access-gated Worker skeleton
 
+**Status: code and tests done; live-deployment verification still
+pending.** `worker/access.ts` verifies the Access JWT (signature via a
+real RSA keypair in tests, `aud`, `iss`, `exp`, `email`); `worker/api.ts`
+gates every `/v1/*` route except `POST /v1/shared-url` behind it, with a
+`requireVar()` check that refuses to run against an unsubstituted
+`replace-me-*` placeholder rather than silently comparing against it.
+The second bullet below — configuring a _real_ Cloudflare Access
+application against a live deployment — is a real, visible
+infrastructure change (Zero Trust org config, a live URL) and hasn't
+been done in this pass; it needs an explicit decision to actually deploy
+and configure Access before it can be checked off. The UI-side Access
+challenge handling (third bullet) is UI work, not yet started.
+
 - Route `/v1/*` (minus `/v1/shared-url`) through Access JWT verification
   (`docs/auth.md` §2): signature against the team domain's JWKS, `aud`,
   `exp`, `email == OWNER_EMAIL`.
