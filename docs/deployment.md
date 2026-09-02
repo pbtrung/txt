@@ -11,16 +11,26 @@ persistent volume to provision.
   every other path (the static UI, via a static assets binding pointing
   at `dist/`, `not_found_handling: "single-page-application"`).
 - **D1**: one database (`docs/data_model.md`), bound to the Worker.
+  `scripts/deploy.sh` resolves it by name (`txt-production`) on every
+  run and creates it (`wrangler d1 create`) if it doesn't exist yet, then
+  applies `worker/migrations/` (`wrangler d1 migrations apply --remote`)
+  before deploying — a fresh database and an up to date schema are both
+  guaranteed on every deploy, not a manual prerequisite.
 - **R2**: the application bucket (`docs/storage_layout.md`), bound to the
   Worker for its own direct object operations (e.g. deleting a revoked
   share's object, `docs/sharing.md`) — never for content the browser
   reads or writes. The Worker mints the browser's scoped, temporary
   credentials through a separate mechanism, Cloudflare's account-level R2
   API (`docs/storage_layout.md` §"Credentials"), since the binding itself
-  has no method for issuing them.
+  has no method for issuing them. `scripts/deploy.sh` also resolves or
+  creates this bucket by name (`wrangler r2 bucket create`) — but not its
+  CORS configuration (§4), which still needs the exact deployed UI origin
+  set up manually.
 - **Access**: one Cloudflare Access application in front of `/v1/*` on
   the deployed host, policy `Include: emails equals OWNER_EMAIL`
-  (`docs/auth.md` §2).
+  (`docs/auth.md` §2), with a bypass policy for `POST /v1/shared-url`.
+  `wrangler` has no command for this at all — configure it manually via
+  the dashboard, the same as the WAF rule below.
 - **WAF rate-limiting rule**: one rule covering `/v1/*`, configured
   directly in the dashboard (`docs/auth.md` §6).
 
@@ -123,12 +133,10 @@ response bodies.
 
 ## 5. Static UI
 
-Build the React UI and deploy it as part of the Worker:
-
-```sh
-npm run ui:build
-wrangler deploy
-```
+The React UI deploys as part of the Worker, via `npm run deploy`
+(`scripts/deploy.sh` §2) — not a bare `wrangler deploy`, which would run
+against the committed `wrangler.jsonc`'s unsubstituted `replace-me-*`
+placeholders directly.
 
 `wrangler.jsonc` declares the Worker's entry point, its D1 and R2
 bindings, and `dist/` as its static assets directory with

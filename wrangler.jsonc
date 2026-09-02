@@ -31,11 +31,17 @@
     // config field with no runtime string equivalent.
     "BUCKET_NAME": "replace-me-bucket-name"
   },
+  // The real database_id is never committed here -- scripts/deploy.sh
+  // resolves or creates the production database (wrangler d1 list/create)
+  // and substitutes its id, the same sed pattern as every other
+  // "replace-me-*" placeholder. Local `wrangler dev`/tests don't need a
+  // real value either: Miniflare's local D1 emulation uses this string
+  // only as an opaque local cache key, not a real database lookup.
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "txt-dev",
-      "database_id": "1706cb6d-568c-4e66-9d0f-8a1842483690",
+      "database_id": "replace-me-database-id",
       "migrations_dir": "worker/migrations"
     }
   ],

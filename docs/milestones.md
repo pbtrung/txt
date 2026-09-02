@@ -379,6 +379,15 @@ WAF rules aren't something `wrangler dev` simulates locally.
 
 ## Milestone 10 — Deployment and release verification
 
+**Status: D1 database and R2 bucket provisioning automated in
+`scripts/deploy.sh` (idempotent: resolves or creates each by name, then
+applies pending D1 migrations before deploying); the Access application,
+WAF rate-limiting rule, and the full `docs/deployment.md` §7 checklist
+still need a real Cloudflare account and dashboard access neither this
+session nor `wrangler` has — `wrangler` has no Access-application
+commands at all, confirmed while implementing this. `scripts/deploy.sh`'s
+Pages-specific invocation was already removed in an earlier milestone.**
+
 - Provision the production D1 database, R2 bucket bindings, Access
   application, and WAF rule per `docs/deployment.md`.
 - Remove `scripts/deploy.sh`'s Pages-specific invocation once the Worker
