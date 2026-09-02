@@ -1,196 +1,155 @@
 # Authentication and Authorization — Design
 
-There is exactly one authenticated principal: the owner. Firebase proves the
-owner's identity, and the API accepts a token only when its verified `sub`
-equals `OWNER_FIREBASE_UID`. A valid Firebase token for any other UID receives
-`403`; there is no code path that creates a second account.
+There is exactly one authenticated principal: the owner. Cloudflare Access
+proves the owner's identity at the edge; the Worker never accepts a request
+to `/v1/*` from anyone Access didn't already authenticate as `OWNER_EMAIL`,
+except the one public redemption endpoint. Anonymous recipients are not
+accounts. They can only redeem an owner-created share capability for a
+short-lived read as described in `docs/sharing.md`.
 
-Anonymous recipients are not accounts. They can only redeem an owner-created
-share capability for a short-lived read URL as described in `docs/sharing.md`.
+## 1. Topology
 
-## 1. API configuration
+One Worker serves the whole `sub.domain.com` host. Requests to `/v1/*` run
+the API's route handlers; every other request falls through to the
+Worker's static assets binding (`dist/`, built from the React UI),
+configured with `not_found_handling: "single-page-application"` so
+client-side routes resolve to `index.html`. The Worker holds a D1 binding
+(`docs/data_model.md`) and an R2 binding used only to mint scoped,
+time-limited credentials for direct browser-to-R2 transfer of EPUB bytes
+(`docs/storage_layout.md`) — the Worker itself never proxies document
+content.
 
-| Name                                                             | Purpose                                                                                     |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `OWNER_FIREBASE_UID`                                             | The only Firebase UID allowed to unlock or mutate the library                               |
-| `FIREBASE_PROJECT_ID`                                            | Expected Firebase issuer and audience                                                       |
-| `R2_TICKET_SECRET`                                               | At least 32 random bytes in padded standard base64, used only for owner binding tickets     |
-| `R2_ENDPOINT`, `R2_BUCKET`, `R2_REGION`                          | S3-compatible R2 destination                                                                |
-| `R2_READ_WRITE_ACCESS_KEY_ID`, `R2_READ_WRITE_SECRET_ACCESS_KEY` | Server-held parent key used to mint owner credentials and presign exact shared-object reads |
-| `RATE_LIMIT_KEY`                                                 | Independent 32-byte secret used to hash rate-limit subjects such as client addresses        |
-| `SHARE_GRANT_KEY`                                                | Independent 32-byte secret used to encrypt/decrypt shared-object path grants (docs/sharing.md) |
-| `UI_ORIGIN`                                                      | Exact browser origin accepted by the API and operator-proxy CORS                            |
+A Cloudflare Access application gates only `/v1/*` at the edge, before any
+request reaches the Worker — not the whole `sub.domain.com` host. The one
+exclusion within `/v1/*` is `POST /v1/shared-url`, which stays reachable
+by anonymous recipients redeeming a share.
 
-OpenResty and rqlite run in the same container. Lua connects only to
-`http://127.0.0.1:14001`, so there is no application-side `RQLITE_URL`,
-`RQLITE_USERNAME`, or `RQLITE_PASSWORD`. `RQLITE_ADMIN_USERNAME` and
-`RQLITE_ADMIN_PASSWORD` protect the separate operator passthrough used for
-migrations, recovery, and the owner UI's wrapped-key read. The Python CLI calls
-that passthrough through `rqlite_operator_url`; the UI calls the same route
-through its `rqlite_db_url`. Both normally equal
-`https://<public-service-domain>/operator/rqlite`.
+Static assets (the SPA shell — `index.html` and its JS/CSS bundle) are
+never gated by Access, for anyone. They carry no confidential data, and
+the owner's authenticated app and the public shared-reading page are
+served from the *same* single-page bundle: gating asset paths would also
+block the shared-reading page's own JS/CSS from loading for a recipient
+who was never meant to pass Access in the first place, since a browser
+that fetches `/shared#...` still has to fetch its script and style assets
+from other, unrelated paths before it can render anything. What actually
+needs protecting — wrapped key material and the ability to mutate the
+library — lives entirely behind `/v1/*`.
 
-The operator credentials are high-value owner secrets. They appear in the
-owner-only unlock file, stay in browser page memory, and are never persisted by
-the application. Exact-origin CORS prevents another browser origin from reading
-operator responses, but it does not replace Basic authentication for
-non-browser clients.
+A `fetch()` to a gated `/v1/*` path from a browser without a valid Access
+session doesn't reach the Worker at all — Access intercepts it and
+responds with its own login challenge, typically an HTML redirect to the
+Access login page, not a JSON body or a clean `401`. The UI treats that
+response shape (a non-JSON body, a redirect, or a cross-origin failure if
+`fetch()` follows the redirect into Access's login domain) as "not logged
+in, prompt to authenticate."
 
-`R2_TICKET_SECRET`, `RATE_LIMIT_KEY`, `SHARE_GRANT_KEY`, and the R2 secret access
-key are independent secrets. The API service holds them; the browser never does.
-Secret rotation is covered in §7.
+## 2. Cloudflare Access
 
-The rqlite schema and access rules are in `docs/control_database.md`. The API
-never connects directly to rqlite's SQLite file.
+A Cloudflare Access application in front of `/v1/*` is configured with
+exactly one policy: `Include: emails equals OWNER_EMAIL`, using either the
+One-Time PIN login method (an emailed code, no external identity
+provider) or a Google login restricted to that one address — both are
+available on Access's free plan, which covers up to 50 authenticated
+seats at no cost; this app uses one.
 
-## 2. Singleton owner record
+Use the Google option only if that Google account already has a passkey
+or hardware security key enrolled: without one, Google login is
+single-factor (password) just like One-Time PIN, and a bare password on a
+heavily phished account is arguably worse than an emailed code, not
+better — the security gain from choosing Google comes entirely from the
+phishing-resistant second factor, not from the provider name. If that
+isn't already true of the account, One-Time PIN is the simpler,
+self-contained choice: it doesn't tie the front door to a separately
+managed third-party account's security posture drifting over time.
 
-The `owner_control` table contains exactly one row with `singleton = 1`. It
-stores the configured Firebase UID, wrapped key material, the hash of the
-owner's private handle, the binding of the two R2 paths, and the public half of
-the P-521 signing key. It contains no role or account-type column.
+Access forwards every gated request to the Worker with a signed
+`Cf-Access-Jwt-Assertion` header. The Worker verifies it independently —
+signature against the team domain's JWKS, `aud` equal to the Access
+application's tag, `exp`, and `email` equal to the configured
+`OWNER_EMAIL` — rather than trusting the edge unconditionally, and uses
+the verified email as the authenticated identity embedded in the owner
+binding ticket (§4.1).
 
-The encrypted credential payload has this shape:
+**Why Access alone isn't enough for a mutation.** Access establishes that
+*this browser session* logged in as the owner and is authorized to reach
+`/v1/*` at all. It says nothing about whether the caller also possesses
+`user_root_key` and the resulting unwrapped P-521 signing key — material
+that never leaves unlocked browser memory and that Access never sees. A
+stolen `Cf-Access-Jwt-Assertion` / `CF_Authorization` session cookie is,
+from the Worker's perspective, just a bearer credential: without also
+stealing the unlock file's `user_root_key` and completing the unwrap, an
+attacker holding only the Access session cannot produce a valid proof
+(§4) and therefore cannot obtain R2 write credentials or mutate any row
+in D1. Every D1-*mutating* `/v1/*` endpoint and R2 credential minting
+require proof of possession, not just a valid Access session; reads stay
+behind the Access JWT alone, since a read only ever returns opaque
+per-row ciphertext (`docs/data_model.md` §1) and an attacker without
+`umk` gains nothing exploitable from it.
+
+## 3. Owner record
+
+D1's singleton `owner` row (`docs/data_model.md` §2) stores the hash of
+the owner's email, wrapped key material, the hash of the owner's private
+handle, the `db_prefix` binding, and the public half of the P-521 signing
+key. It contains no role or account-type column.
+
+The encrypted credential payload (`owner.encrypted_credentials`) has this
+shape:
 
 ```json
 {
   "user_handle": "<base64 32 bytes>",
   "display_name": "...",
-  "db_master_key": "<base64 256 bytes>",
-  "db_path": "<52-character token>",
   "db_prefix": "<52-character token>"
 }
 ```
 
-`db_path` and `db_prefix` are independent 32-byte random values rendered as 52
-lowercase base32-Crockford characters. rqlite stores only
-`SHA-512(UTF8(db_path) || UTF8(db_prefix))`; both source strings have fixed
-validated lengths. The raw `user_handle`, paths, database key, unwrapped owner
-master key, and unwrapped signing private key exist only in the provisioning
-process or unlocked browser memory.
+`db_prefix` is an independently random 32-byte value rendered as 52
+lowercase base32-Crockford characters (`docs/storage_layout.md`). D1
+stores only `SHA-256(db_prefix)`; the raw value, the unwrapped owner
+master key, and the unwrapped signing private key exist only in
+provisioning or unlocked browser memory.
 
-## 3. Provisioning
+## 4. Owner binding ticket and proof of possession
 
-`txt --init-owner rqlite_creds.json` is idempotent and performs these operations:
+### 4.1 Ticket issuance
 
-1. Sign in to Firebase and use the resulting UID as the singleton owner's
-   identity. Deployment verification requires it to equal
-   `OWNER_FIREBASE_UID`.
-2. Query rqlite through `rqlite_operator_url`; if the database is empty, install
-   the current control-schema snapshot and all of its migration markers in one
-   transaction.
-3. Generate a 32-byte `user_handle`, independent `db_path` and `db_prefix`, a
-   128-byte owner master key, and a 256-byte SQLCipher `db_master_key`.
-4. Generate the P-521 request-signing key pair and the composite KEM key pair
-   described in `docs/crypto.md`.
-5. Wrap the owner master key with `user_root_key`; wrap both private keys with
-   the owner master key; encrypt the credential payload with that same key.
-6. Insert the singleton `owner_control` row through
-   `/db/execute?transaction` using parameterized statements.
-
-Re-running provisioning verifies the UID, handle/path bindings, KEM sizes, and
-P-521 keypair without replacing any owner material. If `owner_control` already
-contains a different UID or incompatible material, provisioning aborts.
-
-There is no owner list, invitation, deprovisioning workflow, delegated access,
-or recovery copy belonging to another account. Recovery requires the owner's
-credential file, its `user_root_key`, the rqlite backup, and the R2 objects.
-
-The browser unlock file contains only these seven fields:
+The Worker verifies the Access JWT and reads the singleton `owner` row,
+returning the owner's wrapped key material plus a 24-hour HS256 ticket:
 
 ```json
 {
-  "rqlite_admin_username": "operator",
-  "rqlite_admin_password": "...",
-  "rqlite_db_url": "https://api.example.com/operator/rqlite",
-  "firebase_email": "owner@example.com",
-  "firebase_password": "...",
-  "firebase_api_key": "...",
-  "user_root_key": "<padded standard base64>"
-}
-```
-
-It contains no R2 parent key, account type, or user-management data. The display
-name and private R2 paths come from the encrypted singleton payload.
-
-## 4. Endpoints
-
-OpenResty requires the browser `Origin` to equal `UI_ORIGIN` before any
-`/v1/*` Lua handler runs. A missing or different origin receives `403`. The
-operator proxy instead uses exact-origin CORS so Basic-authenticated CLI clients
-can operate without an `Origin` header.
-
-### 4.1 `POST /v1/keys`
-
-```http
-POST /v1/keys
-Authorization: Bearer <Firebase ID token>
-```
-
-The API verifies the token signature, issuer, audience, expiry, and subject. It
-then requires the subject to equal both `OWNER_FIREBASE_UID` and the singleton
-row's `firebase_uid`. A parameterized rqlite query returns the wrapped material.
-
-```json
-{
-  "uid": "<owner Firebase uid>",
-  "umk": "<base64 wrapped owner master key>",
-  "signing": {
-    "version": 1,
-    "algorithm": "ECDSA-P521-SHA512",
-    "private_key": "<base64 wrapped PKCS#8 private key>"
-  },
-  "credentials": "<base64 encrypted credential payload>",
-  "r2_ticket": "<compact API-signed JWS>"
-}
-```
-
-The 24-hour HS256 ticket contains:
-
-```json
-{
-  "v": 2,
+  "v": 1,
   "aud": "r2-token",
-  "sub": "<owner Firebase uid>",
+  "sub": "<owner email>",
   "jti": "<base64url 32 random bytes>",
   "user_handle_hash": "<base64url SHA-256(handle)>",
-  "sign_version": 1,
-  "sign_algorithm": "ECDSA-P521-SHA512",
   "sign_public_key": "<base64url SPKI DER>",
-  "db_binding_hash": "<base64url SHA-512(path pair)>",
+  "db_binding_hash": "<base64url SHA-256(db_prefix)>",
   "iat": 0,
   "exp": 0
 }
 ```
 
-There is no role claim: any valid ticket is necessarily for the configured
-owner. The current browser uses the response's `uid` and `r2_ticket`; it reads
-the wrapped blobs directly through the operator proxy and requires the Firebase
-UID, rqlite row UID, and API response UID to be identical. The API response
-retains the wrapped fields for protocol completeness. The browser keeps the
-ticket only in unlocked memory.
+| Status | Condition |
+| --- | --- |
+| `200` | Wrapped owner material and ticket returned |
+| `401` | Missing or invalid Access session |
+| `403` | Verified email is not the configured `OWNER_EMAIL` |
+| `429` | Rate limit exceeded (`docs/deployment.md` §2.3) |
 
-| Status | Condition                                  |
-| ------ | ------------------------------------------ |
-| `200`  | Wrapped owner material and ticket returned |
-| `401`  | Firebase token missing or invalid          |
-| `403`  | Verified UID is not the configured owner   |
-| `429`  | Owner unlock budget exceeded               |
-| `503`  | rqlite or ticket signing unavailable       |
+### 4.2 Proof of possession
 
-### 4.2 `POST /v1/r2-token`
-
-This endpoint uses the owner binding ticket and a fresh proof instead of a new
-Firebase token:
+The browser unwraps `umk` (with `user_root_key`) and the P-521 signing
+private key (with `umk`) entirely in memory. For every D1-mutating
+request or R2 credential request, it signs a fresh proof over the exact
+ticket, the request itself, and the `db_prefix` binding:
 
 ```json
 {
-  "ticket": "<exact compact JWS returned by /v1/keys>",
-  "user_handle": "<base64 32 bytes>",
-  "db_path": "<decrypted owner path>",
-  "db_prefix": "<decrypted owner prefix>",
+  "ticket": "<exact compact JWS returned by ticket issuance>",
   "proof": {
-    "version": 2,
+    "version": 1,
     "expires_at": 0,
     "request_id": "<base64 32 random bytes>",
     "signature": "<base64 raw P-521 signature>"
@@ -198,92 +157,118 @@ Firebase token:
 }
 ```
 
-The API verifies the ticket, exact owner subject, handle hash, path binding,
-proof expiry, and P-521 signature. It then mints two 15-minute credentials:
+The signed canonical bytes are (see `docs/crypto.md` §3 for the signing
+mechanics):
 
-- read-write access to the exact `db_path` object;
-- read-write access below `{db_prefix}/`, including owner EPUBs and shared
-  copies.
+```
+UTF8("txt:owner-proof:v1") || 0x00 ||
+SHA-256(UTF8(exact_compact_ticket)) ||
+user_handle_32_bytes ||
+U64BE(expires_at_unix_seconds) ||
+request_id_32_bytes ||
+SHA-256(UTF8(db_prefix)) ||
+SHA-256(UTF8(method) || 0x00 || UTF8(path) || 0x00 || body)
+```
 
-The endpoint does not query rqlite for authorization because the signed ticket
-already authenticates the singleton record. It does use rqlite for its durable
-rate counter.
+Binding the exact HTTP method, full request path, and body — not just an
+abstract "operation name" — matters because a target id such as a
+bookmark or share id typically travels in the URL (e.g. `DELETE
+/v1/bookmarks/{id}`) rather than in an otherwise-empty body: a proof that
+only covered the body would look identical for two different targets of
+the same operation, letting a captured proof for "delete bookmark #5" be
+replayed against bookmark #7. Hashing the full method-and-path together
+with the body closes that. `expires_at` is at most 60 seconds after the
+Worker's clock.
 
-| Status | Condition                                            |
-| ------ | ---------------------------------------------------- |
-| `200`  | Exact-object and prefix credentials returned         |
-| `400`  | Malformed ticket envelope, handle, path, or proof    |
-| `401`  | Ticket invalid or expired                            |
-| `403`  | Owner subject, binding, suite, or signature mismatch |
-| `429`  | R2-token budget exceeded                             |
-| `503`  | R2 signing or rqlite rate limiting unavailable       |
+The Worker verifies the ticket, re-derives the canonical bytes for the
+exact request it received, and verifies the signature with the ticket's
+`sign_public_key`. A valid signature proves possession of the owner's
+unwrapped private key; the `db_binding_hash` check proves the caller also
+knows the raw `db_prefix`, which only unwrapping the credential payload
+(§3) can reveal.
+
+| Status | Condition |
+| --- | --- |
+| `200`/`204` | Mutation applied, or R2 credential returned |
+| `400` | Malformed ticket, proof, or request body |
+| `401` | Ticket invalid, expired, or proof expiry exceeded |
+| `403` | Owner subject, binding, or signature mismatch |
+| `412` | `documents.access_version` conflict (`docs/data_model.md` §4) |
+| `429` | Rate limit exceeded |
+
+### 4.3 Endpoint scope
+
+Every mutating `/v1/*` endpoint — reading-state updates, bookmark writes,
+share create/delete — and the R2 credential endpoint require a ticket and
+proof. Read endpoints (library listing, ticket issuance itself) require
+only a valid Access session. `POST /v1/shared-url` requires neither: it
+has no Access session to check and authenticates purely by capability
+possession (`docs/sharing.md`).
 
 ## 5. Owner session
 
-1. The owner selects the seven-field unlock file. The browser validates that
-   `rqlite_db_url` is the HTTPS `/operator/rqlite` route, with localhost HTTP
-   allowed for development.
-2. The browser signs in to Firebase. In parallel, it queries the singleton
-   wrapped-key row through the Basic-auth operator proxy and calls `/v1/keys`
-   for an owner binding ticket.
-3. Unlock stops unless the Firebase UID, rqlite row UID, and API UID are equal.
-4. The browser unwraps the owner master key, credential payload, and P-521
+1. The owner selects the local unlock file, containing `user_root_key`.
+2. The browser completes Cloudflare Access login if it doesn't already
+   have a session, then requests an owner binding ticket (§4.1).
+3. The browser unwraps `umk`, the credential payload, and the P-521
    private key entirely in memory.
-5. The browser signs a short-lived proof over the exact ticket, handle, and R2
-   paths and calls `/v1/r2-token`.
-6. The API returns 15-minute scoped R2 credentials. The browser renews them with
-   the same ticket until its fixed expiry, then obtains a new ticket through
-   Firebase.
-7. Locking or reloading releases the unlock credentials, plaintext keys, paths,
-   tickets, and temporary R2 credentials from the application session.
+4. The browser signs a proof (§4.2) and requests 15-minute R2
+   credentials (`docs/storage_layout.md`).
+5. The browser renews R2 credentials with a fresh proof against the same
+   ticket until the ticket's 24-hour expiry, then re-authenticates
+   through Access for a new ticket.
+6. Locking or reloading releases the unlock credentials, unwrapped keys,
+   ticket, and any temporary R2 credentials from the page.
 
-## 6. Rate limits
+## 6. Rate limiting
 
-Rate-limit state is stored in rqlite, not process memory, so restarts do not
-reset it. The schema uses `(scope, subject_hash, window_start)` as its key. The
-API derives `subject_hash = HMAC-SHA-256(RATE_LIMIT_KEY, canonical subject)` and
-never stores a raw client address.
+Cloudflare's WAF rate-limiting rules on the free plan give this zone
+exactly one custom rule. One rule, matching every path under `/v1/*` with
+**URI Path** added to its counting characteristics, still keeps a
+separate counter per endpoint — the rule does not collapse different
+`/v1/*` endpoints into one shared counter. Counting happens at
+Cloudflare's edge, before a request reaches the Worker or D1.
 
-Initial budgets are:
+Configured rule (set directly in the Cloudflare dashboard):
 
-| Scope               |                                     Budget |
-| ------------------- | -----------------------------------------: |
-| `owner-keys`        |             60 requests per owner per hour |
-| `owner-r2-token`    |       30 valid requests per owner per hour |
-| `owner-share-write` |            120 requests per owner per hour |
-| `public-share-url`  | 120 requests per direct peer address per minute |
+- Match: `starts_with(http.request.uri.path, "/v1/")`
+- Counting characteristics: `ip.src` and URI Path
+- Period / threshold: 10 seconds / 20 requests
+- Action: Block (or Managed Challenge for a softer response on the public
+  endpoint)
 
-An atomic rqlite transaction increments and reads the counter, then deletes
-windows older than the longest active window. If rqlite is unavailable,
-protected endpoints fail closed with `503`; they do not bypass the limit.
+20 requests per 10 seconds bounds `POST /v1/shared-url` — the one
+endpoint facing unauthenticated internet traffic — at burst granularity.
+Applied to the owner-only endpoints (already behind Access), the same
+rule bounds a compromised or malfunctioning owner session rather than
+anonymous volume. Because counting happens in Cloudflare's own edge
+infrastructure, rate limiting is part of Cloudflare's availability, not a
+dependency this application has to reason about failing open or closed.
 
-## 7. Expiration and incident response
+## 7. Trust boundary
 
-| Event                           | Response                                                                                      |
-| ------------------------------- | --------------------------------------------------------------------------------------------- |
-| Firebase session revoked        | New `/v1/keys` calls fail; an existing binding ticket remains valid until its fixed expiry    |
-| Signing private key exposed     | Re-provision the signing key and rotate `R2_TICKET_SECRET` so existing tickets stop verifying |
-| `R2_TICKET_SECRET` exposed      | Rotate it and redeploy; every outstanding ticket becomes invalid                              |
-| `SHARE_GRANT_KEY` exposed       | Rotate it and redeploy; every outstanding share URL's grant stops decrypting and must be re-copied |
-| Temporary R2 credential exposed | It expires after at most 15 minutes                                                           |
-| Parent R2 credential exposed    | Rotate it immediately and redeploy; already-issued temporary credentials expire naturally     |
-| `RATE_LIMIT_KEY` exposed        | Rotate it; existing counter rows become unreachable and may be deleted                        |
-| Owner root key lost             | Restore from the protected owner credential backup; the server cannot reconstruct it          |
-| `RQLITE_ADMIN_PASSWORD` exposed | Rotate `RQLITE_ADMIN_USERNAME`/`RQLITE_ADMIN_PASSWORD` and redeploy immediately; this credential can run arbitrary SQL against the control database through `/operator/rqlite/`, so treat exposure as a full control-plane compromise until rotated |
+The unlocked browser and the Worker are trusted. D1 is trusted for
+authorization state and durability but receives only wrapped or encrypted
+owner material and hashes, never plaintext content or an unwrapped key —
+rate limiting lives entirely at Cloudflare's edge, so D1 holds no counter
+state either. R2 is trusted for object durability but not plaintext
+confidentiality. Cloudflare Access is trusted to gate request arrival to
+the one configured owner identity, which is sufficient on its own for
+reads; it is never a substitute for proof of possession on any endpoint
+that mutates D1 or mints R2 credentials.
 
-## 8. Trust boundary
+The Worker does not hold `user_root_key`, `umk` unwrapped, any per-row
+key from `key_store` unwrapped, the raw P-521 private key, or any share
+content key. A compromised Worker can authorize R2 access — it is inside
+the trusted computing base — but a copied D1 export alone cannot decrypt
+the library.
 
-The unlocked browser and the Northflank API are trusted. rqlite is trusted for
-authorization state and durability, but it receives only wrapped or encrypted
-owner key material, hashes (including hashes of object paths for active
-shares), and counters — never a plaintext object path. R2 is trusted for
-object durability but not plaintext confidentiality.
+## 8. Incident response
 
-The API holds Firebase verification configuration, signing secrets, and the
-parent R2 key. Lua reaches rqlite only through its loopback listener and needs no
-rqlite password. The owner browser holds the operator Basic credentials and
-`user_root_key` only for the unlocked page session. The API does not hold
-`user_root_key`, plaintext EPUB content, the SQLCipher key, the raw private
-handle, an unwrapped owner master key, or any share content key. A compromised
-API can authorize R2 access and is therefore inside the trusted computing base;
-a copied rqlite backup alone cannot decrypt the library.
+| Event | Response |
+| --- | --- |
+| Access session compromised | Revoke the session in the Access dashboard; every ticket/proof still requires `user_root_key`, which the session alone doesn't grant |
+| Signing private key exposed | Re-provision the signing key; existing tickets referencing the old `sign_public_key` stop verifying once the `owner` row is updated |
+| Temporary R2 credential exposed | It expires after at most 15 minutes |
+| `user_root_key` lost | Restore from the protected owner credential backup; the server cannot reconstruct it |
+| D1 export leaked | No usable plaintext, capability, or unwrapped key is exposed — rotate `user_root_key` and re-wrap if the leak's scope is uncertain |

@@ -1,15 +1,15 @@
 # CLAUDE.md
 
-This repo holds the txt document-storage system's design docs, its single-owner OpenResty/rqlite gateway, the browser UI, and the Python maintenance CLI.
+This repo holds the txt document-storage system's design docs, a single-owner Cloudflare Worker/D1/R2/Access application, the browser UI, and the Python maintenance CLI.
 
 ## Design docs (read these before touching auth/storage code)
 
-- `docs/auth.md` — Firebase owner authentication, owner tickets, proof-of-possession, and the `/v1/keys` and `/v1/r2-token` APIs.
-- `docs/data_model.md` — the owner's SQLCipher database (`txt`/`txt_bookmarks`) schema and its conditional read-write round trip against R2.
-- `docs/storage_layout.md` — the R2 object-key layout the owner database and per-document content live under.
+- `docs/auth.md` — Cloudflare Access owner authentication, the owner binding ticket, proof-of-possession (now required on every D1-mutating endpoint, not only R2 credential minting), and rate limiting.
+- `docs/data_model.md` — the owner's D1 schema (`owner`, `key_store`, `catalog`, `documents`, `bookmarks`, `shares`), its per-row encryption model, and its optimistic-concurrency read/write model.
+- `docs/storage_layout.md` — the R2 object-key layout documents, shared copies, and the catalog object live under.
 - `docs/sharing.md` — public sharing, capability URLs, and presigned R2 reads.
-- `docs/crypto.md` — the AEAD/HKDF/KEM primitives (Ascon-Keccak, HKDF-SHA3-512, ML-KEM-1024+X448) and the blob format used by `owner_control` and encrypted EPUB copies.
-- `docs/deployment.md` — the Northflank container, rqlite persistence and R2 backups, gateway environment, and Cloudflare Pages UI deployment.
+- `docs/crypto.md` — the AEAD/HKDF/KEM primitives (Ascon-Keccak, HKDF-SHA3-512, ML-KEM-1024+X448) and the blob format used by `owner`/`key_store` and row-level D1 data, plus the separate native Web Crypto (AES-256-GCM/HKDF-SHA-256) scheme used only for shared EPUB content.
+- `docs/deployment.md` — the Worker, D1, R2, and Access configuration and release verification.
 
 ## Code layout
 
