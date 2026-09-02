@@ -16,10 +16,9 @@ import { toBase64 } from "../../src/util/base64";
 
 const ID = base64Url(new Uint8Array(32).fill(1));
 const KEY = base64Url(new Uint8Array(128).fill(2));
-const API = "https://api.example.com";
 const GRANT = base64Url(new Uint8Array(96).fill(3));
 const OBJECT_URL = "https://bucket.r2.cloudflarestorage.com/shared-object?sig=1";
-const FRAGMENT = `#id=${ID}&key=${KEY}&api=${API}&grant=${GRANT}`;
+const FRAGMENT = `#id=${ID}&key=${KEY}&grant=${GRANT}`;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -27,37 +26,24 @@ beforeEach(() => {
 });
 
 describe("shared reader references", () => {
-  it("accepts exact capability and content-key lengths with an API origin", () => {
+  it("accepts exact capability and content-key lengths", () => {
     expect(parseSharedReference(FRAGMENT)).toEqual({
       id: ID,
       contentKey: new Uint8Array(128).fill(2),
-      apiBaseUrl: API,
       grant: GRANT,
     });
   });
 
   it("rejects missing, malformed, or incorrectly sized values", () => {
     expect(parseSharedReference("")).toBeNull();
-    expect(
-      parseSharedReference(`#id=${ID}&key=not+url&api=${API}&grant=${GRANT}`),
-    ).toBeNull();
+    expect(parseSharedReference(`#id=${ID}&key=not+url&grant=${GRANT}`)).toBeNull();
     expect(
       parseSharedReference(
-        `#id=${base64Url(new Uint8Array(31))}&key=${KEY}&api=${API}&grant=${GRANT}`,
+        `#id=${base64Url(new Uint8Array(31))}&key=${KEY}&grant=${GRANT}`,
       ),
     ).toBeNull();
-    expect(
-      parseSharedReference(
-        `#id=${ID}&key=${KEY}&api=http://api.example.com&grant=${GRANT}`,
-      ),
-    ).toBeNull();
-    expect(
-      parseSharedReference(`#id=${ID}&key=${KEY}&api=ftp://localhost&grant=${GRANT}`),
-    ).toBeNull();
-    expect(parseSharedReference(`#id=${ID}&key=${KEY}&api=${API}`)).toBeNull();
-    expect(
-      parseSharedReference(`#id=${ID}&key=${KEY}&api=${API}&grant=not+url`),
-    ).toBeNull();
+    expect(parseSharedReference(`#id=${ID}&key=${KEY}`)).toBeNull();
+    expect(parseSharedReference(`#id=${ID}&key=${KEY}&grant=not+url`)).toBeNull();
   });
 });
 
@@ -94,7 +80,7 @@ describe("loadSharedReaderDocument", () => {
       epubBytes: epub,
     });
     expect(fetchMock).toHaveBeenCalledWith(
-      `${API}/v1/shared-url`,
+      "/v1/shared-url",
       expect.objectContaining({
         method: "POST",
         headers: { "Content-Type": "application/json" },

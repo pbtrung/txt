@@ -1,23 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type {
-  DatabaseMutation,
-  LibraryDatabaseStore,
-} from "../../src/data/databaseStore";
-import {
-  deleteBookmarkMutation,
-  listBookmarks,
-  ReadingSession,
-  saveBookmarkMutation,
-  truncateUtf8,
-} from "../../src/data/readingState";
-import type { SqliteDatabase } from "../../src/data/sqlite";
+import type { LibraryStore } from "../../src/data/libraryStore";
+import { ReadingSession } from "../../src/data/readingState";
 
-function fakeDatabase() {
-  const execute = vi.fn();
-  const mutate = vi.fn(async (mutation: DatabaseMutation) => {
-    mutation.apply({ execute } as unknown as SqliteDatabase);
-  });
-  return { database: { mutate }, mutate, execute };
+function fakeLibrary() {
+  const updateReadingPosition = vi.fn().mockResolvedValue(undefined);
+  return {
+    library: { updateReadingPosition } as unknown as Pick<
+      LibraryStore,
+      "updateReadingPosition"
+    >,
+    updateReadingPosition,
+  };
 }
 
 beforeEach(() => {
@@ -31,47 +24,44 @@ afterEach(() => {
 
 describe("ReadingSession", () => {
   it("records last access and the stable CFI only after six visible seconds", () => {
-    const { database, mutate, execute } = fakeDatabase();
-    const session = new ReadingSession(database, 7);
+    const { library, updateReadingPosition } = fakeLibrary();
+    const session = new ReadingSession(library, 7);
     session.start("epubcfi(/6/2)", true);
 
     vi.advanceTimersByTime(5_999);
-    expect(mutate).not.toHaveBeenCalled();
+    expect(updateReadingPosition).not.toHaveBeenCalled();
     vi.advanceTimersByTime(1);
 
-    expect(mutate).toHaveBeenCalledOnce();
-    expect(execute).toHaveBeenCalledWith(
-      "UPDATE txt SET last_accessed = ?, last_cfi = ? WHERE id = ?",
-      [6_000, "epubcfi(/6/2)", 7],
-    );
+    expect(updateReadingPosition).toHaveBeenCalledOnce();
+    expect(updateReadingPosition).toHaveBeenCalledWith(7, "epubcfi(/6/2)", 6_000);
   });
 
   it("discards a quick open and pauses its grace timer while hidden", () => {
-    const quick = fakeDatabase();
-    const quickSession = new ReadingSession(quick.database, 7);
+    const quick = fakeLibrary();
+    const quickSession = new ReadingSession(quick.library, 7);
     quickSession.start("epubcfi(/6/2)", true);
     vi.advanceTimersByTime(5_000);
     quickSession.dispose();
     vi.advanceTimersByTime(20_000);
-    expect(quick.mutate).not.toHaveBeenCalled();
+    expect(quick.updateReadingPosition).not.toHaveBeenCalled();
 
-    const paused = fakeDatabase();
-    const pausedSession = new ReadingSession(paused.database, 8);
+    const paused = fakeLibrary();
+    const pausedSession = new ReadingSession(paused.library, 8);
     pausedSession.start("epubcfi(/6/4)", true);
     vi.advanceTimersByTime(3_000);
     pausedSession.setVisible(false);
     vi.advanceTimersByTime(20_000);
-    expect(paused.mutate).not.toHaveBeenCalled();
+    expect(paused.updateReadingPosition).not.toHaveBeenCalled();
     pausedSession.setVisible(true);
     vi.advanceTimersByTime(2_999);
-    expect(paused.mutate).not.toHaveBeenCalled();
+    expect(paused.updateReadingPosition).not.toHaveBeenCalled();
     vi.advanceTimersByTime(1);
-    expect(paused.mutate).toHaveBeenCalledOnce();
+    expect(paused.updateReadingPosition).toHaveBeenCalledOnce();
   });
 
   it("debounces page turns and uploads reading state at most every 15 seconds", () => {
-    const { database, mutate, execute } = fakeDatabase();
-    const session = new ReadingSession(database, 7);
+    const { library, updateReadingPosition } = fakeLibrary();
+    const session = new ReadingSession(library, 7);
     session.start("epubcfi(/6/2)", true);
     vi.advanceTimersByTime(6_000);
 
@@ -80,101 +70,64 @@ describe("ReadingSession", () => {
     vi.advanceTimersByTime(1_000);
     session.relocate("epubcfi(/6/6)", true);
     vi.advanceTimersByTime(2_000);
-    expect(mutate).toHaveBeenCalledTimes(1);
+    expect(updateReadingPosition).toHaveBeenCalledTimes(1);
 
     vi.advanceTimersByTime(10_999);
-    expect(mutate).toHaveBeenCalledTimes(1);
+    expect(updateReadingPosition).toHaveBeenCalledTimes(1);
     vi.advanceTimersByTime(1);
 
-    expect(mutate).toHaveBeenCalledTimes(2);
-    expect(execute).toHaveBeenLastCalledWith(
-      "UPDATE txt SET last_cfi = ? WHERE id = ?",
-      ["epubcfi(/6/6)", 7],
-    );
+    expect(updateReadingPosition).toHaveBeenCalledTimes(2);
+    expect(updateReadingPosition).toHaveBeenLastCalledWith(7, "epubcfi(/6/6)", null);
   });
 
   it("flushes a qualified pending position when hidden or disposed", () => {
-    const hidden = fakeDatabase();
-    const hiddenSession = new ReadingSession(hidden.database, 7);
+    const hidden = fakeLibrary();
+    const hiddenSession = new ReadingSession(hidden.library, 7);
     hiddenSession.start("epubcfi(/6/2)", true);
     vi.advanceTimersByTime(6_000);
     hiddenSession.relocate("epubcfi(/6/4)", true);
     hiddenSession.setVisible(false);
-    expect(hidden.mutate).toHaveBeenCalledTimes(2);
+    expect(hidden.updateReadingPosition).toHaveBeenCalledTimes(2);
 
-    const disposed = fakeDatabase();
-    const disposedSession = new ReadingSession(disposed.database, 8);
+    const disposed = fakeLibrary();
+    const disposedSession = new ReadingSession(disposed.library, 8);
     disposedSession.start("epubcfi(/6/2)", true);
     vi.advanceTimersByTime(6_000);
     disposedSession.relocate("epubcfi(/6/8)", true);
     disposedSession.dispose();
-    expect(disposed.mutate).toHaveBeenCalledTimes(2);
+    expect(disposed.updateReadingPosition).toHaveBeenCalledTimes(2);
   });
 
   it("does not dirty the CFI for initial or layout-driven relocations", () => {
-    const { database, mutate } = fakeDatabase();
-    const session = new ReadingSession(database, 7);
+    const { library, updateReadingPosition } = fakeLibrary();
+    const session = new ReadingSession(library, 7);
     session.start("epubcfi(/6/2)", true);
     session.relocate("epubcfi(/6/3)", false);
     vi.advanceTimersByTime(6_000);
     session.relocate("epubcfi(/6/4)", false);
     session.dispose();
 
-    expect(mutate).toHaveBeenCalledOnce();
-  });
-});
-
-describe("bookmark mutations", () => {
-  it("normalizes and truncates previews to 100 UTF-8 bytes", () => {
-    const execute = vi.fn();
-    saveBookmarkMutation(
-      3,
-      "epubcfi(/6/2)",
-      12,
-      `  ${"é".repeat(60)}   tail  `,
-      42,
-    ).apply({ execute } as unknown as SqliteDatabase);
-
-    const preview = execute.mock.calls[0][1][3] as string;
-    expect(execute.mock.calls[0][1][2]).toBe(12);
-    expect(new TextEncoder().encode(preview)).toHaveLength(100);
-    expect(preview).toBe("é".repeat(50));
-    expect(truncateUtf8("abc", 2)).toBe("ab");
+    expect(updateReadingPosition).toHaveBeenCalledOnce();
   });
 
-  it("loads newest bookmarks and deletes by document and CFI", async () => {
-    const query = vi.fn().mockReturnValue([
-      [2, "epubcfi(/6/4)", 8, "Second", 20],
-      [1, "epubcfi(/6/2)", null, "First", 10],
-    ]);
-    const database = {
-      read: async (reader: (db: unknown) => unknown) => reader({ query }),
-    } as unknown as LibraryDatabaseStore;
+  it("reports a save failure through onSaveError and re-attempts it on retry()", async () => {
+    const updateReadingPosition = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("network down"))
+      .mockResolvedValueOnce(undefined);
+    const library = { updateReadingPosition } as unknown as Pick<
+      LibraryStore,
+      "updateReadingPosition"
+    >;
+    const session = new ReadingSession(library, 7);
+    const errors: unknown[] = [];
+    session.onSaveError((error) => errors.push(error));
+    session.start("epubcfi(/6/2)", true);
 
-    await expect(listBookmarks(database, 3)).resolves.toEqual([
-      {
-        id: 2,
-        cfi: "epubcfi(/6/4)",
-        pageNumber: 8,
-        preview: "Second",
-        createdAt: 20,
-      },
-      {
-        id: 1,
-        cfi: "epubcfi(/6/2)",
-        pageNumber: null,
-        preview: "First",
-        createdAt: 10,
-      },
-    ]);
+    vi.advanceTimersByTime(6_000);
+    await vi.waitFor(() => expect(errors).toHaveLength(1));
 
-    const execute = vi.fn();
-    deleteBookmarkMutation(3, "epubcfi(/6/4)").apply({
-      execute,
-    } as unknown as SqliteDatabase);
-    expect(execute).toHaveBeenCalledWith(
-      "DELETE FROM txt_bookmarks WHERE txt_id = ? AND cfi = ?",
-      [3, "epubcfi(/6/4)"],
-    );
+    session.retry();
+    await vi.waitFor(() => expect(updateReadingPosition).toHaveBeenCalledTimes(2));
   });
 });

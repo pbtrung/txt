@@ -1,6 +1,6 @@
 import { Button, Dialog, DialogTrigger, Popover } from "react-aria-components";
 import { BookOpen } from "lucide-react";
-import type { LibraryBook } from "../../data/libraryDb";
+import type { LibraryBook } from "../../data/libraryStore";
 import type { BookShare } from "../../data/shares";
 import type { LibraryView } from "./libraryView";
 import { LibrarySidebar } from "./LibrarySidebar";

@@ -12,9 +12,8 @@ import {
 } from "react-aria-components";
 import { Bookmark, BookmarkMinus, BookmarkPlus } from "lucide-react";
 import { IconButton } from "../../components/IconButton";
-import type { DatabaseStoreStatus } from "../../data/databaseStore";
 import type { EpubRenderer, PagePosition } from "../../data/epubRenderer";
-import type { BookmarkRecord } from "../../data/readingState";
+import type { BookmarkRecord, LibraryStoreStatus } from "../../data/libraryStore";
 import { classNames } from "../../util/classNames";
 import { BookmarkRow } from "./BookmarkRow";
 
@@ -41,7 +40,7 @@ export function ReaderNavigation({
   bookmarkSaved: boolean;
   bookmarkBusy: boolean;
   bookmarks: BookmarkRecord[];
-  status: DatabaseStoreStatus;
+  status: LibraryStoreStatus;
   error: string | null;
   onBookmark: () => void;
   onRemove: (cfi: string) => void;
@@ -107,7 +106,7 @@ export function BookmarkMenu({
   bookmarks: BookmarkRecord[];
   bookmarkSaved: boolean;
   bookmarkBusy: boolean;
-  status: DatabaseStoreStatus;
+  status: LibraryStoreStatus;
   error: string | null;
   onBookmark: () => void;
   onRemove: (cfi: string) => void;
@@ -175,7 +174,7 @@ function BookmarkOptions({
   bookmarks: BookmarkRecord[];
   bookmarkSaved: boolean;
   bookmarkBusy: boolean;
-  status: DatabaseStoreStatus;
+  status: LibraryStoreStatus;
   error: string | null;
   onBookmark: () => void;
   onNavigate: (cfi: string) => void;
@@ -222,7 +221,7 @@ function BookmarkStatus({
   error,
   onRetry,
 }: {
-  status: DatabaseStoreStatus;
+  status: LibraryStoreStatus;
   error: string | null;
   onRetry: () => void;
 }) {

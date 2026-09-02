@@ -1,21 +1,23 @@
 // @vitest-environment jsdom
 import JSZip from "jszip";
-import { describe, expect, it } from "vitest";
-import { brotliCompress } from "../../src/crypto/brotli";
+import { describe, expect, it, vi } from "vitest";
 import { encrypt } from "../../src/crypto/cryptoBlob";
-import { toBase32Crockford } from "../../src/util/base32Crockford";
 import { loadReaderDocument } from "../../src/data/readerDocument";
-import { ensureSchema } from "../../src/data/schema";
-import { SqliteDatabase } from "../../src/data/sqlite";
+import type { LibraryStore } from "../../src/data/libraryStore";
+import type { R2Session } from "../../src/data/r2Session";
 
-function fakeR2(objects: Record<string, Uint8Array>) {
+function fakeLibrary(
+  document: ReturnType<LibraryStore["getReaderDocument"]>,
+): LibraryStore {
   return {
-    getContent: async (key: string) => objects[key] ?? null,
-  };
+    getReaderDocument: vi.fn().mockReturnValue(document),
+  } as unknown as LibraryStore;
 }
 
-async function catalogBlob(catalog: Record<string, unknown>): Promise<Uint8Array> {
-  return brotliCompress(new TextEncoder().encode(JSON.stringify(catalog)));
+function fakeStorage(objects: Record<string, Uint8Array>): R2Session {
+  return {
+    getDocument: vi.fn(async (key: string) => objects[key] ?? null),
+  } as unknown as R2Session;
 }
 
 const CONTAINER_XML = `<?xml version="1.0"?>
@@ -57,44 +59,34 @@ async function buildFakeEpub(fields: {
   return zip.generateAsync({ type: "uint8array" });
 }
 
-describe("loadReaderDocument (real sqlcipher.wasm + real crypto)", () => {
-  it("fetches and decrypts a document's content under its own txt_key", async () => {
-    const db = await SqliteDatabase.openUnkeyed();
-    ensureSchema(db);
-
-    const txtKey = crypto.getRandomValues(new Uint8Array(128));
-    const txtPrefix = crypto.getRandomValues(new Uint8Array(32));
-    const path = crypto.getRandomValues(new Uint8Array(32));
+describe("loadReaderDocument (real crypto)", () => {
+  it("fetches and decrypts a document's content under its own content key", async () => {
+    const contentKey = crypto.getRandomValues(new Uint8Array(128));
     const epubBytes = await buildFakeEpub({
       authors: ["Frank Herbert"],
       subjects: ["Science Fiction", "Adventure"],
       publisher: "Ace",
       description: "A desert planet.",
     });
-    const encrypted = await encrypt(epubBytes, txtKey);
-    const catalog = await catalogBlob({ name: "dune.epub", title: "Dune" });
-
-    db.query(
-      "INSERT INTO txt " +
-        "(txt_key, txt_prefix, path, catalog, last_accessed, last_cfi, created_at) " +
-        "VALUES (?, ?, ?, ?, 0, ?, 0)",
-      [txtKey, txtPrefix, path, catalog, "epubcfi(/6/4!/4/2)"],
-    );
-
-    const key = `the-db-prefix/${toBase32Crockford(txtPrefix)}/${toBase32Crockford(path)}`;
-    const r2 = fakeR2({ [key]: encrypted });
+    const encrypted = await encrypt(epubBytes, contentKey);
+    const library = fakeLibrary({
+      contentKey,
+      path: "dune-path",
+      lastCfi: "epubcfi(/6/4!/4/2)",
+      title: "Dune",
+    });
+    const storage = fakeStorage({ "the-db-prefix/documents/dune-path": encrypted });
 
     const progress: string[] = [];
-    const doc = await loadReaderDocument(db, r2, "the-db-prefix", 1, (step) =>
+    const doc = await loadReaderDocument(library, storage, "the-db-prefix", 1, (step) =>
       progress.push(`${step.step}/${step.total} ${step.label}`),
     );
-    db.close();
 
     expect(progress).toEqual([
-      "1/5 Reading book details",
-      "2/5 Downloading text",
-      "3/5 Decrypting text",
-      "4/5 Reading book metadata",
+      "1/4 Reading book details",
+      "2/4 Downloading text",
+      "3/4 Decrypting text",
+      "4/4 Reading book metadata",
     ]);
     expect(doc).not.toBeNull();
     expect(doc!.txtId).toBe(1);
@@ -110,29 +102,18 @@ describe("loadReaderDocument (real sqlcipher.wasm + real crypto)", () => {
   });
 
   it("passes through an empty authors/subjects and a null publisher", async () => {
-    const db = await SqliteDatabase.openUnkeyed();
-    ensureSchema(db);
-
-    const txtKey = crypto.getRandomValues(new Uint8Array(128));
-    const txtPrefix = crypto.getRandomValues(new Uint8Array(32));
-    const path = crypto.getRandomValues(new Uint8Array(32));
+    const contentKey = crypto.getRandomValues(new Uint8Array(128));
     const epubBytes = await buildFakeEpub({});
-    const encrypted = await encrypt(epubBytes, txtKey);
-    const catalog = await catalogBlob({
-      name: "untitled.epub",
+    const encrypted = await encrypt(epubBytes, contentKey);
+    const library = fakeLibrary({
+      contentKey,
+      path: "path",
+      lastCfi: null,
       title: "untitled.epub",
     });
+    const storage = fakeStorage({ "the-db-prefix/documents/path": encrypted });
 
-    db.query(
-      "INSERT INTO txt (txt_key, txt_prefix, path, catalog, last_accessed, created_at) " +
-        "VALUES (?, ?, ?, ?, 0, 0)",
-      [txtKey, txtPrefix, path, catalog],
-    );
-    const key = `the-db-prefix/${toBase32Crockford(txtPrefix)}/${toBase32Crockford(path)}`;
-    const r2 = fakeR2({ [key]: encrypted });
-
-    const doc = await loadReaderDocument(db, r2, "the-db-prefix", 1);
-    db.close();
+    const doc = await loadReaderDocument(library, storage, "the-db-prefix", 1);
 
     expect(doc!.title).toBe("untitled.epub");
     expect(doc!.authors).toEqual([]);
@@ -141,29 +122,22 @@ describe("loadReaderDocument (real sqlcipher.wasm + real crypto)", () => {
     expect(doc!.extraMetadata).toEqual([]);
   });
 
-  it("returns null when the txt row doesn't exist", async () => {
-    const db = await SqliteDatabase.openUnkeyed();
-    ensureSchema(db);
+  it("returns null when the document doesn't exist in the library", async () => {
+    const library = fakeLibrary(undefined);
+    const storage = fakeStorage({});
 
-    expect(await loadReaderDocument(db, fakeR2({}), "the-db-prefix", 999)).toBeNull();
-    db.close();
+    expect(await loadReaderDocument(library, storage, "the-db-prefix", 999)).toBeNull();
   });
 
   it("returns null when the R2 content object is missing", async () => {
-    const db = await SqliteDatabase.openUnkeyed();
-    ensureSchema(db);
+    const library = fakeLibrary({
+      contentKey: crypto.getRandomValues(new Uint8Array(128)),
+      path: "path",
+      lastCfi: null,
+      title: "x.epub",
+    });
+    const storage = fakeStorage({});
 
-    const txtKey = crypto.getRandomValues(new Uint8Array(128));
-    const txtPrefix = crypto.getRandomValues(new Uint8Array(32));
-    const path = crypto.getRandomValues(new Uint8Array(32));
-    const catalog = await catalogBlob({ name: "x.epub", title: "x.epub" });
-    db.query(
-      "INSERT INTO txt (txt_key, txt_prefix, path, catalog, last_accessed, created_at) " +
-        "VALUES (?, ?, ?, ?, 0, 0)",
-      [txtKey, txtPrefix, path, catalog],
-    );
-
-    expect(await loadReaderDocument(db, fakeR2({}), "the-db-prefix", 1)).toBeNull();
-    db.close();
+    expect(await loadReaderDocument(library, storage, "the-db-prefix", 1)).toBeNull();
   });
 });

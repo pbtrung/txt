@@ -5,11 +5,6 @@ import { AwsClient } from "aws4fetch";
 import { withNetworkRetries } from "./networkRequest";
 import type { R2TempCredential } from "./apiClient";
 
-export interface R2Object {
-  bytes: Uint8Array;
-  etag: string;
-}
-
 export class R2AuthorizationError extends Error {}
 export class R2ConflictError extends Error {}
 
@@ -17,15 +12,15 @@ export class R2Client {
   private readonly aws: AwsClient;
   private readonly base: string;
 
-  constructor(credential: R2TempCredential) {
+  constructor(credential: R2TempCredential, endpoint: string, bucket: string) {
     this.aws = new AwsClient({
       accessKeyId: credential.accessKeyId,
       secretAccessKey: credential.secretAccessKey,
       sessionToken: credential.sessionToken,
-      region: credential.region,
+      region: "auto",
       service: "s3",
     });
-    this.base = `${credential.endpoint.replace(/\/$/, "")}/${credential.bucket}`;
+    this.base = `${endpoint.replace(/\/$/, "")}/${bucket}`;
   }
 
   async getObject(key: string): Promise<Uint8Array | null> {
@@ -35,42 +30,6 @@ export class R2Client {
       this.requireSuccess(response, `R2 GET ${key}`);
       return new Uint8Array(await response.arrayBuffer());
     });
-  }
-
-  async getDatabase(key: string): Promise<R2Object | null> {
-    return withNetworkRetries(async (signal) => {
-      const response = await this.aws.fetch(`${this.base}/${key}`, {
-        cache: "no-store",
-        signal,
-      });
-      if (response.status === 404) return null;
-      this.requireSuccess(response, `R2 GET ${key}`);
-      const etag = response.headers.get("ETag");
-      if (!etag) throw new Error(`R2 GET ${key} returned no ETag`);
-      return { bytes: new Uint8Array(await response.arrayBuffer()), etag };
-    });
-  }
-
-  async putDatabase(
-    key: string,
-    bytes: Uint8Array,
-    expectedEtag: string | null,
-  ): Promise<string> {
-    const response = await withNetworkRetries((signal) =>
-      this.aws.fetch(`${this.base}/${key}`, {
-        method: "PUT",
-        headers: expectedEtag ? { "If-Match": expectedEtag } : { "If-None-Match": "*" },
-        body: new Uint8Array(bytes),
-        signal,
-      }),
-    );
-    if (response.status === 412) {
-      throw new R2ConflictError(`R2 PUT ${key} conflicted with a newer database`);
-    }
-    this.requireSuccess(response, `R2 PUT ${key}`);
-    const etag = response.headers.get("ETag");
-    if (!etag) throw new Error(`R2 PUT ${key} returned no ETag`);
-    return etag;
   }
 
   async putImmutable(key: string, bytes: Uint8Array): Promise<void> {

@@ -13,12 +13,9 @@ import {
   type QueuedToast,
 } from "react-aria-components";
 import { useNavigate } from "react-router-dom";
-import { LoadingMessage, ScreenMessage } from "../../components/ScreenMessage";
+import { ScreenMessage } from "../../components/ScreenMessage";
 import { useVault } from "../../state/VaultContext";
 import { errorMessage } from "../../util/errorMessage";
-import type { DatabaseMutation } from "../../data/databaseStore";
-import { clearLastAccessMutation } from "../../data/libraryDb";
-import { deleteBookmarkMutation } from "../../data/readingState";
 import {
   createBookShare,
   deleteBookShare,
@@ -64,12 +61,12 @@ const libraryToastQueue = new UNSTABLE_ToastQueue<LibraryNotice>({
 
 export function LibraryScreen() {
   const { session, lock } = useVault();
-  const library = useLibraryBooks(session?.database ?? null);
-  const shared = useShares(session?.database ?? null);
+  const library = useLibraryBooks(session?.library ?? null);
+  const shared = useShares(session);
   const [query, setQuery] = useState("");
   const [view, setView] = useState<LibraryView>(INITIAL_VIEW);
   const [selectedTxtId, setSelectedTxtId] = useState<number | null>(null);
-  const [selectedShareId, setSelectedShareId] = useState<number | null>(null);
+  const [selectedShareId, setSelectedShareId] = useState<string | null>(null);
   const [operationBusy, setOperationBusy] = useState(false);
   const operation = useRef(false);
   const libraryRoot = useRef<HTMLDivElement>(null);
@@ -84,9 +81,6 @@ export function LibraryScreen() {
 
   useEffect(() => () => libraryToastQueue.clear(), []);
 
-  if (library.status === "loading") {
-    return <LoadingMessage>Loading your library…</LoadingMessage>;
-  }
   if (library.status === "error") {
     return <ScreenMessage error>{library.error}</ScreenMessage>;
   }
@@ -108,14 +102,14 @@ export function LibraryScreen() {
   const selectedBook =
     library.books.find((book) => book.txtId === selectedTxtId) ?? null;
   const selectedShare =
-    shared.shares.find((share) => share.id === selectedShareId) ?? null;
+    shared.shares.find((share) => share.shareIdHash === selectedShareId) ?? null;
   const updateActivity = async (
     action: Extract<
       LibraryOperationAction,
       "Deleting recent access" | "Deleting bookmark"
     >,
     title: string,
-    mutation: DatabaseMutation,
+    apply: () => Promise<void>,
     success: string,
   ) => {
     if (!session) return;
@@ -123,14 +117,12 @@ export function LibraryScreen() {
     if (!progress) return;
     try {
       progress("Saving encrypted library");
-      await session.database.mutate(mutation);
+      await apply();
       progress("Refreshing Recent");
       library.reload();
       showLibraryToast({ status: "success", message: success }, SUCCESS_TOAST_MS);
     } catch (error) {
       showLibraryToast({ status: "error", message: errorMessage(error) });
-      // LibraryDatabaseStore retains a failed mutation for retry. Reload so
-      // Recent reflects the store's authoritative post-failure state.
       library.reload();
     } finally {
       setOperationBusy(false);
@@ -157,7 +149,7 @@ export function LibraryScreen() {
     const progress = beginOperation("Creating share", title);
     if (!progress) return;
     try {
-      await createBookShare(session, txtId, progress);
+      await createBookShare(session, session.umk, txtId, progress);
       showLibraryToast(
         { status: "success", message: `Share created for “${title}”` },
         SUCCESS_TOAST_MS,
@@ -175,7 +167,7 @@ export function LibraryScreen() {
     const progress = beginOperation("Copying share link", share.title);
     if (!progress) return;
     try {
-      const url = await shareUrl(session, share);
+      const url = await shareUrl(session, session.umk, share);
       progress("Copying link to clipboard");
       await navigator.clipboard.writeText(url);
       showLibraryToast(
@@ -195,7 +187,7 @@ export function LibraryScreen() {
     if (!progress) return;
     try {
       await deleteBookShare(session, share, progress);
-      shared.remove(share.id);
+      shared.remove(share.shareIdHash);
       setSelectedShareId(null);
       showLibraryToast(
         { status: "success", message: "Share deleted" },
@@ -288,24 +280,24 @@ export function LibraryScreen() {
                 const book = library.books.find(
                   (candidate) => candidate.txtId === txtId,
                 );
-                if (book) {
+                if (book && session) {
                   void updateActivity(
                     "Deleting recent access",
                     book.title,
-                    clearLastAccessMutation(txtId),
+                    () => session.library.clearLastAccessed(txtId),
                     "Recent access deleted",
                   );
                 }
               }}
-              onDeleteBookmark={(txtId, cfi) => {
+              onDeleteBookmark={(txtId, bookmarkId) => {
                 const book = library.books.find(
                   (candidate) => candidate.txtId === txtId,
                 );
-                if (book) {
+                if (book && session) {
                   void updateActivity(
                     "Deleting bookmark",
                     book.title,
-                    deleteBookmarkMutation(txtId, cfi),
+                    () => session.library.deleteBookmark(bookmarkId),
                     "Bookmark deleted",
                   );
                 }

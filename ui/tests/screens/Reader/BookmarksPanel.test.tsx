@@ -25,7 +25,7 @@ describe("BookmarkMenu", () => {
         ]}
         bookmarkSaved={false}
         bookmarkBusy={false}
-        status={{ pending: false, unsaved: false, error: null }}
+        status={{ pending: false, error: null }}
         error={null}
         onBookmark={vi.fn()}
         onRemove={remove}
@@ -75,7 +75,7 @@ describe("BookmarkMenu", () => {
         bookmarks={[]}
         bookmarkSaved={false}
         bookmarkBusy={false}
-        status={{ pending: false, unsaved: true, error: "conflict" }}
+        status={{ pending: false, error: "conflict" }}
         error="conflict"
         onBookmark={vi.fn()}
         onRemove={vi.fn()}

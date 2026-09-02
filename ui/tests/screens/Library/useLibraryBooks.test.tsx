@@ -1,84 +1,83 @@
 // @vitest-environment jsdom
-import { renderHook, waitFor } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
-import { brotliCompress } from "../../../src/crypto/brotli";
-import type { LibraryDatabaseStore } from "../../../src/data/databaseStore";
-import { ensureSchema } from "../../../src/data/schema";
-import { SqliteDatabase } from "../../../src/data/sqlite";
+import { act, renderHook, waitFor } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import type { LibraryBook, LibraryStore } from "../../../src/data/libraryStore";
 import { useLibraryBooks } from "../../../src/screens/Library/useLibraryBooks";
 
-describe("useLibraryBooks", () => {
-  function storeFor(db: SqliteDatabase): LibraryDatabaseStore {
-    return {
-      read: async (reader: (database: SqliteDatabase) => unknown) => reader(db),
-    } as unknown as LibraryDatabaseStore;
-  }
+function book(txtId: number, title: string): LibraryBook {
+  return {
+    txtId,
+    title,
+    authors: [],
+    subjects: [],
+    publisher: null,
+    lastAccessed: 0,
+    bookmarkCount: 0,
+    lastBookmarked: null,
+    latestBookmarkCfi: null,
+    bookmarks: [],
+  };
+}
 
-  it("returns [] immediately when there's no database yet", () => {
+function fakeLibrary(initial: LibraryBook[]): LibraryStore {
+  let books = initial;
+  const listeners = new Set<() => void>();
+  return {
+    snapshot: () => books,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    reload: vi.fn(async () => {
+      books = [...books, book(99, "Reloaded")];
+      for (const listener of listeners) listener();
+    }),
+  } as unknown as LibraryStore;
+}
+
+describe("useLibraryBooks", () => {
+  it("returns [] immediately when there's no library yet", () => {
     const { result } = renderHook(() => useLibraryBooks(null));
     expect(result.current).toMatchObject({ status: "ready", books: [] });
-    expect(result.current.status === "ready" && result.current.reload).toBeTypeOf(
-      "function",
-    );
   });
 
-  it("loads real database bytes, starting from a loading (null) state", async () => {
-    const db = await SqliteDatabase.openUnkeyed();
-    ensureSchema(db);
-    const blob = await brotliCompress(
-      new TextEncoder().encode(
-        JSON.stringify({
-          name: "dune.epub",
-          title: "Dune",
-          authors: [],
-          subjects: [],
-          publisher: null,
-        }),
-      ),
-    );
-    db.query(
-      "INSERT INTO txt (txt_key, txt_prefix, path, catalog, last_accessed, created_at) " +
-        "VALUES (x'00', x'00', x'00', ?, 0, 0)",
-      [blob],
-    );
-
-    const store = storeFor(db);
-    const { result } = renderHook(() => useLibraryBooks(store));
-    expect(result.current).toEqual({ status: "loading" });
-
-    await waitFor(() => expect(result.current.status).toBe("ready"));
-    expect(result.current).toEqual({
-      status: "ready",
-      books: [
-        {
-          txtId: 1,
-          title: "Dune",
-          authors: [],
-          subjects: [],
-          publisher: null,
-          lastAccessed: 0,
-          bookmarkCount: 0,
-          lastBookmarked: null,
-          latestBookmarkCfi: null,
-          bookmarks: [],
-        },
-      ],
-      reload: expect.any(Function),
-    });
-    db.close();
-  });
-
-  it("surfaces database loading failures", async () => {
-    const db = await SqliteDatabase.openUnkeyed();
-    db.close();
-
-    const store = storeFor(db);
-    const { result } = renderHook(() => useLibraryBooks(store));
-
-    await waitFor(() => expect(result.current.status).toBe("error"));
+  it("reads the already-loaded book list from the store's snapshot", () => {
+    const library = fakeLibrary([book(1, "Dune")]);
+    const { result } = renderHook(() => useLibraryBooks(library));
     expect(result.current).toMatchObject({
-      status: "error",
-      error: "database is closed",
+      status: "ready",
+      books: [book(1, "Dune")],
     });
+  });
+
+  it("re-renders with the new snapshot after reload()", async () => {
+    const library = fakeLibrary([book(1, "Dune")]);
+    const { result } = renderHook(() => useLibraryBooks(library));
+
+    act(() => {
+      if (result.current.status === "ready") result.current.reload();
+    });
+
+    await waitFor(() =>
+      expect(result.current.status === "ready" && result.current.books).toHaveLength(2),
+    );
+  });
+
+  it("surfaces a reload failure", async () => {
+    const noBooks: LibraryBook[] = [];
+    const library = {
+      snapshot: () => noBooks,
+      subscribe: () => () => undefined,
+      reload: vi.fn().mockRejectedValue(new Error("network down")),
+    } as unknown as LibraryStore;
+    const { result } = renderHook(() => useLibraryBooks(library));
+
+    act(() => {
+      if (result.current.status === "ready") result.current.reload();
+    });
+
+    await waitFor(() =>
+      expect(result.current).toMatchObject({ status: "error", error: "network down" }),
+    );
   });
 });

@@ -21,6 +21,7 @@ vi.mock("../../../src/data/shares", async (importOriginal) => ({
   createBookShare: vi.fn(),
   deleteBookShare: vi.fn(),
   shareUrl: vi.fn(),
+  loadShares: vi.fn().mockResolvedValue([]),
 }));
 // jsdom reports a zero-size scroll container, so the real virtualizer would
 // see nothing as "in view" and render no rows at all -- these tests care
@@ -34,10 +35,11 @@ vi.mock("react-aria-components", async (importOriginal) => {
   };
 });
 
-import type { LibraryBook } from "../../../src/data/libraryDb";
+import type { LibraryBook } from "../../../src/data/libraryStore";
 import {
   createBookShare,
   deleteBookShare,
+  loadShares,
   shareUrl,
   type BookShare,
 } from "../../../src/data/shares";
@@ -86,6 +88,7 @@ const LIBRARY: LibraryBook[] = [
     latestBookmarkCfi: "epubcfi(/6/8)",
     bookmarks: [
       {
+        id: 1,
         cfi: "epubcfi(/6/8)",
         pageNumber: 8,
         createdAt: 200,
@@ -94,23 +97,28 @@ const LIBRARY: LibraryBook[] = [
   }),
 ];
 
-function renderScreen(books: LibraryBook[] | null, lock = vi.fn()) {
-  return renderLibrary(
-    books === null
-      ? { status: "loading" }
-      : { status: "ready", books, reload: vi.fn() },
-    lock,
-  );
+function renderScreen(books: LibraryBook[], lock = vi.fn()) {
+  return renderLibrary({ status: "ready", books, reload: vi.fn() }, lock);
 }
 
 function renderLibrary(
   library: LibraryState,
   lock = vi.fn(),
-  mutate = vi.fn().mockResolvedValue(undefined),
+  overrides: {
+    clearLastAccessed?: ReturnType<typeof vi.fn>;
+    deleteBookmark?: ReturnType<typeof vi.fn>;
+  } = {},
   shares: BookShare[] = [],
 ) {
+  vi.mocked(loadShares).mockResolvedValue(shares);
   const session = {
-    database: { mutate, read: vi.fn().mockResolvedValue(shares) },
+    library: {
+      snapshot: () => (library.status === "ready" ? library.books : []),
+      clearLastAccessed:
+        overrides.clearLastAccessed ?? vi.fn().mockResolvedValue(undefined),
+      deleteBookmark: overrides.deleteBookmark ?? vi.fn().mockResolvedValue(undefined),
+    },
+    umk: new Uint8Array(0),
     displayName: "Trung",
   } as unknown as VaultSession;
   vi.mocked(useVault).mockReturnValue({
@@ -167,12 +175,7 @@ describe("LibraryScreen", () => {
 
   afterEach(() => vi.unstubAllGlobals());
 
-  it("shows a loading message before books resolve", () => {
-    renderScreen(null);
-    expect(screen.getByText(/Loading your library/)).toBeInTheDocument();
-  });
-
-  it("collapses the sidebar after a narrow Library finishes loading", () => {
+  it("collapses the sidebar for a narrow Library", () => {
     const bounds = vi
       .spyOn(HTMLElement.prototype, "getBoundingClientRect")
       .mockImplementation(function () {
@@ -183,20 +186,7 @@ describe("LibraryScreen", () => {
             : 0;
         return { width } as DOMRect;
       });
-    const rendered = renderLibrary({ status: "loading" });
-    expect(screen.getByText(/Loading your library/)).toBeInTheDocument();
-
-    vi.mocked(useLibraryBooks).mockReturnValue({
-      status: "ready",
-      books: LIBRARY,
-      reload: vi.fn(),
-    });
-    rendered.rerender(
-      <MemoryRouter>
-        <LibraryScreen />
-        <LocationProbe />
-      </MemoryRouter>,
-    );
+    renderScreen(LIBRARY);
 
     expect(document.querySelector(".library-sidebar")).toBeNull();
     expect(screen.getByRole("button", { name: "Open menu" })).toBeInTheDocument();
@@ -315,11 +305,7 @@ describe("LibraryScreen", () => {
   });
 
   it("attaches Read and Share to search and enables both for the owner", async () => {
-    renderLibrary(
-      { status: "ready", books: LIBRARY, reload: vi.fn() },
-      vi.fn(),
-      vi.fn().mockResolvedValue(undefined),
-    );
+    renderLibrary({ status: "ready", books: LIBRARY, reload: vi.fn() }, vi.fn());
     await userEvent.click(screen.getByRole("button", { name: /^All Books/ }));
     const search = screen.getByRole("searchbox");
     const actions = screen.getByLabelText("Book actions");
@@ -367,15 +353,13 @@ describe("LibraryScreen", () => {
     const pending = new Promise<void>((resolve) => {
       complete = resolve;
     });
-    vi.mocked(createBookShare).mockImplementation(async (_session, _txtId, step) => {
-      step?.("Encrypting shared copy");
-      await pending;
-    });
-    renderLibrary(
-      { status: "ready", books: LIBRARY, reload: vi.fn() },
-      vi.fn(),
-      vi.fn().mockResolvedValue(undefined),
+    vi.mocked(createBookShare).mockImplementation(
+      async (_session, _umk, _txtId, step) => {
+        step?.("Encrypting shared copy");
+        await pending;
+      },
     );
+    renderLibrary({ status: "ready", books: LIBRARY, reload: vi.fn() }, vi.fn());
     await userEvent.click(screen.getByRole("button", { name: /^All Books/ }));
     await userEvent.click(screen.getByRole("row", { name: "Dune" }));
     const shareButton = screen.getByRole("button", { name: "Share" });
@@ -428,12 +412,9 @@ describe("LibraryScreen", () => {
       step?.("Deleting shared copy");
       await pending;
     });
-    renderLibrary(
-      { status: "ready", books: LIBRARY, reload: vi.fn() },
-      vi.fn(),
-      vi.fn().mockResolvedValue(undefined),
-      [existingShare],
-    );
+    renderLibrary({ status: "ready", books: LIBRARY, reload: vi.fn() }, vi.fn(), {}, [
+      existingShare,
+    ]);
     await waitFor(() =>
       expect(screen.getByRole("button", { name: /^Shares/ })).toHaveTextContent("1"),
     );
@@ -505,7 +486,7 @@ describe("LibraryScreen", () => {
       screen.queryByRole("button", { name: "Delete this share" }),
     ).not.toBeInTheDocument();
     await userEvent.click(rows[0]);
-    expect(onSelectShare).toHaveBeenCalledWith(shares[0].id);
+    expect(onSelectShare).toHaveBeenCalledWith(shares[0].shareIdHash);
   });
 
   it("opens a bookmark row at the book's newest bookmark", () => {
@@ -669,8 +650,8 @@ describe("LibraryScreen", () => {
         bookmarkCount: 2,
         lastBookmarked: latestBookmark,
         bookmarks: [
-          { cfi: "page-9", pageNumber: 9, createdAt: latestBookmark },
-          { cfi: "page-4", pageNumber: 4, createdAt: olderBookmark },
+          { id: 1, cfi: "page-9", pageNumber: 9, createdAt: latestBookmark },
+          { id: 2, cfi: "page-4", pageNumber: 4, createdAt: olderBookmark },
         ],
       }),
     ]);
@@ -705,11 +686,18 @@ describe("LibraryScreen", () => {
   });
 
   it("blocks and reports each Recent deletion without overlapping work", async () => {
-    const completions: Array<() => void> = [];
-    const mutate = vi.fn().mockImplementation(
+    const accessCompletions: Array<() => void> = [];
+    const bookmarkCompletions: Array<() => void> = [];
+    const clearLastAccessed = vi.fn().mockImplementation(
       () =>
         new Promise<void>((resolve) => {
-          completions.push(resolve);
+          accessCompletions.push(resolve);
+        }),
+    );
+    const deleteBookmark = vi.fn().mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          bookmarkCompletions.push(resolve);
         }),
     );
     const reload = vi.fn();
@@ -722,13 +710,13 @@ describe("LibraryScreen", () => {
             lastAccessed: 100,
             bookmarkCount: 1,
             lastBookmarked: 200,
-            bookmarks: [{ cfi: "saved-place", pageNumber: 12, createdAt: 200 }],
+            bookmarks: [{ id: 5, cfi: "saved-place", pageNumber: 12, createdAt: 200 }],
           }),
         ],
         reload,
       },
       vi.fn(),
-      mutate,
+      { clearLastAccessed, deleteBookmark },
     );
     const accessDelete = screen.getByRole("button", {
       name: "Delete recent access",
@@ -740,13 +728,13 @@ describe("LibraryScreen", () => {
     await userEvent.click(accessDelete);
     fireEvent.click(bookmarkDelete);
 
-    expect(mutate).toHaveBeenCalledOnce();
+    expect(clearLastAccessed).toHaveBeenCalledOnce();
     expect(screen.getByTestId("library-operation-surface")).toHaveAttribute("inert");
     expect(document.querySelector(".library-operation-blocker")).not.toBeNull();
     expect(libraryToast()).toHaveTextContent("Deleting recent access: Active book");
     expect(libraryToast()).toHaveTextContent("Saving encrypted library");
 
-    await act(async () => completions[0]());
+    await act(async () => accessCompletions[0]());
     await waitFor(() =>
       expect(libraryToast()).toHaveTextContent("Recent access deleted"),
     );
@@ -759,13 +747,11 @@ describe("LibraryScreen", () => {
     expect(libraryToast()).toHaveTextContent("Saving encrypted library");
     expect(screen.getByTestId("library-operation-surface")).toHaveAttribute("inert");
 
-    await act(async () => completions[1]());
+    await act(async () => bookmarkCompletions[0]());
     await waitFor(() => expect(libraryToast()).toHaveTextContent("Bookmark deleted"));
 
-    expect(mutate.mock.calls.map(([mutation]) => mutation.description)).toEqual([
-      "clear last access",
-      "delete bookmark",
-    ]);
+    expect(clearLastAccessed).toHaveBeenCalledWith(expect.any(Number));
+    expect(deleteBookmark).toHaveBeenCalledWith(5);
     expect(accessDelete.querySelector("svg")).not.toBeNull();
     expect(bookmarkDelete.querySelector("svg")).not.toBeNull();
     await waitFor(() => expect(reload).toHaveBeenCalledTimes(2));
@@ -777,7 +763,7 @@ describe("LibraryScreen", () => {
         title: "Marked book",
         bookmarkCount: 1,
         lastBookmarked: 200,
-        bookmarks: [{ cfi: "marked-place", pageNumber: 6, createdAt: 200 }],
+        bookmarks: [{ id: 1, cfi: "marked-place", pageNumber: 6, createdAt: 200 }],
       }),
     ]);
     const remove = screen.getByRole("button", {
@@ -878,13 +864,12 @@ describe("LibraryScreen", () => {
 
 function share(id: number, txtId: number): BookShare {
   return {
-    id,
+    shareIdHash: `hash-${id}`,
     txtId,
     title: "Fallback title",
     shareId: new Uint8Array(32),
     contentKey: new Uint8Array(128),
-    prefix: new Uint8Array(32),
-    path: new Uint8Array(32),
+    sharePath: "s".repeat(52),
     state: "active",
     createdAt: id,
   };

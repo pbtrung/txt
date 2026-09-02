@@ -1,239 +1,192 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-
-import type { FirebaseTokenProvider } from "../../src/auth/firebaseSignIn";
-import { ApiClient, type R2SigningIdentity } from "../../src/data/apiClient";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  R2_TICKET_PROOF_VERSION,
-  canonicalR2TicketProof,
-} from "../../src/data/r2Proof";
-import { fromBase64 } from "../../src/util/base64";
+  AccessRequiredError,
+  AccessVersionConflictError,
+  ApiClient,
+} from "../../src/data/apiClient";
+import type { OwnerSigningIdentity } from "../../src/data/ownerProof";
+import { toBase64 } from "../../src/util/base64";
 
-const API = "https://api.example.com";
-const UID = "owner-uid";
-const DB_PATH = "0123456789abcdefghjkmnpqrstvwxyz0123456789abcdefghjk";
-const DB_PREFIX = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz";
-const USER_HANDLE = new Uint8Array(32).fill(7);
-const TICKET = "header.payload.signature";
-
-let signing: R2SigningIdentity;
-let publicKey: CryptoKey;
-
-function tokenProvider(tokens = ["idtok"]): FirebaseTokenProvider {
-  let index = 0;
+function jsonResponse(status: number, body: unknown): Response {
   return {
-    getIdToken: vi.fn(async (forceRefresh = false) => {
-      if (forceRefresh) index = Math.min(index + 1, tokens.length - 1);
-      return tokens[index];
-    }),
-  };
+    ok: status >= 200 && status < 300,
+    status,
+    headers: new Headers({ "content-type": "application/json" }),
+    json: async () => body,
+  } as Response;
 }
 
-function credential(type: "db_path" | "db_prefix") {
+function htmlResponse(): Response {
   return {
-    type,
-    access_key_id: `${type}-ak`,
-    secret_access_key: `${type}-sk`,
-    session_token: `${type}-st`,
-    expiration: "2026-12-01T00:00:00.000Z",
-  };
+    ok: true,
+    status: 200,
+    headers: new Headers({ "content-type": "text/html" }),
+    json: async () => {
+      throw new Error("not json");
+    },
+  } as Response;
 }
 
-function credentialResponse(
-  credentials = [credential("db_path"), credential("db_prefix")],
-) {
-  return {
-    credentials,
-    endpoint: "https://acct.r2.cloudflarestorage.com",
-    bucket: "bucket",
-    region: "auto",
-  };
-}
+afterEach(() => vi.unstubAllGlobals());
 
-beforeAll(async () => {
+async function testSigning(): Promise<OwnerSigningIdentity> {
   const pair = (await crypto.subtle.generateKey(
     { name: "ECDSA", namedCurve: "P-521" },
     false,
     ["sign", "verify"],
   )) as CryptoKeyPair;
-  signing = { ticket: TICKET, userHandle: USER_HANDLE, privateKey: pair.privateKey };
-  publicKey = pair.publicKey;
-});
+  return {
+    ticket: "header.payload.signature",
+    userHandle: new Uint8Array(32).fill(3),
+    privateKey: pair.privateKey,
+  };
+}
 
-beforeEach(() => {
-  signing.ticket = TICKET;
-});
-
-afterEach(() => vi.unstubAllGlobals());
-
-describe("ApiClient owner ticket", () => {
-  it("uses the API origin and returns only the singleton owner ticket", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({ uid: UID, r2_ticket: TICKET, umk: "ignored" }),
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    const signal = new AbortController().signal;
-
-    await expect(
-      new ApiClient(tokenProvider(), `${API}/`).fetchOwnerTicket(signal),
-    ).resolves.toEqual({ uid: UID, ticket: TICKET });
-    expect(fetchMock).toHaveBeenCalledWith(
-      `${API}/v1/keys`,
-      expect.objectContaining({
-        method: "POST",
-        headers: { Authorization: "Bearer idtok" },
-        signal,
-      }),
+describe("ApiClient Access-challenge detection", () => {
+  it("treats a non-JSON response as AccessRequiredError", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(htmlResponse()));
+    await expect(new ApiClient().fetchOwner()).rejects.toBeInstanceOf(
+      AccessRequiredError,
     );
   });
 
-  it("refreshes Firebase authentication once after a 401", async () => {
-    const provider = tokenProvider(["expired", "fresh"]);
+  it("treats a fetch() failure as AccessRequiredError", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+    await expect(new ApiClient().fetchOwner()).rejects.toBeInstanceOf(
+      AccessRequiredError,
+    );
+  });
+});
+
+describe("ApiClient reads", () => {
+  it("parses the owner record", async () => {
+    const bytes = toBase64(new Uint8Array([1, 2, 3]));
     vi.stubGlobal(
       "fetch",
-      vi
-        .fn()
-        .mockResolvedValueOnce({ ok: false, status: 401 })
-        .mockResolvedValueOnce({
-          ok: true,
-          status: 200,
-          json: async () => ({ uid: UID, r2_ticket: TICKET }),
+      vi.fn().mockResolvedValue(
+        jsonResponse(200, {
+          wrapped_umk: bytes,
+          sign_public_key: bytes,
+          wrapped_sign_private_key: bytes,
+          kem_public_key: bytes,
+          wrapped_kem_private_key: bytes,
+          encrypted_credentials: bytes,
+          ticket: "t",
         }),
+      ),
     );
+    const owner = await new ApiClient().fetchOwner();
+    expect(owner.ticket).toBe("t");
+    expect([...owner.wrappedUmk]).toEqual([1, 2, 3]);
+  });
 
-    await new ApiClient(provider, API).fetchOwnerTicket();
+  it("parses documents", async () => {
+    const bytes = toBase64(new Uint8Array([1]));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse(200, {
+          documents: [
+            {
+              id: 1,
+              created_at: 0,
+              content_blob: bytes,
+              content_key_wrapped: bytes,
+              access_blob: bytes,
+              access_version: 0,
+              access_key_wrapped: bytes,
+            },
+          ],
+        }),
+      ),
+    );
+    const documents = await new ApiClient().fetchDocuments();
+    expect(documents).toHaveLength(1);
+    expect(documents[0].id).toBe(1);
+  });
 
-    expect(provider.getIdToken).toHaveBeenNthCalledWith(1, false, undefined);
-    expect(provider.getIdToken).toHaveBeenNthCalledWith(2, true, undefined);
+  it("parses a null catalog", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse(200, { catalog: null })),
+    );
+    await expect(new ApiClient().fetchCatalog()).resolves.toBeNull();
+  });
+
+  it("fetches bookmarks with the document_id query param", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { bookmarks: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+    await new ApiClient().fetchBookmarks(42);
+    expect(fetchMock.mock.calls[0][0]).toBe("/v1/bookmarks?document_id=42");
   });
 });
 
-describe("ApiClient R2 credentials", () => {
-  it("signs the owner paths and parses one credential of each type", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => credentialResponse(),
-    });
+describe("ApiClient proofed mutations", () => {
+  it("sends the ticket and proof headers with the exact signed body", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonResponse(200, { access_version: 1 }));
     vi.stubGlobal("fetch", fetchMock);
+    const signing = await testSigning();
 
-    const result = await new ApiClient(tokenProvider(), API).fetchR2Token(
-      DB_PATH,
-      DB_PREFIX,
+    await new ApiClient().updateDocumentAccess(
+      5,
+      new Uint8Array([9, 9]),
+      0,
       signing,
+      "a".repeat(52),
     );
 
-    expect(result.dbPath.accessKeyId).toBe("db_path-ak");
-    expect(result.dbPrefix.accessKeyId).toBe("db_prefix-ak");
     const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe(`${API}/v1/r2-token`);
-    const body = JSON.parse(init.body);
-    expect(body.proof.version).toBe(R2_TICKET_PROOF_VERSION);
-    await verifyProof(body.proof);
-  });
-
-  it("replaces an expired ticket and rebuilds the request", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce({ ok: false, status: 401 })
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => ({ uid: UID, r2_ticket: "new.ticket.value" }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => credentialResponse(),
-      });
-    vi.stubGlobal("fetch", fetchMock);
-
-    await new ApiClient(tokenProvider(), API).fetchR2Token(DB_PATH, DB_PREFIX, signing);
-
-    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
-      `${API}/v1/r2-token`,
-      `${API}/v1/keys`,
-      `${API}/v1/r2-token`,
-    ]);
-    expect(JSON.parse(fetchMock.mock.calls[2][1].body).ticket).toBe("new.ticket.value");
-  });
-
-  it("rejects missing or duplicate credential types", async () => {
-    for (const credentials of [
-      [credential("db_path")],
-      [credential("db_path"), credential("db_path")],
-    ]) {
-      vi.stubGlobal(
-        "fetch",
-        vi.fn().mockResolvedValue({
-          ok: true,
-          status: 200,
-          json: async () => credentialResponse(credentials),
+    expect(url).toBe("/v1/documents/5/access");
+    expect(init.method).toBe("PATCH");
+    expect(init.headers["X-Owner-Ticket"]).toBe(signing.ticket);
+    const proof = JSON.parse(init.headers["X-Owner-Proof"]);
+    expect(proof.version).toBe(1);
+    expect(init.body).toEqual(
+      new TextEncoder().encode(
+        JSON.stringify({
+          access_blob: toBase64(new Uint8Array([9, 9])),
+          access_version: 0,
+          user_handle: toBase64(signing.userHandle),
+          db_prefix: "a".repeat(52),
         }),
-      );
-      await expect(
-        new ApiClient(tokenProvider(), API).fetchR2Token(DB_PATH, DB_PREFIX, signing),
-      ).rejects.toThrow(/credential/);
-    }
+      ),
+    );
+  });
+
+  it("throws AccessVersionConflictError on 412", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(412, {})));
+    const signing = await testSigning();
+    await expect(
+      new ApiClient().updateDocumentAccess(
+        5,
+        new Uint8Array(),
+        0,
+        signing,
+        "a".repeat(52),
+      ),
+    ).rejects.toBeInstanceOf(AccessVersionConflictError);
+  });
+
+  it("registers a share and returns the grant", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse(200, { registered: true, grant: "g" })),
+    );
+    const signing = await testSigning();
+    await expect(
+      new ApiClient().createShare(
+        {
+          documentId: 1,
+          shareId: "id",
+          sharePath: "path",
+          keyWrapped: new Uint8Array([1]),
+          ownerBlob: new Uint8Array([2]),
+        },
+        signing,
+        "a".repeat(52),
+      ),
+    ).resolves.toBe("g");
   });
 });
-
-describe("ApiClient shares", () => {
-  it("registers paths and deletes by capability ID", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 201,
-        json: async () => ({ registered: true, grant: "grant-envelope" }),
-      })
-      .mockResolvedValueOnce({ ok: true, status: 204 });
-    vi.stubGlobal("fetch", fetchMock);
-    const client = new ApiClient(tokenProvider(), API);
-    const request = {
-      dbPath: DB_PATH,
-      dbPrefix: DB_PREFIX,
-      sharePrefix: "1".repeat(52),
-      sharePath: "2".repeat(52),
-      shareId: "A".repeat(43),
-    };
-
-    await expect(client.registerShare(request)).resolves.toBe("grant-envelope");
-    await client.deleteShare(request);
-
-    expect(fetchMock.mock.calls.map(([url, init]) => [url, init.method])).toEqual([
-      [`${API}/v1/shares`, "POST"],
-      [`${API}/v1/shares`, "DELETE"],
-    ]);
-    const expectedBody = {
-      db_path: DB_PATH,
-      db_prefix: DB_PREFIX,
-      share_prefix: request.sharePrefix,
-      share_path: request.sharePath,
-      share_id: request.shareId,
-    };
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual(expectedBody);
-    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual(expectedBody);
-  });
-});
-
-async function verifyProof(proof: Record<string, string | number>) {
-  const canonical = await canonicalR2TicketProof({
-    version: R2_TICKET_PROOF_VERSION,
-    ticket: TICKET,
-    userHandle: USER_HANDLE,
-    expiresAt: proof.expires_at as number,
-    requestId: fromBase64(proof.request_id as string),
-    dbPath: DB_PATH,
-    dbPrefix: DB_PREFIX,
-  });
-  await expect(
-    crypto.subtle.verify(
-      { name: "ECDSA", hash: "SHA-512" },
-      publicKey,
-      fromBase64(proof.signature as string),
-      canonical,
-    ),
-  ).resolves.toBe(true);
-}

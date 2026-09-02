@@ -1,7 +1,7 @@
 // Pure search/sort/browse logic over an already-loaded LibraryBook[]
-// (ui/src/data/libraryDb.ts).
+// (ui/src/data/libraryStore.ts).
 import Fuse, { type IFuseOptions } from "fuse.js";
-import type { LibraryBook, LibraryBookmark } from "../../data/libraryDb";
+import type { LibraryBook, LibraryBookmark } from "../../data/libraryStore";
 
 const SEARCH_OPTIONS: IFuseOptions<LibraryBook> = {
   keys: [

@@ -1,168 +1,347 @@
-import type { FirebaseTokenProvider } from "../auth/firebaseSignIn";
-import { toBase64 } from "../util/base64";
+// Thin REST wrapper over the Worker's /v1/* routes (docs/auth.md,
+// docs/data_model.md §3, docs/sharing.md). Same-origin fetch() carries the
+// Cloudflare Access session cookie automatically -- there is no
+// UI-driven sign-in step. Every mutating call signs a fresh proof
+// (ownerProof.ts) over the exact body bytes it sends.
+import type { OwnerSigningIdentity } from "./ownerProof";
+import { signOwnerProof } from "./ownerProof";
+import { fromBase64, toBase64 } from "../util/base64";
 import { objectRecord, stringField } from "../util/validation";
-import { withNetworkRetries } from "./networkRequest";
-import {
-  R2_TICKET_PROOF_VERSION,
-  canonicalR2TicketProof,
-  requireP521Signature,
-} from "./r2Proof";
 
-const PROOF_LIFETIME_SECONDS = 45;
+const TICKET_HEADER = "X-Owner-Ticket";
+const PROOF_HEADER = "X-Owner-Proof";
 
-export interface OwnerTicket {
-  uid: string;
+/** docs/auth.md §1: an unauthenticated request to a gated /v1/* path never
+ * reaches the Worker -- Access intercepts it with its own login
+ * challenge, either a non-JSON redirect response or (if fetch() follows
+ * the redirect cross-origin) a network-level failure. Both surface here
+ * as "not logged in, prompt to authenticate" rather than a decodable API
+ * error. */
+export class AccessRequiredError extends Error {
+  constructor() {
+    super("Cloudflare Access session required");
+    this.name = "AccessRequiredError";
+  }
+}
+
+export class AccessVersionConflictError extends Error {
+  constructor() {
+    super("access_version conflict");
+    this.name = "AccessVersionConflictError";
+  }
+}
+
+export interface OwnerRecord {
+  wrappedUmk: Uint8Array;
+  signPublicKey: Uint8Array;
+  wrappedSignPrivateKey: Uint8Array;
+  kemPublicKey: Uint8Array;
+  wrappedKemPrivateKey: Uint8Array;
+  encryptedCredentials: Uint8Array;
   ticket: string;
 }
 
-export interface R2SigningIdentity {
-  ticket: string;
-  userHandle: Uint8Array;
-  privateKey: CryptoKey;
+export interface DocumentRow {
+  id: number;
+  createdAt: number;
+  contentBlob: Uint8Array;
+  contentKeyWrapped: Uint8Array;
+  accessBlob: Uint8Array;
+  accessVersion: number;
+  accessKeyWrapped: Uint8Array;
+}
+
+export interface CatalogRow {
+  keyWrapped: Uint8Array;
+  catalogBlob: Uint8Array;
+}
+
+export interface BookmarkRow {
+  id: number;
+  createdAt: number;
+  keyWrapped: Uint8Array;
+  bookmarkBlob: Uint8Array;
+}
+
+export interface BookmarkSummaryRow {
+  id: number;
+  documentId: number;
+  count: number;
+  keyWrapped: Uint8Array;
+  bookmarkBlob: Uint8Array;
+  createdAt: number;
+}
+
+export interface ShareRow {
+  shareIdHash: Uint8Array;
+  documentId: number;
+  keyWrapped: Uint8Array;
+  ownerBlob: Uint8Array;
+  state: "creating" | "active" | "deleting";
+  createdAt: number;
 }
 
 export interface R2TempCredential {
   accessKeyId: string;
   secretAccessKey: string;
   sessionToken: string;
-  expiration: string;
+}
+
+export interface R2CredentialSet {
   endpoint: string;
   bucket: string;
-  region: string;
+  expiresAt: number;
+  documents: R2TempCredential;
+  catalog: R2TempCredential;
 }
 
-export interface R2CredentialPair {
-  dbPath: R2TempCredential;
-  dbPrefix: R2TempCredential;
-}
-
-export interface ShareRegistration {
-  dbPath: string;
-  dbPrefix: string;
-  sharePrefix: string;
-  sharePath: string;
-  shareId: string;
+async function fetchSameOrigin(path: string, init: RequestInit): Promise<Response> {
+  let response: Response;
+  try {
+    response = await fetch(path, init);
+  } catch {
+    // A cross-origin failure following Access's own redirect surfaces as a
+    // generic fetch TypeError, indistinguishable from a transient network
+    // error at this layer -- docs/auth.md §1 treats it the same as the
+    // non-JSON-body case below.
+    throw new AccessRequiredError();
+  }
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!contentType.includes("application/json")) {
+    throw new AccessRequiredError();
+  }
+  return response;
 }
 
 export class ApiClient {
-  readonly baseUrl: string;
+  constructor(private readonly baseUrl: string = "") {}
 
-  constructor(
-    private readonly tokens: FirebaseTokenProvider,
-    baseUrl: string,
-  ) {
-    this.baseUrl = baseUrl.replace(/\/+$/, "");
+  async fetchOwner(signal?: AbortSignal): Promise<OwnerRecord> {
+    const response = await this.get("/v1/owner", signal);
+    if (!response.ok)
+      throw new Error(`could not fetch owner record: ${response.status}`);
+    return parseOwnerRecord(await response.json());
   }
 
-  async fetchOwnerTicket(signal?: AbortSignal): Promise<OwnerTicket> {
-    const response = await this.authenticatedRequest(
-      "/v1/keys",
-      "POST",
-      undefined,
+  async fetchDocuments(signal?: AbortSignal): Promise<DocumentRow[]> {
+    const response = await this.get("/v1/documents", signal);
+    if (!response.ok) throw new Error(`could not fetch documents: ${response.status}`);
+    const data = objectRecord(await response.json(), "documents response");
+    if (!Array.isArray(data.documents)) {
+      throw new Error("documents response is missing documents");
+    }
+    return data.documents.map(parseDocumentRow);
+  }
+
+  async fetchCatalog(signal?: AbortSignal): Promise<CatalogRow | null> {
+    const response = await this.get("/v1/catalog", signal);
+    if (!response.ok) throw new Error(`could not fetch catalog: ${response.status}`);
+    const data = objectRecord(await response.json(), "catalog response");
+    return data.catalog === null ? null : parseCatalogRow(data.catalog);
+  }
+
+  async fetchBookmarks(
+    documentId: number,
+    signal?: AbortSignal,
+  ): Promise<BookmarkRow[]> {
+    const response = await this.get(
+      `/v1/bookmarks?${new URLSearchParams({ document_id: String(documentId) })}`,
       signal,
     );
-    if (response.status === 403) {
-      throw new Error("Firebase account is not the configured owner");
+    if (!response.ok) throw new Error(`could not fetch bookmarks: ${response.status}`);
+    const data = objectRecord(await response.json(), "bookmarks response");
+    if (!Array.isArray(data.bookmarks)) {
+      throw new Error("bookmarks response is missing bookmarks");
     }
-    if (!response.ok)
-      throw new Error(`could not obtain owner ticket: ${response.status}`);
-    return parseOwnerTicket(await response.json());
+    return data.bookmarks.map(parseBookmarkRow);
   }
 
-  async fetchR2Token(
-    dbPath: string,
-    dbPrefix: string,
-    signing: R2SigningIdentity,
-    signal?: AbortSignal,
-  ): Promise<R2CredentialPair> {
-    let response = await this.signedR2Request(dbPath, dbPrefix, signing, signal);
-    if (response.status === 401) {
-      signing.ticket = (await this.fetchOwnerTicket(signal)).ticket;
-      response = await this.signedR2Request(dbPath, dbPrefix, signing, signal);
+  async fetchBookmarksSummary(signal?: AbortSignal): Promise<BookmarkSummaryRow[]> {
+    const response = await this.get("/v1/bookmarks/summary", signal);
+    if (!response.ok) {
+      throw new Error(`could not fetch bookmarks summary: ${response.status}`);
     }
+    const data = objectRecord(await response.json(), "bookmarks summary response");
+    if (!Array.isArray(data.summaries)) {
+      throw new Error("bookmarks summary response is missing summaries");
+    }
+    return data.summaries.map(parseBookmarkSummaryRow);
+  }
+
+  async fetchShares(signal?: AbortSignal): Promise<ShareRow[]> {
+    const response = await this.get("/v1/shares", signal);
+    if (!response.ok) throw new Error(`could not fetch shares: ${response.status}`);
+    const data = objectRecord(await response.json(), "shares response");
+    if (!Array.isArray(data.shares)) {
+      throw new Error("shares response is missing shares");
+    }
+    return data.shares.map(parseShareRow);
+  }
+
+  async fetchR2Credentials(
+    signing: OwnerSigningIdentity,
+    dbPrefix: string,
+    signal?: AbortSignal,
+  ): Promise<R2CredentialSet> {
+    const response = await this.proofed(
+      "POST",
+      "/v1/r2-credentials",
+      signing,
+      dbPrefix,
+      {},
+      signal,
+    );
     if (!response.ok) {
       throw new Error(`could not obtain R2 credentials: ${response.status}`);
     }
-    return parseR2CredentialPair(await response.json());
+    return parseR2CredentialSet(await response.json());
   }
 
-  async registerShare(request: ShareRegistration): Promise<string> {
-    return withNetworkRetries(async (signal) => {
-      const response = await this.authenticatedRequest(
-        "/v1/shares",
-        "POST",
-        shareBody(request),
-        signal,
-      );
-      if (!response.ok) {
-        throw new Error(`could not register share: ${response.status}`);
-      }
-      const data = objectRecord(await response.json(), "share registration response");
-      return stringField(data, "grant", "share registration response");
-    });
-  }
-
-  async deleteShare(request: ShareRegistration): Promise<void> {
-    await withNetworkRetries(async (signal) => {
-      const response = await this.authenticatedRequest(
-        "/v1/shares",
-        "DELETE",
-        shareBody(request),
-        signal,
-      );
-      if (!response.ok) throw new Error(`could not delete share: ${response.status}`);
-    });
-  }
-
-  private async signedR2Request(
-    dbPath: string,
+  async updateDocumentAccess(
+    id: number,
+    accessBlob: Uint8Array,
+    accessVersion: number,
+    signing: OwnerSigningIdentity,
     dbPrefix: string,
-    signing: R2SigningIdentity,
     signal?: AbortSignal,
-  ): Promise<Response> {
-    const proof = await signedProof(dbPath, dbPrefix, signing);
-    return fetch(this.url("/v1/r2-token"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ticket: signing.ticket,
-        user_handle: toBase64(signing.userHandle),
-        db_path: dbPath,
-        db_prefix: dbPrefix,
-        proof,
-      }),
+  ): Promise<number> {
+    const response = await this.proofed(
+      "PATCH",
+      `/v1/documents/${id}/access`,
+      signing,
+      dbPrefix,
+      { access_blob: toBase64(accessBlob), access_version: accessVersion },
       signal,
-    });
-  }
-
-  private async authenticatedRequest(
-    path: string,
-    method: string,
-    body?: unknown,
-    signal?: AbortSignal,
-  ): Promise<Response> {
-    let response = await this.authorizedRequest(path, method, false, body, signal);
-    if (response.status === 401) {
-      response = await this.authorizedRequest(path, method, true, body, signal);
+    );
+    if (response.status === 412) throw new AccessVersionConflictError();
+    if (!response.ok) {
+      throw new Error(`could not update reading position: ${response.status}`);
     }
-    return response;
+    const data = objectRecord(await response.json(), "access update response");
+    return numberField(data, "access_version", "access update response");
   }
 
-  private async authorizedRequest(
-    path: string,
+  async createBookmark(
+    documentId: number,
+    keyWrapped: Uint8Array,
+    bookmarkBlob: Uint8Array,
+    signing: OwnerSigningIdentity,
+    dbPrefix: string,
+    signal?: AbortSignal,
+  ): Promise<number> {
+    const response = await this.proofed(
+      "POST",
+      "/v1/bookmarks",
+      signing,
+      dbPrefix,
+      {
+        document_id: documentId,
+        key_wrapped: toBase64(keyWrapped),
+        bookmark_blob: toBase64(bookmarkBlob),
+      },
+      signal,
+    );
+    if (!response.ok) throw new Error(`could not save bookmark: ${response.status}`);
+    const data = objectRecord(await response.json(), "bookmark response");
+    return numberField(data, "id", "bookmark response");
+  }
+
+  async deleteBookmark(
+    id: number,
+    signing: OwnerSigningIdentity,
+    dbPrefix: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const response = await this.proofed(
+      "DELETE",
+      `/v1/bookmarks/${id}`,
+      signing,
+      dbPrefix,
+      {},
+      signal,
+    );
+    if (!response.ok) throw new Error(`could not delete bookmark: ${response.status}`);
+  }
+
+  async createShare(
+    fields: {
+      documentId: number;
+      shareId: string;
+      sharePath: string;
+      keyWrapped: Uint8Array;
+      ownerBlob: Uint8Array;
+    },
+    signing: OwnerSigningIdentity,
+    dbPrefix: string,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    const response = await this.proofed(
+      "POST",
+      "/v1/shares",
+      signing,
+      dbPrefix,
+      {
+        document_id: fields.documentId,
+        share_id: fields.shareId,
+        share_path: fields.sharePath,
+        key_wrapped: toBase64(fields.keyWrapped),
+        owner_blob: toBase64(fields.ownerBlob),
+      },
+      signal,
+    );
+    if (!response.ok) throw new Error(`could not register share: ${response.status}`);
+    const data = objectRecord(await response.json(), "share response");
+    return stringField(data, "grant", "share response");
+  }
+
+  async deleteShare(
+    fields: { documentId: number; shareId: string; sharePath: string },
+    signing: OwnerSigningIdentity,
+    dbPrefix: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const response = await this.proofed(
+      "DELETE",
+      "/v1/shares",
+      signing,
+      dbPrefix,
+      {
+        document_id: fields.documentId,
+        share_id: fields.shareId,
+        share_path: fields.sharePath,
+      },
+      signal,
+    );
+    if (!response.ok) throw new Error(`could not delete share: ${response.status}`);
+  }
+
+  private async get(path: string, signal?: AbortSignal): Promise<Response> {
+    return fetchSameOrigin(this.url(path), { signal });
+  }
+
+  private async proofed(
     method: string,
-    forceRefresh: boolean,
-    body?: unknown,
+    path: string,
+    signing: OwnerSigningIdentity,
+    dbPrefix: string,
+    bodyFields: Record<string, unknown>,
     signal?: AbortSignal,
   ): Promise<Response> {
-    const idToken = await this.tokens.getIdToken(forceRefresh, signal);
-    return fetch(this.url(path), {
+    const { envelope, body } = await signOwnerProof(
+      signing,
+      dbPrefix,
+      method,
+      path,
+      bodyFields,
+    );
+    return fetchSameOrigin(this.url(path), {
       method,
       headers: {
-        Authorization: `Bearer ${idToken}`,
-        ...(body ? { "Content-Type": "application/json" } : {}),
+        "Content-Type": "application/json",
+        [TICKET_HEADER]: signing.ticket,
+        [PROOF_HEADER]: JSON.stringify(envelope),
       },
-      ...(body ? { body: JSON.stringify(body) } : {}),
+      body: new Uint8Array(body),
       signal,
     });
   }
@@ -172,106 +351,119 @@ export class ApiClient {
   }
 }
 
-async function signedProof(
-  dbPath: string,
-  dbPrefix: string,
-  signing: R2SigningIdentity,
-) {
-  const expiresAt = Math.floor(Date.now() / 1000) + PROOF_LIFETIME_SECONDS;
-  const requestId = crypto.getRandomValues(new Uint8Array(32));
-  const canonical = await canonicalR2TicketProof({
-    version: R2_TICKET_PROOF_VERSION,
-    ticket: signing.ticket,
-    userHandle: signing.userHandle,
-    expiresAt,
-    requestId,
-    dbPath,
-    dbPrefix,
-  });
-  const signature = new Uint8Array(
-    await crypto.subtle.sign(
-      { name: "ECDSA", hash: "SHA-512" },
-      signing.privateKey,
-      new Uint8Array(canonical),
+function numberField(
+  record: Record<string, unknown>,
+  key: string,
+  label: string,
+): number {
+  const value = record[key];
+  if (typeof value !== "number") throw new Error(`${label} is missing ${key}`);
+  return value;
+}
+
+function bytesField(
+  record: Record<string, unknown>,
+  key: string,
+  label: string,
+): Uint8Array {
+  return fromBase64(stringField(record, key, label));
+}
+
+function parseOwnerRecord(value: unknown): OwnerRecord {
+  const data = objectRecord(value, "owner response");
+  return {
+    wrappedUmk: bytesField(data, "wrapped_umk", "owner response"),
+    signPublicKey: bytesField(data, "sign_public_key", "owner response"),
+    wrappedSignPrivateKey: bytesField(
+      data,
+      "wrapped_sign_private_key",
+      "owner response",
     ),
-  );
-  requireP521Signature(signature);
-  return {
-    version: R2_TICKET_PROOF_VERSION,
-    expires_at: expiresAt,
-    request_id: toBase64(requestId),
-    signature: toBase64(signature),
+    kemPublicKey: bytesField(data, "kem_public_key", "owner response"),
+    wrappedKemPrivateKey: bytesField(data, "wrapped_kem_private_key", "owner response"),
+    encryptedCredentials: bytesField(data, "encrypted_credentials", "owner response"),
+    ticket: stringField(data, "ticket", "owner response"),
   };
 }
 
-function parseOwnerTicket(value: unknown): OwnerTicket {
-  const data = objectRecord(value, "owner ticket response");
+function parseDocumentRow(value: unknown): DocumentRow {
+  const data = objectRecord(value, "document row");
   return {
-    uid: stringField(data, "uid", "owner ticket response"),
-    ticket: stringField(data, "r2_ticket", "owner ticket response"),
+    id: numberField(data, "id", "document row"),
+    createdAt: numberField(data, "created_at", "document row"),
+    contentBlob: bytesField(data, "content_blob", "document row"),
+    contentKeyWrapped: bytesField(data, "content_key_wrapped", "document row"),
+    accessBlob: bytesField(data, "access_blob", "document row"),
+    accessVersion: numberField(data, "access_version", "document row"),
+    accessKeyWrapped: bytesField(data, "access_key_wrapped", "document row"),
   };
 }
 
-function shareBody(request: ShareRegistration) {
+function parseCatalogRow(value: unknown): CatalogRow {
+  const data = objectRecord(value, "catalog row");
   return {
-    db_path: request.dbPath,
-    db_prefix: request.dbPrefix,
-    share_prefix: request.sharePrefix,
-    share_path: request.sharePath,
-    share_id: request.shareId,
+    keyWrapped: bytesField(data, "key_wrapped", "catalog row"),
+    catalogBlob: bytesField(data, "catalog_blob", "catalog row"),
   };
 }
 
-function parseR2CredentialPair(value: unknown): R2CredentialPair {
-  const data = objectRecord(value, "R2 credential response");
-  if (!Array.isArray(data.credentials)) {
-    throw new Error("R2 credential response is missing credentials");
+function parseBookmarkRow(value: unknown): BookmarkRow {
+  const data = objectRecord(value, "bookmark row");
+  return {
+    id: numberField(data, "id", "bookmark row"),
+    createdAt: numberField(data, "created_at", "bookmark row"),
+    keyWrapped: bytesField(data, "key_wrapped", "bookmark row"),
+    bookmarkBlob: bytesField(data, "bookmark_blob", "bookmark row"),
+  };
+}
+
+function parseBookmarkSummaryRow(value: unknown): BookmarkSummaryRow {
+  const data = objectRecord(value, "bookmark summary row");
+  return {
+    id: numberField(data, "id", "bookmark summary row"),
+    documentId: numberField(data, "document_id", "bookmark summary row"),
+    count: numberField(data, "count", "bookmark summary row"),
+    keyWrapped: bytesField(data, "key_wrapped", "bookmark summary row"),
+    bookmarkBlob: bytesField(data, "bookmark_blob", "bookmark summary row"),
+    createdAt: numberField(data, "created_at", "bookmark summary row"),
+  };
+}
+
+function parseShareRow(value: unknown): ShareRow {
+  const data = objectRecord(value, "share row");
+  const state = stringField(data, "state", "share row");
+  if (state !== "creating" && state !== "active" && state !== "deleting") {
+    throw new Error("share row has an invalid state");
   }
-  const common = {
+  return {
+    shareIdHash: bytesField(data, "share_id_hash", "share row"),
+    documentId: numberField(data, "document_id", "share row"),
+    keyWrapped: bytesField(data, "key_wrapped", "share row"),
+    ownerBlob: bytesField(data, "owner_blob", "share row"),
+    state,
+    createdAt: numberField(data, "created_at", "share row"),
+  };
+}
+
+function parseR2CredentialSet(value: unknown): R2CredentialSet {
+  const data = objectRecord(value, "R2 credential response");
+  return {
     endpoint: stringField(data, "endpoint", "R2 credential response"),
     bucket: stringField(data, "bucket", "R2 credential response"),
-    region: stringField(data, "region", "R2 credential response"),
-  };
-  const parsed = data.credentials.map((value) => parseTypedCredential(value, common));
-  const dbPath = oneCredential(parsed, "db_path");
-  const dbPrefix = oneCredential(parsed, "db_prefix");
-  return { dbPath, dbPrefix };
-}
-
-function parseTypedCredential(
-  value: unknown,
-  common: Pick<R2TempCredential, "endpoint" | "bucket" | "region">,
-) {
-  const data = objectRecord(value, "R2 credential");
-  return {
-    type: stringField(data, "type", "R2 credential"),
-    credential: parseR2Credential(data, common),
+    expiresAt: numberField(data, "expires_at", "R2 credential response"),
+    documents: parseR2TempCredential(data, "documents"),
+    catalog: parseR2TempCredential(data, "catalog"),
   };
 }
 
-function oneCredential(
-  values: ReturnType<typeof parseTypedCredential>[],
-  type: "db_path" | "db_prefix",
-): R2TempCredential {
-  const matches = values.filter((value) => value.type === type);
-  if (
-    matches.length !== 1 ||
-    values.some((value) => !["db_path", "db_prefix"].includes(value.type))
-  ) {
-    throw new Error("R2 credential response has missing, duplicate, or unknown types");
-  }
-  return matches[0].credential;
-}
-
-function parseR2Credential(
+function parseR2TempCredential(
   data: Record<string, unknown>,
-  common: Pick<R2TempCredential, "endpoint" | "bucket" | "region">,
+  key: "documents" | "catalog",
 ): R2TempCredential {
+  const credential = objectRecord(data[key], `R2 credential response ${key}`);
   return {
-    accessKeyId: stringField(data, "access_key_id", "R2 credential"),
-    secretAccessKey: stringField(data, "secret_access_key", "R2 credential"),
-    sessionToken: stringField(data, "session_token", "R2 credential"),
-    expiration: stringField(data, "expiration", "R2 credential"),
-    ...common,
+    accessKeyId: stringField(credential, "access_key_id", "R2 credential"),
+    secretAccessKey: stringField(credential, "secret_access_key", "R2 credential"),
+    sessionToken: stringField(credential, "session_token", "R2 credential"),
   };
 }

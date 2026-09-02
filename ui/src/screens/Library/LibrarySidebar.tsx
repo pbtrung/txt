@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { UserCircle } from "lucide-react";
 import { Button } from "react-aria-components";
 import { IconButton } from "../../components/IconButton";
-import type { LibraryBook } from "../../data/libraryDb";
+import type { LibraryBook } from "../../data/libraryStore";
 import type { BookShare } from "../../data/shares";
 import { classNames } from "../../util/classNames";
 import { browseEntries, recentBookCount, type BrowseDimension } from "./libraryModel";

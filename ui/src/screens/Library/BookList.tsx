@@ -8,7 +8,7 @@ import {
 } from "react-aria-components";
 import { Bookmark, BookOpen, BookX, Clock3, FileText } from "lucide-react";
 import { IconButton } from "../../components/IconButton";
-import type { LibraryBook, LibraryBookmark } from "../../data/libraryDb";
+import type { LibraryBook, LibraryBookmark } from "../../data/libraryStore";
 import { classNames } from "../../util/classNames";
 
 const ROW_HEIGHT_PX = 72;

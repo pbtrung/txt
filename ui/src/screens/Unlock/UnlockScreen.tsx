@@ -47,6 +47,20 @@ export function UnlockScreen() {
           {progress.label} (step {progress.step} of {progress.total})
         </p>
       )}
+      {status === "access-required" && (
+        <div role="alert" className="alert alert-warning mt-3 mb-0 block text-left">
+          <p className="mb-2">
+            You need a Cloudflare Access session before unlocking. Log in below, then
+            choose your unlock file again.
+          </p>
+          <Button
+            className="btn btn-sm"
+            onPress={() => window.open("/v1/owner", "_blank", "noopener")}
+          >
+            Log in with Cloudflare Access
+          </Button>
+        </div>
+      )}
       {error && (
         <p role="alert" className="alert alert-error mt-3 mb-0">
           {error}

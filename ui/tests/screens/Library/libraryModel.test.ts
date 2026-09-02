@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { LibraryBook } from "../../../src/data/libraryDb";
+import type { LibraryBook } from "../../../src/data/libraryStore";
 import {
   allBooksSorted,
   booksForDimensionValue,
@@ -77,6 +77,7 @@ describe("recent books", () => {
         lastBookmarked: 100 + index,
         bookmarks: [
           {
+            id: index + 1,
             cfi: `bookmark-${index + 1}`,
             pageNumber: index + 1,
             createdAt: 100 + index,
@@ -97,6 +98,7 @@ describe("recent books", () => {
     const marked = book({
       bookmarkCount: 9,
       bookmarks: Array.from({ length: 9 }, (_, index) => ({
+        id: index + 1,
         cfi: `bookmark-${index + 1}`,
         pageNumber: index + 1,
         createdAt: index + 1,

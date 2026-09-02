@@ -1,12 +1,11 @@
 import { useState, type ReactNode } from "react";
 import { LoadingMessage, ScreenMessage } from "../../components/ScreenMessage";
-import type { DatabaseStoreStatus } from "../../data/databaseStore";
 import type { EpubRenderer, PagePosition } from "../../data/epubRenderer";
+import type { BookmarkRecord, LibraryStoreStatus } from "../../data/libraryStore";
 import {
   READER_LOAD_TOTAL_STEPS,
   type ReaderDocument,
 } from "../../data/readerDocument";
-import type { BookmarkRecord } from "../../data/readingState";
 import { classNames } from "../../util/classNames";
 import { ReaderInfoPanel } from "./ReaderInfoPanel";
 import { ReaderNavigation } from "./ReaderNavigation";
@@ -30,7 +29,7 @@ export interface ReaderReadingState {
   toggleCurrent: (pageNumber: number) => void | Promise<void>;
   remove: (cfi: string) => void | Promise<void>;
   retry: () => void | Promise<void>;
-  databaseStatus: DatabaseStoreStatus;
+  libraryStatus: LibraryStoreStatus;
   error: string | null;
 }
 
@@ -93,7 +92,7 @@ export function ReadyReaderView({
           bookmarkSaved={reading.currentSaved}
           bookmarkBusy={reading.bookmarkBusy}
           bookmarks={reading.bookmarks}
-          status={reading.databaseStatus}
+          status={reading.libraryStatus}
           error={reading.error}
           onBookmark={() => void reading.toggleCurrent(page.current)}
           onRemove={(cfi) => void reading.remove(cfi)}

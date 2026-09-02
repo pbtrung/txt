@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { EpubRenderer, ReaderLocation } from "../../data/epubRenderer";
-import type { BookmarkRecord } from "../../data/readingState";
+import type { BookmarkRecord } from "../../data/libraryStore";
 import { errorMessage } from "../../util/errorMessage";
 
 const STORAGE_PREFIX = "txt:shared-reader:v1:";
@@ -12,7 +12,7 @@ interface SharedReadingRecord {
   bookmarks: BookmarkRecord[];
 }
 
-const EMPTY_STATUS = { pending: false, unsaved: false, error: null } as const;
+const EMPTY_STATUS = { pending: false, error: null } as const;
 
 export function sharedLastCfi(shareId: string): string | null {
   return readRecord(shareId).lastCfi;
@@ -98,7 +98,7 @@ export function useSharedReadingState(
     toggleCurrent,
     remove,
     retry,
-    databaseStatus: EMPTY_STATUS,
+    libraryStatus: EMPTY_STATUS,
     error: localError,
   };
 }

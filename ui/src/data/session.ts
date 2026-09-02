@@ -1,67 +1,84 @@
+// docs/auth.md §5 step 3: unwraps the owner's key material entirely
+// client-side once GET /v1/owner has returned it. The Worker never sees
+// umk, the credential payload, or an unwrapped private key.
 import { decrypt, decryptJson } from "../crypto/cryptoBlob";
 import { fromBase64, toBase64 } from "../util/base64";
 import { objectRecord, stringField } from "../util/validation";
-import type { R2SigningIdentity } from "./apiClient";
-import type { RqliteOwnerKeys } from "./rqlite";
+import type { OwnerRecord } from "./apiClient";
+import type { OwnerSigningIdentity } from "./ownerProof";
 
-interface CredStorePayload {
-  display_name: string;
+const USER_HANDLE_BYTES = 32;
+
+interface CredentialPayload {
   user_handle: string; // base64, 32 bytes
-  db_master_key: string; // base64
-  db_path: string;
+  display_name: string;
   db_prefix: string;
 }
 
-interface UnwrappedSession {
+export interface UnwrappedOwner {
   umk: Uint8Array;
-  credStore: CredStorePayload;
-  signing: R2SigningIdentity;
+  displayName: string;
+  dbPrefix: string;
+  signing: OwnerSigningIdentity;
+  // Held only -- docs/crypto.md's Composite KEM support: nothing in this
+  // app currently encapsulates or decapsulates with it.
+  kemPrivateKey: Uint8Array;
 }
 
-export async function unwrapKeys(
-  keys: RqliteOwnerKeys,
-  ticket: string,
+export async function unwrapOwner(
+  owner: OwnerRecord,
   userRootKeyBase64: string,
-): Promise<UnwrappedSession> {
+): Promise<UnwrappedOwner> {
   const ikm = fromBase64(userRootKeyBase64);
-  const umk = await decrypt(keys.wrappedUmk, ikm);
-  const payload = await decryptJson<unknown>(keys.encryptedCredentials, umk);
-  const credStore = parseCredStore(payload);
-  const userHandle = parseUserHandle(credStore.user_handle);
-  const privateDer = await decrypt(keys.signing.wrappedPrivateKey, umk);
+  const umk = await decrypt(owner.wrappedUmk, ikm);
+  const credentials = parseCredentialPayload(
+    await decryptJson<unknown>(owner.encryptedCredentials, umk),
+  );
+  const userHandle = parseUserHandle(credentials.user_handle);
+  const signingPrivateKey = await importSigningKey(owner.wrappedSignPrivateKey, umk);
+  const kemPrivateKey = await decrypt(owner.wrappedKemPrivateKey, umk);
+  return {
+    umk,
+    displayName: credentials.display_name,
+    dbPrefix: credentials.db_prefix,
+    signing: { ticket: owner.ticket, userHandle, privateKey: signingPrivateKey },
+    kemPrivateKey,
+  };
+}
+
+async function importSigningKey(
+  wrapped: Uint8Array,
+  umk: Uint8Array,
+): Promise<CryptoKey> {
+  const privateDer = await decrypt(wrapped, umk);
   try {
-    const privateKey = await crypto.subtle.importKey(
+    return await crypto.subtle.importKey(
       "pkcs8",
       new Uint8Array(privateDer),
       { name: "ECDSA", namedCurve: "P-521" },
       false,
       ["sign"],
     );
-    return {
-      umk,
-      credStore,
-      signing: { ticket, userHandle, privateKey },
-    };
   } finally {
     privateDer.fill(0);
   }
 }
 
-function parseCredStore(value: unknown): CredStorePayload {
-  const data = objectRecord(value, "credential store");
+function parseCredentialPayload(value: unknown): CredentialPayload {
+  const data = objectRecord(value, "credential payload");
   return {
-    display_name: stringField(data, "display_name", "credential store"),
-    user_handle: stringField(data, "user_handle", "credential store"),
-    db_master_key: stringField(data, "db_master_key", "credential store"),
-    db_path: stringField(data, "db_path", "credential store"),
-    db_prefix: stringField(data, "db_prefix", "credential store"),
+    user_handle: stringField(data, "user_handle", "credential payload"),
+    display_name: stringField(data, "display_name", "credential payload"),
+    db_prefix: stringField(data, "db_prefix", "credential payload"),
   };
 }
 
 function parseUserHandle(value: string): Uint8Array {
   const bytes = fromBase64(value);
-  if (bytes.byteLength !== 32 || toBase64(bytes) !== value) {
-    throw new Error("credential store user_handle must be 32 bytes in base64");
+  if (bytes.byteLength !== USER_HANDLE_BYTES || toBase64(bytes) !== value) {
+    throw new Error(
+      `credential payload user_handle must be ${USER_HANDLE_BYTES} bytes in base64`,
+    );
   }
   return bytes;
 }

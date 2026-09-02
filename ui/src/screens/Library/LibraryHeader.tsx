@@ -9,7 +9,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { Button, Input, SearchField } from "react-aria-components";
-import type { LibraryBook } from "../../data/libraryDb";
+import type { LibraryBook } from "../../data/libraryStore";
 import type { BookShare } from "../../data/shares";
 import { classNames } from "../../util/classNames";
 

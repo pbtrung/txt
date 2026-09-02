@@ -16,7 +16,7 @@ vi.mock("../../../src/screens/Reader/useReadingState", () => ({
     toggleCurrent: vi.fn(),
     remove: vi.fn(),
     retry: vi.fn(),
-    databaseStatus: { pending: false, unsaved: false, error: null },
+    libraryStatus: { pending: false, error: null },
     error: null,
   })),
 }));

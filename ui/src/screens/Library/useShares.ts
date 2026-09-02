@@ -1,22 +1,24 @@
 import { useCallback, useEffect, useState } from "react";
-import type { LibraryDatabaseStore } from "../../data/databaseStore";
 import { loadShares, type BookShare } from "../../data/shares";
+import type { VaultSession } from "../../state/VaultContext";
 import { errorMessage } from "../../util/errorMessage";
 
-export function useShares(database: LibraryDatabaseStore | null) {
+export function useShares(session: VaultSession | null) {
   const [shares, setShares] = useState<BookShare[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
   const reload = useCallback(() => setRevision((value) => value + 1), []);
   const remove = useCallback(
-    (id: number) => setShares((current) => current.filter((share) => share.id !== id)),
+    (shareIdHash: string) =>
+      setShares((current) =>
+        current.filter((share) => share.shareIdHash !== shareIdHash),
+      ),
     [],
   );
   useEffect(() => {
     let cancelled = false;
-    if (database) {
-      void database
-        .read(loadShares)
+    if (session) {
+      void loadShares(session, session.library.snapshot(), session.umk)
         .then((value) => {
           if (!cancelled) {
             setShares(value);
@@ -30,6 +32,6 @@ export function useShares(database: LibraryDatabaseStore | null) {
     return () => {
       cancelled = true;
     };
-  }, [database, revision]);
+  }, [session, revision]);
   return { shares, error, reload, remove };
 }

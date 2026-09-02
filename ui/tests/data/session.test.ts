@@ -1,15 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import { encrypt, encryptJson } from "../../src/crypto/cryptoBlob";
-import type { RqliteOwnerKeys } from "../../src/data/rqlite";
-import { unwrapKeys } from "../../src/data/session";
+import type { OwnerRecord } from "../../src/data/apiClient";
+import { unwrapOwner } from "../../src/data/session";
 import { toBase64 } from "../../src/util/base64";
 
-async function wrappedKeys(
+async function wrappedOwner(
   userRootKey: Uint8Array,
   umk: Uint8Array,
   payload: unknown,
-): Promise<{ keys: RqliteOwnerKeys; publicKey: CryptoKey }> {
+): Promise<{ owner: OwnerRecord; publicKey: CryptoKey }> {
   const pair = (await crypto.subtle.generateKey(
     { name: "ECDSA", namedCurve: "P-521" },
     true,
@@ -18,45 +18,43 @@ async function wrappedKeys(
   const privateDer = new Uint8Array(
     await crypto.subtle.exportKey("pkcs8", pair.privateKey),
   );
+  const kemPrivateKey = crypto.getRandomValues(new Uint8Array(3224));
   return {
     publicKey: pair.publicKey,
-    keys: {
-      uid: "uid-123",
+    owner: {
       wrappedUmk: await encrypt(umk, userRootKey),
-      signing: {
-        version: 1,
-        algorithm: "ECDSA-P521-SHA512",
-        wrappedPrivateKey: await encrypt(privateDer, umk),
-      },
+      signPublicKey: new Uint8Array(
+        await crypto.subtle.exportKey("spki", pair.publicKey),
+      ),
+      wrappedSignPrivateKey: await encrypt(privateDer, umk),
+      kemPublicKey: crypto.getRandomValues(new Uint8Array(1624)),
+      wrappedKemPrivateKey: await encrypt(kemPrivateKey, umk),
       encryptedCredentials: await encryptJson(payload, umk),
+      ticket: "header.payload.signature",
     },
   };
 }
 
-describe("unwrapKeys (real crypto)", () => {
-  it("unwraps the credential store and imports a non-extractable P-521 key", async () => {
+describe("unwrapOwner (real crypto)", () => {
+  it("unwraps the credential payload and imports a non-extractable P-521 key", async () => {
     const userRootKey = crypto.getRandomValues(new Uint8Array(256));
     const umk = crypto.getRandomValues(new Uint8Array(128));
     const payload = {
       display_name: "Ada",
       user_handle: toBase64(new Uint8Array(32).fill(7)),
-      db_master_key: toBase64(crypto.getRandomValues(new Uint8Array(256))),
-      db_path: "a".repeat(52),
       db_prefix: "b".repeat(52),
     };
-    const { keys, publicKey } = await wrappedKeys(userRootKey, umk, payload);
+    const { owner, publicKey } = await wrappedOwner(userRootKey, umk, payload);
 
-    const result = await unwrapKeys(
-      keys,
-      "header.payload.signature",
-      toBase64(userRootKey),
-    );
+    const result = await unwrapOwner(owner, toBase64(userRootKey));
 
     expect([...result.umk]).toEqual([...umk]);
-    expect(result.credStore).toEqual(payload);
+    expect(result.displayName).toBe(payload.display_name);
+    expect(result.dbPrefix).toBe(payload.db_prefix);
     expect(result.signing.ticket).toBe("header.payload.signature");
     expect(result.signing.userHandle).toEqual(new Uint8Array(32).fill(7));
     expect(result.signing.privateKey.extractable).toBe(false);
+    expect(result.kemPrivateKey.byteLength).toBe(3224);
     const message = new TextEncoder().encode("proof");
     const signature = await crypto.subtle.sign(
       { name: "ECDSA", hash: "SHA-512" },
@@ -77,24 +75,22 @@ describe("unwrapKeys (real crypto)", () => {
     const userRootKey = crypto.getRandomValues(new Uint8Array(256));
     const wrongKey = crypto.getRandomValues(new Uint8Array(256));
     const umk = crypto.getRandomValues(new Uint8Array(128));
-    const { keys } = await wrappedKeys(userRootKey, umk, {});
+    const { owner } = await wrappedOwner(userRootKey, umk, {});
 
-    await expect(
-      unwrapKeys(keys, "header.payload.signature", toBase64(wrongKey)),
-    ).rejects.toThrow();
+    await expect(unwrapOwner(owner, toBase64(wrongKey))).rejects.toThrow();
   });
 
-  it("rejects an incomplete decrypted credential store", async () => {
+  it("rejects an incomplete decrypted credential payload", async () => {
     const userRootKey = crypto.getRandomValues(new Uint8Array(256));
     const umk = crypto.getRandomValues(new Uint8Array(128));
-    const { keys } = await wrappedKeys(userRootKey, umk, {
+    const { owner } = await wrappedOwner(userRootKey, umk, {
       display_name: "Ada",
       user_handle: toBase64(new Uint8Array(32)),
     });
 
-    await expect(
-      unwrapKeys(keys, "header.payload.signature", toBase64(userRootKey)),
-    ).rejects.toThrow(/db_master_key/);
+    await expect(unwrapOwner(owner, toBase64(userRootKey))).rejects.toThrow(
+      /db_prefix/,
+    );
   });
 
   it("rejects a decrypted user handle with the wrong size", async () => {
@@ -103,13 +99,11 @@ describe("unwrapKeys (real crypto)", () => {
     const payload = {
       display_name: "Ada",
       user_handle: toBase64(new Uint8Array(31)),
-      db_master_key: toBase64(new Uint8Array(256)),
-      db_path: "a".repeat(52),
       db_prefix: "b".repeat(52),
     };
-    const { keys } = await wrappedKeys(userRootKey, umk, payload);
-    await expect(
-      unwrapKeys(keys, "header.payload.signature", toBase64(userRootKey)),
-    ).rejects.toThrow(/user_handle must be 32 bytes/);
+    const { owner } = await wrappedOwner(userRootKey, umk, payload);
+    await expect(unwrapOwner(owner, toBase64(userRootKey))).rejects.toThrow(
+      /user_handle must be 32 bytes/,
+    );
   });
 });

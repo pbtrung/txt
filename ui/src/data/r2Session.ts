@@ -1,77 +1,45 @@
-import { R2AuthorizationError, R2Client, type R2Object } from "./r2";
+// Holds the two 15-minute scoped R2 credentials docs/storage_layout.md
+// §"Credentials" mints (`documents`: read-write over documents/* and
+// shared/*; `catalog`: read-only over catalog/*), refreshing both
+// together with a fresh proof on expiry or an R2 authorization failure.
+import { R2AuthorizationError, R2Client } from "./r2";
 import { isNetworkError, withNetworkRetries } from "./networkRequest";
-import type { ApiClient, R2CredentialPair, R2SigningIdentity } from "./apiClient";
+import type { ApiClient, R2CredentialSet } from "./apiClient";
+import type { OwnerSigningIdentity } from "./ownerProof";
 
 const EXPIRY_SKEW_MS = 60_000;
 
 export class R2Session {
   private expiresAt: number;
-  private clients: { dbPath: R2Client; dbPrefix: R2Client };
+  private clients: { documents: R2Client; catalog: R2Client };
   private refreshInFlight: Promise<void> | null = null;
 
   constructor(
     private readonly api: ApiClient,
-    private readonly signing: R2SigningIdentity,
-    private readonly dbPath: string,
+    private readonly signing: OwnerSigningIdentity,
     private readonly dbPrefix: string,
-    initialCredentials: R2CredentialPair,
+    initialCredentials: R2CredentialSet,
   ) {
-    this.expiresAt = credentialExpiry(initialCredentials);
+    this.expiresAt = initialCredentials.expiresAt * 1000;
     this.clients = this.buildClients(initialCredentials);
   }
 
-  getDatabase(): Promise<R2Object | null> {
-    return this.withCredential("dbPath", (client) => client.getDatabase(this.dbPath));
-  }
-
-  putDatabase(bytes: Uint8Array, etag: string | null): Promise<string> {
-    return this.withCredential("dbPath", (client) =>
-      client.putDatabase(this.dbPath, bytes, etag),
-    );
-  }
-
-  getContent(key: string): Promise<Uint8Array | null> {
-    return this.withCredential("dbPrefix", (client) => client.getObject(key));
+  getDocument(key: string): Promise<Uint8Array | null> {
+    return this.withCredential("documents", (client) => client.getObject(key));
   }
 
   putShared(key: string, bytes: Uint8Array): Promise<void> {
-    return this.withCredential("dbPrefix", (client) => client.putImmutable(key, bytes));
+    return this.withCredential("documents", (client) =>
+      client.putImmutable(key, bytes),
+    );
   }
 
-  registerShare(
-    sharePrefix: string,
-    sharePath: string,
-    shareId: string,
-  ): Promise<string> {
-    return this.api.registerShare({
-      dbPath: this.dbPath,
-      dbPrefix: this.dbPrefix,
-      sharePrefix,
-      sharePath,
-      shareId,
-    });
-  }
-
-  deleteShareRegistration(
-    sharePrefix: string,
-    sharePath: string,
-    shareId: string,
-  ): Promise<void> {
-    return this.api.deleteShare({
-      dbPath: this.dbPath,
-      dbPrefix: this.dbPrefix,
-      sharePrefix,
-      sharePath,
-      shareId,
-    });
-  }
-
-  apiBaseUrl(): string {
-    return this.api.baseUrl;
+  getCatalogObject(key: string): Promise<Uint8Array | null> {
+    return this.withCredential("catalog", (client) => client.getObject(key));
   }
 
   private async withCredential<T>(
-    type: "dbPath" | "dbPrefix",
+    type: "documents" | "catalog",
     operation: (client: R2Client) => Promise<T>,
   ): Promise<T> {
     await this.refreshIfNeeded(false);
@@ -102,28 +70,24 @@ export class R2Session {
 
   private async refresh(): Promise<void> {
     const credentials = await withNetworkRetries((signal) =>
-      this.fetchCredentials(signal),
+      this.api.fetchR2Credentials(this.signing, this.dbPrefix, signal),
     );
-    this.expiresAt = credentialExpiry(credentials);
+    this.expiresAt = credentials.expiresAt * 1000;
     this.clients = this.buildClients(credentials);
   }
 
-  private fetchCredentials(signal: AbortSignal): Promise<R2CredentialPair> {
-    return this.api.fetchR2Token(this.dbPath, this.dbPrefix, this.signing, signal);
-  }
-
-  private buildClients(credentials: R2CredentialPair) {
+  private buildClients(credentials: R2CredentialSet) {
     return {
-      dbPath: new R2Client(credentials.dbPath),
-      dbPrefix: new R2Client(credentials.dbPrefix),
+      documents: new R2Client(
+        credentials.documents,
+        credentials.endpoint,
+        credentials.bucket,
+      ),
+      catalog: new R2Client(
+        credentials.catalog,
+        credentials.endpoint,
+        credentials.bucket,
+      ),
     };
   }
-}
-
-function credentialExpiry(credentials: R2CredentialPair): number {
-  const expiresAt = Math.min(
-    Date.parse(credentials.dbPath.expiration),
-    Date.parse(credentials.dbPrefix.expiration),
-  );
-  return Number.isFinite(expiresAt) ? expiresAt : 0;
 }

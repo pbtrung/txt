@@ -1,4 +1,4 @@
-import type { LibraryBook } from "../../data/libraryDb";
+import type { LibraryBook } from "../../data/libraryStore";
 import {
   bookHasDimensionValue,
   type BookSearchIndex,

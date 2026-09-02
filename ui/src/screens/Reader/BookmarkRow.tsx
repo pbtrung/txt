@@ -1,6 +1,6 @@
 import { IconButton } from "../../components/IconButton";
 import { Button, GridListItem } from "react-aria-components";
-import type { BookmarkRecord } from "../../data/readingState";
+import type { BookmarkRecord } from "../../data/libraryStore";
 
 export function BookmarkRow({
   bookmark,

@@ -73,7 +73,7 @@ function loadOnce(
   reference: SharedReference,
   onProgress: (progress: ReaderLoadProgress) => void,
 ): Promise<ReaderDocument> {
-  const key = `${reference.apiBaseUrl}.${reference.id}.${toBase64(reference.contentKey)}`;
+  const key = `${reference.id}.${toBase64(reference.contentKey)}`;
   const existing = PENDING_LOADS.get(key);
   if (existing) {
     existing.listeners.add(onProgress);

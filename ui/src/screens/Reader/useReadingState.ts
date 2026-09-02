@@ -1,13 +1,8 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { EpubRenderer, ReaderLocation } from "../../data/epubRenderer";
+import type { BookmarkRecord } from "../../data/libraryStore";
 import type { ReaderDocument } from "../../data/readerDocument";
-import {
-  deleteBookmarkMutation,
-  listBookmarks,
-  ReadingSession,
-  saveBookmarkMutation,
-  type BookmarkRecord,
-} from "../../data/readingState";
+import { ReadingSession } from "../../data/readingState";
 import type { VaultSession } from "../../state/VaultContext";
 import { errorMessage } from "../../util/errorMessage";
 
@@ -23,14 +18,15 @@ export function useReadingState(
   const [bookmarkBusy, setBookmarkBusy] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
-  const databaseStatus = useSyncExternalStore(
-    (listener) => session.database.subscribe(listener),
-    () => session.database.snapshot(),
+  const libraryStatus = useSyncExternalStore(
+    (listener) => session.library.subscribe(listener),
+    () => session.library.statusSnapshot(),
   );
 
   useEffect(() => {
     if (!renderer || !ready) return;
-    const controller = new ReadingSession(session.database, document.txtId);
+    const controller = new ReadingSession(session.library, document.txtId);
+    controller.onSaveError((error) => setLocalError(errorMessage(error)));
     controller.start(
       document.lastCfi,
       globalThis.document.visibilityState !== "hidden",
@@ -44,7 +40,7 @@ export function useReadingState(
       controller.dispose();
       if (readingSession.current === controller) readingSession.current = null;
     };
-  }, [document.lastCfi, document.txtId, ready, renderer, session.database]);
+  }, [document.lastCfi, document.txtId, ready, renderer, session.library]);
 
   useEffect(() => {
     if (location)
@@ -53,14 +49,14 @@ export function useReadingState(
 
   useEffect(() => {
     let active = true;
-    void listBookmarks(session.database, document.txtId).then(
+    void session.library.listBookmarks(document.txtId).then(
       (items) => active && setBookmarks(items),
       (error: unknown) => active && setLocalError(errorMessage(error)),
     );
     return () => {
       active = false;
     };
-  }, [document.txtId, refresh, session.database]);
+  }, [document.txtId, refresh, session.library]);
 
   const currentCfi = location?.cfi ?? null;
   const currentSaved =
@@ -74,16 +70,17 @@ export function useReadingState(
       setBookmarkBusy(true);
       setLocalError(null);
       try {
-        await session.database.mutate(
-          bookmarks.some((bookmark) => bookmark.cfi === current.cfi)
-            ? deleteBookmarkMutation(document.txtId, current.cfi)
-            : saveBookmarkMutation(
-                document.txtId,
-                current.cfi,
-                pageNumber,
-                current.preview,
-              ),
-        );
+        const existing = bookmarks.find((bookmark) => bookmark.cfi === current.cfi);
+        if (existing) {
+          await session.library.deleteBookmark(existing.id);
+        } else {
+          await session.library.saveBookmark(
+            document.txtId,
+            current.cfi,
+            pageNumber,
+            current.preview,
+          );
+        }
         setRefresh((value) => value + 1);
       } catch (error) {
         setLocalError(errorMessage(error));
@@ -91,15 +88,17 @@ export function useReadingState(
         setBookmarkBusy(false);
       }
     },
-    [bookmarkBusy, bookmarks, document.txtId, renderer, session.database],
+    [bookmarkBusy, bookmarks, document.txtId, renderer, session.library],
   );
 
   const remove = useCallback(
     async (cfi: string) => {
+      const existing = bookmarks.find((bookmark) => bookmark.cfi === cfi);
+      if (!existing) return;
       setBookmarkBusy(true);
       setLocalError(null);
       try {
-        await session.database.mutate(deleteBookmarkMutation(document.txtId, cfi));
+        await session.library.deleteBookmark(existing.id);
         setRefresh((value) => value + 1);
       } catch (error) {
         setLocalError(errorMessage(error));
@@ -107,18 +106,13 @@ export function useReadingState(
         setBookmarkBusy(false);
       }
     },
-    [document.txtId, session.database],
+    [bookmarks, session.library],
   );
 
-  const retry = useCallback(async () => {
+  const retry = useCallback(() => {
     setLocalError(null);
-    try {
-      await session.database.retry();
-      setRefresh((value) => value + 1);
-    } catch (error) {
-      setLocalError(errorMessage(error));
-    }
-  }, [session.database]);
+    readingSession.current?.retry();
+  }, []);
 
   return {
     bookmarks,
@@ -127,7 +121,7 @@ export function useReadingState(
     toggleCurrent,
     remove,
     retry,
-    databaseStatus,
-    error: localError ?? databaseStatus.error,
+    libraryStatus,
+    error: localError ?? libraryStatus.error,
   };
 }

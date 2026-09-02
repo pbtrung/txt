@@ -17,7 +17,6 @@ const MAX_GRANT_LENGTH = 512;
 export interface SharedReference {
   id: string;
   contentKey: Uint8Array;
-  apiBaseUrl: string;
   grant: string;
 }
 
@@ -25,12 +24,10 @@ export function parseSharedReference(hash: string): SharedReference | null {
   const params = new URLSearchParams(hash.startsWith("#") ? hash.slice(1) : hash);
   const id = params.get("id");
   const key = params.get("key");
-  const api = params.get("api");
   const grant = params.get("grant");
   if (
     !id ||
     !key ||
-    !api ||
     !grant ||
     !BASE64URL.test(id) ||
     !BASE64URL.test(grant) ||
@@ -41,10 +38,9 @@ export function parseSharedReference(hash: string): SharedReference | null {
   try {
     const shareId = decodeBase64Url(id);
     const contentKey = decodeBase64Url(key);
-    const apiBaseUrl = parseApiOrigin(api);
     return shareId.byteLength === SHARE_ID_BYTES &&
       contentKey.byteLength === CONTENT_KEY_BYTES
-      ? { id, contentKey, apiBaseUrl, grant }
+      ? { id, contentKey, grant }
       : null;
   } catch {
     return null;
@@ -57,7 +53,7 @@ export async function loadSharedReaderDocument(
 ): Promise<ReaderDocument> {
   report(onProgress, "Requesting shared book", 1);
   const encrypted = await withNetworkRetries(async (signal) => {
-    const response = await fetch(`${reference.apiBaseUrl}/v1/shared-url`, {
+    const response = await fetch("/v1/shared-url", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ share_id: reference.id, grant: reference.grant }),
@@ -97,16 +93,6 @@ function sharedObjectUrl(value: unknown): string {
   const url = new URL(valueUrl);
   if (url.protocol !== "https:") throw new Error("shared object URL must use HTTPS");
   return url.toString();
-}
-
-function parseApiOrigin(value: string): string {
-  const url = new URL(value);
-  const local = url.hostname === "127.0.0.1" || url.hostname === "localhost";
-  const secure = url.protocol === "https:";
-  if (url.origin !== value || (!secure && !(local && url.protocol === "http:"))) {
-    throw new Error("invalid API origin");
-  }
-  return value;
 }
 
 function decodeBase64Url(value: string): Uint8Array {

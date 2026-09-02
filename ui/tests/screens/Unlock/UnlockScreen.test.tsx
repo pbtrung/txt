@@ -64,13 +64,33 @@ describe("UnlockScreen", () => {
   });
 
   it("shows an error message", () => {
-    mockVault({ error: "Firebase sign-in failed: 400" });
+    mockVault({ error: "could not fetch owner record: 500" });
     render(
       <MemoryRouter>
         <UnlockScreen />
       </MemoryRouter>,
     );
-    expect(screen.getByRole("alert")).toHaveTextContent("Firebase sign-in failed: 400");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "could not fetch owner record: 500",
+    );
+  });
+
+  it("offers a Cloudflare Access login link when a session is required", async () => {
+    const openMock = vi.fn();
+    vi.stubGlobal("open", openMock);
+    mockVault({ status: "access-required" });
+    render(
+      <MemoryRouter>
+        <UnlockScreen />
+      </MemoryRouter>,
+    );
+
+    const button = screen.getByRole("button", {
+      name: "Log in with Cloudflare Access",
+    });
+    await userEvent.click(button);
+    expect(openMock).toHaveBeenCalledWith("/v1/owner", "_blank", "noopener");
+    vi.unstubAllGlobals();
   });
 
   it("navigates to /library once unlocked", () => {

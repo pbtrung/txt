@@ -1,49 +1,24 @@
-import { objectRecord, stringFields } from "../util/validation";
+// docs/auth.md §3/§5: the browser's own unlock file carries exactly the
+// one secret nothing else can derive, `user_root_key`. Everything else
+// the owner session needs comes from GET /v1/owner once Access has
+// authenticated the browser at the edge.
+import { fromBase64, toBase64 } from "../util/base64";
+import { objectRecord, stringField } from "../util/validation";
+
+const USER_ROOT_KEY_BYTES = 256;
 
 export interface BrowserCreds {
-  rqlite_admin_username: string;
-  rqlite_admin_password: string;
-  rqlite_db_url: string;
-  firebase_email: string;
-  firebase_password: string;
-  firebase_api_key: string;
   user_root_key: string;
 }
 
-const REQUIRED_FIELDS = [
-  "rqlite_admin_username",
-  "rqlite_admin_password",
-  "rqlite_db_url",
-  "firebase_email",
-  "firebase_password",
-  "firebase_api_key",
-  "user_root_key",
-] as const;
-
 export function parseBrowserCreds(data: unknown): BrowserCreds {
-  const record = objectRecord(data, "creds.json");
-  const creds = stringFields(record, REQUIRED_FIELDS, "creds.json");
-  validateRqliteUrl(creds.rqlite_db_url);
-  return creds satisfies BrowserCreds;
-}
-
-export function apiOrigin(creds: BrowserCreds): string {
-  return new URL(creds.rqlite_db_url).origin;
-}
-
-function validateRqliteUrl(value: string): void {
-  const url = new URL(value);
-  const local = url.hostname === "127.0.0.1" || url.hostname === "localhost";
-  if (url.protocol !== "https:" && !(local && url.protocol === "http:")) {
-    throw new Error("creds.json rqlite_db_url must use HTTPS");
+  const record = objectRecord(data, "unlock file");
+  const userRootKey = stringField(record, "user_root_key", "unlock file");
+  const bytes = fromBase64(userRootKey);
+  if (bytes.byteLength !== USER_ROOT_KEY_BYTES || toBase64(bytes) !== userRootKey) {
+    throw new Error(
+      `unlock file user_root_key must be ${USER_ROOT_KEY_BYTES} bytes in base64`,
+    );
   }
-  if (url.pathname.replace(/\/+$/, "") !== "/operator/rqlite") {
-    throw new Error("creds.json rqlite_db_url must end with /operator/rqlite");
-  }
-  if (url.search || url.hash) {
-    throw new Error("creds.json rqlite_db_url must not contain a query or fragment");
-  }
-  if (url.username || url.password) {
-    throw new Error("creds.json rqlite_db_url must not contain embedded credentials");
-  }
+  return { user_root_key: userRootKey };
 }

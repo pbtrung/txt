@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../../src/data/readerDocument", () => ({
   loadReaderDocument: vi.fn(),
-  READER_LOAD_TOTAL_STEPS: 5,
+  READER_LOAD_TOTAL_STEPS: 4,
 }));
 
 import { loadReaderDocument } from "../../../src/data/readerDocument";
@@ -13,7 +13,7 @@ import type { VaultSession } from "../../../src/state/VaultContext";
 import { useReaderDocument } from "../../../src/screens/Reader/useReaderDocument";
 
 const SESSION = {
-  database: { read: async (reader: (db: object) => unknown) => reader({}) },
+  library: {},
   storage: {},
   dbPrefix: "the-db-prefix",
 } as unknown as VaultSession;
@@ -27,7 +27,7 @@ describe("useReaderDocument", () => {
     expect(result.current.status === "loading" && result.current.progress).toEqual({
       label: "Reading book details",
       step: 1,
-      total: 5,
+      total: 4,
     });
   });
 
@@ -77,7 +77,7 @@ describe("useReaderDocument", () => {
     let finish!: (value: null) => void;
     vi.mocked(loadReaderDocument).mockImplementation(
       async (_db, _storage, _prefix, _txtId, onProgress) => {
-        onProgress?.({ label: "Downloading text", step: 2, total: 5 });
+        onProgress?.({ label: "Downloading text", step: 2, total: 4 });
         return new Promise<null>((resolve) => {
           finish = resolve;
         });
@@ -90,7 +90,7 @@ describe("useReaderDocument", () => {
       expect(result.current.status === "loading" && result.current.progress).toEqual({
         label: "Downloading text",
         step: 2,
-        total: 5,
+        total: 4,
       }),
     );
     finish(null);

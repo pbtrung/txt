@@ -1,17 +1,12 @@
-import type { DatabaseMutation, LibraryDatabaseStore } from "./databaseStore";
+// The reading-position timing state machine: a grace period before a
+// position first counts as "visited", debounced/throttled saves after
+// that. Bookmark and reading-position persistence itself lives in
+// LibraryStore -- this only decides when to call it.
+import type { LibraryStore } from "./libraryStore";
 
 const GRACE_MS = 6_000;
 const LOCATION_DEBOUNCE_MS = 2_000;
 const UPLOAD_INTERVAL_MS = 15_000;
-const PREVIEW_BYTES = 100;
-
-export interface BookmarkRecord {
-  id: number;
-  cfi: string;
-  pageNumber: number | null;
-  preview: string;
-  createdAt: number;
-}
 
 interface Clock {
   now(): number;
@@ -38,9 +33,10 @@ export class ReadingSession {
   private dirty = false;
   private disposed = false;
   private lastDispatchedAt = Number.NEGATIVE_INFINITY;
+  private onError: ((error: unknown) => void) | null = null;
 
   constructor(
-    private readonly database: Pick<LibraryDatabaseStore, "mutate">,
+    private readonly library: Pick<LibraryStore, "updateReadingPosition">,
     private readonly txtId: number,
     private readonly clock: Clock = SYSTEM_CLOCK,
   ) {}
@@ -74,6 +70,17 @@ export class ReadingSession {
     } else if (!visible) {
       this.flushNow();
     }
+  }
+
+  /** Re-attempts saving the current position after a previous save failed. */
+  retry(): void {
+    if (!this.qualified || this.disposed) return;
+    this.dirty = true;
+    this.flushNow();
+  }
+
+  onSaveError(callback: (error: unknown) => void): void {
+    this.onError = callback;
   }
 
   dispose(): void {
@@ -139,11 +146,9 @@ export class ReadingSession {
     this.lastDispatchedAt = now;
     this.lastSubmittedCfi = cfi;
     this.dirty = false;
-    void this.database
-      .mutate(readingMutation(this.txtId, cfi, includeLastAccessed ? now : null))
-      .catch(() => {
-        // LibraryDatabaseStore exposes the retained unsaved mutation and error.
-      });
+    void this.library
+      .updateReadingPosition(this.txtId, cfi, includeLastAccessed ? now : null)
+      .catch((error: unknown) => this.onError?.(error));
   }
 
   private clearTimer(kind: "grace" | "debounce" | "throttle"): void {
@@ -152,101 +157,4 @@ export class ReadingSession {
     if (timer) this.clock.clearTimeout(timer);
     this[key] = null;
   }
-}
-
-export async function listBookmarks(
-  database: LibraryDatabaseStore,
-  txtId: number,
-): Promise<BookmarkRecord[]> {
-  return database.read((db) =>
-    db
-      .query(
-        "SELECT id, cfi, page_number, preview, created_at FROM txt_bookmarks " +
-          "WHERE txt_id = ? ORDER BY created_at DESC, id DESC",
-        [txtId],
-      )
-      .map(([id, cfi, pageNumber, preview, createdAt]) => ({
-        id: id as number,
-        cfi: cfi as string,
-        pageNumber: pageNumber as number | null,
-        preview: preview as string,
-        createdAt: createdAt as number,
-      })),
-  );
-}
-
-export function saveBookmarkMutation(
-  txtId: number,
-  cfi: string,
-  pageNumber: number,
-  preview: string,
-  createdAt = Date.now(),
-): DatabaseMutation {
-  const safePreview = truncateUtf8(normalizePreview(preview), PREVIEW_BYTES);
-  return {
-    description: "save bookmark",
-    apply: (db) =>
-      db.execute(
-        "INSERT INTO txt_bookmarks (txt_id, cfi, page_number, preview, created_at) " +
-          "VALUES (?, ?, ?, ?, ?) " +
-          "ON CONFLICT(txt_id, cfi) DO UPDATE SET " +
-          "page_number = excluded.page_number, preview = excluded.preview, " +
-          "created_at = excluded.created_at",
-        [txtId, cfi, validPageNumber(pageNumber), safePreview, createdAt],
-      ),
-  };
-}
-
-function validPageNumber(pageNumber: number): number | null {
-  return Number.isInteger(pageNumber) && pageNumber >= 1 ? pageNumber : null;
-}
-
-export function deleteBookmarkMutation(txtId: number, cfi: string): DatabaseMutation {
-  return {
-    description: "delete bookmark",
-    apply: (db) =>
-      db.execute("DELETE FROM txt_bookmarks WHERE txt_id = ? AND cfi = ?", [
-        txtId,
-        cfi,
-      ]),
-  };
-}
-
-export function truncateUtf8(value: string, maximumBytes: number): string {
-  const encoder = new TextEncoder();
-  if (encoder.encode(value).byteLength <= maximumBytes) return value;
-  let result = "";
-  let used = 0;
-  for (const character of value) {
-    const size = encoder.encode(character).byteLength;
-    if (used + size > maximumBytes) break;
-    result += character;
-    used += size;
-  }
-  return result;
-}
-
-function normalizePreview(value: string): string {
-  return value.replace(/\s+/g, " ").trim();
-}
-
-function readingMutation(
-  txtId: number,
-  cfi: string | null,
-  lastAccessed: number | null,
-): DatabaseMutation {
-  return {
-    description: "save reading position",
-    apply: (db) => {
-      if (lastAccessed !== null) {
-        db.execute("UPDATE txt SET last_accessed = ?, last_cfi = ? WHERE id = ?", [
-          lastAccessed,
-          cfi,
-          txtId,
-        ]);
-      } else if (cfi !== null) {
-        db.execute("UPDATE txt SET last_cfi = ? WHERE id = ?", [cfi, txtId]);
-      }
-    },
-  };
 }

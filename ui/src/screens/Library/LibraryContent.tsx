@@ -1,7 +1,7 @@
 import { IconButton } from "../../components/IconButton";
 import { useMemo } from "react";
 import { Button, GridList, type Selection } from "react-aria-components";
-import type { LibraryBook } from "../../data/libraryDb";
+import type { LibraryBook } from "../../data/libraryStore";
 import type { BookShare } from "../../data/shares";
 import { BookList, BookRow, EmptyState, SelectableBookRow } from "./BookList";
 import {
@@ -38,11 +38,11 @@ export function LibraryContent({
   query: string;
   selectedTxtId: number | null;
   onSelectBook: (txtId: number | null) => void;
-  selectedShareId: number | null;
-  onSelectShare: (shareId: number | null) => void;
+  selectedShareId: string | null;
+  onSelectShare: (shareId: string | null) => void;
   onNavigate: (view: LibraryView) => void;
   onClearAccess: (txtId: number) => void;
-  onDeleteBookmark: (txtId: number, cfi: string) => void;
+  onDeleteBookmark: (txtId: number, bookmarkId: number) => void;
   shares: BookShare[];
   sharesError: string | null;
 }) {
@@ -86,8 +86,8 @@ function SharesList({
   shares: BookShare[];
   sharesError: string | null;
   query: string;
-  selectedShareId: number | null;
-  onSelectShare: (shareId: number | null) => void;
+  selectedShareId: string | null;
+  onSelectShare: (shareId: string | null) => void;
 }) {
   const booksById = useMemo(
     () => new Map(books.map((book) => [book.txtId, book])),
@@ -119,8 +119,8 @@ function SharesList({
     >
       {visibleShares.map((share) => (
         <SelectableBookRow
-          key={share.id}
-          id={share.id}
+          key={share.shareIdHash}
+          id={share.shareIdHash}
           book={booksById.get(share.txtId) ?? shareBookFallback(share)}
         />
       ))}
@@ -128,10 +128,10 @@ function SharesList({
   );
 }
 
-function selectedId(selection: Selection): number | null {
+function selectedId(selection: Selection): string | null {
   if (selection === "all") return null;
   const value = selection.values().next().value;
-  return typeof value === "number" ? value : null;
+  return typeof value === "string" ? value : null;
 }
 
 function shareBookFallback(share: BookShare): LibraryBook {
@@ -180,7 +180,7 @@ function RecentBooks({
 }: {
   books: LibraryBook[];
   onClearAccess: (txtId: number) => void;
-  onDeleteBookmark: (txtId: number, cfi: string) => void;
+  onDeleteBookmark: (txtId: number, bookmarkId: number) => void;
 }) {
   const accessed = useMemo(() => recentlyAccessed(books), [books]);
   const bookmarked = useMemo(() => recentlyBookmarked(books), [books]);
@@ -236,7 +236,7 @@ function RecentBookmarks({
   onDeleteBookmark,
 }: {
   items: ReturnType<typeof recentlyBookmarked>;
-  onDeleteBookmark: (txtId: number, cfi: string) => void;
+  onDeleteBookmark: (txtId: number, bookmarkId: number) => void;
 }) {
   if (!items.length) return null;
   return (
@@ -252,7 +252,7 @@ function RecentBookmarks({
             book={book}
             bookmark={bookmark}
             removeLabel="Delete bookmark"
-            onRemove={() => onDeleteBookmark(book.txtId, bookmark.cfi)}
+            onRemove={() => onDeleteBookmark(book.txtId, bookmark.id)}
           />
         ))}
       </GridList>

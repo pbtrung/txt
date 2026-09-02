@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { LibraryBook } from "../../../src/data/libraryDb";
+import type { LibraryBook } from "../../../src/data/libraryStore";
 
 const fuse = vi.hoisted(() => ({ search: vi.fn(() => []) }));
 

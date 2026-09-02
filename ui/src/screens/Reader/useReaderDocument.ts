@@ -1,5 +1,5 @@
-// The session-selector hook for Reader: loads the requested txt row's
-// content from the unlocked session's already-open SqliteDatabase + R2Client.
+// The session-selector hook for Reader: loads the requested document's
+// content through the unlocked session's LibraryStore + R2Session.
 import { useEffect, useState } from "react";
 import {
   loadReaderDocument,
@@ -123,14 +123,16 @@ function loadOnce(
   };
   pending.progress = INITIAL_PROGRESS;
   pending.listeners = listeners;
-  pending.promise = session.database
-    .read((db) =>
-      loadReaderDocument(db, session.storage, session.dbPrefix, txtId, report),
-    )
-    .finally(() => {
-      if (sessionLoads.get(txtId) === pending) sessionLoads.delete(txtId);
-      if (sessionLoads.size === 0) PENDING_LOADS.delete(session);
-    });
+  pending.promise = loadReaderDocument(
+    session.library,
+    session.storage,
+    session.dbPrefix,
+    txtId,
+    report,
+  ).finally(() => {
+    if (sessionLoads.get(txtId) === pending) sessionLoads.delete(txtId);
+    if (sessionLoads.size === 0) PENDING_LOADS.delete(session);
+  });
   sessionLoads.set(txtId, pending);
   return pending.promise;
 }
