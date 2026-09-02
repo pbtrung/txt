@@ -42,6 +42,7 @@ export async function handleGetBookmarks(env: Env, url: URL): Promise<Response> 
 }
 
 interface BookmarkSummaryRow {
+  id: number;
   document_id: number;
   key_wrapped: ArrayBuffer;
   bookmark_blob: ArrayBuffer;
@@ -51,12 +52,14 @@ interface BookmarkSummaryRow {
 
 // One row per document that has at least one bookmark: its total count
 // (a plaintext aggregate -- no decryption needed) and its single latest
-// bookmark's wrapped key + blob, for the Library screen's bookmark badge
-// and "recently bookmarked" section without an N+1 fetch across every book.
+// bookmark's id + wrapped key + blob (the id lets the client delete this
+// exact bookmark directly, without a separate lookup), for the Library
+// screen's bookmark badge and "recently bookmarked" section without an
+// N+1 fetch across every book.
 const BOOKMARKS_SUMMARY_QUERY = `
-  SELECT document_id, key_wrapped, bookmark_blob, created_at, count
+  SELECT id, document_id, key_wrapped, bookmark_blob, created_at, count
   FROM (
-    SELECT b.document_id, k.wrapped_key AS key_wrapped, b.bookmark_blob, b.created_at,
+    SELECT b.id, b.document_id, k.wrapped_key AS key_wrapped, b.bookmark_blob, b.created_at,
            COUNT(*) OVER (PARTITION BY b.document_id) AS count,
            ROW_NUMBER() OVER (
              PARTITION BY b.document_id ORDER BY b.created_at DESC, b.id DESC
@@ -73,6 +76,7 @@ export async function handleGetBookmarksSummary(env: Env): Promise<Response> {
   ).all<BookmarkSummaryRow>();
   return Response.json({
     summaries: results.map((row) => ({
+      id: row.id,
       document_id: row.document_id,
       count: row.count,
       key_wrapped: base64Encode(row.key_wrapped),

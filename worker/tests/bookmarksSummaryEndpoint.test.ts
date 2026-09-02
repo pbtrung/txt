@@ -36,18 +36,22 @@ async function insertDocument(): Promise<number> {
 async function insertBookmark(
   documentId: number,
   createdAt: number,
-): Promise<{ keyWrapped: Uint8Array; bookmarkBlob: Uint8Array }> {
+): Promise<{ id: number; keyWrapped: Uint8Array; bookmarkBlob: Uint8Array }> {
   const keyId = await insertKey("bookmark_key");
   const keyRow = await env.DB.prepare("SELECT wrapped_key FROM key_store WHERE id = ?")
     .bind(keyId)
     .first<{ wrapped_key: ArrayBuffer }>();
   const bookmarkBlob = blob(32);
-  await env.DB.prepare(
+  const { meta } = await env.DB.prepare(
     "INSERT INTO bookmarks (document_id, created_at, key_id, bookmark_blob) VALUES (?, ?, ?, ?)",
   )
     .bind(documentId, createdAt, keyId, bookmarkBlob)
     .run();
-  return { keyWrapped: new Uint8Array(keyRow!.wrapped_key), bookmarkBlob };
+  return {
+    id: meta.last_row_id,
+    keyWrapped: new Uint8Array(keyRow!.wrapped_key),
+    bookmarkBlob,
+  };
 }
 
 async function accessSession(): Promise<{ restore: () => void; headers: HeadersInit }> {
@@ -92,6 +96,7 @@ describe("GET /v1/bookmarks/summary", () => {
       });
       const body = (await response.json()) as {
         summaries: {
+          id: number;
           document_id: number;
           count: number;
           key_wrapped: string;
@@ -101,6 +106,7 @@ describe("GET /v1/bookmarks/summary", () => {
       };
       const row = body.summaries.find((r) => r.document_id === documentId);
       expect(row).toBeDefined();
+      expect(row?.id).toBe(latest.id);
       expect(row?.count).toBe(3);
       expect(row?.created_at).toBe(3000);
       expect(row?.key_wrapped).toBe(base64Encode(latest.keyWrapped));
