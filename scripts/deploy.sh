@@ -59,7 +59,11 @@ echo "Checking for D1 database '$D1_DATABASE_NAME'..." >&2
 DATABASE_ID=$(find_database_id)
 if [ -z "$DATABASE_ID" ]; then
   echo "Creating D1 database '$D1_DATABASE_NAME'..." >&2
-  npx wrangler d1 create "$D1_DATABASE_NAME"
+  # --update-config=false: this command defaults to rewriting wrangler.jsonc
+  # in place with the new database's binding -- wrangler.jsonc's real
+  # values only ever come from this script's own sed substitution below,
+  # never from wrangler mutating the tracked file itself.
+  npx wrangler d1 create "$D1_DATABASE_NAME" --update-config=false
   DATABASE_ID=$(find_database_id)
 fi
 if [ -z "$DATABASE_ID" ]; then
@@ -75,7 +79,8 @@ echo "D1 database '$D1_DATABASE_NAME' id=$DATABASE_ID" >&2
 echo "Checking for R2 bucket '$BUCKET_NAME'..." >&2
 if ! npx wrangler r2 bucket info "$BUCKET_NAME" >/dev/null 2>&1; then
   echo "Creating R2 bucket '$BUCKET_NAME'..." >&2
-  npx wrangler r2 bucket create "$BUCKET_NAME"
+  # --update-config=false: same reasoning as wrangler d1 create above.
+  npx wrangler r2 bucket create "$BUCKET_NAME" --update-config=false
 fi
 
 # wrangler.jsonc never commits these deployment-specific values -- substitute
@@ -95,7 +100,12 @@ s/replace-me-team-domain/$CF_ACCESS_TEAM_DOMAIN/
 s/replace-me-access-aud/$CF_ACCESS_AUD/"
 fi
 
-config=$(mktemp /tmp/txt-wrangler-deploy.XXXXXX.jsonc)
+# Created inside the repo root, not /tmp: wrangler.jsonc's relative paths
+# (migrations_dir, main, assets.directory) resolve against the config
+# file's own directory, so a --config file living somewhere else (e.g.
+# /tmp) silently breaks them -- this is what caused migrations_dir to
+# resolve to a nonexistent /tmp/worker/migrations the first time.
+config=$(mktemp ./wrangler.deploy.XXXXXX.jsonc)
 trap 'rm -f "$config"' EXIT HUP INT TERM
 sed -e "$sed_script" wrangler.jsonc > "$config"
 
