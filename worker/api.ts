@@ -137,6 +137,37 @@ async function requireAccess(request: Request, env: Env): Promise<AccessJwtClaim
   });
 }
 
+// TESTING ONLY, never set for a real deployment (docs/deployment.md §2):
+// lets every non-public /v1/* route through with no Access session at
+// all, for exercising the rest of the app before an Access application
+// exists. Synthesizes the claims a verified session would have carried
+// so downstream code (e.g. GET /v1/owner's ticket issuance) still sees a
+// consistent `access.email`. Cast away the literal-string type
+// `wrangler types` infers from the committed "false" default, the same
+// reason requireVar() exists for the other vars.
+function accessCheckSkipped(env: Env): boolean {
+  return (env.SKIP_ACCESS_CHECK as string | undefined) === "true";
+}
+
+async function resolveAccess(
+  request: Request,
+  env: Env,
+): Promise<AccessJwtClaims | null> {
+  if (accessCheckSkipped(env)) {
+    return {
+      email: requireVar(env.OWNER_EMAIL, "OWNER_EMAIL"),
+      aud: [],
+      exp: Infinity,
+      iss: "",
+    };
+  }
+  try {
+    return await requireAccess(request, env);
+  } catch {
+    return null;
+  }
+}
+
 // A route pattern's dynamic segments (e.g. "/v1/bookmarks/:id") are the
 // only templating this app needs -- one param per segment, no wildcards.
 function matchPattern(
@@ -188,14 +219,14 @@ export async function handleApi(
 
   let access: AccessJwtClaims | undefined;
   if (!route.public) {
-    try {
-      access = await requireAccess(request, env);
-    } catch {
+    const resolved = await resolveAccess(request, env);
+    if (!resolved) {
       // Deliberately uniform: which check failed isn't revealed to the
       // caller (docs/auth.md's Access session is either present and valid,
       // or the request doesn't get further than this).
       return new Response("Unauthorized", { status: 401 });
     }
+    access = resolved;
   }
 
   let proof: ProofContext | undefined;

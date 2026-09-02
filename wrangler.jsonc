@@ -29,7 +29,13 @@
     // bucket in R2 temp-access-credentials requests, docs/storage_layout.md
     // §"Credentials"); the binding's bucket_name is a separate, Wrangler-only
     // config field with no runtime string equivalent.
-    "BUCKET_NAME": "replace-me-bucket-name"
+    "BUCKET_NAME": "replace-me-bucket-name",
+    // TESTING ONLY, never "true" for a real deployment (docs/deployment.md
+    // §2, worker/api.ts's accessCheckSkipped()) -- lets every non-public
+    // /v1/* route through with no Access session, for exercising the app
+    // before an Access application exists yet. deploy.sh only ever flips
+    // this on when creds/deploy.json explicitly asks for it.
+    "SKIP_ACCESS_CHECK": "false"
   },
   // The real database_id is never committed here -- scripts/deploy.sh
   // resolves or creates the production database (wrangler d1 list/create)

@@ -99,3 +99,25 @@ describe("Access-gated /v1/* routes", () => {
     expect(response.status).toBe(405);
   });
 });
+
+describe("SKIP_ACCESS_CHECK (testing-only bypass)", () => {
+  it("lets a normally Access-gated route through with no session when set to 'true'", async () => {
+    // `wrangler types` infers the narrow literal "false" from
+    // wrangler.jsonc's committed default -- cast to widen, same reason
+    // worker/api.ts's requireVar() exists for the other vars.
+    const mutableEnv = env as unknown as { SKIP_ACCESS_CHECK: string };
+    const original = mutableEnv.SKIP_ACCESS_CHECK;
+    mutableEnv.SKIP_ACCESS_CHECK = "true";
+    try {
+      const response = await SELF.fetch("https://example.com/v1/health");
+      expect(response.status).toBe(200);
+    } finally {
+      mutableEnv.SKIP_ACCESS_CHECK = original;
+    }
+  });
+
+  it("stays gated (the default) once restored", async () => {
+    const response = await SELF.fetch("https://example.com/v1/health");
+    expect(response.status).toBe(401);
+  });
+});

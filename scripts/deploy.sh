@@ -13,7 +13,21 @@ if [ ! -f "$config_json" ]; then
   exit 1
 fi
 
-for var in BUCKET_NAME OWNER_EMAIL CF_ACCESS_TEAM_DOMAIN CF_ACCESS_AUD CF_ACCOUNT_ID; do
+# TESTING ONLY (docs/deployment.md §2, worker/api.ts's
+# accessCheckSkipped()): set "SKIP_ACCESS_CHECK": true in $config_json to
+# deploy with every /v1/* route reachable with no Access session at all,
+# before an Access application exists yet. Defaults to false -- a
+# creds/deploy.json without this key deploys exactly as before.
+SKIP_ACCESS_CHECK=$(jq -r '.SKIP_ACCESS_CHECK // false' "$config_json")
+
+CF_ACCESS_TEAM_DOMAIN=""
+CF_ACCESS_AUD=""
+required_vars="BUCKET_NAME OWNER_EMAIL CF_ACCOUNT_ID"
+if [ "$SKIP_ACCESS_CHECK" != "true" ]; then
+  required_vars="$required_vars CF_ACCESS_TEAM_DOMAIN CF_ACCESS_AUD"
+fi
+
+for var in $required_vars; do
   value=$(jq -r --arg k "$var" '.[$k] // empty' "$config_json")
   if [ -z "$value" ]; then
     echo "deploy.sh: $var is missing or empty in $config_json" >&2
@@ -21,6 +35,12 @@ for var in BUCKET_NAME OWNER_EMAIL CF_ACCESS_TEAM_DOMAIN CF_ACCESS_AUD CF_ACCOUN
   fi
   eval "$var=\$value"
 done
+
+if [ "$SKIP_ACCESS_CHECK" = "true" ]; then
+  echo "*** SKIP_ACCESS_CHECK is on: /v1/* will accept requests with NO" >&2
+  echo "*** Access session at all. Testing only -- never leave this on for" >&2
+  echo "*** a real deployment (docs/deployment.md §2)." >&2
+fi
 
 D1_DATABASE_NAME="txt-production"
 
@@ -59,17 +79,25 @@ if ! npx wrangler r2 bucket info "$BUCKET_NAME" >/dev/null 2>&1; then
 fi
 
 # wrangler.jsonc never commits these deployment-specific values -- substitute
-# them into a throwaway copy rather than the tracked file.
+# them into a throwaway copy rather than the tracked file. CF_ACCESS_*
+# stay as their committed "replace-me-*" placeholders when
+# SKIP_ACCESS_CHECK is on, since that code path never reads them then.
+sed_script="s/replace-me-bucket-name/$BUCKET_NAME/
+s/replace-me-owner-email/$OWNER_EMAIL/
+s/replace-me-account-id/$CF_ACCOUNT_ID/
+s/replace-me-database-id/$DATABASE_ID/"
+if [ "$SKIP_ACCESS_CHECK" = "true" ]; then
+  sed_script="$sed_script
+s/\"SKIP_ACCESS_CHECK\": \"false\"/\"SKIP_ACCESS_CHECK\": \"true\"/"
+else
+  sed_script="$sed_script
+s/replace-me-team-domain/$CF_ACCESS_TEAM_DOMAIN/
+s/replace-me-access-aud/$CF_ACCESS_AUD/"
+fi
+
 config=$(mktemp /tmp/txt-wrangler-deploy.XXXXXX.jsonc)
 trap 'rm -f "$config"' EXIT HUP INT TERM
-sed \
-  -e "s/replace-me-bucket-name/$BUCKET_NAME/" \
-  -e "s/replace-me-owner-email/$OWNER_EMAIL/" \
-  -e "s/replace-me-team-domain/$CF_ACCESS_TEAM_DOMAIN/" \
-  -e "s/replace-me-access-aud/$CF_ACCESS_AUD/" \
-  -e "s/replace-me-account-id/$CF_ACCOUNT_ID/" \
-  -e "s/replace-me-database-id/$DATABASE_ID/" \
-  wrangler.jsonc > "$config"
+sed -e "$sed_script" wrangler.jsonc > "$config"
 
 # Apply any pending D1 migrations (worker/migrations/) before deploying
 # Worker code that expects the schema they add -- `wrangler deploy` does
@@ -83,8 +111,15 @@ npx wrangler deploy --config "$config"
 echo "Remember: SHARE_GRANT_KEY, TICKET_SIGNING_KEY, R2_PARENT_API_TOKEN, and" >&2
 echo "R2_PARENT_ACCESS_KEY_ID are set once via 'wrangler secret put <NAME>'," >&2
 echo "not by this script or $config_json (docs/deployment.md)." >&2
-echo "wrangler has no Access-application support: create/verify the Access" >&2
-echo "application gating /v1/* (Include: emails equals $OWNER_EMAIL, one" >&2
-echo "bypass policy for POST /v1/shared-url) and R2 bucket CORS manually via" >&2
-echo "the dashboard (docs/auth.md §2, docs/storage_layout.md) if not already" >&2
-echo "done." >&2
+if [ "$SKIP_ACCESS_CHECK" = "true" ]; then
+  echo "*** Deployed with SKIP_ACCESS_CHECK on: /v1/* has NO auth at all." >&2
+  echo "*** Set up the Access application, then remove SKIP_ACCESS_CHECK" >&2
+  echo "*** from $config_json and redeploy." >&2
+else
+  echo "wrangler has no Access-application support: create/verify the Access" >&2
+  echo "application gating /v1/* (Include: emails equals $OWNER_EMAIL, one" >&2
+  echo "bypass policy for POST /v1/shared-url) manually via the dashboard" >&2
+  echo "(docs/auth.md §2) if not already done." >&2
+fi
+echo "R2 bucket CORS for the deployed UI origin also still needs the" >&2
+echo "dashboard (docs/storage_layout.md)." >&2

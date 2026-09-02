@@ -76,6 +76,16 @@ into a throwaway config copy before calling `wrangler deploy`; running
 with a clear error instead of deploying a broken or placeholder
 configuration.
 
+An optional sixth key, `"SKIP_ACCESS_CHECK": true`, deploys with
+`worker/api.ts`'s `accessCheckSkipped()` bypass on: every non-public
+`/v1/*` route accepts requests with no Access session at all, and
+`CF_ACCESS_TEAM_DOMAIN`/`CF_ACCESS_AUD` become optional (unread in that
+mode). **Testing only, for exercising the app before an Access
+application exists yet — never leave this on for a real deployment.**
+`scripts/deploy.sh` prints a loud warning whenever it's on, both before
+and after deploying, and it defaults to off: a `creds/deploy.json`
+without this key deploys exactly as if it didn't exist.
+
 Secrets, set once per deployment with `wrangler secret put <NAME>` (never
 committed, never passed through `scripts/deploy.sh`):
 
