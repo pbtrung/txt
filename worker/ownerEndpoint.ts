@@ -40,7 +40,19 @@ export async function handleGetOwner(
     // error, but also not something to distinguish from "unauthorized" in
     // the response (docs/auth.md §2's uniform-failure reasoning applies
     // here too: no reason to tell an unprovisioned deployment's caller
-    // more than a provisioned one's).
+    // more than a provisioned one's). Server-side only: this exact
+    // symptom (Access passes, but the singleton row can't be found)
+    // usually means --init-owner wrote to a different D1 database than
+    // this Worker's own d1_databases binding resolves to -- log this
+    // binding's own row count directly, rather than trusting a
+    // separately-run `wrangler d1 execute` to have targeted the same
+    // database.
+    const { results } = await env.DB.prepare("SELECT count(*) AS n FROM owner").all<{
+      n: number;
+    }>();
+    console.error(
+      `GET /v1/owner: no singleton row; this binding's owner table has ${results[0]?.n} row(s)`,
+    );
     return new Response("Unauthorized", { status: 401 });
   }
 
