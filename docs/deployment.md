@@ -44,11 +44,27 @@ R2 temporary-credentials calls (`docs/storage_layout.md` §"Credentials")
 reads, distinct from the R2 binding's `bucket_name` config field below,
 which Worker code can't read at runtime. `wrangler.jsonc` never commits
 their real values — only `replace-me-*` placeholders the Worker's own
-`requireVar()` check deliberately refuses to run with. `scripts/deploy.sh`
-requires all five as environment variables and substitutes them into a
-throwaway config copy before calling `wrangler deploy`; running `npm run
-deploy` without one set fails fast with a clear error instead of
-deploying a broken or placeholder configuration.
+`requireVar()` check deliberately refuses to run with.
+
+These five values live in a gitignored JSON file (`creds/deploy.json` by
+default — `creds/` is already gitignored — or a path passed as
+`scripts/deploy.sh`'s first argument for a different deployment):
+
+```json
+{
+  "BUCKET_NAME": "...",
+  "OWNER_EMAIL": "...",
+  "CF_ACCESS_TEAM_DOMAIN": "...",
+  "CF_ACCESS_AUD": "...",
+  "CF_ACCOUNT_ID": "..."
+}
+```
+
+`scripts/deploy.sh` reads all five from that file and substitutes them
+into a throwaway config copy before calling `wrangler deploy`; running
+`npm run deploy` with a missing file or a missing/empty key fails fast
+with a clear error instead of deploying a broken or placeholder
+configuration.
 
 Secrets, set once per deployment with `wrangler secret put <NAME>` (never
 committed, never passed through `scripts/deploy.sh`):
