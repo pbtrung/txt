@@ -89,6 +89,17 @@ reasoning as validating a Firebase token's issuer and audience today, and it
 gives the Worker an authenticated identity claim to embed in the owner
 binding ticket in place of the Firebase `sub`.
 
+**The SPA has to handle an Access challenge, not a normal API error.** A
+`fetch()` to a gated `/v1/*` path from a browser without a valid Access
+session doesn't reach the Worker at all — Access intercepts it and responds
+with its own login challenge, typically an HTML redirect to the Access
+login page, not a JSON body or a clean `401`. The UI needs to treat that
+response shape (a non-JSON body, a redirect, or a cross-origin failure if
+`fetch()` follows the redirect into Access's login domain) as "not logged
+in, prompt to authenticate," rather than assuming every `/v1/*` response is
+either valid JSON or a same-origin API error the way it is today against
+Firebase-gated Northflank endpoints.
+
 **Is proof-of-possession still needed?** Yes, unchanged. Access answers a
 different question than the proof-of-possession protocol in `docs/auth.md`
 §4.2/`docs/crypto.md`: Access establishes that *this browser session* logged
@@ -183,8 +194,9 @@ reverse, so deleting a bookmark or a share doesn't automatically delete the
 the *bookmark cap trigger* evicts a row automatically, which the caller
 can't easily anticipate (it doesn't know in advance which row `ORDER BY id
 DESC LIMIT 20` will evict). The unified schema (§4.2) handles this with an
-`AFTER DELETE` trigger per table (`trg_txt_delete_keys`, `trg_txt_bookmarks_
-delete_key`, `trg_shares_delete_key`) rather than relying on caller
+`AFTER DELETE` trigger per table
+(`trg_txt_delete_keys`, `trg_txt_bookmarks_delete_key`,
+`trg_shares_delete_key`) rather than relying on caller
 discipline: each fires on any deletion of its owning row — explicit or
 cap-trigger-driven — and removes the corresponding `key_store` row in the
 same statement's execution, so an orphan is never created in the first
@@ -196,6 +208,15 @@ plus one key row), and *two* extra writes per new `txt` row, since it
 references two independent per-row keys (`content_key_id` and
 `access_key_id`); at this app's volume that is still a trivial fraction of
 D1's free-tier write budget (§7).
+
+Because of the purpose-check triggers below, the order of writes for a new
+row is fixed: insert its `key_store` row(s) first, then the row that
+references them. A `BEFORE INSERT` trigger checks `NEW.*_key_id` against
+`key_store` at the moment the referencing row is inserted, so that row's
+key(s) must already exist — inserting a `txt` row before its
+`content_key_id`/`access_key_id` rows would fail the purpose check (or the
+`REFERENCES` constraint itself, if enforced) rather than the other way
+around.
 
 ### 4.2 Schema
 
@@ -262,8 +283,8 @@ BEGIN
   DELETE FROM key_store WHERE id = OLD.content_key_id OR id = OLD.access_key_id;
 END;
 CREATE TRIGGER trg_txt_key_purpose BEFORE INSERT ON txt
-WHEN (SELECT purpose FROM key_store WHERE id = NEW.content_key_id) != 'txt_content_key'
-   OR (SELECT purpose FROM key_store WHERE id = NEW.access_key_id) != 'txt_access_key'
+WHEN (SELECT purpose FROM key_store WHERE id = NEW.content_key_id) IS NOT 'txt_content_key'
+   OR (SELECT purpose FROM key_store WHERE id = NEW.access_key_id) IS NOT 'txt_access_key'
 BEGIN
   SELECT RAISE(ABORT, 'key_store purpose mismatch for txt row');
 END;
@@ -292,7 +313,7 @@ BEGIN
   DELETE FROM key_store WHERE id = OLD.key_id;
 END;
 CREATE TRIGGER trg_txt_bookmarks_key_purpose BEFORE INSERT ON txt_bookmarks
-WHEN (SELECT purpose FROM key_store WHERE id = NEW.key_id) != 'txt_bookmark_key'
+WHEN (SELECT purpose FROM key_store WHERE id = NEW.key_id) IS NOT 'txt_bookmark_key'
 BEGIN
   SELECT RAISE(ABORT, 'key_store purpose mismatch for txt_bookmarks row');
 END;
@@ -314,12 +335,12 @@ BEGIN
   DELETE FROM key_store WHERE id = OLD.key_id;
 END;
 CREATE TRIGGER trg_shares_key_purpose BEFORE INSERT ON shares
-WHEN (SELECT purpose FROM key_store WHERE id = NEW.key_id) != 'txt_share_key'
+WHEN (SELECT purpose FROM key_store WHERE id = NEW.key_id) IS NOT 'txt_share_key'
 BEGIN
   SELECT RAISE(ABORT, 'key_store purpose mismatch for shares row');
 END;
 CREATE TRIGGER trg_catalog_key_purpose BEFORE INSERT ON catalog
-WHEN (SELECT purpose FROM key_store WHERE id = NEW.key_id) != 'txt_catalog_key'
+WHEN (SELECT purpose FROM key_store WHERE id = NEW.key_id) IS NOT 'txt_catalog_key'
 BEGIN
   SELECT RAISE(ABORT, 'key_store purpose mismatch for catalog row');
 END;
@@ -332,8 +353,18 @@ pairing would otherwise be an unenforced, application-level-only invariant.
 The purpose-check triggers guard `BEFORE INSERT` only, matching that every
 row here is written once and never has its `*_key_id` reassigned afterward;
 they turn that silent, undetectable mismatch into an immediate
-`RAISE(ABORT)`. The delete-cascading triggers (`trg_txt_
-delete_keys`, `trg_txt_bookmarks_delete_key`, `trg_shares_delete_key`) mean
+`RAISE(ABORT)`. Each comparison uses `IS NOT` rather than `!=` deliberately:
+if a `*_key_id` pointed at a `key_store` row that doesn't exist at all
+(e.g. because `foreign_keys` enforcement turned out to be off, per the
+caveat below), the subquery returns `NULL`, and `NULL != 'x'` evaluates to
+`NULL` rather than true — a `WHEN` clause that evaluates to `NULL` does not
+fire the trigger, so `!=` would let exactly the case these triggers exist
+to catch slip through unabridged. `IS NOT` is SQLite's NULL-safe
+inequality: `NULL IS NOT 'x'` is always true, so a dangling reference aborts
+the insert just as reliably as a wrong-but-present purpose does. The
+delete-cascading triggers
+(`trg_txt_delete_keys`, `trg_txt_bookmarks_delete_key`,
+`trg_shares_delete_key`) mean
 `key_store` rows are cleaned up automatically by SQLite/D1 itself whenever
 their owning row is deleted — including the bookmark-cap trigger's automatic
 eviction above, which the Worker has no direct visibility into (it doesn't
@@ -476,11 +507,12 @@ D1 transaction. This drops the local wasm SQLCipher engine entirely.
 conflict-retry loop, though.** A D1 transaction guarantees one statement or
 batch is atomic and consistent; it says nothing about two *different*
 requests, from two devices, each independently reading then overwriting the
-same row — the exact race the ETag mechanism exists to catch. `txt.
-access_blob` is the row most exposed to this: two devices syncing reading
-position near-simultaneously could otherwise silently lose whichever
-update loses the race to land last, with no error raised. `txt.
-access_version` (§4.2) exists specifically to close this: every update to
+same row — the exact race the ETag mechanism exists to catch.
+`txt.access_blob` is the row most exposed to this: two devices syncing
+reading position near-simultaneously could otherwise silently lose
+whichever update loses the race to land last, with no error raised.
+`txt.access_version` (§4.2) exists specifically to close this: every
+update to
 `access_blob` is a conditional statement, `UPDATE txt SET access_blob = ?,
 access_version = access_version + 1 WHERE id = ? AND access_version = ?`,
 using the version number the client's own read returned. `access_key_id`
@@ -490,9 +522,11 @@ per the Blob Format (`docs/crypto.md`); rotating it here would mint a new
 `key_store` row on every coalesced 15-second reading-state write with no
 trigger positioned to clean up the old one, since the delete-cascading
 triggers (§4.2) fire on row *deletion*, not on an in-place `*_key_id`
-change. Zero rows affected means another
-write landed first — the same signal a `412` gives today — and the client
-re-fetches the row and reapplies its semantic mutation, exactly as
+change. Zero rows affected means another write landed first; the Worker
+returns `412` for this, the same status the current design's conditional
+`PUT` gives on a whole-file conflict, so the client's existing `412`-retry
+handling needs no new status code to recognize — and the client re-fetches
+the row and reapplies its semantic mutation, exactly as
 `docs/data_model.md` §1 step 7 already does for the whole file. Bookmark and
 share rows don't need this: they're created and deleted, not read-modified-
 and-written-back in place, so there's no analogous lost-update window for
@@ -536,8 +570,9 @@ for a different object, and giving them the same placeholder name here would
 suggest otherwise.
 
 This replaces `docs/storage_layout.md`'s current two-random-segment layout
-(`{db_prefix}/{txt_prefix}/{path}` for owner content, `{db_prefix}/shared/
-{share_prefix}/{share_path}` for shared copies) and drops the whole-file
+(`{db_prefix}/{txt_prefix}/{path}` for owner content,
+`{db_prefix}/shared/{share_prefix}/{share_path}` for shared copies) and
+drops the whole-file
 database object (`{db_path}`) entirely, since that data now lives in D1
 (§4). The literal `txt`/`shared`/`catalog` segments already keep objects out
 of each other's way inside `{db_prefix}/`, so a second random segment per
@@ -558,9 +593,15 @@ general `{db_prefix}/*` read-write credential the browser already gets for
 should only ever need to *read* `catalog/*` (only the maintenance tooling
 writes it), so a blanket read-write grant gives the browser more than it
 needs and reintroduces exactly the kind of unnecessarily broad credential
-the current design avoids. Mint the browser's credential as read-write on
-`{db_prefix}/txt/*` and `{db_prefix}/shared/*`, but read-only on
-`{db_prefix}/catalog/*`, rather than one undifferentiated prefix grant.
+the current design avoids. Mint two credentials instead of one, mirroring
+today's exact-object-plus-prefix split rather than presuming R2's
+temporary-credential API can express mixed read-write/read-only permissions
+across different prefixes within a single grant: one read-write credential
+for `{db_prefix}/txt/*` and `{db_prefix}/shared/*`, and a separate read-only
+credential for `{db_prefix}/catalog/*`. Confirm against R2's actual
+temporary-credential policy capabilities whether these can be collapsed
+into one multi-statement credential later; two credentials is the safer
+default to design against.
 
 ## 6. Rate limiting
 
