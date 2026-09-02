@@ -51,6 +51,18 @@ rather than one undifferentiated prefix grant:
   ingestion tooling writes it), so a blanket read-write grant would give
   the browser more than it needs.
 
+Minting goes through Cloudflare's account-level R2 temporary-credentials
+API (`POST accounts/{account_id}/r2/temp-access-credentials`), not the
+Workers R2 binding — the binding has no method for issuing scoped,
+temporary credentials at all, only direct object operations from inside
+the Worker itself, which this design deliberately never uses for content
+bytes. The call is authenticated with a standing parent R2 API token
+(`docs/deployment.md` §2: `R2_PARENT_API_TOKEN` as the bearer credential,
+`R2_PARENT_ACCESS_KEY_ID` as that same token's `parentAccessKeyId`); a
+temporary credential can never exceed its parent token's own permissions,
+so the parent token itself is scoped to this one bucket with read-write
+access.
+
 A public recipient receives only a presigned `GET` for one shared object,
 minted by the Worker at redemption time (`docs/sharing.md`), never a
 standing credential.

@@ -11,9 +11,13 @@ persistent volume to provision.
   every other path (the static UI, via a static assets binding pointing
   at `dist/`, `not_found_handling: "single-page-application"`).
 - **D1**: one database (`docs/data_model.md`), bound to the Worker.
-- **R2**: the application bucket (`docs/storage_layout.md`), bound to
-  the Worker for minting scoped credentials only — the Worker never
-  proxies object bytes.
+- **R2**: the application bucket (`docs/storage_layout.md`), bound to the
+  Worker for its own direct object operations (e.g. deleting a revoked
+  share's object, `docs/sharing.md`) — never for content the browser
+  reads or writes. The Worker mints the browser's scoped, temporary
+  credentials through a separate mechanism, Cloudflare's account-level R2
+  API (`docs/storage_layout.md` §"Credentials"), since the binding itself
+  has no method for issuing them.
 - **Access**: one Cloudflare Access application in front of `/v1/*` on
   the deployed host, policy `Include: emails equals OWNER_EMAIL`
   (`docs/auth.md` §2).
@@ -28,17 +32,23 @@ Non-secret, deployment-specific `vars` (`docs/auth.md` §2):
 OWNER_EMAIL
 CF_ACCESS_TEAM_DOMAIN
 CF_ACCESS_AUD
+CF_ACCOUNT_ID
+BUCKET_NAME
 ```
 
 `OWNER_EMAIL`, `CF_ACCESS_AUD`, and `CF_ACCESS_TEAM_DOMAIN` (used to build
 both the JWKS URL and the expected `iss`) back the Worker's independent
-verification of the Access JWT. `wrangler.jsonc` never commits their real
-values — only `replace-me-*` placeholders the Worker's own `requireVar()`
-check deliberately refuses to run with. `scripts/deploy.sh` requires all
-three (alongside `BUCKET_NAME`, `docs/storage_layout.md`) as environment
-variables and substitutes them into a throwaway config copy before calling
-`wrangler deploy`; running `npm run deploy` without one set fails fast with
-a clear error instead of deploying a broken or placeholder configuration.
+verification of the Access JWT. `CF_ACCOUNT_ID` and `BUCKET_NAME` back the
+R2 temporary-credentials calls (`docs/storage_layout.md` §"Credentials")
+— `BUCKET_NAME` here is a plain runtime string the Worker's own code
+reads, distinct from the R2 binding's `bucket_name` config field below,
+which Worker code can't read at runtime. `wrangler.jsonc` never commits
+their real values — only `replace-me-*` placeholders the Worker's own
+`requireVar()` check deliberately refuses to run with. `scripts/deploy.sh`
+requires all five as environment variables and substitutes them into a
+throwaway config copy before calling `wrangler deploy`; running `npm run
+deploy` without one set fails fast with a clear error instead of
+deploying a broken or placeholder configuration.
 
 Secrets, set once per deployment with `wrangler secret put <NAME>` (never
 committed, never passed through `scripts/deploy.sh`):
@@ -46,6 +56,8 @@ committed, never passed through `scripts/deploy.sh`):
 ```text
 SHARE_GRANT_KEY
 TICKET_SIGNING_KEY
+R2_PARENT_API_TOKEN
+R2_PARENT_ACCESS_KEY_ID
 ```
 
 `SHARE_GRANT_KEY` is an independent 32-byte secret (`openssl rand -base64
@@ -53,6 +65,11 @@ TICKET_SIGNING_KEY
 §"Share grant envelope", `docs/sharing.md`). `TICKET_SIGNING_KEY` is an
 independent 32-byte secret (`openssl rand -base64 32`) used only to sign
 and verify the owner binding ticket (`docs/auth.md` §4.1).
+`R2_PARENT_API_TOKEN` and `R2_PARENT_ACCESS_KEY_ID` are the value and
+access key id of one R2 API token, scoped in the dashboard to this bucket
+with read-write access — every temporary credential the Worker mints from
+it is capped at that same scope (`docs/storage_layout.md`
+§"Credentials").
 
 Plus the D1 binding (`DB`) and R2 bucket binding declared in
 `wrangler.jsonc`. Cloudflare terminates TLS and
@@ -140,6 +157,10 @@ Before exposing a deployment, verify:
    succeeds.
 9. A redeploy preserves owner, document, bookmark, and share state (D1
    and R2 are unaffected by a Worker redeploy).
+10. A `PUT` against `{db_prefix}/catalog/*` using the read-only credential
+    from `POST /v1/r2-credentials` is actually rejected by R2 — a scope
+    the code only claims to enforce isn't verified until it's tried
+    against a real credential (`docs/milestones.md` Milestone 6).
 
 ## 8. Free-tier budget
 

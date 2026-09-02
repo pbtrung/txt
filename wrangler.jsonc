@@ -20,7 +20,16 @@
   "vars": {
     "OWNER_EMAIL": "replace-me-owner-email",
     "CF_ACCESS_TEAM_DOMAIN": "replace-me-team-domain",
-    "CF_ACCESS_AUD": "replace-me-access-aud"
+    "CF_ACCESS_AUD": "replace-me-access-aud",
+    "CF_ACCOUNT_ID": "replace-me-account-id",
+    // Same placeholder token as r2_buckets[0].bucket_name below --
+    // deploy.sh's substitution is a plain literal replace, so one
+    // BUCKET_NAME environment variable fills in both. This one is a
+    // runtime-readable string the Worker's own code needs (to name the
+    // bucket in R2 temp-access-credentials requests, docs/storage_layout.md
+    // §"Credentials"); the binding's bucket_name is a separate, Wrangler-only
+    // config field with no runtime string equivalent.
+    "BUCKET_NAME": "replace-me-bucket-name"
   },
   "d1_databases": [
     {

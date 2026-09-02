@@ -253,6 +253,23 @@ the Worker-side endpoint work.
 
 ## Milestone 6 — R2 credentials
 
+**Status: Worker-side minting done and tested against a mocked Cloudflare
+API; the live-deployment test below hasn't been run.**
+`worker/r2CredentialsEndpoint.ts` implements `POST /v1/r2-credentials`
+(ticket + proof required, `docs/auth.md` §4.3), calling Cloudflare's
+account-level R2 temp-access-credentials API — confirmed against the real
+API docs (not the Workers R2 binding, which has no such method at all,
+a real gap fixed in `docs/storage_layout.md` and `docs/deployment.md`
+above) to support exactly the two-credential, prefix-scoped split this
+design calls for. `worker/tests/r2CredentialsEndpoint.test.ts` verifies
+the Worker's own request shape (permission/prefixes/bucket per
+credential) and response mapping against a mocked Cloudflare API, and
+that ticket/proof gating and an upstream API failure are both handled.
+The "actually attempt a `PUT` against `catalog/*`" test below needs a
+live deployment, a real R2 API token, and a real bucket — none of which
+exist in this session — and hasn't been run; do that as part of release
+verification (`docs/deployment.md` §7) instead.
+
 - Mint the two separate credentials from `docs/storage_layout.md`
   §"Credentials": read-write on `documents/*` and `shared/*`, read-only
   on `catalog/*`.

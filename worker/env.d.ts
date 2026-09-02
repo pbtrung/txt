@@ -12,11 +12,19 @@ declare global {
   // merged in.
   interface Env {
     TICKET_SIGNING_KEY: string;
+    // The R2 API token backing docs/storage_layout.md §"Credentials"'
+    // temp-access-credentials calls: R2_PARENT_API_TOKEN is its raw value
+    // (the Bearer auth for that call), R2_PARENT_ACCESS_KEY_ID is the same
+    // token's access key id (the request's parentAccessKeyId field).
+    R2_PARENT_API_TOKEN: string;
+    R2_PARENT_ACCESS_KEY_ID: string;
   }
   // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace Cloudflare {
     interface Env {
       TICKET_SIGNING_KEY: string;
+      R2_PARENT_API_TOKEN: string;
+      R2_PARENT_ACCESS_KEY_ID: string;
     }
   }
 }

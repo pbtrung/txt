@@ -17,6 +17,8 @@ import {
   handlePostBookmark,
   handleDeleteBookmark,
 } from "./bookmarksEndpoint";
+import { handlePostR2Credentials } from "./r2CredentialsEndpoint";
+import { requireVar } from "./requireVar";
 
 export interface RequestContext {
   access: AccessJwtClaims | undefined;
@@ -68,6 +70,12 @@ const ROUTES: Record<string, Partial<Record<string, Route>>> = {
       handler: (_request, env, ctx) => handleDeleteBookmark(env, ctx.params.id),
     },
   },
+  "/v1/r2-credentials": {
+    POST: {
+      requiresProof: true,
+      handler: (_request, env, ctx) => handlePostR2Credentials(env, ctx.proof!),
+    },
+  },
   // Placeholder: the real handler (docs/sharing.md §3.2) lands in
   // Milestone 7. Declared now, and marked public, so the Access-gating
   // rule ("every /v1/* route except this one") is concretely testable
@@ -95,19 +103,6 @@ async function fetchJwks(teamDomain: string): Promise<unknown> {
   }
   const value: unknown = await response.json();
   cachedJwks = { value, fetchedAt: Date.now() };
-  return value;
-}
-
-// wrangler types infers each `vars` entry's type from its committed
-// wrangler.jsonc placeholder value, as a narrow, optional string literal --
-// not the general, always-present `string` these actually are once
-// scripts/deploy.sh substitutes the real values. Reading through this
-// (rather than a bare `as string`) also catches the genuine
-// misconfiguration case: a deploy that forgot to substitute a placeholder.
-function requireVar(value: string | undefined, name: string): string {
-  if (!value || value.startsWith("replace-me-")) {
-    throw new Error(`${name} is not configured`);
-  }
   return value;
 }
 

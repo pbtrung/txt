@@ -31,10 +31,14 @@ export default defineConfig({
           OWNER_EMAIL: "owner@example.com",
           CF_ACCESS_TEAM_DOMAIN: "test-team.cloudflareaccess.com",
           CF_ACCESS_AUD: "test-access-application-aud",
-          // A secret in real deployments (wrangler.jsonc never declares it,
-          // worker/env.d.ts's ambient merge is what types it) -- fixed here
-          // the same way the vars above are.
+          CF_ACCOUNT_ID: "test-account-id",
+          BUCKET_NAME: "test-bucket",
+          // Secrets in real deployments (wrangler.jsonc never declares them,
+          // worker/env.d.ts's ambient merge is what types them) -- fixed
+          // here the same way the vars above are.
           TICKET_SIGNING_KEY: "dGVzdC10aWNrZXQtc2lnbmluZy1rZXktMzItYnl0ZXMh",
+          R2_PARENT_API_TOKEN: "test-parent-api-token",
+          R2_PARENT_ACCESS_KEY_ID: "test-parent-access-key-id",
         },
       },
     }),
