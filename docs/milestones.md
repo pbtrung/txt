@@ -182,6 +182,16 @@ Worker crash.
 
 ## Milestone 4 — Owner ticket and proof of possession
 
+**Status: Worker side (ticket issuance, `GET /v1/owner`, proof
+verification) done and tested; client-side signing not started.**
+`worker/ownerTicket.ts` issues and verifies the HS256 ticket;
+`worker/ownerProof.ts` builds and verifies the canonical proof bytes and
+is exported so a future client-side signer reuses the exact same
+construction; `worker/ownerEndpoint.ts` wires `GET /v1/owner` to the D1
+`owner` row. The client-side signing bullet below is UI work, deferred
+to when a mutating endpoint (Milestone 5) actually needs to send a
+proof.
+
 - Implement ticket issuance (`docs/auth.md` §4.1) and proof verification
   (`docs/auth.md` §4.2) exactly per the canonical-bytes construction in
   `docs/crypto.md`.
