@@ -18,6 +18,12 @@ import {
   handleDeleteBookmark,
 } from "./bookmarksEndpoint";
 import { handlePostR2Credentials } from "./r2CredentialsEndpoint";
+import {
+  handleGetShares,
+  handlePostShares,
+  handleDeleteShares,
+} from "./sharesEndpoint";
+import { handlePostSharedUrl } from "./sharedUrlEndpoint";
 import { requireVar } from "./requireVar";
 
 export interface RequestContext {
@@ -76,14 +82,24 @@ const ROUTES: Record<string, Partial<Record<string, Route>>> = {
       handler: (_request, env, ctx) => handlePostR2Credentials(env, ctx.proof!),
     },
   },
-  // Placeholder: the real handler (docs/sharing.md §3.2) lands in
-  // Milestone 7. Declared now, and marked public, so the Access-gating
-  // rule ("every /v1/* route except this one") is concretely testable
-  // rather than asserted about a route that doesn't exist yet.
+  "/v1/shares": {
+    GET: { handler: (_request, env) => handleGetShares(env) },
+    POST: {
+      requiresProof: true,
+      handler: (_request, env, ctx) => handlePostShares(env, ctx.proof!),
+    },
+    DELETE: {
+      requiresProof: true,
+      handler: (_request, env, ctx) => handleDeleteShares(env, ctx.proof!),
+    },
+  },
+  // The one /v1/* route excluded from Access (docs/auth.md §1,
+  // docs/sharing.md) -- capability possession is the entire
+  // authorization.
   "/v1/shared-url": {
     POST: {
       public: true,
-      handler: () => new Response("Not Implemented", { status: 501 }),
+      handler: (request, env) => handlePostSharedUrl(request, env),
     },
   },
 };

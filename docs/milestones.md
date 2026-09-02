@@ -126,7 +126,7 @@ browser," which was this milestone's original, wrong framing:
    Worker (`worker/`) — this is genuinely Worker-side, unlike the Blob
    Format, because the Worker is the only party that holds
    `SHARE_GRANT_KEY` and the only party that ever encrypts or decrypts a
-   grant (`docs/sharing.md` §3.1/§3.2).
+   grant (`docs/sharing.md` §3.2/§3.3).
 
 **Test, for the share grant envelope:**
 
@@ -286,10 +286,35 @@ than no comment at all.
 
 ## Milestone 7 — Sharing
 
+**Status: Worker endpoints done and tested; the UI creation/recipient
+flow is deferred to its own pass, same scoping decision as Milestone 5.**
+`worker/sharesEndpoint.ts` implements `GET`/`POST`/`DELETE /v1/shares`;
+`worker/sharedUrlEndpoint.ts` implements `POST /v1/shared-url`, minting a
+single-object 60-second R2 credential through the same Cloudflare API
+`worker/r2CredentialsEndpoint.ts` uses (reusing `createMintCredential`,
+generalized to accept an object/prefix scope and a TTL) and presigning
+the `GET` locally with `aws4fetch` — no hand-rolled SigV4 signing, and no
+new secret to derive an S3-style key from the parent R2 API token. `GET
+/v1/shares` (a read endpoint, not in the original bullet list below) was
+added because the design's own rationale for `owner_blob` — "so the
+owner's browser can list active shares" (`docs/sharing.md` §1) — is
+unimplementable without one, the same gap Milestone 5 found for
+bookmarks. Two real bugs were found and fixed in `docs/sharing.md` while
+implementing this: §3.1's `POST /v1/shares` body sent `share_content_key`
+to the Worker in plaintext and said "the Worker... wraps" `owner_blob`,
+and §3.3's `DELETE /v1/shares` said the Worker "re-derives... from the
+row's decrypted `owner_blob`" — both impossible, since the Worker never
+holds an unwrapped key. Both endpoints now take an already-encrypted
+`owner_blob` plus a plaintext `share_path` the Worker can hash and
+compare directly, matching the trust boundary the rest of the design
+already follows. The "Bundle-size or import-graph assertion" test below
+is UI-scoped and deferred along with the rest of the UI work.
+
 - Implement `POST /v1/shares`, `POST /v1/shared-url`, `DELETE
-/v1/shares` per `docs/sharing.md` §3, using the D1-direct lookup (no
-  grant envelope) and the Milestone 2 sharing-content encryption for the
-  EPUB copy itself.
+/v1/shares` per `docs/sharing.md` §3, using the grant envelope
+  (`docs/crypto.md` §"Share grant envelope", already implemented in
+  Milestone 2's `worker/shareGrant.ts`) and the Milestone 2
+  sharing-content encryption for the EPUB copy itself.
 - UI: the creation flow (§4) and recipient flow (§5), including the
   shared-reading page's use of the sharing-content decoder — confirm
   this page's bundle does not pull in the leancrypto module at all,

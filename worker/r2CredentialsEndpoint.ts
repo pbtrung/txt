@@ -1,17 +1,25 @@
-// docs/storage_layout.md §"Credentials": mints two separate 15-minute R2
-// credentials for the browser via Cloudflare's account-level R2
-// temp-access-credentials API. This is a plain HTTP call to Cloudflare's
-// control-plane API, not the Workers R2 binding -- R2Bucket has no method
-// for minting scoped, temporary credentials at all (only direct
-// get/put/delete/list from inside the Worker itself, which this design
-// deliberately never uses for content). Requires ticket + proof
-// (docs/auth.md §4.3), same as every other mutating endpoint.
+// docs/storage_layout.md §"Credentials": mints R2 credentials for the
+// browser (POST /v1/r2-credentials, below) and for the Worker's own
+// presigned-URL minting (worker/sharedUrlEndpoint.ts) via Cloudflare's
+// account-level R2 temp-access-credentials API. This is a plain HTTP call
+// to Cloudflare's control-plane API, not the Workers R2 binding --
+// R2Bucket has no method for minting scoped, temporary credentials at
+// all (only direct get/put/delete/list from inside the Worker itself,
+// used only for the Worker's own object housekeeping, never for content
+// this design deliberately keeps out of the Worker's hands). Requires
+// ticket + proof (docs/auth.md §4.3), same as every other mutating
+// endpoint.
 import type { ProofContext } from "./requireProof";
 import { requireVar } from "./requireVar";
 
-const TTL_SECONDS = 15 * 60;
+const BROWSER_CREDENTIAL_TTL_SECONDS = 15 * 60;
 
 type Permission = "object-read-write" | "object-read-only";
+
+export interface MintCredentialScope {
+  prefixes?: string[];
+  objects?: string[];
+}
 
 export interface TempR2Credential {
   access_key_id: string;
@@ -21,7 +29,8 @@ export interface TempR2Credential {
 
 export type MintCredential = (
   permission: Permission,
-  prefixes: string[],
+  scope: MintCredentialScope,
+  ttlSeconds: number,
 ) => Promise<TempR2Credential>;
 
 interface TempCredentialsApiResponse {
@@ -34,7 +43,7 @@ interface TempCredentialsApiResponse {
  * without a live Cloudflare account (mirrors worker/access.ts's
  * `fetchJwks` pattern). */
 export function createMintCredential(env: Env): MintCredential {
-  return async (permission, prefixes) => {
+  return async (permission, scope, ttlSeconds) => {
     const accountId = requireVar(env.CF_ACCOUNT_ID, "CF_ACCOUNT_ID");
     const response = await fetch(
       `https://api.cloudflare.com/client/v4/accounts/${accountId}/r2/temp-access-credentials`,
@@ -51,8 +60,8 @@ export function createMintCredential(env: Env): MintCredential {
             "R2_PARENT_ACCESS_KEY_ID",
           ),
           permission,
-          ttlSeconds: TTL_SECONDS,
-          prefixes,
+          ttlSeconds,
+          ...scope,
         }),
       },
     );
@@ -78,11 +87,16 @@ export async function handlePostR2Credentials(
   let catalog: TempR2Credential;
   try {
     [documents, catalog] = await Promise.all([
-      mintCredential("object-read-write", [
-        `${dbPrefix}/documents/`,
-        `${dbPrefix}/shared/`,
-      ]),
-      mintCredential("object-read-only", [`${dbPrefix}/catalog/`]),
+      mintCredential(
+        "object-read-write",
+        { prefixes: [`${dbPrefix}/documents/`, `${dbPrefix}/shared/`] },
+        BROWSER_CREDENTIAL_TTL_SECONDS,
+      ),
+      mintCredential(
+        "object-read-only",
+        { prefixes: [`${dbPrefix}/catalog/`] },
+        BROWSER_CREDENTIAL_TTL_SECONDS,
+      ),
     ]);
   } catch {
     // The Cloudflare API call itself failed -- not a client error, so none
@@ -93,7 +107,7 @@ export async function handlePostR2Credentials(
   return Response.json({
     endpoint: `https://${requireVar(env.CF_ACCOUNT_ID, "CF_ACCOUNT_ID")}.r2.cloudflarestorage.com`,
     bucket: requireVar(env.BUCKET_NAME, "BUCKET_NAME"),
-    expires_at: Math.floor(Date.now() / 1000) + TTL_SECONDS,
+    expires_at: Math.floor(Date.now() / 1000) + BROWSER_CREDENTIAL_TTL_SECONDS,
     documents,
     catalog,
   });

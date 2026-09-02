@@ -18,6 +18,8 @@ declare global {
     // token's access key id (the request's parentAccessKeyId field).
     R2_PARENT_API_TOKEN: string;
     R2_PARENT_ACCESS_KEY_ID: string;
+    // docs/crypto.md §"Share grant envelope".
+    SHARE_GRANT_KEY: string;
   }
   // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace Cloudflare {
@@ -25,6 +27,7 @@ declare global {
       TICKET_SIGNING_KEY: string;
       R2_PARENT_API_TOKEN: string;
       R2_PARENT_ACCESS_KEY_ID: string;
+      SHARE_GRANT_KEY: string;
     }
   }
 }

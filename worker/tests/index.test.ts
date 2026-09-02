@@ -34,10 +34,11 @@ describe("static assets and public routes", () => {
     const response = await SELF.fetch("https://example.com/v1/shared-url", {
       method: "POST",
     });
-    // 501 (not yet implemented, Milestone 7) proves the request reached the
-    // handler at all -- the property under test is "not blocked by Access,"
-    // not "fully implemented."
-    expect(response.status).toBe(501);
+    // A bodyless request 400s on malformed input (worker/tests/
+    // sharedUrlEndpoint.test.ts covers the handler itself) -- the
+    // property under test here is just "not blocked by Access" (401
+    // would mean it never reached the handler at all).
+    expect(response.status).not.toBe(401);
   });
 });
 

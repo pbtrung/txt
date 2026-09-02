@@ -24,7 +24,7 @@ D1's `shares` table (`docs/data_model.md` §2) contains, per share:
 share_path}` — the owner's own durable record of a share it created,
   so the owner's browser can list active shares and know what to submit
   for revocation, without needing local-only browser storage. This blob
-  plays no part in redemption (§3.2) — the grant does.
+  plays no part in redemption (§3.3) — the grant does.
 - `active`/`creating`/`deleting` state and timestamps.
 
 D1 never stores the raw capability, the share content key, or the
@@ -54,7 +54,31 @@ object path.
 
 ## 3. Endpoints
 
-### 3.1 `POST /v1/shares`
+### 3.1 `GET /v1/shares`
+
+Owner-only, Access session only (no proof — a read, `docs/auth.md`
+§4.3). Returns every `shares` row, joined against `key_store` for its
+`key_wrapped` (avoiding N+1, the same pattern as `GET /v1/documents`,
+`docs/data_model.md` §3), so the browser can decrypt each `owner_blob`
+locally to list active shares and know what to submit for revocation
+(§1):
+
+```json
+{
+  "shares": [
+    {
+      "share_id_hash": "<base64>",
+      "document_id": 0,
+      "key_wrapped": "<base64>",
+      "owner_blob": "<base64>",
+      "state": "active",
+      "created_at": 0
+    }
+  ]
+}
+```
+
+### 3.2 `POST /v1/shares`
 
 Owner-only. Requires the `X-Owner-Ticket`/`X-Owner-Proof` headers and the
 `user_handle`/`db_prefix` body fields described in `docs/auth.md` §4.2,
@@ -66,15 +90,19 @@ alongside:
   "db_prefix": "<52-character token>",
   "document_id": 0,
   "share_id": "<canonical base64url 32 random bytes>",
-  "share_content_key": "<base64 128 random bytes>",
-  "share_path": "<52-character segment>"
+  "share_path": "<52-character segment>",
+  "key_wrapped": "<base64, a fresh key_store `share_key` row's wrapped bytes>",
+  "owner_blob": "<base64, {share_id, share_content_key, share_path} already encrypted client-side under that key, Blob Format>"
 }
 ```
 
-The Worker validates every value, constructs
-`{db_prefix}/shared/{share_path}`, wraps `{share_id, share_content_key,
-share_path}` into a fresh `key_store`-backed `owner_blob` (§1), and
-inserts a `shares` row keyed by `SHA-256(share_id)` and
+The browser generates `share_content_key` and encrypts `owner_blob`
+itself, the same way it encrypts every other row-level blob (`docs/
+crypto.md`) — the Worker never receives `share_content_key` in any form,
+wrapped or plain. The Worker validates `share_id`, `share_path`, and
+`document_id`, constructs `{db_prefix}/shared/{share_path}`, and inserts
+a `key_store` row holding `key_wrapped` plus a `shares` row holding
+`owner_blob` as opaque bytes, keyed by `SHA-256(share_id)` and
 `SHA-256(object_path)` — never the object path itself. Repeating the same
 capability and object path is idempotent; reusing either for different
 material returns `409`. The response is:
@@ -93,7 +121,7 @@ later (§4) without D1 ever having stored the path to look up.
 | `400`  | Malformed body or path segment                                         |
 | `409`  | Capability or path reused for different material                       |
 
-### 3.2 `POST /v1/shared-url`
+### 3.3 `POST /v1/shared-url`
 
 No Access session and no proof required — capability possession is the
 entire authorization. The rate-limiting rule (`docs/auth.md` §6) still
@@ -131,26 +159,32 @@ occurred.
 | `404`  | No active share matching this capability and grant  |
 | `429`  | Rate limit exceeded                                 |
 
-### 3.3 `DELETE /v1/shares`
+### 3.4 `DELETE /v1/shares`
 
 Owner-only (`X-Owner-Ticket`/`X-Owner-Proof` headers, `docs/auth.md`
 §4.2). No grant is needed here — the owner already holds `document_id`
 and the share's own `share_path` locally (from creating it, or from
-decrypting its own `owner_blob`):
+decrypting its own `owner_blob`), and sends `share_path` again in
+plaintext so the Worker can re-derive the hash itself without ever
+decrypting `owner_blob` (which it cannot — it never holds the key that
+wraps it):
 
 ```json
 {
   "user_handle": "<base64 32 bytes>",
   "db_prefix": "<52-character token>",
   "document_id": 0,
-  "share_id": "<canonical base64url 32 random bytes>"
+  "share_id": "<canonical base64url 32 random bytes>",
+  "share_path": "<52-character segment>"
 }
 ```
 
-The Worker re-derives `object_path_hash` from the request and the row's
-decrypted `owner_blob`, checks it matches, and atomically transitions
-`active` → `deleting`, which immediately blocks new presigned URLs from
-§3.2 (any grant decrypted afterward still fails the `active`-row lookup).
+The Worker looks up the row by `SHA-256(share_id)`, checks its
+`document_id` matches, re-derives `object_path_hash` from
+`{db_prefix}/shared/{share_path}` and checks it matches the row's stored
+value, and atomically transitions `active` → `deleting`, which
+immediately blocks new presigned URLs from §3.3 (any grant decrypted
+afterward still fails the `active`-row lookup).
 No row for that `share_id` is treated as already deleted — `204` with no
 further action. Once `deleting`, the Worker deletes the exact R2 object;
 a `404` from R2 is treated as success. After successful deletion, it
@@ -181,7 +215,10 @@ until its 60-second expiry unless the object is already gone.
 5. Using its temporary `{db_prefix}/shared/*` credential
    (`docs/storage_layout.md`), the browser uploads the copy with
    `If-None-Match: *`.
-6. The browser calls `POST /v1/shares` (§3.1) with a fresh proof. After
+6. The browser mints a fresh `key_store`-backed key, wraps
+   `{share_id, share_content_key, share_path}` into `owner_blob` under it
+   (Blob Format, `docs/crypto.md`), and calls `POST /v1/shares` (§3.2)
+   with `key_wrapped`, `owner_blob`, and a fresh proof. After
    registration succeeds, it commits local state as `active`, discarding
    the grant in that response — creation and copying are independent
    actions.
@@ -202,7 +239,7 @@ RESTRICT`).
    navigation request and referrer.
 2. The shared page validates and retains the capability, content key,
    and grant in memory.
-3. It posts the capability and grant to `POST /v1/shared-url` (§3.2).
+3. It posts the capability and grant to `POST /v1/shared-url` (§3.3).
 4. It immediately fetches the encrypted EPUB from the returned R2 URL.
 5. It decrypts (the same Blob Format used everywhere else,
    `docs/crypto.md`) and renders the EPUB locally. The Worker sees

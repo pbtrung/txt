@@ -39,6 +39,7 @@ export default defineConfig({
           TICKET_SIGNING_KEY: "dGVzdC10aWNrZXQtc2lnbmluZy1rZXktMzItYnl0ZXMh",
           R2_PARENT_API_TOKEN: "test-parent-api-token",
           R2_PARENT_ACCESS_KEY_ID: "test-parent-access-key-id",
+          SHARE_GRANT_KEY: "dGVzdC1zaGFyZS1ncmFudC1rZXktMzItYnl0ZXMhISE=",
         },
       },
     }),
