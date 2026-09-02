@@ -174,7 +174,16 @@ async function resolveAccess(
   }
   try {
     return await requireAccess(request, env);
-  } catch {
+  } catch (error) {
+    // The client-facing response stays a uniform 401 (docs/auth.md §2) --
+    // this is server-side only, visible via `wrangler tail`, and is the
+    // one place that says *why* a session Access itself already accepted
+    // still failed the Worker's own independent check (wrong
+    // CF_ACCESS_TEAM_DOMAIN/CF_ACCESS_AUD/OWNER_EMAIL, or an Access
+    // application gating a different host/path than this deployment).
+    console.error(
+      `Access verification failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return null;
   }
 }
