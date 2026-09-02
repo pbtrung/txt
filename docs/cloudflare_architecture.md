@@ -142,19 +142,9 @@ generated client-side at write time; that per-row key is wrapped by the
 unwrapped owner master key (`umk`) using the Blob Format's Encrypt procedure,
 and the row's own payload is wrapped by the *resulting unwrapped per-row
 key* — not by `umk` directly. No new key-derivation primitive is needed
-beyond Encrypt/Decrypt applied twice. `key_store` holds every wrapped
-per-row key, referenced by the row it protects:
-
-```sql
-CREATE TABLE key_store (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    purpose     TEXT    NOT NULL CHECK (purpose IN
-                     ('txt_catalog_key', 'txt_content_key', 'txt_access_key',
-                      'txt_bookmark_key', 'txt_share_key')),
-    wrapped_key BLOB    NOT NULL,  -- Blob Format, IKM = umk; plaintext is 128 random bytes
-    created_at  INTEGER NOT NULL
-) STRICT;
-```
+beyond Encrypt/Decrypt applied twice. `key_store` (defined in the unified
+schema, §4.2) holds every wrapped per-row key, referenced by the row it
+protects.
 
 A per-row key closes a relocation risk the Blob Format's additional data
 alone can't: a data blob decrypts only under the specific key its own row's
@@ -196,6 +186,17 @@ CREATE TABLE owner_control (
     kem_public_key            BLOB    NOT NULL,  -- provisioned, unused by sharing today (docs/crypto.md)
     wrapped_kem_private_key   BLOB    NOT NULL,  -- Blob Format, IKM = umk
     encrypted_credentials     BLOB    NOT NULL   -- {user_handle, display_name, db_prefix}
+) STRICT;
+
+-- Holds every per-row key (§4.1), wrapped by umk, referenced by the row it
+-- protects.
+CREATE TABLE key_store (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    purpose     TEXT    NOT NULL CHECK (purpose IN
+                     ('txt_catalog_key', 'txt_content_key', 'txt_access_key',
+                      'txt_bookmark_key', 'txt_share_key')),
+    wrapped_key BLOB    NOT NULL,  -- Blob Format, IKM = umk; plaintext is 128 random bytes
+    created_at  INTEGER NOT NULL
 ) STRICT;
 
 -- Singleton, like owner_control. Points at the one R2 catalog object (§4.3);
