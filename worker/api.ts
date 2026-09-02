@@ -12,6 +12,7 @@ import { handleGetOwner } from "./ownerEndpoint";
 import { requireProof, ProofRequiredError } from "./requireProof";
 import type { ProofContext } from "./requireProof";
 import { handleGetDocuments, handlePatchDocumentAccess } from "./documentsEndpoint";
+import { handleGetCatalog } from "./catalogEndpoint";
 import {
   handleGetBookmarks,
   handlePostBookmark,
@@ -55,6 +56,9 @@ const ROUTES: Record<string, Partial<Record<string, Route>>> = {
   },
   "/v1/documents": {
     GET: { handler: (_request, env) => handleGetDocuments(env) },
+  },
+  "/v1/catalog": {
+    GET: { handler: (_request, env) => handleGetCatalog(env) },
   },
   "/v1/documents/:id/access": {
     PATCH: {

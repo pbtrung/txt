@@ -343,10 +343,11 @@ trip to the Worker rather than opening a fully offline local copy.
 
 Because `access_blob` encrypts `last_accessed` and `last_cfi` together,
 D1 cannot `ORDER BY` reading state — the Library screen's recency sort
-happens client-side, after one request returns every `documents` row plus
-the catalog object for the browser to decrypt and sort locally. That
-request joins `documents` against `key_store` (on both `content_key_id`
-and `access_key_id`) rather than fetching each row's keys with a separate
+happens client-side, after `GET /v1/documents` returns every `documents`
+row and a separate `GET /v1/catalog` returns the catalog pointer row, for
+the browser to decrypt and sort locally. The `GET /v1/documents` query
+joins `documents` against `key_store` (on both `content_key_id` and
+`access_key_id`) rather than fetching each row's keys with a separate
 query per row, avoiding an N+1 pattern that would multiply D1's
 per-query overhead across the whole library on every Library-screen
 load. EPUB content stays in R2, fetched and decrypted client-side.
