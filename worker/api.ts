@@ -6,8 +6,14 @@
 // verification, not the primary gate.
 import { verifyAccessJwt } from "./access";
 import type { AccessJwtClaims } from "./access";
+import { handleGetOwner } from "./ownerEndpoint";
 
-type Handler = (request: Request, env: Env, url: URL) => Promise<Response> | Response;
+type Handler = (
+  request: Request,
+  env: Env,
+  url: URL,
+  access: AccessJwtClaims | undefined,
+) => Promise<Response> | Response;
 
 interface Route {
   handler: Handler;
@@ -17,6 +23,11 @@ interface Route {
 const ROUTES: Record<string, Partial<Record<string, Route>>> = {
   "/v1/health": {
     GET: { handler: () => Response.json({ status: "ok" }) },
+  },
+  "/v1/owner": {
+    // `access` is always defined here: this route isn't `public`, so
+    // handleApi() has already verified it before invoking the handler.
+    GET: { handler: (_request, env, _url, access) => handleGetOwner(env, access!) },
   },
   // Placeholder: the real handler (docs/sharing.md §3.2) lands in
   // Milestone 7. Declared now, and marked public, so the Access-gating
@@ -90,9 +101,10 @@ export async function handleApi(
     return new Response("Method Not Allowed", { status: 405 });
   }
 
+  let access: AccessJwtClaims | undefined;
   if (!route.public) {
     try {
-      await requireAccess(request, env);
+      access = await requireAccess(request, env);
     } catch {
       // Deliberately uniform: which check failed isn't revealed to the
       // caller (docs/auth.md's Access session is either present and valid,
@@ -101,5 +113,5 @@ export async function handleApi(
     }
   }
 
-  return route.handler(request, env, url);
+  return route.handler(request, env, url, access);
 }

@@ -31,6 +31,10 @@ export default defineConfig({
           OWNER_EMAIL: "owner@example.com",
           CF_ACCESS_TEAM_DOMAIN: "test-team.cloudflareaccess.com",
           CF_ACCESS_AUD: "test-access-application-aud",
+          // A secret in real deployments (wrangler.jsonc never declares it,
+          // worker/env.d.ts's ambient merge is what types it) -- fixed here
+          // the same way the vars above are.
+          TICKET_SIGNING_KEY: "dGVzdC10aWNrZXQtc2lnbmluZy1rZXktMzItYnl0ZXMh",
         },
       },
     }),

@@ -114,8 +114,25 @@ provisioning or unlocked browser memory.
 
 ### 4.1 Ticket issuance
 
-The Worker verifies the Access JWT and reads the singleton `owner` row,
-returning the owner's wrapped key material plus a 24-hour HS256 ticket:
+`GET /v1/owner` verifies the Access JWT and reads the singleton `owner`
+row, returning the owner's wrapped key material plus a 24-hour HS256
+ticket:
+
+```json
+{
+  "wrapped_umk": "<base64>",
+  "sign_public_key": "<base64 SPKI DER>",
+  "wrapped_sign_private_key": "<base64>",
+  "kem_public_key": "<base64>",
+  "wrapped_kem_private_key": "<base64>",
+  "encrypted_credentials": "<base64>",
+  "ticket": "<exact compact JWS>"
+}
+```
+
+`ticket` decodes to the following claims — a self-contained bearer value
+signed with the Worker's own `TICKET_SIGNING_KEY` secret, so a later
+request (§4.2) can be checked without a fresh D1 read of `owner`:
 
 ```json
 {
@@ -131,31 +148,45 @@ returning the owner's wrapped key material plus a 24-hour HS256 ticket:
 }
 ```
 
+`sub` is the Access-verified `email` claim (§2), not read from `owner` —
+the row stores only `owner_email_hash`. `user_handle_hash` and
+`db_binding_hash` come directly from the corresponding `owner` columns;
+`jti` is freshly random per ticket.
+
 | Status | Condition                                          |
 | ------ | -------------------------------------------------- |
 | `200`  | Wrapped owner material and ticket returned         |
 | `401`  | Missing or invalid Access session                  |
-| `403`  | Verified email is not the configured `OWNER_EMAIL` |
 | `429`  | Rate limit exceeded (`docs/deployment.md` §2.3)    |
 
 ### 4.2 Proof of possession
 
 The browser unwraps `umk` (with `user_root_key`) and the P-521 signing
 private key (with `umk`) entirely in memory. For every D1-mutating
-request or R2 credential request, it signs a fresh proof over the exact
-ticket, the request itself, and the `db_prefix` binding:
+request or R2 credential request, the ticket and a fresh proof travel as
+headers — not in the JSON body — specifically so the canonical bytes
+below can bind to the *exact, unambiguous* request body without the proof
+needing to somehow sign over a body that also contains the proof itself:
+
+```text
+X-Owner-Ticket: <exact compact JWS returned by ticket issuance>
+X-Owner-Proof: {"version":1,"expires_at":0,"request_id":"<base64 32 random bytes>","signature":"<base64 raw P-521 signature>"}
+```
+
+The request body carries the raw `user_handle` and `db_prefix` — which
+only unwrapping the credential payload (§3) can reveal, and which the
+Worker needs to verify against the ticket's hashes below — alongside
+whatever fields that specific mutation needs:
 
 ```json
 {
-  "ticket": "<exact compact JWS returned by ticket issuance>",
-  "proof": {
-    "version": 1,
-    "expires_at": 0,
-    "request_id": "<base64 32 random bytes>",
-    "signature": "<base64 raw P-521 signature>"
-  }
+  "user_handle": "<base64 32 bytes>",
+  "db_prefix": "<52-character token>"
 }
 ```
+
+(Endpoint-specific fields, e.g. `docs/sharing.md`'s `share_id`, are
+additional top-level fields in this same body.)
 
 The signed canonical bytes are (see `docs/crypto.md` §3 for the signing
 mechanics):
@@ -170,6 +201,9 @@ SHA-256(UTF8(db_prefix)) ||
 SHA-256(UTF8(method) || 0x00 || UTF8(path) || 0x00 || body)
 ```
 
+`body` is the exact raw request body bytes (empty for a bodyless
+request) — not a re-serialization of it, since re-serializing JSON can
+reorder keys or change whitespace and silently break the signature.
 Binding the exact HTTP method, full request path, and body — not just an
 abstract "operation name" — matters because a target id such as a
 bookmark or share id typically travels in the URL (e.g. `DELETE
@@ -181,11 +215,16 @@ with the body closes that. `expires_at` is at most 60 seconds after the
 Worker's clock.
 
 The Worker verifies the ticket, re-derives the canonical bytes for the
-exact request it received, and verifies the signature with the ticket's
-`sign_public_key`. A valid signature proves possession of the owner's
-unwrapped private key; the `db_binding_hash` check proves the caller also
-knows the raw `db_prefix`, which only unwrapping the credential payload
-(§3) can reveal.
+exact request it received (method, path, and the exact raw body bytes it
+read before parsing them as JSON), and verifies the signature with the
+ticket's `sign_public_key`. A valid signature proves possession of the
+owner's unwrapped private key. It also independently checks
+`SHA-256(user_handle) == ticket.user_handle_hash` and
+`SHA-256(db_prefix) == ticket.db_binding_hash` from the parsed body — the
+canonical-bytes signature alone already covers these exact bytes, but
+this second, explicit comparison is what actually authorizes the request
+against the ticket's claims, rather than merely proving the body wasn't
+tampered with in transit.
 
 | Status      | Condition                                                     |
 | ----------- | ------------------------------------------------------------- |

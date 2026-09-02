@@ -56,10 +56,14 @@ object path.
 
 ### 3.1 `POST /v1/shares`
 
-Owner-only, requires a fresh proof (`docs/auth.md` §4.2):
+Owner-only. Requires the `X-Owner-Ticket`/`X-Owner-Proof` headers and the
+`user_handle`/`db_prefix` body fields described in `docs/auth.md` §4.2,
+alongside:
 
 ```json
 {
+  "user_handle": "<base64 32 bytes>",
+  "db_prefix": "<52-character token>",
   "document_id": 0,
   "share_id": "<canonical base64url 32 random bytes>",
   "share_content_key": "<base64 128 random bytes>",
@@ -129,12 +133,18 @@ occurred.
 
 ### 3.3 `DELETE /v1/shares`
 
-Owner-only, requires a fresh proof. No grant is needed here — the owner
-already holds `document_id` and the share's own `share_path` locally
-(from creating it, or from decrypting its own `owner_blob`):
+Owner-only (`X-Owner-Ticket`/`X-Owner-Proof` headers, `docs/auth.md`
+§4.2). No grant is needed here — the owner already holds `document_id`
+and the share's own `share_path` locally (from creating it, or from
+decrypting its own `owner_blob`):
 
 ```json
-{ "document_id": 0, "share_id": "<canonical base64url 32 random bytes>" }
+{
+  "user_handle": "<base64 32 bytes>",
+  "db_prefix": "<52-character token>",
+  "document_id": 0,
+  "share_id": "<canonical base64url 32 random bytes>"
+}
 ```
 
 The Worker re-derives `object_path_hash` from the request and the row's

@@ -45,11 +45,14 @@ committed, never passed through `scripts/deploy.sh`):
 
 ```text
 SHARE_GRANT_KEY
+TICKET_SIGNING_KEY
 ```
 
 `SHARE_GRANT_KEY` is an independent 32-byte secret (`openssl rand -base64
 32`) used only to encrypt/decrypt share-object-path grants (`docs/crypto.md`
-§"Share grant envelope", `docs/sharing.md`).
+§"Share grant envelope", `docs/sharing.md`). `TICKET_SIGNING_KEY` is an
+independent 32-byte secret (`openssl rand -base64 32`) used only to sign
+and verify the owner binding ticket (`docs/auth.md` §4.1).
 
 Plus the D1 binding (`DB`) and R2 bucket binding declared in
 `wrangler.jsonc`. Cloudflare terminates TLS and
