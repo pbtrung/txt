@@ -3,6 +3,9 @@
   "name": "txt",
   "main": "worker/index.ts",
   "compatibility_date": "2026-08-21",
+  // Custom domain in use instead -- add it as a "routes" entry (dashboard
+  // or wrangler.jsonc) separately; that's independent of this flag.
+  "workers_dev": false,
   // One Worker serves both /v1/* and the static UI (docs/deployment.md §1).
   // ASSETS is served by worker/index.ts explicitly delegating non-/v1/*
   // requests to it, not by Wrangler's default asset-first routing --
