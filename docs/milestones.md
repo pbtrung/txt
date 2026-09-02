@@ -26,6 +26,14 @@ a real D1 binding, and pytest for the Python tooling.
 
 ## Milestone 0 — Repo scaffolding
 
+**Status: done.** `worker/` holds the Worker source; `wrangler.jsonc`
+declares the entry point, static assets binding, D1 binding, and an R2
+binding (real bucket name supplied only at deploy time via `BUCKET_NAME`,
+never committed). `txt-dev` and `txt-ci` D1 databases are provisioned.
+`Env` comes from `wrangler types`' generated output rather than a
+hand-maintained duplicate. Tests run inside the real Workers runtime via
+`@cloudflare/vitest-pool-workers` (`worker/tests/index.test.ts`).
+
 - Add a `worker/` directory (or `src/worker/`, matching whatever the UI
   build's existing layout prefers) for the Worker's TypeScript source,
   separate from `ui/`.
@@ -44,9 +52,19 @@ returning `200` and the built UI shell at `/`.
 
 ## Milestone 1 — D1 schema and migration tooling
 
+**Status: done.** Schema changes are tracked with `wrangler d1 migrations`
+(`worker/migrations/0001_initial_schema.sql`), not a bespoke
+`schema_migrations` table — documented in `docs/data_model.md` §2.
+`PRAGMA foreign_keys` was confirmed on by default in D1 and not something
+a caller can turn off (`PRAGMA foreign_keys = OFF` runs without error but
+doesn't change subsequent enforcement) — `worker/tests/db.test.ts` proved
+this empirically rather than assuming it, so no startup assertion was
+needed. Tests run against a real D1 binding via
+`@cloudflare/vitest-pool-workers`, not a mocked SQLite.
+
 - Apply the schema in `docs/data_model.md` §2 to the dev D1 database.
   Decide now whether schema changes are tracked with `wrangler d1
-  migrations` or the bespoke `schema_migrations` table the design keeps
+migrations` or the bespoke `schema_migrations` table the design keeps
   for parity with today's `RqliteUpdater` — pick one and document the
   choice in `docs/data_model.md` rather than leaving it open.
 - Confirm `PRAGMA foreign_keys` is actually on for every connection the
@@ -63,14 +81,18 @@ returning `200` and the built UI shell at `/`.
 identified and fixed on paper:**
 
 - Insert a `documents` row whose `content_key_id` references a
-  `key_store` row of the *wrong* purpose → `trg_documents_key_purpose`
+  `key_store` row of the _wrong_ purpose → `trg_documents_key_purpose`
   aborts.
 - Insert a `documents` row whose `content_key_id` references a
-  *nonexistent* `key_store` row (with `foreign_keys` deliberately
-  disabled for this one test, to prove the trigger — not the FK
-  constraint — is what catches it) → still aborts. This is the specific
-  `IS NOT` vs. `!=` regression to guard against: write this test first,
-  confirm it fails against a `!=`-based trigger, then confirm it passes
+  _nonexistent_ `key_store` row → still aborts, with the trigger's own
+  error message (not a generic constraint error) — proving the `BEFORE
+INSERT` trigger catches it before the `FOREIGN KEY` constraint even
+  runs. Disabling `foreign_keys` to isolate this turned out to be
+  unnecessary: D1 doesn't allow it to be disabled in the first place
+  (see Status above), and a `BEFORE INSERT` trigger fires before the `FK`
+  check regardless. This is the specific `IS NOT` vs. `!=` regression to
+  guard against: write this test first, confirm it fails against a
+  `!=`-based trigger, then confirm it passes
   against the shipped `IS NOT` version.
 - Insert 25 bookmarks for one document → exactly 20 remain, and
   `SELECT count(*) FROM key_store WHERE purpose = 'bookmark_key'` shows
@@ -203,7 +225,7 @@ than no comment at all.
 ## Milestone 7 — Sharing
 
 - Implement `POST /v1/shares`, `POST /v1/shared-url`, `DELETE
-  /v1/shares` per `docs/sharing.md` §3, using the D1-direct lookup (no
+/v1/shares` per `docs/sharing.md` §3, using the D1-direct lookup (no
   grant envelope) and the Milestone 2 sharing-content encryption for the
   EPUB copy itself.
 - UI: the creation flow (§4) and recipient flow (§5), including the
@@ -223,7 +245,7 @@ than no comment at all.
   already deleted) rather than an undefined race.
 - Idempotent re-registration: calling `POST /v1/shares` twice with the
   same capability and path succeeds both times; with the same capability
-  and a *different* path returns `409`.
+  and a _different_ path returns `409`.
 - Bundle-size or import-graph assertion that the shared-reading route
   doesn't transitively import the leancrypto/WASM module.
 

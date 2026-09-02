@@ -20,8 +20,8 @@ whole-file passphrase has no equivalent here. Instead, every row holding
 sensitive data gets its own fresh 128-byte random key, generated
 client-side at write time. That per-row key is wrapped by the unwrapped
 owner master key (`umk`) using the Encrypt procedure (`docs/crypto.md`),
-and the row's own payload is wrapped by the *resulting unwrapped per-row
-key* — not by `umk` directly. `key_store` holds every wrapped per-row
+and the row's own payload is wrapped by the _resulting unwrapped per-row
+key_ — not by `umk` directly. `key_store` holds every wrapped per-row
 key, referenced by the row it protects.
 
 A per-row key closes a relocation risk the Blob Format's additional data
@@ -38,13 +38,12 @@ CFI, bookmark text, or share capability material.
 
 ## 2. Schema
 
-```sql
-CREATE TABLE schema_migrations (
-    version    INTEGER PRIMARY KEY,
-    name       TEXT    NOT NULL UNIQUE,
-    applied_at INTEGER NOT NULL
-) STRICT;
+Schema changes are tracked by `wrangler d1 migrations` (`worker/migrations/
+NNNN_*.sql`, applied and recorded in its own `d1_migrations` table) rather
+than a bespoke `schema_migrations` table — first-class Cloudflare tooling
+for exactly this, with no reason to duplicate it by hand.
 
+```sql
 CREATE TABLE owner (
     singleton                INTEGER PRIMARY KEY CHECK (singleton = 1),
     created_at                INTEGER NOT NULL,
@@ -183,13 +182,18 @@ wrong-but-present purpose does. Because the purpose-check triggers run
 inserting `documents` before its `content_key_id`/`access_key_id` rows
 exist fails validation rather than the other way around.
 
-Confirm D1 enforces `FOREIGN KEY` constraints on every connection before
-relying on `bookmarks.document_id ON DELETE CASCADE` or
-`shares.document_id ON DELETE RESTRICT` actually firing: SQLite's
-`foreign_keys` pragma is off by default per connection unless explicitly
-turned on. The `key_store` cleanup/purpose-check triggers above aren't
-affected by this — plain `CREATE TRIGGER` objects fire on the
-`INSERT`/`DELETE` event itself, independent of the `foreign_keys` pragma.
+Unlike plain SQLite, where `foreign_keys` defaults to off per connection,
+D1 enforces it by default and doesn't allow turning it off: `PRAGMA
+foreign_keys = OFF` runs without error but a subsequent read of the pragma
+still reports it on, and a dangling reference is still rejected. `docs/
+milestones.md`'s Milestone 1 confirmed this empirically (`worker/tests/
+db.test.ts`) rather than assuming it — `bookmarks.document_id ON DELETE
+CASCADE` and `shares.document_id ON DELETE RESTRICT` can be relied on. The
+`key_store` cleanup/purpose-check triggers don't depend on this either
+way — plain `CREATE TRIGGER` objects fire on the `INSERT`/`DELETE` event
+itself, independent of the `foreign_keys` pragma, and in fact catch a
+dangling `key_store` reference _before_ the `FOREIGN KEY` constraint would:
+a `BEFORE INSERT` trigger runs first.
 
 `documents.id`, `bookmarks.id`, and `key_store.id` are plain
 `AUTOINCREMENT` integers rather than random tokens: every read and write
@@ -232,7 +236,7 @@ same core fields in its own internal package document, so the Reader gets
 full metadata by parsing that directly once it has the document's bytes
 in hand, rather than this duplicating it.
 
-Everything needed to actually *open* a document (`content_key`, its EPUB
+Everything needed to actually _open_ a document (`content_key`, its EPUB
 `path`) is authoritative in `documents.content_blob` — the Worker's own
 library query already returns that row. The catalog object exists purely
 to make the Library screen's initial browse/search list fast: fetching
@@ -241,7 +245,7 @@ fields is strictly cheaper than N D1 rows and N per-row decrypts.
 
 **Write order and recovery.** The `documents` row (D1) and the catalog
 object (R2) are two independent stores with no cross-system transaction.
-Ingestion inserts the new `documents`/`key_store` rows into D1 *first*,
+Ingestion inserts the new `documents`/`key_store` rows into D1 _first_,
 then rewrites the catalog object second. That ordering makes an
 interruption between the two steps a safe, self-correcting state rather
 than a broken one: a `documents` row that exists but isn't in the catalog
@@ -253,7 +257,7 @@ would show and then fail to open. Ingestion re-runs are idempotent for
 this reason: each run reconciles by checking for any `documents` row not
 yet represented in the current catalog object and adding it.
 
-**Scaling assumption.** Because catalog is one object holding *every*
+**Scaling assumption.** Because catalog is one object holding _every_
 document's display metadata, adding a single new book means fully
 downloading, decrypting, re-encrypting, and re-uploading the entire
 catalog object, not just appending an entry. This holds up fine at
@@ -323,7 +327,7 @@ load. EPUB content stays in R2, fetched and decrypted client-side.
 ## 4. Concurrency
 
 A D1 transaction guarantees one statement or batch is atomic and
-consistent; it says nothing about two *different* requests, from two
+consistent; it says nothing about two _different_ requests, from two
 devices, each independently reading then overwriting the same row.
 `documents.access_blob` is the row most exposed to this: two devices
 syncing reading position near-simultaneously could otherwise silently
@@ -343,7 +347,7 @@ every successive `access_blob` for that row, with a fresh salt and IV
 each time (`docs/crypto.md`); rotating it would mint a new `key_store`
 row on every coalesced reading-state write with no trigger positioned to
 clean up the old one, since the delete-cascading triggers fire on row
-*deletion*, not on an in-place `*_key_id` change. Zero rows affected
+_deletion_, not on an in-place `*_key_id` change. Zero rows affected
 means another write landed first; the Worker returns `412`, and the
 client re-fetches the row, reapplies its semantic mutation, and retries,
 up to a bounded limit.
