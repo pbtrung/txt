@@ -41,6 +41,47 @@ export async function handleGetBookmarks(env: Env, url: URL): Promise<Response> 
   });
 }
 
+interface BookmarkSummaryRow {
+  document_id: number;
+  key_wrapped: ArrayBuffer;
+  bookmark_blob: ArrayBuffer;
+  created_at: number;
+  count: number;
+}
+
+// One row per document that has at least one bookmark: its total count
+// (a plaintext aggregate -- no decryption needed) and its single latest
+// bookmark's wrapped key + blob, for the Library screen's bookmark badge
+// and "recently bookmarked" section without an N+1 fetch across every book.
+const BOOKMARKS_SUMMARY_QUERY = `
+  SELECT document_id, key_wrapped, bookmark_blob, created_at, count
+  FROM (
+    SELECT b.document_id, k.wrapped_key AS key_wrapped, b.bookmark_blob, b.created_at,
+           COUNT(*) OVER (PARTITION BY b.document_id) AS count,
+           ROW_NUMBER() OVER (
+             PARTITION BY b.document_id ORDER BY b.created_at DESC, b.id DESC
+           ) AS rn
+    FROM bookmarks b
+    JOIN key_store k ON k.id = b.key_id
+  )
+  WHERE rn = 1
+`;
+
+export async function handleGetBookmarksSummary(env: Env): Promise<Response> {
+  const { results } = await env.DB.prepare(
+    BOOKMARKS_SUMMARY_QUERY,
+  ).all<BookmarkSummaryRow>();
+  return Response.json({
+    summaries: results.map((row) => ({
+      document_id: row.document_id,
+      count: row.count,
+      key_wrapped: base64Encode(row.key_wrapped),
+      bookmark_blob: base64Encode(row.bookmark_blob),
+      created_at: row.created_at,
+    })),
+  });
+}
+
 export async function handlePostBookmark(
   env: Env,
   proof: ProofContext,

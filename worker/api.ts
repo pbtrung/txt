@@ -15,6 +15,7 @@ import { handleGetDocuments, handlePatchDocumentAccess } from "./documentsEndpoi
 import { handleGetCatalog } from "./catalogEndpoint";
 import {
   handleGetBookmarks,
+  handleGetBookmarksSummary,
   handlePostBookmark,
   handleDeleteBookmark,
 } from "./bookmarksEndpoint";
@@ -73,6 +74,12 @@ const ROUTES: Record<string, Partial<Record<string, Route>>> = {
       requiresProof: true,
       handler: (_request, env, ctx) => handlePostBookmark(env, ctx.proof!),
     },
+  },
+  // Registered before "/v1/bookmarks/:id" below -- findRoute() matches in
+  // insertion order, and both patterns have the same segment count, so
+  // "summary" would otherwise be captured as an :id.
+  "/v1/bookmarks/summary": {
+    GET: { handler: (_request, env) => handleGetBookmarksSummary(env) },
   },
   "/v1/bookmarks/:id": {
     DELETE: {
