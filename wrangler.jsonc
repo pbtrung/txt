@@ -43,9 +43,12 @@
   // The real database_id is never committed here -- scripts/deploy.sh
   // resolves or creates the production database (wrangler d1 list/create)
   // and substitutes its id, the same sed pattern as every other
-  // "replace-me-*" placeholder. Local `wrangler dev`/tests don't need a
-  // real value either: Miniflare's local D1 emulation uses this string
-  // only as an opaque local cache key, not a real database lookup.
+  // "replace-me-*" placeholder; it also rewrites database_name to
+  // "txt-production" in that same substitution, so a deploy's own
+  // bindings summary names the database actually bound instead of this
+  // local dev label. Local `wrangler dev`/tests don't need a real value
+  // either: Miniflare's local D1 emulation uses this string only as an
+  // opaque local cache key, not a real database lookup.
   "d1_databases": [
     {
       "binding": "DB",

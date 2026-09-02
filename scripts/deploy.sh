@@ -90,7 +90,8 @@ fi
 sed_script="s/replace-me-bucket-name/$BUCKET_NAME/
 s/replace-me-owner-email/$OWNER_EMAIL/
 s/replace-me-account-id/$CF_ACCOUNT_ID/
-s/replace-me-database-id/$DATABASE_ID/"
+s/replace-me-database-id/$DATABASE_ID/
+s/\"database_name\": \"txt-dev\"/\"database_name\": \"$D1_DATABASE_NAME\"/"
 if [ "$SKIP_ACCESS_CHECK" = "true" ]; then
   sed_script="$sed_script
 s/\"SKIP_ACCESS_CHECK\": \"false\"/\"SKIP_ACCESS_CHECK\": \"true\"/"
@@ -109,14 +110,24 @@ config=$(mktemp ./wrangler.deploy.XXXXXX.jsonc)
 trap 'rm -f "$config"' EXIT HUP INT TERM
 sed -e "$sed_script" wrangler.jsonc > "$config"
 
+# --env="": $config still carries the whole "env" block from wrangler.jsonc
+# (env.ci, for CI's own separate D1 database) verbatim -- only specific
+# placeholders get substituted above, not the file's structure. Without an
+# explicit --env, Wrangler's own environment resolution (which can be
+# swayed by an ambient CLOUDFLARE_ENV) is not guaranteed to pick the
+# top-level environment this script actually configured; forcing it
+# explicitly is the fix Wrangler's own "multiple environments" warning
+# suggests, and the only way to guarantee this deploy's D1/R2/vars
+# bindings are the ones just resolved and substituted above, not env.ci's.
+
 # Apply any pending D1 migrations (worker/migrations/) before deploying
 # Worker code that expects the schema they add -- `wrangler deploy` does
 # not do this on its own.
-npx wrangler d1 migrations apply DB --remote --config "$config"
+npx wrangler d1 migrations apply DB --remote --config "$config" --env=""
 
 npm run ui:build
 
-npx wrangler deploy --config "$config"
+npx wrangler deploy --config "$config" --env=""
 
 echo "Remember: SHARE_GRANT_KEY, TICKET_SIGNING_KEY, R2_PARENT_API_TOKEN, and" >&2
 echo "R2_PARENT_ACCESS_KEY_ID are set once via 'wrangler secret put <NAME>'," >&2
