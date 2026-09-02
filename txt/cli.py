@@ -7,6 +7,7 @@ from .creds import load_owner_creds
 from .edit_epub import EpubEditor
 from .ingest import TxtIngester
 from .logger import Logger
+from .migrate_rql import RqlMigrator, load_rql_creds
 from .owner_init import OwnerInitializer
 from .replace_images import ImageReplacer
 
@@ -42,17 +43,38 @@ from .replace_images import ImageReplacer
     help="Ingest every *.epub in SRC_DIR (needs --local-db-dir and --creds)",
 )
 @click.option(
+    "--migrate-rql",
+    "migrate_rql_creds",
+    nargs=2,
+    type=click.Path(),
+    metavar="RQL_CREDS_JSON CF_CREDS_JSON",
+    help=(
+        "Import one owner's rqlite+SQLCipher library (RQL_CREDS_JSON) into "
+        "the D1 owner in CF_CREDS_JSON (needs --local-db-dir)"
+    ),
+)
+@click.option(
     "--local-db-dir",
     "local_db_dir",
     type=click.Path(),
     metavar="DIR",
-    help="Local working directory for the ingest recovery checkpoint, for --ingest",
+    help=(
+        "Local working directory for the recovery checkpoint, "
+        "for --ingest and --migrate-rql"
+    ),
 )
 @click.option(
     "--creds",
     "ingest_creds_path",
     metavar="CREDS_JSON",
     help="creds.json for --ingest",
+)
+@click.option(
+    "--limit",
+    "migrate_limit",
+    type=int,
+    metavar="N",
+    help="Migrate at most N not-yet-migrated documents, for --migrate-rql",
 )
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose progress logging")
 @click.pass_context
@@ -104,11 +126,21 @@ def _dispatch_ingest(opts: dict, logger: Logger) -> None:
     )
 
 
+def _dispatch_migrate_rql(opts: dict, logger: Logger) -> None:
+    _run_migrate_rql(
+        opts["migrate_rql_creds"],
+        opts["local_db_dir"],
+        opts["migrate_limit"],
+        logger,
+    )
+
+
 COMMAND_HANDLERS = (
     ("owner_creds_path", _dispatch_init_owner),
     ("replace_images_dirs", _dispatch_replace_images),
     ("edit_epub_dirs", _dispatch_edit_epub),
     ("ingest_src_dir", _dispatch_ingest),
+    ("migrate_rql_creds", _dispatch_migrate_rql),
 )
 
 
@@ -136,6 +168,22 @@ def _run_ingest(
         )
     creds = load_owner_creds(creds_path)
     TxtIngester(Path(src_dir), Path(local_db_dir), creds, creds_path, logger).run()
+
+
+def _run_migrate_rql(
+    creds_paths: tuple[str, str],
+    local_db_dir: str | None,
+    limit: int | None,
+    logger: Logger,
+) -> None:
+    if not local_db_dir:
+        raise click.UsageError("--migrate-rql requires --local-db-dir DIR")
+    rql_creds_path, cf_creds_path = creds_paths
+    rql_creds = load_rql_creds(rql_creds_path)
+    cf_creds = load_owner_creds(cf_creds_path)
+    RqlMigrator(
+        rql_creds, cf_creds, cf_creds_path, Path(local_db_dir), logger, limit=limit
+    ).run()
 
 
 def run(argv: list | None = None) -> None:

@@ -113,6 +113,65 @@ def test_ingest_loads_creds_and_runs_ingester(monkeypatch, tmp_path):
     assert captured["ran"] is True
 
 
+def test_migrate_rql_without_local_db_dir_is_a_usage_error(tmp_path):
+    rql_creds = tmp_path / "rql_creds.json"
+    cf_creds = tmp_path / "cf_creds.json"
+    rql_creds.write_text("{}")
+    cf_creds.write_text("{}")
+    result = CliRunner().invoke(cli, ["--migrate-rql", str(rql_creds), str(cf_creds)])
+    assert result.exit_code != 0
+    assert "--local-db-dir" in result.output
+
+
+def test_migrate_rql_loads_both_creds_and_runs_migrator(monkeypatch, tmp_path):
+    captured = {}
+    rql_loaded, cf_loaded = object(), object()
+
+    class FakeMigrator:
+        def __init__(
+            self, rql_creds, cf_creds, cf_path, local_db_dir, logger, *, limit
+        ):
+            captured.update(
+                rql_creds=rql_creds,
+                cf_creds=cf_creds,
+                cf_path=cf_path,
+                local_db_dir=local_db_dir,
+                limit=limit,
+            )
+
+        def run(self):
+            captured["ran"] = True
+
+    rql_creds_path = tmp_path / "rql_creds.json"
+    cf_creds_path = tmp_path / "cf_creds.json"
+    rql_creds_path.write_text("{}")
+    cf_creds_path.write_text("{}")
+    local = tmp_path / "local"
+    monkeypatch.setattr(cli_module, "load_rql_creds", lambda value: rql_loaded)
+    monkeypatch.setattr(cli_module, "load_owner_creds", lambda value: cf_loaded)
+    monkeypatch.setattr(cli_module, "RqlMigrator", FakeMigrator)
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--migrate-rql",
+            str(rql_creds_path),
+            str(cf_creds_path),
+            "--local-db-dir",
+            str(local),
+            "--limit",
+            "10",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["rql_creds"] is rql_loaded
+    assert captured["cf_creds"] is cf_loaded
+    assert captured["cf_path"] == str(cf_creds_path)
+    assert captured["limit"] == 10
+    assert captured["ran"] is True
+
+
 def test_rejects_multiple_primary_commands(tmp_path):
     src, dst = tmp_path / "src", tmp_path / "dst"
     src.mkdir()
