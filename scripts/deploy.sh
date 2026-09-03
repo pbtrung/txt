@@ -110,24 +110,14 @@ config=$(mktemp ./wrangler.deploy.XXXXXX.jsonc)
 trap 'rm -f "$config"' EXIT HUP INT TERM
 sed -e "$sed_script" wrangler.jsonc > "$config"
 
-# --env="": $config still carries the whole "env" block from wrangler.jsonc
-# (env.ci, for CI's own separate D1 database) verbatim -- only specific
-# placeholders get substituted above, not the file's structure. Without an
-# explicit --env, Wrangler's own environment resolution (which can be
-# swayed by an ambient CLOUDFLARE_ENV) is not guaranteed to pick the
-# top-level environment this script actually configured; forcing it
-# explicitly is the fix Wrangler's own "multiple environments" warning
-# suggests, and the only way to guarantee this deploy's D1/R2/vars
-# bindings are the ones just resolved and substituted above, not env.ci's.
-
 # Apply any pending D1 migrations (worker/migrations/) before deploying
 # Worker code that expects the schema they add -- `wrangler deploy` does
 # not do this on its own.
-npx wrangler d1 migrations apply DB --remote --config "$config" --env=""
+npx wrangler d1 migrations apply DB --remote --config "$config"
 
 npm run ui:build
 
-npx wrangler deploy --config "$config" --env=""
+npx wrangler deploy --config "$config"
 
 echo "Remember: SHARE_GRANT_KEY, TICKET_SIGNING_KEY, R2_PARENT_ACCESS_KEY_ID," >&2
 echo "and R2_PARENT_SECRET_ACCESS_KEY are set once via 'wrangler secret put" >&2

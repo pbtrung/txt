@@ -68,26 +68,5 @@
       "binding": "BUCKET",
       "bucket_name": "replace-me-bucket-name"
     }
-  ],
-  // Bindings for `wrangler <cmd> --env ci` (e.g. verifying migrations apply
-  // cleanly against a real, shared D1 instance in a CI job) -- distinct
-  // from the ephemeral, per-run local D1/R2 that worker/vitest.config.ts
-  // configures for the actual test suite (docs/milestones.md Milestone 1).
-  "env": {
-    "ci": {
-      "assets": {
-        "directory": "./dist",
-        "binding": "ASSETS",
-        "not_found_handling": "single-page-application"
-      },
-      "d1_databases": [
-        {
-          "binding": "DB",
-          "database_name": "txt-ci",
-          "database_id": "9b0c2cf4-2eb8-43c7-b08d-c8383bec0580",
-          "migrations_dir": "worker/migrations"
-        }
-      ]
-    }
-  }
+  ]
 }
