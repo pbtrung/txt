@@ -14,8 +14,9 @@ See [authentication](docs/auth.md), [data model](docs/data_model.md),
 [cryptography](docs/crypto.md), [deployment](docs/deployment.md), and the
 [implementation plan](docs/milestones.md) for the complete design. The design
 is decided; implementation is in progress per `docs/milestones.md`. The
-Python CLI's `--init-owner`, `--ingest`, `--clean-bucket`, and `--clean-db`,
-and the browser UI, target the Cloudflare/D1 design described here.
+Python CLI's `--init-owner`, `--ingest`, `--clean-bucket`, `--clean-db`, and
+`--update-db`, and the browser UI, target the Cloudflare/D1 design described
+here.
 
 ## Architecture
 
@@ -150,6 +151,19 @@ what would be deleted without deleting it:
 txt --clean-bucket creds.json --dry-run --verbose
 txt --clean-bucket creds.json --verbose
 txt --clean-db creds.json --verbose
+```
+
+## One-time data migrations
+
+`--update-db` clears `documents.access_key_id`/`access_blob` back to
+`NULL` for every document that still has them set from before those
+columns became nullable (`worker/migrations/0002_nullable_access.sql`) —
+apply that migration first. Takes the owner's usual `creds.json` and
+supports `--dry-run`:
+
+```sh
+txt --update-db creds.json --dry-run --verbose
+txt --update-db creds.json --verbose
 ```
 
 ## Development checks

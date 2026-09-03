@@ -396,6 +396,16 @@ schema-migration/validation function that only `db_updater.py` called
 was removed alongside it, and `database_schema.py` (the predecessor
 `txt`/`txt_bookmarks` table definitions) went with it.
 
+`--update-db` was later reintroduced, unrelated to that removed command
+and its predecessor-schema purpose: a one-time *data* migration (not a
+schema change — `wrangler d1 migrations` still owns those) clearing
+`documents.access_key_id`/`access_blob` back to `NULL` for documents
+ingested before `worker/migrations/0002_nullable_access.sql` made those
+columns nullable and `catalog_writer.py` stopped minting an access key
+eagerly. A single D1 `UPDATE` (`txt/db_updater.py`) does this for every
+row at once; `trg_documents_clear_access_key` deletes each now-orphaned
+`key_store` row automatically.
+
 A one-time `--migrate-rql` command later imported a predecessor
 deployment's rqlite-hosted `owner_control` row and whole R2-hosted
 SQLCipher database into a provisioned D1 owner, briefly reintroducing

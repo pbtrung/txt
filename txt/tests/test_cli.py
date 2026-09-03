@@ -163,6 +163,31 @@ def test_clean_db_loads_creds_and_runs_cleaner(monkeypatch, tmp_path):
     assert captured["ran"] is True
 
 
+def test_update_db_loads_creds_and_runs_updater(monkeypatch, tmp_path):
+    captured = {}
+    creds = object()
+
+    class FakeUpdater:
+        def __init__(self, loaded, path, logger, *, dry_run):
+            captured.update(creds=loaded, path=path, dry_run=dry_run)
+
+        def run(self):
+            captured["ran"] = True
+
+    path = tmp_path / "creds.json"
+    path.write_text("{}")
+    monkeypatch.setattr(cli_module, "load_owner_creds", lambda value: creds)
+    monkeypatch.setattr(cli_module, "DbUpdater", FakeUpdater)
+
+    result = CliRunner().invoke(cli, ["--update-db", str(path), "--dry-run"])
+
+    assert result.exit_code == 0
+    assert captured["creds"] is creds
+    assert captured["path"] == str(path)
+    assert captured["dry_run"] is True
+    assert captured["ran"] is True
+
+
 def test_rejects_multiple_primary_commands(tmp_path):
     src, dst = tmp_path / "src", tmp_path / "dst"
     src.mkdir()

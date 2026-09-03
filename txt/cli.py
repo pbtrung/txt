@@ -6,6 +6,7 @@ import click
 from .bucket_cleaner import BucketCleaner
 from .creds import load_owner_creds
 from .db_cleaner import DbCleaner
+from .db_updater import DbUpdater
 from .edit_epub import EpubEditor
 from .ingest import TxtIngester
 from .logger import Logger
@@ -69,10 +70,23 @@ from .replace_images import ImageReplacer
     help="Retry cleanup of any 'shares' row stuck in state='deleting'",
 )
 @click.option(
+    "--update-db",
+    "update_db_creds_path",
+    metavar="CREDS_JSON",
+    help=(
+        "One-time data migration: clear every document's access_key_id/"
+        "access_blob back to NULL (needs worker/migrations/"
+        "0002_nullable_access.sql already applied)"
+    ),
+)
+@click.option(
     "--dry-run",
     "dry_run",
     is_flag=True,
-    help="Report what --clean-bucket/--clean-db would delete without deleting it",
+    help=(
+        "Report what --clean-bucket/--clean-db/--update-db would change "
+        "without changing it"
+    ),
 )
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose progress logging")
 @click.pass_context
@@ -132,6 +146,10 @@ def _dispatch_clean_db(opts: dict, logger: Logger) -> None:
     _run_clean_db(opts["clean_db_creds_path"], opts["dry_run"], logger)
 
 
+def _dispatch_update_db(opts: dict, logger: Logger) -> None:
+    _run_update_db(opts["update_db_creds_path"], opts["dry_run"], logger)
+
+
 COMMAND_HANDLERS = (
     ("owner_creds_path", _dispatch_init_owner),
     ("replace_images_dirs", _dispatch_replace_images),
@@ -139,6 +157,7 @@ COMMAND_HANDLERS = (
     ("ingest_src_dir", _dispatch_ingest),
     ("clean_bucket_creds_path", _dispatch_clean_bucket),
     ("clean_db_creds_path", _dispatch_clean_db),
+    ("update_db_creds_path", _dispatch_update_db),
 )
 
 
@@ -176,6 +195,11 @@ def _run_clean_bucket(creds_path: str, dry_run: bool, logger: Logger) -> None:
 def _run_clean_db(creds_path: str, dry_run: bool, logger: Logger) -> None:
     creds = load_owner_creds(creds_path)
     DbCleaner(creds, creds_path, logger, dry_run=dry_run).run()
+
+
+def _run_update_db(creds_path: str, dry_run: bool, logger: Logger) -> None:
+    creds = load_owner_creds(creds_path)
+    DbUpdater(creds, creds_path, logger, dry_run=dry_run).run()
 
 
 def run(argv: list | None = None) -> None:
