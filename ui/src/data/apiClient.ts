@@ -139,14 +139,13 @@ export class ApiClient {
 
   async fetchOwner(signal?: AbortSignal): Promise<OwnerRecord> {
     const response = await this.get("/v1/owner", signal);
-    if (!response.ok)
-      throw new Error(`could not fetch owner record: ${response.status}`);
+    requireOk(response, "fetch owner record");
     return parseOwnerRecord(await response.json());
   }
 
   async fetchDocuments(signal?: AbortSignal): Promise<DocumentRow[]> {
     const response = await this.get("/v1/documents", signal);
-    if (!response.ok) throw new Error(`could not fetch documents: ${response.status}`);
+    requireOk(response, "fetch documents");
     const data = objectRecord(await response.json(), "documents response");
     if (!Array.isArray(data.documents)) {
       throw new Error("documents response is missing documents");
@@ -156,7 +155,7 @@ export class ApiClient {
 
   async fetchCatalog(signal?: AbortSignal): Promise<CatalogRow | null> {
     const response = await this.get("/v1/catalog", signal);
-    if (!response.ok) throw new Error(`could not fetch catalog: ${response.status}`);
+    requireOk(response, "fetch catalog");
     const data = objectRecord(await response.json(), "catalog response");
     return data.catalog === null ? null : parseCatalogRow(data.catalog);
   }
@@ -169,7 +168,7 @@ export class ApiClient {
       `/v1/bookmarks?${new URLSearchParams({ document_id: String(documentId) })}`,
       signal,
     );
-    if (!response.ok) throw new Error(`could not fetch bookmarks: ${response.status}`);
+    requireOk(response, "fetch bookmarks");
     const data = objectRecord(await response.json(), "bookmarks response");
     if (!Array.isArray(data.bookmarks)) {
       throw new Error("bookmarks response is missing bookmarks");
@@ -179,9 +178,7 @@ export class ApiClient {
 
   async fetchBookmarksSummary(signal?: AbortSignal): Promise<BookmarkSummaryRow[]> {
     const response = await this.get("/v1/bookmarks/summary", signal);
-    if (!response.ok) {
-      throw new Error(`could not fetch bookmarks summary: ${response.status}`);
-    }
+    requireOk(response, "fetch bookmarks summary");
     const data = objectRecord(await response.json(), "bookmarks summary response");
     if (!Array.isArray(data.summaries)) {
       throw new Error("bookmarks summary response is missing summaries");
@@ -191,7 +188,7 @@ export class ApiClient {
 
   async fetchShares(signal?: AbortSignal): Promise<ShareRow[]> {
     const response = await this.get("/v1/shares", signal);
-    if (!response.ok) throw new Error(`could not fetch shares: ${response.status}`);
+    requireOk(response, "fetch shares");
     const data = objectRecord(await response.json(), "shares response");
     if (!Array.isArray(data.shares)) {
       throw new Error("shares response is missing shares");
@@ -212,9 +209,7 @@ export class ApiClient {
       {},
       signal,
     );
-    if (!response.ok) {
-      throw new Error(`could not obtain R2 credentials: ${response.status}`);
-    }
+    requireOk(response, "obtain R2 credentials");
     return parseR2CredentialSet(await response.json());
   }
 
@@ -235,9 +230,7 @@ export class ApiClient {
       signal,
     );
     if (response.status === 412) throw new AccessVersionConflictError();
-    if (!response.ok) {
-      throw new Error(`could not update reading position: ${response.status}`);
-    }
+    requireOk(response, "update reading position");
     const data = objectRecord(await response.json(), "access update response");
     return numberField(data, "access_version", "access update response");
   }
@@ -262,7 +255,7 @@ export class ApiClient {
       },
       signal,
     );
-    if (!response.ok) throw new Error(`could not save bookmark: ${response.status}`);
+    requireOk(response, "save bookmark");
     const data = objectRecord(await response.json(), "bookmark response");
     return numberField(data, "id", "bookmark response");
   }
@@ -281,7 +274,7 @@ export class ApiClient {
       {},
       signal,
     );
-    if (!response.ok) throw new Error(`could not delete bookmark: ${response.status}`);
+    requireOk(response, "delete bookmark");
   }
 
   async createShare(
@@ -310,7 +303,7 @@ export class ApiClient {
       },
       signal,
     );
-    if (!response.ok) throw new Error(`could not register share: ${response.status}`);
+    requireOk(response, "register share");
     const data = objectRecord(await response.json(), "share response");
     return stringField(data, "grant", "share response");
   }
@@ -333,7 +326,7 @@ export class ApiClient {
       },
       signal,
     );
-    if (!response.ok) throw new Error(`could not delete share: ${response.status}`);
+    requireOk(response, "delete share");
   }
 
   private async get(path: string, signal?: AbortSignal): Promise<Response> {
@@ -370,6 +363,10 @@ export class ApiClient {
   private url(path: string): string {
     return this.baseUrl + path;
   }
+}
+
+function requireOk(response: Response, label: string): void {
+  if (!response.ok) throw new Error(`could not ${label}: ${response.status}`);
 }
 
 function numberField(

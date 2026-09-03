@@ -17,7 +17,7 @@ export async function withNetworkRetries<T>(
   }
 }
 
-export async function withNetworkTimeout<T>(
+async function withNetworkTimeout<T>(
   operation: (signal: AbortSignal) => Promise<T>,
 ): Promise<T> {
   const controller = new AbortController();

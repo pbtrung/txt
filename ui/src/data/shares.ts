@@ -89,8 +89,20 @@ export async function createBookShare(
   );
 
   onProgress?.("Registering share");
+  await registerShare(session, umk, txtId, material);
+}
+
+// Wraps a fresh key_store row key, encrypts owner_blob under it, and calls
+// createShare() -- both createBookShare() (fresh material) and shareUrl()
+// (re-registering existing material purely to obtain a new grant,
+// docs/sharing.md §3.2) do exactly this sequence.
+async function registerShare(
+  session: ShareSession,
+  umk: Uint8Array,
+  txtId: number,
+  material: ShareMaterial,
+): Promise<string> {
   const rowKey = crypto.getRandomValues(new Uint8Array(128));
-  const keyWrapped = await encrypt(rowKey, umk);
   const ownerBlob = await encryptJson(
     {
       share_id: base64Url(material.shareId),
@@ -99,12 +111,12 @@ export async function createBookShare(
     },
     rowKey,
   );
-  await session.api.createShare(
+  return session.api.createShare(
     {
       documentId: txtId,
       shareId: base64Url(material.shareId),
       sharePath: material.sharePath,
-      keyWrapped,
+      keyWrapped: await encrypt(rowKey, umk),
       ownerBlob,
     },
     session.signing,
@@ -140,25 +152,7 @@ export async function shareUrl(
   // untouched -- these are re-derived the same way createBookShare() built
   // them the first time purely so the request body is well-formed, not
   // because the server will store them again.
-  const rowKey = crypto.getRandomValues(new Uint8Array(128));
-  const grant = await session.api.createShare(
-    {
-      documentId: share.txtId,
-      shareId: base64Url(share.shareId),
-      sharePath: share.sharePath,
-      keyWrapped: await encrypt(rowKey, umk),
-      ownerBlob: await encryptJson(
-        {
-          share_id: base64Url(share.shareId),
-          share_content_key: toBase64(share.contentKey),
-          share_path: share.sharePath,
-        },
-        rowKey,
-      ),
-    },
-    session.signing,
-    session.dbPrefix,
-  );
+  const grant = await registerShare(session, umk, share.txtId, share);
   const url = new URL("/shared", window.location.origin);
   url.hash = new URLSearchParams({
     id: base64Url(share.shareId),

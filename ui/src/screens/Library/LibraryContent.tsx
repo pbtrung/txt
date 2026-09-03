@@ -9,6 +9,7 @@ import {
   createBookSearch,
   recentlyAccessed,
   recentlyBookmarked,
+  type BookSearchIndex,
   type BrowseDimension,
 } from "./libraryModel";
 import {
@@ -58,7 +59,15 @@ export function LibraryContent({
         <RecentBooks {...{ books, onClearAccess, onDeleteBookmark }} />
       ) : view.kind === "shares" ? (
         <SharesList
-          {...{ books, shares, sharesError, query, selectedShareId, onSelectShare }}
+          {...{
+            books,
+            search,
+            shares,
+            sharesError,
+            query,
+            selectedShareId,
+            onSelectShare,
+          }}
         />
       ) : view.kind === "entries" ? (
         <EntriesList {...{ books, query, onNavigate }} dimension={view.dimension} />
@@ -76,6 +85,7 @@ export function LibraryContent({
 
 function SharesList({
   books,
+  search,
   shares,
   sharesError,
   query,
@@ -83,6 +93,7 @@ function SharesList({
   onSelectShare,
 }: {
   books: LibraryBook[];
+  search: BookSearchIndex;
   shares: BookShare[];
   sharesError: string | null;
   query: string;
@@ -95,12 +106,8 @@ function SharesList({
   );
   const matchingBookIds = useMemo(() => {
     if (!query.trim()) return null;
-    return new Set(
-      createBookSearch(books)
-        .search(query)
-        .map((book) => book.txtId),
-    );
-  }, [books, query]);
+    return new Set(search.search(query).map((book) => book.txtId));
+  }, [search, query]);
   const visibleShares = matchingBookIds
     ? shares.filter((share) => matchingBookIds.has(share.txtId))
     : shares;

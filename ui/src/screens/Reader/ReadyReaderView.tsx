@@ -12,7 +12,7 @@ import { ReaderNavigation } from "./ReaderNavigation";
 import { ReaderToolbar } from "./ReaderToolbar";
 import { TocPanel } from "./TocPanel";
 
-export interface ReaderRenderState {
+interface ReaderRenderState {
   setHost: (host: HTMLDivElement | null) => void;
   renderer: EpubRenderer | null;
   ready: boolean;
@@ -22,7 +22,7 @@ export interface ReaderRenderState {
   error: string | null;
 }
 
-export interface ReaderReadingState {
+interface ReaderReadingState {
   bookmarks: BookmarkRecord[];
   bookmarkBusy: boolean;
   currentSaved: boolean;

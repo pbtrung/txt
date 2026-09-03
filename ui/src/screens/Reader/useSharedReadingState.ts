@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { EpubRenderer, ReaderLocation } from "../../data/epubRenderer";
 import type { BookmarkRecord } from "../../data/libraryStore";
+import { isBookmarkedAt } from "../../util/bookmarkMatch";
 import { errorMessage } from "../../util/errorMessage";
 
 const STORAGE_PREFIX = "txt:shared-reader:v1:";
@@ -55,8 +56,7 @@ export function useSharedReadingState(
   }, [location, ready, shareId]);
 
   const currentCfi = location?.cfi ?? null;
-  const currentSaved =
-    currentCfi !== null && bookmarks.some((bookmark) => bookmark.cfi === currentCfi);
+  const currentSaved = isBookmarkedAt(bookmarks, currentCfi);
 
   const toggleCurrent = useCallback(
     (pageNumber: number) => {
@@ -64,7 +64,7 @@ export function useSharedReadingState(
       const current = renderer.currentBookmark();
       if (!current) return;
       setBookmarkBusy(true);
-      const existing = bookmarks.some((bookmark) => bookmark.cfi === current.cfi);
+      const existing = isBookmarkedAt(bookmarks, current.cfi);
       const next = existing
         ? bookmarks.filter((bookmark) => bookmark.cfi !== current.cfi)
         : [

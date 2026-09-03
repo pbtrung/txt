@@ -4,6 +4,7 @@ import type { BookmarkRecord } from "../../data/libraryStore";
 import type { ReaderDocument } from "../../data/readerDocument";
 import { ReadingSession } from "../../data/readingState";
 import type { VaultSession } from "../../state/VaultContext";
+import { findBookmarkByCfi, isBookmarkedAt } from "../../util/bookmarkMatch";
 import { errorMessage } from "../../util/errorMessage";
 
 export function useReadingState(
@@ -59,8 +60,7 @@ export function useReadingState(
   }, [document.txtId, refresh, session.library]);
 
   const currentCfi = location?.cfi ?? null;
-  const currentSaved =
-    currentCfi !== null && bookmarks.some((bookmark) => bookmark.cfi === currentCfi);
+  const currentSaved = isBookmarkedAt(bookmarks, currentCfi);
 
   const toggleCurrent = useCallback(
     async (pageNumber: number) => {
@@ -70,7 +70,7 @@ export function useReadingState(
       setBookmarkBusy(true);
       setLocalError(null);
       try {
-        const existing = bookmarks.find((bookmark) => bookmark.cfi === current.cfi);
+        const existing = findBookmarkByCfi(bookmarks, current.cfi);
         if (existing) {
           await session.library.deleteBookmark(existing.id);
         } else {
@@ -93,7 +93,7 @@ export function useReadingState(
 
   const remove = useCallback(
     async (cfi: string) => {
-      const existing = bookmarks.find((bookmark) => bookmark.cfi === cfi);
+      const existing = findBookmarkByCfi(bookmarks, cfi);
       if (!existing) return;
       setBookmarkBusy(true);
       setLocalError(null);

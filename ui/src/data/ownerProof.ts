@@ -4,7 +4,7 @@
 // than risk two independently-written implementations drifting apart.
 import { toBase64 } from "../util/base64";
 
-export const PROOF_VERSION = 1;
+const PROOF_VERSION = 1;
 export const P521_SIGNATURE_BYTES = 132;
 const DOMAIN_LABEL = new TextEncoder().encode("txt:owner-proof:v1");
 const PROOF_TTL_SECONDS = 45; // comfortably under docs/auth.md §4.2's 60-second cap
@@ -23,7 +23,7 @@ export interface OwnerSigningIdentity {
   privateKey: CryptoKey;
 }
 
-export interface SignedProofRequest {
+interface SignedProofRequest {
   envelope: ProofEnvelope;
   body: Uint8Array;
 }

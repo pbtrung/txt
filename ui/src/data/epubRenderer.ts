@@ -118,7 +118,7 @@ export interface ReaderLocation {
   userInitiated: boolean;
 }
 
-export interface CurrentBookmark {
+interface CurrentBookmark {
   cfi: string;
   preview: string;
 }

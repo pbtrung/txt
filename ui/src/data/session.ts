@@ -15,7 +15,7 @@ interface CredentialPayload {
   db_prefix: string;
 }
 
-export interface UnwrappedOwner {
+interface UnwrappedOwner {
   umk: Uint8Array;
   displayName: string;
   dbPrefix: string;

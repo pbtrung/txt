@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createLoadCoalescer } from "../../data/loadCoalescer";
 import {
   loadSharedReaderDocument,
   SHARED_READER_LOAD_TOTAL_STEPS,
@@ -19,13 +20,7 @@ type SharedReaderState =
   | { status: "invalid"; document: null; error: null }
   | { status: "error"; document: null; error: string };
 
-interface PendingLoad {
-  progress: ReaderLoadProgress;
-  promise: Promise<ReaderDocument>;
-  listeners: Set<(progress: ReaderLoadProgress) => void>;
-}
-
-const PENDING_LOADS = new Map<string, PendingLoad>();
+const COALESCER = createLoadCoalescer<string, ReaderDocument>();
 const INITIAL_PROGRESS: ReaderLoadProgress = {
   label: "Requesting shared book",
   step: 1,
@@ -74,25 +69,9 @@ function loadOnce(
   onProgress: (progress: ReaderLoadProgress) => void,
 ): Promise<ReaderDocument> {
   const key = `${reference.id}.${toBase64(reference.contentKey)}`;
-  const existing = PENDING_LOADS.get(key);
-  if (existing) {
-    existing.listeners.add(onProgress);
-    onProgress(existing.progress);
-    return existing.promise;
-  }
-  const listeners = new Set([onProgress]);
-  const pending = {} as PendingLoad;
-  const report = (progress: ReaderLoadProgress) => {
-    pending.progress = progress;
-    for (const listener of listeners) listener(progress);
-  };
-  pending.progress = INITIAL_PROGRESS;
-  pending.listeners = listeners;
-  pending.promise = loadSharedReaderDocument(reference, report).finally(() => {
-    if (PENDING_LOADS.get(key) === pending) PENDING_LOADS.delete(key);
-  });
-  PENDING_LOADS.set(key, pending);
-  return pending.promise;
+  return COALESCER.run(key, onProgress, INITIAL_PROGRESS, (report) =>
+    loadSharedReaderDocument(reference, report),
+  );
 }
 
 function loading(progress: ReaderLoadProgress): SharedReaderState {

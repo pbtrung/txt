@@ -1,6 +1,7 @@
 // The session-selector hook for Reader: loads the requested document's
 // content through the unlocked session's LibraryStore + R2Session.
 import { useEffect, useState } from "react";
+import { createLoadCoalescer, type LoadCoalescer } from "../../data/loadCoalescer";
 import {
   loadReaderDocument,
   READER_LOAD_TOTAL_STEPS,
@@ -27,13 +28,21 @@ interface LoadedReader {
   state: ReaderState;
 }
 
-interface PendingReaderLoad {
-  promise: Promise<ReaderDocument | null>;
-  progress: ReaderLoadProgress;
-  listeners: Set<(progress: ReaderLoadProgress) => void>;
-}
+const COALESCERS = new WeakMap<
+  VaultSession,
+  LoadCoalescer<number, ReaderDocument | null>
+>();
 
-const PENDING_LOADS = new WeakMap<VaultSession, Map<number, PendingReaderLoad>>();
+function coalescerFor(
+  session: VaultSession,
+): LoadCoalescer<number, ReaderDocument | null> {
+  let coalescer = COALESCERS.get(session);
+  if (!coalescer) {
+    coalescer = createLoadCoalescer();
+    COALESCERS.set(session, coalescer);
+  }
+  return coalescer;
+}
 
 const INITIAL_PROGRESS: ReaderLoadProgress = {
   label: "Reading book details",
@@ -103,36 +112,13 @@ function loadOnce(
   txtId: number,
   onProgress: (progress: ReaderLoadProgress) => void,
 ): Promise<ReaderDocument | null> {
-  let sessionLoads = PENDING_LOADS.get(session);
-  if (!sessionLoads) {
-    sessionLoads = new Map();
-    PENDING_LOADS.set(session, sessionLoads);
-  }
-  const existing = sessionLoads.get(txtId);
-  if (existing) {
-    existing.listeners.add(onProgress);
-    onProgress(existing.progress);
-    return existing.promise;
-  }
-
-  const listeners = new Set([onProgress]);
-  const pending = {} as PendingReaderLoad;
-  const report = (progress: ReaderLoadProgress) => {
-    pending.progress = progress;
-    for (const listener of listeners) listener(progress);
-  };
-  pending.progress = INITIAL_PROGRESS;
-  pending.listeners = listeners;
-  pending.promise = loadReaderDocument(
-    session.library,
-    session.storage,
-    session.dbPrefix,
-    txtId,
-    report,
-  ).finally(() => {
-    if (sessionLoads.get(txtId) === pending) sessionLoads.delete(txtId);
-    if (sessionLoads.size === 0) PENDING_LOADS.delete(session);
-  });
-  sessionLoads.set(txtId, pending);
-  return pending.promise;
+  return coalescerFor(session).run(txtId, onProgress, INITIAL_PROGRESS, (report) =>
+    loadReaderDocument(
+      session.library,
+      session.storage,
+      session.dbPrefix,
+      txtId,
+      report,
+    ),
+  );
 }

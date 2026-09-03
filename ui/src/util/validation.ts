@@ -17,16 +17,6 @@ export function stringField(
   return value;
 }
 
-export function stringFields<const Key extends string>(
-  record: Record<string, unknown>,
-  keys: readonly Key[],
-  label: string,
-): Record<Key, string> {
-  return Object.fromEntries(
-    keys.map((key) => [key, stringField(record, key, label)]),
-  ) as Record<Key, string>;
-}
-
 export function stringArrayField(
   record: Record<string, unknown>,
   key: string,

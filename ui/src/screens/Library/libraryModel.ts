@@ -28,7 +28,7 @@ export function recentlyAccessed(books: LibraryBook[]): LibraryBook[] {
     .slice(0, 7);
 }
 
-export interface RecentBookmark {
+interface RecentBookmark {
   book: LibraryBook;
   bookmark: LibraryBookmark;
 }
