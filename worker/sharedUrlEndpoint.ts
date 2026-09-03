@@ -1,10 +1,10 @@
 // docs/sharing.md §3.3: POST /v1/shared-url -- the one public endpoint,
 // capability possession is the entire authorization. Mints a single,
-// object-scoped, 60-second R2 credential via the same Cloudflare API
-// worker/r2CredentialsEndpoint.ts uses, then presigns a GET locally with
-// it (aws4fetch, no extra network round trip) -- reusing the temp-access-
-// credentials mechanism here avoids ever deriving or storing a
-// standalone S3-style secret key for the parent R2 API token.
+// object-scoped, 60-second R2 credential via the same local JWT-signing
+// mechanism worker/r2CredentialsEndpoint.ts uses (no network call), then
+// presigns a GET locally with it (aws4fetch, no extra round trip) --
+// reusing that mechanism here avoids ever deriving or storing a
+// standalone S3-style secret key for the parent R2 token.
 import { AwsClient } from "aws4fetch";
 import { openGrant } from "./shareGrant";
 import { createMintCredential } from "./r2CredentialsEndpoint";
@@ -83,7 +83,10 @@ export async function handlePostSharedUrl(
       PRESIGN_TTL_SECONDS,
     );
   } catch {
-    return new Response("failed to mint R2 credential", { status: 502 });
+    // Local signing has no network dependency left to fail -- this is
+    // always a configuration problem now, not an upstream outage, hence
+    // 500 rather than the old 502 (worker/r2CredentialsEndpoint.ts).
+    return new Response("failed to mint R2 credential", { status: 500 });
   }
 
   const accountId = requireVar(env.CF_ACCOUNT_ID, "CF_ACCOUNT_ID");

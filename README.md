@@ -91,7 +91,7 @@ base64 key and writes it back to the file:
 `owner_email` must exactly match the Worker's configured `OWNER_EMAIL`
 (`docs/deployment.md`). `cf_d1_api_token` is a Cloudflare API token with D1
 edit permission for `cf_d1_database_id` — separate from the Worker's own
-`R2_PARENT_API_TOKEN`/`TICKET_SIGNING_KEY`/`SHARE_GRANT_KEY` secrets, and
+`R2_PARENT_SECRET_ACCESS_KEY`/`TICKET_SIGNING_KEY`/`SHARE_GRANT_KEY` secrets, and
 never shared with the Worker. Provisioning is a one-time, idempotent
 operation: a second run against an already-provisioned database validates
 the existing owner row instead of creating a second one, and a mismatched

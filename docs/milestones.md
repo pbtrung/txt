@@ -253,29 +253,30 @@ them.
 
 ## Milestone 6 — R2 credentials
 
-**Status: Worker-side minting done and tested against a mocked Cloudflare
-API; the live-deployment test below hasn't been run.**
+**Status: Worker-side minting done and tested; the live-deployment test
+below hasn't been run.**
 `worker/r2CredentialsEndpoint.ts` implements `POST /v1/r2-credentials`
-(ticket + proof required, `docs/auth.md` §4.3), calling Cloudflare's
-account-level R2 temp-access-credentials API — confirmed against the real
-API docs (not the Workers R2 binding, which has no such method at all,
-a real gap fixed in `docs/storage_layout.md` and `docs/deployment.md`
-above) to support exactly the two-credential, prefix-scoped split this
-design calls for. `worker/tests/r2CredentialsEndpoint.test.ts` verifies
-the Worker's own request shape (permission/prefixes/bucket per
-credential) and response mapping against a mocked Cloudflare API, and
-that ticket/proof gating and an upstream API failure are both handled.
-The "actually attempt a `PUT` against `catalog/*`" test below needs a
-live deployment, a real R2 API token, and a real bucket — none of which
+(ticket + proof required, `docs/auth.md` §4.3), minting entirely inside
+the Worker: a scoped JWT is signed locally (HS256, keyed on the parent
+R2 token's secret access key) with no network call to Cloudflare, per
+Cloudflare's documented "generate locally" scheme for temporary R2
+credentials (`docs/storage_layout.md` §"Credentials") — to support
+exactly the two-credential, prefix-scoped split this design calls for.
+`worker/tests/r2CredentialsEndpoint.test.ts` verifies the signed JWT's
+own claim shape (permission/prefixes/bucket per credential) and response
+mapping by decoding and verifying it against the test parent secret key,
+and that ticket/proof gating and a missing-secret configuration failure
+are both handled. The "actually attempt a `PUT` against `catalog/*`"
+test below needs a live deployment and a real bucket — none of which
 exist in this session — and hasn't been run; do that as part of release
 verification (`docs/deployment.md` §7) instead.
 
 - Mint the two separate credentials from `docs/storage_layout.md`
   §"Credentials": read-write on `documents/*` and `shared/*`, read-only
   on `catalog/*`.
-- Confirm R2's actual temporary-credential API can express this split as
-  designed (the design doc flags this as unverified against R2's real
-  capabilities) — if it can't, the two-credential approach is still the
+- Confirm R2 itself enforces this split when verifying a locally-signed
+  JWT's claims (the design doc flags this as unverified against R2's
+  real behavior) — if it can't, the two-credential approach is still the
   fallback, so this milestone should not need a design change, only
   confirmation.
 
@@ -289,8 +290,9 @@ than no comment at all.
 **Status: done, Worker and client sides both.**
 `worker/sharesEndpoint.ts` implements `GET`/`POST`/`DELETE /v1/shares`;
 `worker/sharedUrlEndpoint.ts` implements `POST /v1/shared-url`, minting a
-single-object 60-second R2 credential through the same Cloudflare API
-`worker/r2CredentialsEndpoint.ts` uses (reusing `createMintCredential`,
+single-object 60-second R2 credential through the same local
+JWT-signing mechanism `worker/r2CredentialsEndpoint.ts` uses (reusing
+`createMintCredential`,
 generalized to accept an object/prefix scope and a TTL) and presigning
 the `GET` locally with `aws4fetch` — no hand-rolled SigV4 signing, and no
 new secret to derive an S3-style key from the parent R2 API token. `GET

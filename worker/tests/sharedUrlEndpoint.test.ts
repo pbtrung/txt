@@ -1,7 +1,7 @@
 // Milestone 7 (docs/milestones.md): POST /v1/shared-url, and the full
 // create -> redeem -> revoke -> redeem-again lifecycle through the real
-// fetch() handler. The Cloudflare temp-access-credentials call is mocked
-// (worker/tests/r2CredentialsEndpoint.test.ts already covers that request
+// fetch() handler. Credential minting is local (no network call to mock,
+// worker/tests/r2CredentialsEndpoint.test.ts already covers that request
 // shape in isolation); what's under test here is grant decryption, the
 // active-row lookup, and the presigned URL's shape.
 import { env, SELF } from "cloudflare:test";
@@ -106,30 +106,6 @@ async function revokeShare(
   });
 }
 
-// Handles both the Access-certs and Cloudflare temp-access-credentials
-// endpoints so a redemption call (public, no Access session) still
-// resolves the mint call it makes internally.
-function mockCloudflareApi(): () => void {
-  const original = globalThis.fetch;
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = typeof input === "string" ? input : input.toString();
-    if (url.includes("/r2/temp-access-credentials")) {
-      return Response.json({
-        success: true,
-        result: {
-          accessKeyId: "redeem-access-key",
-          secretAccessKey: "redeem-secret-key",
-          sessionToken: "redeem-session-token",
-        },
-      });
-    }
-    return original(input, init);
-  }) as typeof fetch;
-  return () => {
-    globalThis.fetch = original;
-  };
-}
-
 async function redeem(shareId: Uint8Array, grant: string): Promise<Response> {
   return SELF.fetch("https://example.com/v1/shared-url", {
     method: "POST",
@@ -143,7 +119,6 @@ describe("POST /v1/shared-url", () => {
     const shareId = blob(32);
     const path = sharePath();
     const { restore: restoreAccess, headers } = await accessSession();
-    const restoreApi = mockCloudflareApi();
     try {
       const grant = await registerShare(documentId, shareId, path, headers);
 
@@ -161,37 +136,26 @@ describe("POST /v1/shared-url", () => {
       const redeemedAgain = await redeem(shareId, grant);
       expect(redeemedAgain.status).toBe(404);
     } finally {
-      restoreApi();
       restoreAccess();
     }
   });
 
   it("rejects a malformed grant with 400", async () => {
-    const restoreApi = mockCloudflareApi();
-    try {
-      const response = await redeem(blob(32), base64UrlEncode(blob(20)));
-      expect(response.status).toBe(400);
-    } finally {
-      restoreApi();
-    }
+    const response = await redeem(blob(32), base64UrlEncode(blob(20)));
+    expect(response.status).toBe(400);
   });
 
   it("rejects an unknown share_id (well-formed but unregistered) with 404", async () => {
-    const restoreApi = mockCloudflareApi();
-    try {
-      // A grant that decrypts fine but for a share_id with no shares row.
-      const shareId = blob(32);
-      const idHash = new Uint8Array(await crypto.subtle.digest("SHA-256", shareId));
-      const grantBytes = await sealGrant(
-        "some/object/path",
-        idHash,
-        await decodeTestShareGrantKey(),
-      );
-      const response = await redeem(shareId, base64UrlEncode(grantBytes));
-      expect(response.status).toBe(404);
-    } finally {
-      restoreApi();
-    }
+    // A grant that decrypts fine but for a share_id with no shares row.
+    const shareId = blob(32);
+    const idHash = new Uint8Array(await crypto.subtle.digest("SHA-256", shareId));
+    const grantBytes = await sealGrant(
+      "some/object/path",
+      idHash,
+      await decodeTestShareGrantKey(),
+    );
+    const response = await redeem(shareId, base64UrlEncode(grantBytes));
+    expect(response.status).toBe(404);
   });
 
   it("works with no Access session (capability possession is the authorization)", async () => {
@@ -199,7 +163,6 @@ describe("POST /v1/shared-url", () => {
     const shareId = blob(32);
     const path = sharePath();
     const { restore: restoreAccess, headers } = await accessSession();
-    const restoreApi = mockCloudflareApi();
     try {
       const grant = await registerShare(documentId, shareId, path, headers);
       // redeem() (below) never sends Cf-Access-Jwt-Assertion at all -- this
@@ -208,7 +171,6 @@ describe("POST /v1/shared-url", () => {
       const redeemed = await redeem(shareId, grant);
       expect(redeemed.status).toBe(200);
     } finally {
-      restoreApi();
       restoreAccess();
     }
   });

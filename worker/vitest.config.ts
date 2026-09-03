@@ -37,8 +37,8 @@ export default defineConfig({
           // worker/env.d.ts's ambient merge is what types them) -- fixed
           // here the same way the vars above are.
           TICKET_SIGNING_KEY: "dGVzdC10aWNrZXQtc2lnbmluZy1rZXktMzItYnl0ZXMh",
-          R2_PARENT_API_TOKEN: "test-parent-api-token",
           R2_PARENT_ACCESS_KEY_ID: "test-parent-access-key-id",
+          R2_PARENT_SECRET_ACCESS_KEY: "test-parent-secret-access-key",
           SHARE_GRANT_KEY: "dGVzdC1zaGFyZS1ncmFudC1rZXktMzItYnl0ZXMhISE=",
         },
       },

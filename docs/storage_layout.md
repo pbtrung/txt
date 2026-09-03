@@ -51,16 +51,22 @@ rather than one undifferentiated prefix grant:
   ingestion tooling writes it), so a blanket read-write grant would give
   the browser more than it needs.
 
-Minting goes through Cloudflare's account-level R2 temporary-credentials
-API (`POST accounts/{account_id}/r2/temp-access-credentials`), not the
-Workers R2 binding — the binding has no method for issuing scoped,
-temporary credentials at all, only direct object operations from inside
-the Worker itself, which this design deliberately never uses for content
-bytes. The call is authenticated with a standing parent R2 API token
-(`docs/deployment.md` §2: `R2_PARENT_API_TOKEN` as the bearer credential,
-`R2_PARENT_ACCESS_KEY_ID` as that same token's `parentAccessKeyId`); a
-temporary credential can never exceed its parent token's own permissions,
-so the parent token itself is scoped to this one bucket with read-write
+Minting happens entirely inside the Worker, with no network call to
+Cloudflare at request time: the Worker signs a scoped JWT locally (HMAC,
+claims for `bucket`/`scope`/`paths`) using the parent R2 token's own
+secret access key, and R2 verifies that signature itself when the
+credential is later used — this is Cloudflare's documented
+"generate locally" scheme for temporary R2 credentials, not the
+account-level `POST accounts/{account_id}/r2/temp-access-credentials`
+REST API. The minted credential's `secretAccessKey` is the SHA-256 hex
+digest of the signed JWT and its `sessionToken` is `base64("jwt/" +
+jwt)`; `accessKeyId` is the parent token's own access key id, reused
+as-is. The signing key never leaves the Worker (`docs/deployment.md`
+§2: `R2_PARENT_ACCESS_KEY_ID` as the parent token's access key id,
+embedded as the signed JWT's issuer; `R2_PARENT_SECRET_ACCESS_KEY` as
+that same token's secret access key, the HMAC signing key). A temporary
+credential can never exceed its parent token's own permissions, so the
+parent token itself is scoped to this one bucket with read-write
 access.
 
 A public recipient receives only a presigned `GET` for one shared object,

@@ -20,8 +20,8 @@ persistent volume to provision.
   Worker for its own direct object operations (e.g. deleting a revoked
   share's object, `docs/sharing.md`) — never for content the browser
   reads or writes. The Worker mints the browser's scoped, temporary
-  credentials through a separate mechanism, Cloudflare's account-level R2
-  API (`docs/storage_layout.md` §"Credentials"), since the binding itself
+  credentials itself, by signing a JWT locally with no network call
+  (`docs/storage_layout.md` §"Credentials"), since the binding itself
   has no method for issuing them. `scripts/deploy.sh` also resolves or
   creates this bucket by name (`wrangler r2 bucket create`) — but not its
   CORS configuration (§4), which still needs the exact deployed UI origin
@@ -101,8 +101,8 @@ committed, never passed through `scripts/deploy.sh`):
 ```text
 SHARE_GRANT_KEY
 TICKET_SIGNING_KEY
-R2_PARENT_API_TOKEN
 R2_PARENT_ACCESS_KEY_ID
+R2_PARENT_SECRET_ACCESS_KEY
 ```
 
 `SHARE_GRANT_KEY` is an independent 32-byte secret (`openssl rand -base64
@@ -110,19 +110,22 @@ R2_PARENT_ACCESS_KEY_ID
 §"Share grant envelope", `docs/sharing.md`). `TICKET_SIGNING_KEY` is an
 independent 32-byte secret (`openssl rand -base64 32`) used only to sign
 and verify the owner binding ticket (`docs/auth.md` §4.1).
-`R2_PARENT_API_TOKEN` and `R2_PARENT_ACCESS_KEY_ID` are two of the three
-values the dashboard shows when creating one R2 API token scoped to this
-bucket with read-write access: `R2_PARENT_API_TOKEN` is that token's
-**Token value** (used as `Authorization: Bearer` against Cloudflare's own
-temp-access-credentials API, `createMintCredential()` in
-`worker/r2CredentialsEndpoint.ts` — not R2's S3-compatible signing), and
-`R2_PARENT_ACCESS_KEY_ID` is that same token's **Access Key ID**. The
-token's third value, its **Secret Access Key**, is never used by this
-Worker at all — every temporary credential it mints is capped at the
-parent token's own scope (`docs/storage_layout.md` §"Credentials"). A
-wrong or missing value here surfaces as `POST /v1/r2-credentials`
-returning `502`, logged server-side only as `POST /v1/r2-credentials:
-mintCredential failed: <reason>` (`wrangler tail`).
+`R2_PARENT_ACCESS_KEY_ID` and `R2_PARENT_SECRET_ACCESS_KEY` are two of the
+three values the dashboard shows when creating one R2 API token scoped to
+this bucket with read-write access: `R2_PARENT_ACCESS_KEY_ID` is that
+token's **Access Key ID** (reused as-is for every minted credential, and
+embedded as the signed JWT's issuer), and `R2_PARENT_SECRET_ACCESS_KEY` is
+that same token's **Secret Access Key** — the HMAC key every scoped JWT is
+signed with locally, entirely inside the Worker
+(`createMintCredential()` in `worker/r2CredentialsEndpoint.ts`,
+`docs/storage_layout.md` §"Credentials"). R2 verifies that signature with
+its own copy of the secret when the credential is later used; the secret
+itself is never sent anywhere. The token's third value, its **Token
+value**, is never used by this Worker at all — minting makes no network
+call to Cloudflare. A wrong or missing value here surfaces as
+`POST /v1/r2-credentials` returning `500`, logged server-side only as
+`POST /v1/r2-credentials: mintCredential failed: <reason>` (`wrangler
+tail`).
 
 Plus the D1 binding (`DB`) and R2 bucket binding declared in
 `wrangler.jsonc`. Cloudflare terminates TLS and

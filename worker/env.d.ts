@@ -13,11 +13,14 @@ declare global {
   interface Env {
     TICKET_SIGNING_KEY: string;
     // The R2 API token backing docs/storage_layout.md §"Credentials"'
-    // temp-access-credentials calls: R2_PARENT_API_TOKEN is its raw value
-    // (the Bearer auth for that call), R2_PARENT_ACCESS_KEY_ID is the same
-    // token's access key id (the request's parentAccessKeyId field).
-    R2_PARENT_API_TOKEN: string;
+    // locally-signed temporary credentials: R2_PARENT_ACCESS_KEY_ID is
+    // that token's access key id (reused as-is for every minted
+    // credential and embedded as the signed JWT's issuer),
+    // R2_PARENT_SECRET_ACCESS_KEY is the same token's secret access key
+    // (the HMAC key every scoped JWT is signed with -- R2 verifies with
+    // its own copy, never sent anywhere).
     R2_PARENT_ACCESS_KEY_ID: string;
+    R2_PARENT_SECRET_ACCESS_KEY: string;
     // docs/crypto.md §"Share grant envelope".
     SHARE_GRANT_KEY: string;
   }
@@ -25,8 +28,8 @@ declare global {
   namespace Cloudflare {
     interface Env {
       TICKET_SIGNING_KEY: string;
-      R2_PARENT_API_TOKEN: string;
       R2_PARENT_ACCESS_KEY_ID: string;
+      R2_PARENT_SECRET_ACCESS_KEY: string;
       SHARE_GRANT_KEY: string;
     }
   }
