@@ -110,7 +110,12 @@ export async function requireProof(
   }
   const body = bodyJson as Record<string, unknown>;
   const dbPrefix = requireString(body, "db_prefix");
-  const userHandle = base64Decode(requireString(body, "user_handle"));
+  let userHandle: Uint8Array;
+  try {
+    userHandle = base64Decode(requireString(body, "user_handle"));
+  } catch {
+    throw new ProofRequiredError(400, "malformed user_handle");
+  }
 
   try {
     await verifyProof({

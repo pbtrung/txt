@@ -157,6 +157,79 @@ describe("POST /v1/shares", () => {
     }
   });
 
+  it("reactivates a share stuck in 'deleting' on idempotent replay", async () => {
+    const documentId = await insertDocument();
+    const shareId = blob(32);
+    const path = sharePath();
+    const { restore, headers } = await accessSession();
+    try {
+      await postShares(documentId, shareId, path, headers);
+      const shareIdHash = await crypto.subtle.digest("SHA-256", shareId);
+      await env.DB.prepare(
+        "UPDATE shares SET state = 'deleting' WHERE share_id_hash = ?",
+      )
+        .bind(shareIdHash)
+        .run();
+
+      const replay = await postShares(documentId, shareId, path, headers);
+      expect(replay.status).toBe(200);
+
+      const row = await env.DB.prepare(
+        "SELECT state FROM shares WHERE share_id_hash = ?",
+      )
+        .bind(shareIdHash)
+        .first<{ state: string }>();
+      expect(row?.state).toBe("active");
+    } finally {
+      restore();
+    }
+  });
+
+  it("both succeed when two concurrent creates race for the same new share_id", async () => {
+    const documentId = await insertDocument();
+    const shareId = blob(32);
+    const path = sharePath();
+    const { restore, headers } = await accessSession();
+    try {
+      const [first, second] = await Promise.all([
+        postShares(documentId, shareId, path, headers),
+        postShares(documentId, shareId, path, headers),
+      ]);
+      expect(first.status).toBe(200);
+      expect(second.status).toBe(200);
+
+      const rows = await env.DB.prepare(
+        "SELECT count(*) AS n FROM shares WHERE share_id_hash = ?",
+      )
+        .bind(await crypto.subtle.digest("SHA-256", shareId))
+        .first<{ n: number }>();
+      expect(rows?.n).toBe(1);
+    } finally {
+      restore();
+    }
+  });
+
+  it("rejects malformed base64 in key_wrapped/owner_blob with 400 instead of crashing", async () => {
+    const documentId = await insertDocument();
+    const { restore, headers } = await accessSession();
+    try {
+      const init = await session.signedRequest("POST", "/v1/shares", {
+        document_id: documentId,
+        share_id: base64UrlEncode(blob(32)),
+        share_path: sharePath(),
+        key_wrapped: "not valid base64!!",
+        owner_blob: base64Encode(blob(64)),
+      });
+      const response = await SELF.fetch("https://example.com/v1/shares", {
+        ...init,
+        headers: { ...init.headers, ...headers },
+      });
+      expect(response.status).toBe(400);
+    } finally {
+      restore();
+    }
+  });
+
   it("rejects an invalid document_id with 400 and leaves no orphaned key_store row", async () => {
     const { restore, headers } = await accessSession();
     try {

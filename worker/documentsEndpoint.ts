@@ -54,17 +54,28 @@ export async function handlePatchDocumentAccess(
   }
   const accessBlobB64 = proof.bodyJson.access_blob;
   const accessVersion = proof.bodyJson.access_version;
-  if (typeof accessBlobB64 !== "string" || typeof accessVersion !== "number") {
+  if (
+    typeof accessBlobB64 !== "string" ||
+    typeof accessVersion !== "number" ||
+    !Number.isInteger(accessVersion) ||
+    accessVersion < 0
+  ) {
     return new Response("missing or invalid access_blob/access_version", {
       status: 400,
     });
+  }
+  let accessBlob: Uint8Array;
+  try {
+    accessBlob = base64Decode(accessBlobB64);
+  } catch {
+    return new Response("malformed access_blob", { status: 400 });
   }
 
   const { meta } = await env.DB.prepare(
     `UPDATE documents SET access_blob = ?, access_version = access_version + 1
      WHERE id = ? AND access_version = ?`,
   )
-    .bind(base64Decode(accessBlobB64), id, accessVersion)
+    .bind(accessBlob, id, accessVersion)
     .run();
 
   if (meta.changes === 0) {

@@ -170,6 +170,71 @@ describe("PATCH /v1/documents/:id/access", () => {
     }
   });
 
+  it("rejects malformed base64 user_handle with 400 instead of crashing (requireProof.ts, shared by every proof-requiring route)", async () => {
+    const doc = await insertDocument();
+    const { restore, headers: accessHeaders } = await accessSession();
+    try {
+      const init = await session.signedRequest(
+        "PATCH",
+        `/v1/documents/${doc.id}/access`,
+        { access_blob: base64Encode(blob(32)), access_version: 0 },
+      );
+      const badBody = JSON.stringify({
+        ...JSON.parse(new TextDecoder().decode(init.body as Uint8Array)),
+        user_handle: "not valid base64!!",
+      });
+      const response = await SELF.fetch(
+        `https://example.com/v1/documents/${doc.id}/access`,
+        {
+          ...init,
+          headers: { ...init.headers, ...accessHeaders },
+          body: badBody,
+        },
+      );
+      expect(response.status).toBe(400);
+    } finally {
+      restore();
+    }
+  });
+
+  it("rejects malformed base64 in access_blob with 400 instead of crashing", async () => {
+    const doc = await insertDocument();
+    const { restore, headers: accessHeaders } = await accessSession();
+    try {
+      const init = await session.signedRequest(
+        "PATCH",
+        `/v1/documents/${doc.id}/access`,
+        { access_blob: "not valid base64!!", access_version: 0 },
+      );
+      const response = await SELF.fetch(
+        `https://example.com/v1/documents/${doc.id}/access`,
+        { ...init, headers: { ...init.headers, ...accessHeaders } },
+      );
+      expect(response.status).toBe(400);
+    } finally {
+      restore();
+    }
+  });
+
+  it("rejects a non-integer access_version with 400", async () => {
+    const doc = await insertDocument();
+    const { restore, headers: accessHeaders } = await accessSession();
+    try {
+      const init = await session.signedRequest(
+        "PATCH",
+        `/v1/documents/${doc.id}/access`,
+        { access_blob: base64Encode(blob(32)), access_version: 0.5 },
+      );
+      const response = await SELF.fetch(
+        `https://example.com/v1/documents/${doc.id}/access`,
+        { ...init, headers: { ...init.headers, ...accessHeaders } },
+      );
+      expect(response.status).toBe(400);
+    } finally {
+      restore();
+    }
+  });
+
   it("returns 404 for a document that doesn't exist", async () => {
     const { restore, headers: accessHeaders } = await accessSession();
     try {

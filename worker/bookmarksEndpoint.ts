@@ -103,26 +103,34 @@ export async function handlePostBookmark(
       status: 400,
     });
   }
-
-  const { meta: keyMeta } = await env.DB.prepare(
-    "INSERT INTO key_store (purpose, wrapped_key, created_at) VALUES ('bookmark_key', ?, ?)",
-  )
-    .bind(base64Decode(keyWrappedB64), Date.now())
-    .run();
-  const keyId = keyMeta.last_row_id;
-
+  let keyWrapped: Uint8Array;
+  let bookmarkBlob: Uint8Array;
   try {
-    const { meta } = await env.DB.prepare(
-      "INSERT INTO bookmarks (document_id, created_at, key_id, bookmark_blob) VALUES (?, ?, ?, ?)",
-    )
-      .bind(documentId, Date.now(), keyId, base64Decode(bookmarkBlobB64))
-      .run();
-    return Response.json({ id: meta.last_row_id });
+    keyWrapped = base64Decode(keyWrappedB64);
+    bookmarkBlob = base64Decode(bookmarkBlobB64);
   } catch {
-    // documentId doesn't reference a real documents row -- clean up the
-    // key_store row we just created rather than leaving it orphaned, since
-    // nothing else in this schema reconciles a dangling key_store row.
-    await env.DB.prepare("DELETE FROM key_store WHERE id = ?").bind(keyId).run();
+    return new Response("malformed key_wrapped/bookmark_blob", { status: 400 });
+  }
+
+  // One D1 batch (not two separate statements): docs/data_model.md §4's
+  // atomicity guarantee only covers a single statement or batch, and
+  // nothing else in this schema reconciles a key_store row left behind
+  // by an interruption between two independently-awaited statements.
+  // last_insert_rowid() lets the second statement reference the first's
+  // id within the same batch/transaction.
+  try {
+    const [, bookmarkResult] = await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO key_store (purpose, wrapped_key, created_at) VALUES ('bookmark_key', ?, ?)",
+      ).bind(keyWrapped, Date.now()),
+      env.DB.prepare(
+        "INSERT INTO bookmarks (document_id, created_at, key_id, bookmark_blob) VALUES (?, ?, last_insert_rowid(), ?)",
+      ).bind(documentId, Date.now(), bookmarkBlob),
+    ]);
+    return Response.json({ id: bookmarkResult.meta.last_row_id });
+  } catch {
+    // documentId doesn't reference a real documents row -- the whole
+    // batch (including the key_store insert) rolled back atomically.
     return new Response("invalid document_id", { status: 400 });
   }
 }

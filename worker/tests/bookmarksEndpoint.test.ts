@@ -88,6 +88,27 @@ describe("POST /v1/bookmarks", () => {
     }
   });
 
+  it("rejects malformed base64 in key_wrapped/bookmark_blob with 400 instead of crashing", async () => {
+    const documentId = await insertDocument();
+    const { restore, headers: accessHeaders } = await accessSession();
+    try {
+      const keyStoreBefore = await countRows("key_store");
+      const init = await session.signedRequest("POST", "/v1/bookmarks", {
+        document_id: documentId,
+        key_wrapped: "not valid base64!!",
+        bookmark_blob: base64Encode(blob(32)),
+      });
+      const response = await SELF.fetch("https://example.com/v1/bookmarks", {
+        ...init,
+        headers: { ...init.headers, ...accessHeaders },
+      });
+      expect(response.status).toBe(400);
+      expect(await countRows("key_store")).toBe(keyStoreBefore);
+    } finally {
+      restore();
+    }
+  });
+
   it("rejects an invalid document_id and leaves no orphaned key_store row", async () => {
     const { restore, headers: accessHeaders } = await accessSession();
     try {
