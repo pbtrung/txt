@@ -26,6 +26,17 @@ async function wrapKey(key: Uint8Array): Promise<Uint8Array> {
   return encrypt(key, UMK);
 }
 
+// LibraryStore.create() no longer awaits its first reload() (it starts in
+// the background, VaultContext.tsx) -- this restores the old test
+// ergonomics of "await a fully-loaded store" by waiting for it here.
+async function openStore(
+  ...args: Parameters<typeof LibraryStore.create>
+): Promise<LibraryStore> {
+  const store = LibraryStore.create(...args);
+  await vi.waitFor(() => expect(store.statusSnapshot().loadedOnce).toBe(true));
+  return store;
+}
+
 async function documentRow(
   id: number,
   path: string,
@@ -132,7 +143,7 @@ function fakeStorage(objectBytes?: Uint8Array): R2Session {
   } as unknown as R2Session;
 }
 
-describe("LibraryStore.open", () => {
+describe("LibraryStore.create", () => {
   it("decrypts documents and joins them against the catalog and bookmark summary", async () => {
     const {
       row: document,
@@ -150,7 +161,7 @@ describe("LibraryStore.open", () => {
       fetchCatalog: vi.fn().mockResolvedValue(catalog),
       fetchBookmarksSummary: vi.fn().mockResolvedValue([summary]),
     });
-    const store = await LibraryStore.open(
+    const store = await openStore(
       api,
       fakeStorage(objectBytes),
       SIGNING,
@@ -187,7 +198,7 @@ describe("LibraryStore.open", () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const api = fakeApi({ fetchDocuments: vi.fn().mockResolvedValue([good, bad]) });
 
-    const store = await LibraryStore.open(api, fakeStorage(), SIGNING, DB_PREFIX, UMK);
+    const store = await openStore(api, fakeStorage(), SIGNING, DB_PREFIX, UMK);
 
     expect(store.snapshot().map((book) => book.txtId)).toEqual([1]);
     expect(store.statusSnapshot().error).toBeNull();
@@ -201,7 +212,7 @@ describe("LibraryStore.open", () => {
       lastCfi: null,
     });
     const api = fakeApi({ fetchDocuments: vi.fn().mockResolvedValue([document]) });
-    const store = await LibraryStore.open(api, fakeStorage(), SIGNING, DB_PREFIX, UMK);
+    const store = await openStore(api, fakeStorage(), SIGNING, DB_PREFIX, UMK);
 
     const [book] = store.snapshot();
     expect(book.title).toBe("Untitled");
@@ -235,7 +246,7 @@ describe("LibraryStore.updateReadingPosition", () => {
       }),
       updateDocumentAccess,
     });
-    const store = await LibraryStore.open(api, fakeStorage(), SIGNING, DB_PREFIX, UMK);
+    const store = await openStore(api, fakeStorage(), SIGNING, DB_PREFIX, UMK);
 
     await store.updateReadingPosition(1, "new-cfi", 42);
 
@@ -252,7 +263,7 @@ describe("LibraryStore.updateReadingPosition", () => {
       fetchDocuments: vi.fn().mockResolvedValue([document]),
       updateDocumentAccess,
     });
-    const store = await LibraryStore.open(api, fakeStorage(), SIGNING, DB_PREFIX, UMK);
+    const store = await openStore(api, fakeStorage(), SIGNING, DB_PREFIX, UMK);
 
     await store.updateReadingPosition(1, "new-cfi", 42);
 
@@ -280,7 +291,7 @@ describe("LibraryStore.clearLastAccessed", () => {
       fetchDocuments: vi.fn().mockResolvedValue([document]),
       updateDocumentAccess,
     });
-    const store = await LibraryStore.open(api, fakeStorage(), SIGNING, DB_PREFIX, UMK);
+    const store = await openStore(api, fakeStorage(), SIGNING, DB_PREFIX, UMK);
 
     await store.clearLastAccessed(1);
 
@@ -301,7 +312,7 @@ describe("LibraryStore.clearLastAccessed", () => {
       fetchDocuments: vi.fn().mockResolvedValue([document]),
       updateDocumentAccess,
     });
-    const store = await LibraryStore.open(api, fakeStorage(), SIGNING, DB_PREFIX, UMK);
+    const store = await openStore(api, fakeStorage(), SIGNING, DB_PREFIX, UMK);
 
     await store.clearLastAccessed(1);
 
@@ -324,7 +335,7 @@ describe("LibraryStore bookmarks", () => {
         .mockResolvedValueOnce([summaryAfter]),
       createBookmark: vi.fn().mockResolvedValue(5),
     });
-    const store = await LibraryStore.open(api, fakeStorage(), SIGNING, DB_PREFIX, UMK);
+    const store = await openStore(api, fakeStorage(), SIGNING, DB_PREFIX, UMK);
     expect(store.snapshot()[0].bookmarkCount).toBe(0);
 
     await store.saveBookmark(1, "new-cfi", 3, "preview text");

@@ -13,7 +13,7 @@ import {
   type QueuedToast,
 } from "react-aria-components";
 import { useNavigate } from "react-router-dom";
-import { ScreenMessage } from "../../components/ScreenMessage";
+import { LoadingMessage, ScreenMessage } from "../../components/ScreenMessage";
 import { useVault } from "../../state/VaultContext";
 import { errorMessage } from "../../util/errorMessage";
 import {
@@ -81,6 +81,9 @@ export function LibraryScreen() {
 
   useEffect(() => () => libraryToastQueue.clear(), []);
 
+  if (library.status === "loading") {
+    return <LoadingMessage>Loading your library…</LoadingMessage>;
+  }
   if (library.status === "error") {
     return <ScreenMessage error>{library.error}</ScreenMessage>;
   }
