@@ -7,10 +7,10 @@ import type { LibraryStore } from "../../src/data/libraryStore";
 import type { R2Session } from "../../src/data/r2Session";
 
 function fakeLibrary(
-  document: ReturnType<LibraryStore["getReaderDocument"]>,
+  document: Awaited<ReturnType<LibraryStore["getReaderDocument"]>>,
 ): LibraryStore {
   return {
-    getReaderDocument: vi.fn().mockReturnValue(document),
+    getReaderDocument: vi.fn().mockResolvedValue(document),
   } as unknown as LibraryStore;
 }
 

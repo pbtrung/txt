@@ -169,8 +169,6 @@ describe("ApiClient reads", () => {
             {
               id: 1,
               created_at: 0,
-              content_blob: bytes,
-              content_key_wrapped: bytes,
               access_blob: bytes,
               access_version: 0,
               access_key_wrapped: bytes,
@@ -182,6 +180,26 @@ describe("ApiClient reads", () => {
     const documents = await new ApiClient().fetchDocuments();
     expect(documents).toHaveLength(1);
     expect(documents[0].id).toBe(1);
+  });
+
+  it("parses one document's content", async () => {
+    const bytes = toBase64(new Uint8Array([1]));
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          jsonResponse(200, { content_blob: bytes, content_key_wrapped: bytes }),
+        ),
+    );
+    const content = await new ApiClient().fetchDocumentContent(1);
+    expect(content).not.toBeNull();
+    expect([...content!.contentBlob]).toEqual([1]);
+  });
+
+  it("returns null for a document content 404", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(404, {})));
+    await expect(new ApiClient().fetchDocumentContent(999)).resolves.toBeNull();
   });
 
   it("parses a null catalog", async () => {

@@ -11,7 +11,11 @@ import type { AccessJwtClaims } from "./access";
 import { handleGetOwner } from "./ownerEndpoint";
 import { requireProof, ProofRequiredError } from "./requireProof";
 import type { ProofContext } from "./requireProof";
-import { handleGetDocuments, handlePatchDocumentAccess } from "./documentsEndpoint";
+import {
+  handleGetDocuments,
+  handleGetDocumentContent,
+  handlePatchDocumentAccess,
+} from "./documentsEndpoint";
 import { handleGetCatalog } from "./catalogEndpoint";
 import {
   handleGetBookmarks,
@@ -66,6 +70,13 @@ const ROUTES: Record<string, Partial<Record<string, Route>>> = {
       requiresProof: true,
       handler: (_request, env, ctx) =>
         handlePatchDocumentAccess(env, ctx.params.id, ctx.proof!),
+    },
+  },
+  // One document's content key + pointer, fetched lazily only when a
+  // reader session actually opens that book -- see documentsEndpoint.ts.
+  "/v1/documents/:id/content": {
+    GET: {
+      handler: (_request, env, ctx) => handleGetDocumentContent(env, ctx.params.id),
     },
   },
   "/v1/bookmarks": {

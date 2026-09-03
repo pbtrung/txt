@@ -97,8 +97,8 @@ describe("GET /v1/documents", () => {
       expect(body.documents).toHaveLength(1);
       const row = body.documents[0];
       expect(row.id).toBe(doc.id);
-      expect(row.content_blob).toBe(base64Encode(doc.contentBlob));
-      expect(row.content_key_wrapped).toBe(base64Encode(doc.contentKeyWrapped));
+      expect(row.content_blob).toBeUndefined();
+      expect(row.content_key_wrapped).toBeUndefined();
       expect(row.access_blob).toBe(base64Encode(doc.accessBlob));
       expect(row.access_key_wrapped).toBe(base64Encode(doc.accessKeyWrapped));
       expect(row.access_version).toBe(0);
@@ -107,7 +107,7 @@ describe("GET /v1/documents", () => {
     }
   });
 
-  it("returns every document's own keys, not cross-joined, for a library with many documents", async () => {
+  it("returns every document's own access key, not cross-joined, for a library with many documents", async () => {
     const docs = await Promise.all([
       insertDocument(),
       insertDocument(),
@@ -128,9 +128,54 @@ describe("GET /v1/documents", () => {
       expect(body.documents).toHaveLength(totalDocuments);
       for (const doc of docs) {
         const row = body.documents.find((r) => r.id === doc.id);
-        expect(row?.content_key_wrapped).toBe(base64Encode(doc.contentKeyWrapped));
         expect(row?.access_key_wrapped).toBe(base64Encode(doc.accessKeyWrapped));
       }
+    } finally {
+      restore();
+    }
+  });
+});
+
+describe("GET /v1/documents/:id/content", () => {
+  it("returns the document's content key and blob, not any other document's", async () => {
+    const [docA, docB] = await Promise.all([insertDocument(), insertDocument()]);
+    const { restore, headers } = await accessSession();
+    try {
+      const response = await SELF.fetch(
+        `https://example.com/v1/documents/${docA.id}/content`,
+        { headers },
+      );
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as Record<string, unknown>;
+      expect(body.content_blob).toBe(base64Encode(docA.contentBlob));
+      expect(body.content_key_wrapped).toBe(base64Encode(docA.contentKeyWrapped));
+      expect(body.content_blob).not.toBe(base64Encode(docB.contentBlob));
+    } finally {
+      restore();
+    }
+  });
+
+  it("returns 404 for a document that doesn't exist", async () => {
+    const { restore, headers } = await accessSession();
+    try {
+      const response = await SELF.fetch(
+        "https://example.com/v1/documents/999999/content",
+        { headers },
+      );
+      expect(response.status).toBe(404);
+    } finally {
+      restore();
+    }
+  });
+
+  it("rejects a non-integer id with 400", async () => {
+    const { restore, headers } = await accessSession();
+    try {
+      const response = await SELF.fetch(
+        "https://example.com/v1/documents/not-a-number/content",
+        { headers },
+      );
+      expect(response.status).toBe(400);
     } finally {
       restore();
     }

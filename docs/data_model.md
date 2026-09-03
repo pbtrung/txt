@@ -242,10 +242,11 @@ full metadata by parsing that directly once it has the document's bytes
 in hand, rather than this duplicating it.
 
 Everything needed to actually _open_ a document (`content_key`, its EPUB
-`path`) is authoritative in `documents.content_blob` — the Worker's own
-library query already returns that row. The catalog object exists purely
-to make the Library screen's initial browse/search list fast: fetching
-and decrypting one object that already holds every document's display
+`path`) is authoritative in `documents.content_blob`, fetched on demand
+by `GET /v1/documents/:id/content` (§3) rather than the Worker's library
+query, which never touches it. The catalog object exists purely to make
+the Library screen's initial browse/search list fast: fetching and
+decrypting one object that already holds every document's display
 fields is strictly cheaper than N D1 rows and N per-row decrypts.
 
 **Written by** the Python ingestion tool (`txt --ingest`) directly, over
@@ -346,11 +347,21 @@ D1 cannot `ORDER BY` reading state — the Library screen's recency sort
 happens client-side, after `GET /v1/documents` returns every `documents`
 row and a separate `GET /v1/catalog` returns the catalog pointer row, for
 the browser to decrypt and sort locally. The `GET /v1/documents` query
-joins `documents` against `key_store` (on both `content_key_id` and
-`access_key_id`) rather than fetching each row's keys with a separate
-query per row, avoiding an N+1 pattern that would multiply D1's
-per-query overhead across the whole library on every Library-screen
-load. EPUB content stays in R2, fetched and decrypted client-side.
+joins `documents` against `key_store` on `access_key_id` only, rather
+than fetching each row's access key with a separate query per row,
+avoiding an N+1 pattern that would multiply D1's per-query overhead
+across the whole library on every Library-screen load.
+
+It deliberately does *not* also join on `content_key_id`: D1 bills by
+rows read, and a book's content key is only ever needed to actually open
+that book, not to list it. `GET /v1/documents/:id/content` fetches one
+document's `content_blob` + wrapped content key lazily, only when a
+reader session opens that specific document — so a library of thousands
+of books costs the Library screen one `key_store` row per book (the
+access key, genuinely needed for every row's recency sort), not two,
+regardless of how many of those books anyone ever actually opens. EPUB
+content itself stays in R2, fetched and decrypted client-side only at
+that same point.
 
 ## 4. Concurrency
 

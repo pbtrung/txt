@@ -50,11 +50,14 @@ export interface OwnerRecord {
 export interface DocumentRow {
   id: number;
   createdAt: number;
-  contentBlob: Uint8Array;
-  contentKeyWrapped: Uint8Array;
   accessBlob: Uint8Array;
   accessVersion: number;
   accessKeyWrapped: Uint8Array;
+}
+
+export interface DocumentContent {
+  contentBlob: Uint8Array;
+  contentKeyWrapped: Uint8Array;
 }
 
 export interface CatalogRow {
@@ -151,6 +154,20 @@ export class ApiClient {
       throw new Error("documents response is missing documents");
     }
     return data.documents.map(parseDocumentRow);
+  }
+
+  /** Fetched lazily, only when a reader session actually opens this
+   * document -- never as part of fetchDocuments()'s library-wide list,
+   * which would bill D1 a content_key_id key_store row for every book
+   * regardless of whether it's ever opened. */
+  async fetchDocumentContent(
+    id: number,
+    signal?: AbortSignal,
+  ): Promise<DocumentContent | null> {
+    const response = await this.get(`/v1/documents/${id}/content`, signal);
+    if (response.status === 404) return null;
+    requireOk(response, "fetch document content");
+    return parseDocumentContent(await response.json());
   }
 
   async fetchCatalog(signal?: AbortSignal): Promise<CatalogRow | null> {
@@ -409,11 +426,17 @@ function parseDocumentRow(value: unknown): DocumentRow {
   return {
     id: numberField(data, "id", "document row"),
     createdAt: numberField(data, "created_at", "document row"),
-    contentBlob: bytesField(data, "content_blob", "document row"),
-    contentKeyWrapped: bytesField(data, "content_key_wrapped", "document row"),
     accessBlob: bytesField(data, "access_blob", "document row"),
     accessVersion: numberField(data, "access_version", "document row"),
     accessKeyWrapped: bytesField(data, "access_key_wrapped", "document row"),
+  };
+}
+
+function parseDocumentContent(value: unknown): DocumentContent {
+  const data = objectRecord(value, "document content");
+  return {
+    contentBlob: bytesField(data, "content_blob", "document content"),
+    contentKeyWrapped: bytesField(data, "content_key_wrapped", "document content"),
   };
 }
 

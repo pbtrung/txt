@@ -5,6 +5,7 @@ import {
   type ApiClient,
   type BookmarkSummaryRow,
   type CatalogRow,
+  type DocumentContent,
   type DocumentRow,
 } from "../../src/data/apiClient";
 import { LibraryStore, truncateUtf8 } from "../../src/data/libraryStore";
@@ -22,21 +23,16 @@ async function wrapKey(key: Uint8Array): Promise<Uint8Array> {
 
 async function documentRow(
   id: number,
-  content: { path: string },
+  path: string,
   access: { lastAccessed: number; lastCfi: string | null },
   accessVersion = 0,
-): Promise<{ row: DocumentRow; accessKey: Uint8Array }> {
+): Promise<{ row: DocumentRow; accessKey: Uint8Array; content: DocumentContent }> {
   const contentKeyRow = crypto.getRandomValues(new Uint8Array(128));
   const contentKey = crypto.getRandomValues(new Uint8Array(128));
   const accessKeyRow = crypto.getRandomValues(new Uint8Array(128));
   const row: DocumentRow = {
     id,
     createdAt: 0,
-    contentBlob: await encryptJson(
-      { content_key: toBase64(contentKey), path: content.path },
-      contentKeyRow,
-    ),
-    contentKeyWrapped: await wrapKey(contentKeyRow),
     accessBlob: await encryptJson(
       { last_accessed: access.lastAccessed, last_cfi: access.lastCfi },
       accessKeyRow,
@@ -44,7 +40,14 @@ async function documentRow(
     accessVersion,
     accessKeyWrapped: await wrapKey(accessKeyRow),
   };
-  return { row, accessKey: accessKeyRow };
+  const content: DocumentContent = {
+    contentBlob: await encryptJson(
+      { content_key: toBase64(contentKey), path },
+      contentKeyRow,
+    ),
+    contentKeyWrapped: await wrapKey(contentKeyRow),
+  };
+  return { row, accessKey: accessKeyRow, content };
 }
 
 async function catalogRow(entries: { documentId: number; title: string }[]): Promise<{
@@ -96,6 +99,7 @@ async function bookmarkSummaryRow(
 function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
   return {
     fetchDocuments: vi.fn().mockResolvedValue([]),
+    fetchDocumentContent: vi.fn().mockResolvedValue(null),
     fetchCatalog: vi.fn().mockResolvedValue(null),
     fetchBookmarksSummary: vi.fn().mockResolvedValue([]),
     fetchBookmarks: vi.fn().mockResolvedValue([]),
@@ -114,11 +118,11 @@ function fakeStorage(objectBytes?: Uint8Array): R2Session {
 
 describe("LibraryStore.open", () => {
   it("decrypts documents and joins them against the catalog and bookmark summary", async () => {
-    const { row: document, accessKey: _accessKey } = await documentRow(
-      1,
-      { path: "epub-path" },
-      { lastAccessed: 500, lastCfi: "cfi-1" },
-    );
+    const {
+      row: document,
+      accessKey: _accessKey,
+      content,
+    } = await documentRow(1, "epub-path", { lastAccessed: 500, lastCfi: "cfi-1" });
     const { row: catalog, objectBytes } = await catalogRow([
       { documentId: 1, title: "Book One" },
     ]);
@@ -126,6 +130,7 @@ describe("LibraryStore.open", () => {
 
     const api = fakeApi({
       fetchDocuments: vi.fn().mockResolvedValue([document]),
+      fetchDocumentContent: vi.fn().mockResolvedValue(content),
       fetchCatalog: vi.fn().mockResolvedValue(catalog),
       fetchBookmarksSummary: vi.fn().mockResolvedValue([summary]),
     });
@@ -147,22 +152,17 @@ describe("LibraryStore.open", () => {
       { id: 9, cfi: "cfi-1", pageNumber: 3, createdAt: 1000 },
     ]);
 
-    const document2 = store.getReaderDocument(1);
+    const document2 = await store.getReaderDocument(1);
     expect(document2?.path).toBe("epub-path");
     expect(document2?.title).toBe("Book One");
   });
 
   it("skips a malformed document row instead of failing the whole reload", async () => {
-    const { row: good } = await documentRow(
-      1,
-      { path: "p1" },
-      { lastAccessed: 10, lastCfi: null },
-    );
-    const { row: bad } = await documentRow(
-      2,
-      { path: "p2" },
-      { lastAccessed: 0, lastCfi: null },
-    );
+    const { row: good } = await documentRow(1, "p1", {
+      lastAccessed: 10,
+      lastCfi: null,
+    });
+    const { row: bad } = await documentRow(2, "p2", { lastAccessed: 0, lastCfi: null });
     const badAccessKey = crypto.getRandomValues(new Uint8Array(128));
     // last_accessed must be a number -- this fails parseAccessPayload(),
     // overriding the well-formed access fields documentRow() built.
@@ -180,11 +180,10 @@ describe("LibraryStore.open", () => {
   });
 
   it("falls back to placeholder catalog fields for a document missing from the catalog", async () => {
-    const { row: document } = await documentRow(
-      2,
-      { path: "p" },
-      { lastAccessed: 0, lastCfi: null },
-    );
+    const { row: document } = await documentRow(2, "p", {
+      lastAccessed: 0,
+      lastCfi: null,
+    });
     const api = fakeApi({ fetchDocuments: vi.fn().mockResolvedValue([document]) });
     const store = await LibraryStore.open(api, fakeStorage(), SIGNING, DB_PREFIX, UMK);
 
@@ -199,7 +198,7 @@ describe("LibraryStore.updateReadingPosition", () => {
   it("retries once against a freshly fetched access_version after a 412", async () => {
     const { row: document, accessKey } = await documentRow(
       1,
-      { path: "p" },
+      "p",
       { lastAccessed: 0, lastCfi: null },
       0,
     );
@@ -233,11 +232,10 @@ describe("LibraryStore.updateReadingPosition", () => {
 
 describe("LibraryStore bookmarks", () => {
   it("reloads the bookmark summary after saving a new bookmark", async () => {
-    const { row: document } = await documentRow(
-      1,
-      { path: "p" },
-      { lastAccessed: 0, lastCfi: null },
-    );
+    const { row: document } = await documentRow(1, "p", {
+      lastAccessed: 0,
+      lastCfi: null,
+    });
     const summaryAfter = await bookmarkSummaryRow(5, 1, "new-cfi", 1);
     const api = fakeApi({
       fetchDocuments: vi.fn().mockResolvedValue([document]),

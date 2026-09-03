@@ -39,7 +39,7 @@ export async function loadReaderDocument(
   onProgress?: (progress: ReaderLoadProgress) => void,
 ): Promise<ReaderDocument | null> {
   reportProgress(onProgress, "Reading book details", 1);
-  const document = library.getReaderDocument(txtId);
+  const document = await library.getReaderDocument(txtId);
   if (!document) return null;
 
   reportProgress(onProgress, "Downloading text", 2);

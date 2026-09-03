@@ -66,8 +66,6 @@ interface CatalogEntry {
 }
 
 interface DocumentSecret {
-  contentKey: Uint8Array;
-  path: string;
   accessKey: Uint8Array;
   accessVersion: number;
   lastAccessed: number;
@@ -204,17 +202,11 @@ export class LibraryStore {
   }
 
   private async unwrapDocumentSecret(document: DocumentRow): Promise<DocumentSecret> {
-    const contentRowKey = await decrypt(document.contentKeyWrapped, this.umk);
-    const content = parseContentPointer(
-      await decryptJson<unknown>(document.contentBlob, contentRowKey),
-    );
     const accessKey = await decrypt(document.accessKeyWrapped, this.umk);
     const access = parseAccessPayload(
       await decryptJson<unknown>(document.accessBlob, accessKey),
     );
     return {
-      contentKey: fromBase64(content.content_key),
-      path: content.path,
       accessKey,
       accessVersion: document.accessVersion,
       lastAccessed: access.last_accessed,
@@ -259,18 +251,29 @@ export class LibraryStore {
   /** Everything readerDocument.ts needs to open one document: its content
    * key + R2 path, last saved CFI, and title (from the catalog this store
    * already decrypted) -- never the document's access key, which stays
-   * private to this store's own updateReadingPosition()/clearLastAccessed(). */
-  getReaderDocument(
+   * private to this store's own updateReadingPosition()/clearLastAccessed().
+   * The content key/pointer aren't unwrapped until this is actually
+   * called (docs/data_model.md §3) -- fetched fresh from
+   * GET /v1/documents/:id/content rather than cached from reload(), so a
+   * book nobody opens never costs a content_key_id key_store row. */
+  async getReaderDocument(
     txtId: number,
-  ):
+  ): Promise<
     | { contentKey: Uint8Array; path: string; lastCfi: string | null; title: string }
-    | undefined {
+    | undefined
+  > {
     const secret = this.secrets.get(txtId);
     if (!secret) return undefined;
+    const content = await this.api.fetchDocumentContent(txtId);
+    if (!content) return undefined;
+    const contentRowKey = await decrypt(content.contentKeyWrapped, this.umk);
+    const pointer = parseContentPointer(
+      await decryptJson<unknown>(content.contentBlob, contentRowKey),
+    );
     const title = this.books.find((book) => book.txtId === txtId)?.title ?? "Untitled";
     return {
-      contentKey: secret.contentKey,
-      path: secret.path,
+      contentKey: fromBase64(pointer.content_key),
+      path: pointer.path,
       lastCfi: secret.lastCfi,
       title,
     };
