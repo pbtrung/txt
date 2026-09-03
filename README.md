@@ -14,9 +14,9 @@ See [authentication](docs/auth.md), [data model](docs/data_model.md),
 [cryptography](docs/crypto.md), [deployment](docs/deployment.md), and the
 [implementation plan](docs/milestones.md) for the complete design. The design
 is decided; implementation is in progress per `docs/milestones.md`. The
-Python CLI's `--init-owner`, `--ingest`, `--clean-bucket`, `--clean-db`, and
-`--update-db`, and the browser UI, target the Cloudflare/D1 design described
-here.
+Python CLI's `--init-owner`, `--ingest`, `--clean-bucket`, `--clean-db`,
+`--update-db`, and `--check-catalog`, and the browser UI, target the
+Cloudflare/D1 design described here.
 
 ## Architecture
 
@@ -151,6 +151,18 @@ what would be deleted without deleting it:
 txt --clean-bucket creds.json --dry-run --verbose
 txt --clean-bucket creds.json --verbose
 txt --clean-db creds.json --verbose
+```
+
+## Checking catalog consistency
+
+`--check-catalog` is read-only: it reports any `documents` row not yet
+represented in the R2-hosted catalog object (invisible in the Library
+screen until `--ingest` reconciles it) and any catalog entry referencing
+a `document_id` that doesn't exist (shouldn't happen — nothing in this
+design deletes a document). Never writes to D1 or R2:
+
+```sh
+txt --check-catalog creds.json --verbose
 ```
 
 ## One-time data migrations

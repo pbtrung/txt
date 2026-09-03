@@ -188,6 +188,30 @@ def test_update_db_loads_creds_and_runs_updater(monkeypatch, tmp_path):
     assert captured["ran"] is True
 
 
+def test_check_catalog_loads_creds_and_runs_checker(monkeypatch, tmp_path):
+    captured = {}
+    creds = object()
+
+    class FakeChecker:
+        def __init__(self, loaded, path, logger):
+            captured.update(creds=loaded, path=path)
+
+        def run(self):
+            captured["ran"] = True
+
+    path = tmp_path / "creds.json"
+    path.write_text("{}")
+    monkeypatch.setattr(cli_module, "load_owner_creds", lambda value: creds)
+    monkeypatch.setattr(cli_module, "CatalogChecker", FakeChecker)
+
+    result = CliRunner().invoke(cli, ["--check-catalog", str(path)])
+
+    assert result.exit_code == 0
+    assert captured["creds"] is creds
+    assert captured["path"] == str(path)
+    assert captured["ran"] is True
+
+
 def test_rejects_multiple_primary_commands(tmp_path):
     src, dst = tmp_path / "src", tmp_path / "dst"
     src.mkdir()

@@ -4,6 +4,7 @@ from pathlib import Path
 import click
 
 from .bucket_cleaner import BucketCleaner
+from .catalog_checker import CatalogChecker
 from .creds import load_owner_creds
 from .db_cleaner import DbCleaner
 from .db_updater import DbUpdater
@@ -80,6 +81,15 @@ from .replace_images import ImageReplacer
     ),
 )
 @click.option(
+    "--check-catalog",
+    "check_catalog_creds_path",
+    metavar="CREDS_JSON",
+    help=(
+        "Read-only: report any drift between the D1 owner's documents rows "
+        "and the R2 catalog"
+    ),
+)
+@click.option(
     "--dry-run",
     "dry_run",
     is_flag=True,
@@ -150,6 +160,10 @@ def _dispatch_update_db(opts: dict, logger: Logger) -> None:
     _run_update_db(opts["update_db_creds_path"], opts["dry_run"], logger)
 
 
+def _dispatch_check_catalog(opts: dict, logger: Logger) -> None:
+    _run_check_catalog(opts["check_catalog_creds_path"], logger)
+
+
 COMMAND_HANDLERS = (
     ("owner_creds_path", _dispatch_init_owner),
     ("replace_images_dirs", _dispatch_replace_images),
@@ -158,6 +172,7 @@ COMMAND_HANDLERS = (
     ("clean_bucket_creds_path", _dispatch_clean_bucket),
     ("clean_db_creds_path", _dispatch_clean_db),
     ("update_db_creds_path", _dispatch_update_db),
+    ("check_catalog_creds_path", _dispatch_check_catalog),
 )
 
 
@@ -200,6 +215,11 @@ def _run_clean_db(creds_path: str, dry_run: bool, logger: Logger) -> None:
 def _run_update_db(creds_path: str, dry_run: bool, logger: Logger) -> None:
     creds = load_owner_creds(creds_path)
     DbUpdater(creds, creds_path, logger, dry_run=dry_run).run()
+
+
+def _run_check_catalog(creds_path: str, logger: Logger) -> None:
+    creds = load_owner_creds(creds_path)
+    CatalogChecker(creds, creds_path, logger).run()
 
 
 def run(argv: list | None = None) -> None:
