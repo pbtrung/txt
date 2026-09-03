@@ -103,7 +103,7 @@ INSERT` trigger catches it before the `FOREIGN KEY` constraint even
 
 ## Milestone 2 — Crypto module
 
-Two independent pieces on opposite sides of the trust boundary
+**Status: done.** Two independent pieces on opposite sides of the trust boundary
 (`docs/auth.md` §7) — not both "usable from both the Worker and the
 browser," which was this milestone's original, wrong framing:
 
@@ -309,26 +309,30 @@ holds an unwrapped key. Both endpoints now take an already-encrypted
 `owner_blob` plus a plaintext `share_path` the Worker can hash and
 compare directly, matching the trust boundary the rest of the design
 already follows. `ui/src/data/shares.ts` implements the creation flow
-(§4) and `ui/src/data/sharedReader.ts`/`useSharedReaderDocument.ts`/
-`useSharedReadingState.ts` implement the recipient flow (§5); the
-shared-reading page's bookmark/reading-state persistence stays entirely
-in `localStorage`, keyed by the capability, and never touches the
-owner's D1 rows. The "Bundle-size or import-graph assertion" test below
-was not written — the shared-reading route's independence from the
-leancrypto/WASM module is a property of `sharedReader.ts` never
-importing `crypto/aead.ts`, not something enforced by an automated
-check.
+(§4) and `ui/src/data/sharedReader.ts` plus `ui/src/screens/Reader/
+useSharedReaderDocument.ts`/`useSharedReadingState.ts` implement the
+recipient flow (§5); the shared-reading page's bookmark/reading-state
+persistence stays entirely in `localStorage`, keyed by the capability,
+and never touches the owner's D1 rows. An earlier draft of this
+milestone (and of Milestone 2, above) assumed the shared-reading route
+would avoid loading the leancrypto/WASM module entirely, on the theory
+that sharing content used a separate native-only format. That was
+never true and can't be: the shared EPUB *content* is encrypted with
+the same Ascon-Keccak Blob Format as every other row (`docs/crypto.md`,
+`CLAUDE.md`) — only the object-*path* grant uses the separate native
+AES-256-GCM scheme (`docs/crypto.md` §"Share grant envelope"). A
+recipient who can decrypt the EPUB necessarily loads the same
+WASM-backed Blob Format the owner's Reader does; `sharedReader.ts`
+imports `crypto/cryptoBlob.ts` for exactly this reason. No bundle-size
+or import-graph assertion was written, and none is needed.
 
 - Implement `POST /v1/shares`, `POST /v1/shared-url`, `DELETE
 /v1/shares` per `docs/sharing.md` §3, using the grant envelope
   (`docs/crypto.md` §"Share grant envelope", already implemented in
-  Milestone 2's `worker/shareGrant.ts`) and the Milestone 2
-  sharing-content encryption for the EPUB copy itself.
-- UI: the creation flow (§4) and recipient flow (§5), including the
-  shared-reading page's use of the sharing-content decoder — confirm
-  this page's bundle does not pull in the leancrypto module at all,
-  since that's the specific reason the design put sharing content on a
-  separate native-only format.
+  Milestone 2's `worker/shareGrant.ts`) for the object path, and the
+  existing Blob Format (unchanged from Milestone 2) for the EPUB copy
+  itself.
+- UI: the creation flow (§4) and recipient flow (§5).
 
 **Test:**
 
@@ -342,10 +346,13 @@ check.
 - Idempotent re-registration: calling `POST /v1/shares` twice with the
   same capability and path succeeds both times; with the same capability
   and a _different_ path returns `409`.
-- Bundle-size or import-graph assertion that the shared-reading route
-  doesn't transitively import the leancrypto/WASM module.
 
 ## Milestone 8 — Rate limiting
+
+**Status: done.** The WAF rule covering `/v1/*` is configured directly
+in the Cloudflare dashboard (no code deliverable — this milestone is a
+dashboard configuration and a load test against a real deployment) and
+confirmed working by the operator.
 
 - Configure the WAF rule from `docs/auth.md` §6 directly in the
   Cloudflare dashboard, not in code (matching the design's stated
@@ -381,6 +388,10 @@ why a checkpoint is required — a `documents` row alone can't say what its
 catalog entry should contain). `txt/rqlite_client.py`,
 `rqlite_schema.py`, `rqlite_updater.py`, and `firebase_auth.py` had no
 remaining callers once this landed and were removed entirely.
+(`rqlite_client.py` and `firebase_auth.py` were later reintroduced,
+unchanged from the `master` branch, so `migrate_rql.py` could read a
+not-yet-migrated deployment's `owner_control` row — see below;
+`rqlite_schema.py` and `rqlite_updater.py` stay gone.)
 `ingest.py`'s own rewrite no longer uses `sqlite_engine.py` at all;
 `bucket_cleaner.py`/`db_cleaner.py` were later rewritten against D1 too
 (the R2 allowlist and the `shares` `state='deleting'` retry
@@ -417,12 +428,17 @@ was removed alongside it. `sqlite_engine.py` now stays only for
 
 **Status: D1 database and R2 bucket provisioning automated in
 `scripts/deploy.sh` (idempotent: resolves or creates each by name, then
-applies pending D1 migrations before deploying); the Access application,
-WAF rate-limiting rule, and the full `docs/deployment.md` §7 checklist
-still need a real Cloudflare account and dashboard access neither this
-session nor `wrangler` has — `wrangler` has no Access-application
-commands at all, confirmed while implementing this. `scripts/deploy.sh`'s
-Pages-specific invocation was already removed in an earlier milestone.**
+applies pending D1 migrations before deploying); the Access application
+(Milestone 3) and WAF rate-limiting rule (Milestone 8) are both
+configured and confirmed working by the operator against the real
+deployment — `wrangler` itself has no commands for either at all,
+confirmed while implementing this, so both were set up by hand via the
+dashboard. The full `docs/deployment.md` §7 release-verification
+checklist beyond those two items (end-to-end share flows, the R2
+read-only-credential-scope test, a live concurrent-write `412`, etc.)
+has not been exhaustively re-run item-by-item against the real
+deployment in this session. `scripts/deploy.sh`'s Pages-specific
+invocation was already removed in an earlier milestone.**
 
 - Provision the production D1 database, R2 bucket bindings, Access
   application, and WAF rule per `docs/deployment.md`.

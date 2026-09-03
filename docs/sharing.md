@@ -148,9 +148,11 @@ presigned `GET` for that object path and returns:
 
 The response uses `Cache-Control: no-store`. The signed request permits
 only `GET` for one object — no list, write, delete, bucket, prefix, or
-other object access. An invalid grant, an unknown `share_id_hash`, or a
-non-`active` row all fail the same way, without revealing which case
-occurred.
+other object access. A grant that fails to decrypt at all is
+distinguished (`400`) from one that decrypts but doesn't match any
+`active` row (`404`, whether the `share_id_hash` is unknown or the row
+is inactive) — those latter two cases are indistinguishable from each
+other, without revealing which one occurred.
 
 | Status | Condition                                           |
 | ------ | --------------------------------------------------- |
@@ -196,40 +198,45 @@ If R2 deletion fails, the row stays `deleting`: the share remains revoked
 and the owner can retry. A URL issued before revocation can remain usable
 until its 60-second expiry unless the object is already gone.
 
-| Status | Condition                                               |
-| ------ | ------------------------------------------------------- |
-| `204`  | Revoked (or already absent)                             |
-| `409`  | Row exists but isn't `active` (e.g. already `deleting`) |
-| `503`  | R2 deletion failed; row remains `deleting` for retry    |
+| Status | Condition                                                  |
+| ------ | ----------------------------------------------------------- |
+| `204`  | Revoked (or already absent)                                |
+| `400`  | Row exists but its `document_id`/`share_path` don't match  |
+| `409`  | Row exists but isn't `active` (e.g. already `deleting`)    |
+| `503`  | R2 deletion failed; row remains `deleting` for retry       |
 
 ## 4. Creation flow
 
 1. The owner selects a document to share.
 2. The browser generates `share_id`, `share_content_key`, and
-   `share_path` independently with `crypto.getRandomValues`.
-3. The browser commits a local pending-share marker in `creating` state.
-4. The browser decrypts the owner's EPUB locally and encrypts a new
+   `share_path` independently with `crypto.getRandomValues`. D1 is the
+   only durable state for a share — the browser keeps no local
+   "creating"/"deleting" bookkeeping of its own to keep in sync; a
+   share is either registered on the server or it isn't.
+3. The browser decrypts the owner's EPUB locally and encrypts a new
    immutable copy under `share_content_key` using the same Blob Format
    used for D1 rows (`docs/crypto.md`) — no change from how the rest of
    this design encrypts content.
-5. Using its temporary `{db_prefix}/shared/*` credential
+4. Using its temporary `{db_prefix}/shared/*` credential
    (`docs/storage_layout.md`), the browser uploads the copy with
    `If-None-Match: *`.
-6. The browser mints a fresh `key_store`-backed key, wraps
+5. The browser mints a fresh `key_store`-backed key, wraps
    `{share_id, share_content_key, share_path}` into `owner_blob` under it
    (Blob Format, `docs/crypto.md`), and calls `POST /v1/shares` (§3.2)
-   with `key_wrapped`, `owner_blob`, and a fresh proof. After
-   registration succeeds, it commits local state as `active`, discarding
+   with `key_wrapped`, `owner_blob`, and a fresh proof, then discards
    the grant in that response — creation and copying are independent
    actions.
-7. Separately, whenever the owner copies the share link (immediately
+6. Separately, whenever the owner copies the share link (immediately
    after creation, or any time later), the browser calls `POST
 /v1/shares` again (idempotent) purely to obtain a fresh `grant`, then
    constructs the fragment URL and copies it. The complete URL is never
    stored in D1 or R2.
 
-A failed upload or registration leaves a visible `creating` marker the
-owner can retry or discard. The owner cannot delete the source document
+A failed upload or registration surfaces as an error to the owner, who
+can simply retry the Share action from scratch — since no local state
+is kept, a retry generates entirely new `share_id`/`share_content_key`/
+`share_path` material rather than resuming the failed attempt. The
+owner cannot delete the source document
 while a share row references it (`shares.document_id ... ON DELETE
 RESTRICT`).
 

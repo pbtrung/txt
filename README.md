@@ -21,7 +21,7 @@ and the browser UI, target the Cloudflare/D1 design described here.
 
 ```text
 Browser ── HTTPS ─┬─> Worker /v1/* (Access-gated, except /v1/shared-url) ─┬─> D1
-                  │                                                       └─> R2 (credential minting only)
+                  │                                                       └─> R2 (credential minting; direct delete on share revoke)
                   └─> Worker static assets (dist/, ungated)
                   └─> Cloudflare R2 encrypted objects (direct, via minted credentials)
 ```
