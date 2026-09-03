@@ -110,11 +110,19 @@ R2_PARENT_ACCESS_KEY_ID
 §"Share grant envelope", `docs/sharing.md`). `TICKET_SIGNING_KEY` is an
 independent 32-byte secret (`openssl rand -base64 32`) used only to sign
 and verify the owner binding ticket (`docs/auth.md` §4.1).
-`R2_PARENT_API_TOKEN` and `R2_PARENT_ACCESS_KEY_ID` are the value and
-access key id of one R2 API token, scoped in the dashboard to this bucket
-with read-write access — every temporary credential the Worker mints from
-it is capped at that same scope (`docs/storage_layout.md`
-§"Credentials").
+`R2_PARENT_API_TOKEN` and `R2_PARENT_ACCESS_KEY_ID` are two of the three
+values the dashboard shows when creating one R2 API token scoped to this
+bucket with read-write access: `R2_PARENT_API_TOKEN` is that token's
+**Token value** (used as `Authorization: Bearer` against Cloudflare's own
+temp-access-credentials API, `createMintCredential()` in
+`worker/r2CredentialsEndpoint.ts` — not R2's S3-compatible signing), and
+`R2_PARENT_ACCESS_KEY_ID` is that same token's **Access Key ID**. The
+token's third value, its **Secret Access Key**, is never used by this
+Worker at all — every temporary credential it mints is capped at the
+parent token's own scope (`docs/storage_layout.md` §"Credentials"). A
+wrong or missing value here surfaces as `POST /v1/r2-credentials`
+returning `502`, logged server-side only as `POST /v1/r2-credentials:
+mintCredential failed: <reason>` (`wrangler tail`).
 
 Plus the D1 binding (`DB`) and R2 bucket binding declared in
 `wrangler.jsonc`. Cloudflare terminates TLS and
