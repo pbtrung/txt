@@ -100,6 +100,30 @@ describe("Access-gated /v1/* routes", () => {
   });
 });
 
+describe("GET /v1/access-check (docs/auth.md's same-tab Access login round trip)", () => {
+  it("rejects with no Access session, same as any other gated route", async () => {
+    const response = await SELF.fetch("https://example.com/v1/access-check", {
+      redirect: "manual",
+    });
+    expect(response.status).toBe(401);
+  });
+
+  it("redirects to / once Access lets the request through", async () => {
+    const restore = mockAccessCertsEndpoint();
+    try {
+      const token = await signTestAccessToken(validTestClaims());
+      const response = await SELF.fetch("https://example.com/v1/access-check", {
+        headers: { "Cf-Access-Jwt-Assertion": token },
+        redirect: "manual",
+      });
+      expect(response.status).toBe(302);
+      expect(response.headers.get("Location")).toBe("/");
+    } finally {
+      restore();
+    }
+  });
+});
+
 describe("SKIP_ACCESS_CHECK (testing-only bypass)", () => {
   it("lets a normally Access-gated route through with no session when set to 'true'", async () => {
     // `wrangler types` infers the narrow literal "false" from

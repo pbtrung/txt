@@ -55,6 +55,19 @@ const ROUTES: Record<string, Partial<Record<string, Route>>> = {
   "/v1/health": {
     GET: { handler: () => Response.json({ status: "ok" }) },
   },
+  // Not `public`, so an unauthenticated same-tab navigation here (the
+  // Unlock screen's "Log in with Cloudflare Access" button, docs/auth.md
+  // §1) gets Access's own hosted login challenge instead of reaching this
+  // handler -- once that completes, Access redirects the browser back to
+  // this exact URL, this handler runs, and the 302 below lands the
+  // browser back on the SPA shell at "/", same tab throughout. Unlike
+  // "/v1/owner", this never returns JSON: it exists only to give Access
+  // something gated to redirect back to that isn't a raw API response.
+  "/v1/access-check": {
+    GET: {
+      handler: () => new Response(null, { status: 302, headers: { Location: "/" } }),
+    },
+  },
   "/v1/owner": {
     // `ctx.access` is always defined here: this route isn't `public`, so
     // handleApi() has already verified it before invoking the handler.

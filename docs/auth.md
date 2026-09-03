@@ -43,6 +43,18 @@ response shape (a non-JSON body, a redirect, or a cross-origin failure if
 `fetch()` follows the redirect into Access's login domain) as "not logged
 in, prompt to authenticate."
 
+The Unlock screen's own "Log in with Cloudflare Access" button (shown
+after exactly that failure) navigates the same tab to `GET
+/v1/access-check` rather than fetching it — a full browser navigation, so
+Access can actually present its hosted login challenge in-page instead of
+as a fetch-level failure. `/v1/access-check` itself does nothing but
+302-redirect back to `/` once Access lets the request through; the point
+of the round trip is Access's own redirect-back-to-the-originally-requested-URL
+behavior, which lands the browser on this route again post-login, whose
+redirect then lands it back on the SPA shell — same tab throughout, no
+new tab, and never stranded on a raw JSON response the way navigating
+straight to a data-returning route like `/v1/owner` would.
+
 ## 2. Cloudflare Access
 
 A Cloudflare Access application in front of `/v1/*` is configured with

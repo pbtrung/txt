@@ -55,7 +55,7 @@ export function UnlockScreen() {
           </p>
           <Button
             className="btn btn-sm"
-            onPress={() => window.open("/v1/owner", "_blank", "noopener")}
+            onPress={() => window.location.assign("/v1/access-check")}
           >
             Log in with Cloudflare Access
           </Button>

@@ -76,8 +76,8 @@ describe("UnlockScreen", () => {
   });
 
   it("offers a Cloudflare Access login link when a session is required", async () => {
-    const openMock = vi.fn();
-    vi.stubGlobal("open", openMock);
+    const assignMock = vi.fn();
+    vi.stubGlobal("location", { ...window.location, assign: assignMock });
     mockVault({ status: "access-required" });
     render(
       <MemoryRouter>
@@ -89,7 +89,7 @@ describe("UnlockScreen", () => {
       name: "Log in with Cloudflare Access",
     });
     await userEvent.click(button);
-    expect(openMock).toHaveBeenCalledWith("/v1/owner", "_blank", "noopener");
+    expect(assignMock).toHaveBeenCalledWith("/v1/access-check");
     vi.unstubAllGlobals();
   });
 
