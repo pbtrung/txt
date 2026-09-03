@@ -67,17 +67,25 @@ class FakeD1:
         return id_
 
     def query(self, sql, _params=None):
-        if sql.strip().startswith("SELECT k.wrapped_key AS key_wrapped"):
+        if sql.strip().startswith("SELECT d.id, k.wrapped_key AS key_wrapped"):
             return self._document_rows(sql)
         raise AssertionError(f"unexpected query: {sql}")
 
     def _document_rows(self, sql):
-        match = re.search(r"LIMIT (\d+) OFFSET (\d+)", sql)
-        limit, offset = int(match.group(1)), int(match.group(2))
-        page = self.documents[offset : offset + limit]
+        last_id = int(re.search(r"d\.id > (\d+)", sql).group(1))
+        limit = int(re.search(r"LIMIT (\d+)", sql).group(1))
+        page = [
+            (doc_id, key_id, blob)
+            for doc_id, (key_id, blob) in enumerate(self.documents, start=1)
+            if doc_id > last_id
+        ][:limit]
         return [
-            {"key_wrapped": self.key_store[key_id]["wrapped_key"], "content_blob": blob}
-            for key_id, blob in page
+            {
+                "id": doc_id,
+                "key_wrapped": self.key_store[key_id]["wrapped_key"],
+                "content_blob": blob,
+            }
+            for doc_id, key_id, blob in page
         ]
 
     def query_one(self, sql, _params=None):

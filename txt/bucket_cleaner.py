@@ -21,14 +21,20 @@ from .owner_init import OwnerInitializer
 from .r2_client import R2Client
 
 DOCUMENT_KEYS_SQL = (
-    "SELECT k.wrapped_key AS key_wrapped, d.content_blob "
-    "FROM documents d JOIN key_store k ON k.id = d.content_key_id ORDER BY d.id"
+    "SELECT d.id, k.wrapped_key AS key_wrapped, d.content_blob "
+    "FROM documents d JOIN key_store k ON k.id = d.content_key_id"
 )
 CATALOG_ROW_SQL = "SELECT key_id, catalog_blob FROM catalog WHERE singleton = 1"
 
 # Documents are read from D1 a page at a time -- a library with many
 # thousands of rows risks a single unbounded SELECT hitting D1's own
-# response size limits or a request timeout.
+# response size limits or a request timeout. Paged by a `d.id > ?` seek
+# (keyset pagination) rather than OFFSET: OFFSET makes D1 walk and
+# discard every already-returned row on each subsequent page, which
+# D1 bills as rows read same as if they'd been returned -- a seek by
+# primary key touches only the rows a page actually returns, so the
+# total read across every page stays equal to the document count no
+# matter how many pages that takes.
 PAGE_SIZE = 1000
 
 
@@ -71,16 +77,17 @@ class BucketCleaner:
         return keys
 
     def _document_keys(self, umk: bytes, db_prefix: str) -> set[str]:
-        keys, offset = set(), 0
+        keys, last_id = set(), 0
         while True:
             rows = self.owner.d1.query(
-                f"{DOCUMENT_KEYS_SQL} LIMIT {PAGE_SIZE} OFFSET {offset}"
+                f"{DOCUMENT_KEYS_SQL} WHERE d.id > {last_id} "
+                f"ORDER BY d.id LIMIT {PAGE_SIZE}"
             )
             keys.update(self._document_path(row, umk, db_prefix) for row in rows)
             self.logger.info(f"Read {len(keys):,} document reference(s)...")
             if len(rows) < PAGE_SIZE:
                 return keys
-            offset += PAGE_SIZE
+            last_id = rows[-1]["id"]
 
     def _document_path(self, row: dict, umk: bytes, db_prefix: str) -> str:
         row_key = self.blob.decrypt(row["key_wrapped"], umk)
