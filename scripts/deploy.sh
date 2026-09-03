@@ -60,18 +60,26 @@ D1_DATABASE_NAME="txt-production"
 # idempotent way to do this rather than treating a create error as
 # "already exists" by guesswork.
 find_database_id() {
-  # Captured (not "2>/dev/null"-discarded) so a genuine failure here --
-  # auth, network, wrong account -- surfaces instead of silently looking
-  # identical to "no database found," which would send this script down
-  # the "create a new one" path for the wrong reason.
+  # stdout and stderr are captured separately, not merged: wrangler (and
+  # npx itself) writes its own banner/notice text to stderr so a --json
+  # consumer's stdout stays pure JSON -- merging them back together here
+  # would feed that banner text to jq below and break the parse, making
+  # this look identical to "no database found" (a real regression this
+  # exact form once caused). A genuine failure -- auth, network, wrong
+  # account -- still surfaces via the captured stderr file below, instead
+  # of silently sending this script down the "create a new one" path for
+  # the wrong reason.
+  d1_list_stderr=$(mktemp)
   d1_list_status=0
-  d1_list_output=$(npx wrangler d1 list --json 2>&1) || d1_list_status=$?
+  d1_list_stdout=$(npx wrangler d1 list --json 2>"$d1_list_stderr") || d1_list_status=$?
   if [ "$d1_list_status" -ne 0 ]; then
     echo "deploy.sh: 'wrangler d1 list' failed (exit $d1_list_status):" >&2
-    echo "$d1_list_output" >&2
+    cat "$d1_list_stderr" >&2
+    rm -f "$d1_list_stderr"
     exit 1
   fi
-  printf '%s\n' "$d1_list_output" |
+  rm -f "$d1_list_stderr"
+  printf '%s\n' "$d1_list_stdout" |
     jq -r --arg name "$D1_DATABASE_NAME" '.[] | select(.name == $name) | .uuid' |
     head -n1
 }
