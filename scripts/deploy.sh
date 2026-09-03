@@ -129,9 +129,9 @@ npm run ui:build
 
 npx wrangler deploy --config "$config" --env=""
 
-echo "Remember: SHARE_GRANT_KEY, TICKET_SIGNING_KEY, R2_PARENT_API_TOKEN, and" >&2
-echo "R2_PARENT_ACCESS_KEY_ID are set once via 'wrangler secret put <NAME>'," >&2
-echo "not by this script or $config_json (docs/deployment.md)." >&2
+echo "Remember: SHARE_GRANT_KEY, TICKET_SIGNING_KEY, R2_PARENT_ACCESS_KEY_ID," >&2
+echo "and R2_PARENT_SECRET_ACCESS_KEY are set once via 'wrangler secret put" >&2
+echo "<NAME>', not by this script or $config_json (docs/deployment.md)." >&2
 if [ "$SKIP_ACCESS_CHECK" = "true" ]; then
   echo "*** Deployed with SKIP_ACCESS_CHECK on: /v1/* has NO auth at all." >&2
   echo "*** Set up the Access application, then remove SKIP_ACCESS_CHECK" >&2
