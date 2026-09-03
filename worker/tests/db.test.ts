@@ -32,6 +32,16 @@ async function insertDocument(): Promise<number> {
   return meta.last_row_id;
 }
 
+async function insertDocumentWithoutAccess(): Promise<number> {
+  const contentKeyId = await insertKey("content_key");
+  const { meta } = await env.DB.prepare(
+    "INSERT INTO documents (created_at, content_key_id, content_blob) VALUES (?, ?, ?)",
+  )
+    .bind(Date.now(), contentKeyId, blob())
+    .run();
+  return meta.last_row_id;
+}
+
 async function countRows(table: string): Promise<number> {
   const row = await env.DB.prepare(`SELECT count(*) AS n FROM ${table}`).first<{
     n: number;
@@ -120,6 +130,74 @@ describe("key_store purpose enforcement", () => {
         .bind(wrongPurposeKeyId, blob(), Date.now())
         .run(),
     ).rejects.toThrow(/key_store purpose mismatch for catalog row/);
+  });
+});
+
+describe("documents.access_key_id/access_blob nullability", () => {
+  it("allows inserting a document with no access state at all", async () => {
+    const documentId = await insertDocumentWithoutAccess();
+    const row = await env.DB.prepare(
+      "SELECT access_key_id, access_blob FROM documents WHERE id = ?",
+    )
+      .bind(documentId)
+      .first<{ access_key_id: number | null; access_blob: ArrayBuffer | null }>();
+    expect(row?.access_key_id).toBeNull();
+    expect(row?.access_blob).toBeNull();
+  });
+
+  it("rejects an insert with access_blob but no access_key_id", async () => {
+    const contentKeyId = await insertKey("content_key");
+    await expect(
+      env.DB.prepare(
+        "INSERT INTO documents (created_at, content_key_id, content_blob, access_blob) VALUES (?, ?, ?, ?)",
+      )
+        .bind(Date.now(), contentKeyId, blob(), blob())
+        .run(),
+    ).rejects.toThrow();
+  });
+
+  it("rejects an insert with access_key_id but no access_blob", async () => {
+    const contentKeyId = await insertKey("content_key");
+    const accessKeyId = await insertKey("access_key");
+    await expect(
+      env.DB.prepare(
+        "INSERT INTO documents (created_at, content_key_id, content_blob, access_key_id) VALUES (?, ?, ?, ?)",
+      )
+        .bind(Date.now(), contentKeyId, blob(), accessKeyId)
+        .run(),
+    ).rejects.toThrow();
+  });
+
+  it("aborts an update that gives access_key_id the wrong purpose", async () => {
+    const documentId = await insertDocumentWithoutAccess();
+    const wrongPurposeKeyId = await insertKey("content_key"); // should be access_key
+    await expect(
+      env.DB.prepare(
+        "UPDATE documents SET access_key_id = ?, access_blob = ? WHERE id = ?",
+      )
+        .bind(wrongPurposeKeyId, blob(), documentId)
+        .run(),
+    ).rejects.toThrow(/key_store purpose mismatch for documents row/);
+  });
+
+  it("deletes the old access_key row when access_key_id is cleared back to NULL", async () => {
+    const documentId = await insertDocument();
+    const before = await countRows("key_store");
+    await env.DB.prepare(
+      "UPDATE documents SET access_key_id = NULL, access_blob = NULL WHERE id = ?",
+    )
+      .bind(documentId)
+      .run();
+    const after = await countRows("key_store");
+    expect(after).toBe(before - 1); // access_key gone, content_key untouched
+  });
+
+  it("deletes only the content_key row for a document with no access state", async () => {
+    const documentId = await insertDocumentWithoutAccess();
+    const before = await countRows("key_store");
+    await env.DB.prepare("DELETE FROM documents WHERE id = ?").bind(documentId).run();
+    const after = await countRows("key_store");
+    expect(after).toBe(before - 1);
   });
 });
 

@@ -58,16 +58,14 @@ class FakeD1:
         return {"meta": {"last_row_id": id_}}
 
     def _insert_document(self, sql, params):
-        content_blob, access_blob = params
-        match = re.search(
-            r"VALUES \(\d+, (\d+), unhex\(\?\), (\d+), unhex\(\?\)\)", sql
-        )
+        (content_blob,) = params
+        match = re.search(r"VALUES \(\d+, (\d+), unhex\(\?\)\)", sql)
         id_ = self._alloc_id()
         self.documents[id_] = {
             "content_key_id": int(match.group(1)),
             "content_blob": content_blob,
-            "access_key_id": int(match.group(2)),
-            "access_blob": access_blob,
+            "access_key_id": None,
+            "access_blob": None,
         }
         return {"meta": {"last_row_id": id_}}
 
@@ -110,24 +108,12 @@ def store(engine):
     )
 
 
-def test_insert_document_defaults_to_unread_access_state(store):
+def test_insert_document_starts_with_no_access_state(store):
     document_id = store.insert_document(b"c" * 128, "path123")
 
     row = store.d1.documents[document_id]
-    access_row_key = store.unwrap_key(row["access_key_id"])
-    payload = store.blob.decrypt_json(row["access_blob"], access_row_key)
-    assert payload == {"last_accessed": 0, "last_cfi": None}
-
-
-def test_insert_document_preserves_supplied_reading_state(store):
-    document_id = store.insert_document(
-        b"c" * 128, "path123", last_accessed=1234, last_cfi="epubcfi(/6/2)"
-    )
-
-    row = store.d1.documents[document_id]
-    access_row_key = store.unwrap_key(row["access_key_id"])
-    payload = store.blob.decrypt_json(row["access_blob"], access_row_key)
-    assert payload == {"last_accessed": 1234, "last_cfi": "epubcfi(/6/2)"}
+    assert row["access_key_id"] is None
+    assert row["access_blob"] is None
 
 
 def test_insert_document_failure_leaves_no_orphaned_key_store_rows(store):

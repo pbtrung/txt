@@ -12,6 +12,7 @@ import { errorMessage } from "../util/errorMessage";
 import { objectRecord, stringArrayField, stringField } from "../util/validation";
 import {
   AccessVersionConflictError,
+  type AccessWrite,
   type ApiClient,
   type BookmarkSummaryRow,
   type DocumentRow,
@@ -66,7 +67,10 @@ interface CatalogEntry {
 }
 
 interface DocumentSecret {
-  accessKey: Uint8Array;
+  // null for a document nobody has ever opened -- no access_key_id/
+  // access_blob exists yet (docs/data_model.md §2), and lastAccessed/
+  // lastCfi are their implicit never-accessed defaults.
+  accessKey: Uint8Array | null;
   accessVersion: number;
   lastAccessed: number;
   lastCfi: string | null;
@@ -202,6 +206,14 @@ export class LibraryStore {
   }
 
   private async unwrapDocumentSecret(document: DocumentRow): Promise<DocumentSecret> {
+    if (document.accessBlob === null || document.accessKeyWrapped === null) {
+      return {
+        accessKey: null,
+        accessVersion: document.accessVersion,
+        lastAccessed: 0,
+        lastCfi: null,
+      };
+    }
     const accessKey = await decrypt(document.accessKeyWrapped, this.umk);
     const access = parseAccessPayload(
       await decryptJson<unknown>(document.accessBlob, accessKey),
@@ -279,11 +291,15 @@ export class LibraryStore {
     };
   }
 
+  /** Wipes a document's reading state back to never-accessed (access_blob
+   * NULL, docs/data_model.md §2) rather than just resetting lastAccessed
+   * under the existing key -- so a book removed from "recent" costs
+   * nothing again until it's actually reopened. Loses the saved lastCfi
+   * too: there is no cheaper "forget recency, keep position" state once
+   * access_blob itself is what's cleared. */
   async clearLastAccessed(txtId: number): Promise<void> {
-    await this.updateAccess(txtId, (current) => ({
-      lastAccessed: 0,
-      lastCfi: current.lastCfi,
-    }));
+    if (this.requireSecret(txtId).accessKey === null) return;
+    await this.withVersionConflictRetry(txtId, () => this.writeClearAccess(txtId));
   }
 
   async updateReadingPosition(
@@ -291,40 +307,71 @@ export class LibraryStore {
     cfi: string | null,
     lastAccessed: number | null,
   ): Promise<void> {
-    await this.updateAccess(txtId, (current) => ({
-      lastAccessed: lastAccessed ?? current.lastAccessed,
-      lastCfi: cfi ?? current.lastCfi,
-    }));
+    await this.withVersionConflictRetry(txtId, () =>
+      this.writeReadingPosition(txtId, cfi, lastAccessed),
+    );
   }
 
-  private async updateAccess(
+  private async writeReadingPosition(
     txtId: number,
-    apply: (current: { lastAccessed: number; lastCfi: string | null }) => {
-      lastAccessed: number;
-      lastCfi: string | null;
-    },
+    cfi: string | null,
+    lastAccessed: number | null,
   ): Promise<void> {
+    const secret = this.requireSecret(txtId);
+    const next = {
+      lastAccessed: lastAccessed ?? secret.lastAccessed,
+      lastCfi: cfi ?? secret.lastCfi,
+    };
+    const accessKey = secret.accessKey ?? crypto.getRandomValues(new Uint8Array(128));
+    const accessBlob = await encryptJson(
+      { last_accessed: next.lastAccessed, last_cfi: next.lastCfi },
+      accessKey,
+    );
+    const write: AccessWrite =
+      secret.accessKey === null
+        ? {
+            kind: "first",
+            accessBlob,
+            accessKeyWrapped: await encrypt(accessKey, this.umk),
+          }
+        : { kind: "update", accessBlob };
+    const accessVersion = await this.api.updateDocumentAccess(
+      txtId,
+      write,
+      secret.accessVersion,
+      this.signing,
+      this.dbPrefix,
+    );
+    this.secrets.set(txtId, { accessKey, accessVersion, ...next });
+    this.patchBook(txtId, (book) => ({ ...book, lastAccessed: next.lastAccessed }));
+  }
+
+  private async writeClearAccess(txtId: number): Promise<void> {
+    const secret = this.requireSecret(txtId);
+    if (secret.accessKey === null) return; // a concurrent write already cleared this
+    const accessVersion = await this.api.updateDocumentAccess(
+      txtId,
+      { kind: "clear" },
+      secret.accessVersion,
+      this.signing,
+      this.dbPrefix,
+    );
+    this.secrets.set(txtId, {
+      accessKey: null,
+      accessVersion,
+      lastAccessed: 0,
+      lastCfi: null,
+    });
+    this.patchBook(txtId, (book) => ({ ...book, lastAccessed: 0 }));
+  }
+
+  private async withVersionConflictRetry<T>(
+    txtId: number,
+    write: () => Promise<T>,
+  ): Promise<T> {
     for (let attempt = 1; attempt <= MAX_CONFLICT_ATTEMPTS; attempt += 1) {
-      const secret = this.requireSecret(txtId);
-      const next = apply({
-        lastAccessed: secret.lastAccessed,
-        lastCfi: secret.lastCfi,
-      });
-      const blob = await encryptJson(
-        { last_accessed: next.lastAccessed, last_cfi: next.lastCfi },
-        secret.accessKey,
-      );
       try {
-        const accessVersion = await this.api.updateDocumentAccess(
-          txtId,
-          blob,
-          secret.accessVersion,
-          this.signing,
-          this.dbPrefix,
-        );
-        this.secrets.set(txtId, { ...secret, accessVersion, ...next });
-        this.patchBook(txtId, (book) => ({ ...book, lastAccessed: next.lastAccessed }));
-        return;
+        return await write();
       } catch (error) {
         if (
           error instanceof AccessVersionConflictError &&
@@ -336,21 +383,13 @@ export class LibraryStore {
         throw error;
       }
     }
+    throw new Error("unreachable: retry loop always returns or throws");
   }
 
   private async refreshAccessSecret(txtId: number): Promise<void> {
-    const secret = this.requireSecret(txtId);
     const document = await this.api.fetchDocument(txtId);
     if (!document) throw new Error("document not found");
-    const access = parseAccessPayload(
-      await decryptJson<unknown>(document.accessBlob, secret.accessKey),
-    );
-    this.secrets.set(txtId, {
-      ...secret,
-      accessVersion: document.accessVersion,
-      lastAccessed: access.last_accessed,
-      lastCfi: access.last_cfi,
-    });
+    this.secrets.set(txtId, await this.unwrapDocumentSecret(document));
   }
 
   async listBookmarks(txtId: number): Promise<BookmarkRecord[]> {

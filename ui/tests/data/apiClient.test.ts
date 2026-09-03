@@ -251,7 +251,7 @@ describe("ApiClient proofed mutations", () => {
 
     await new ApiClient().updateDocumentAccess(
       5,
-      new Uint8Array([9, 9]),
+      { kind: "update", accessBlob: new Uint8Array([9, 9]) },
       0,
       signing,
       "a".repeat(52),
@@ -281,7 +281,7 @@ describe("ApiClient proofed mutations", () => {
     await expect(
       new ApiClient().updateDocumentAccess(
         5,
-        new Uint8Array(),
+        { kind: "clear" },
         0,
         signing,
         "a".repeat(52),

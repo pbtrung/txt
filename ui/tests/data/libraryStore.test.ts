@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { encrypt, encryptJson } from "../../src/crypto/cryptoBlob";
+import {
+  decrypt,
+  decryptJson,
+  encrypt,
+  encryptJson,
+} from "../../src/crypto/cryptoBlob";
 import {
   AccessVersionConflictError,
   type ApiClient,
@@ -48,6 +53,16 @@ async function documentRow(
     contentKeyWrapped: await wrapKey(contentKeyRow),
   };
   return { row, accessKey: accessKeyRow, content };
+}
+
+function documentRowWithoutAccess(id: number): DocumentRow {
+  return {
+    id,
+    createdAt: 0,
+    accessBlob: null,
+    accessVersion: 0,
+    accessKeyWrapped: null,
+  };
 }
 
 async function catalogRow(entries: { documentId: number; title: string }[]): Promise<{
@@ -213,13 +228,11 @@ describe("LibraryStore.updateReadingPosition", () => {
       .mockResolvedValueOnce(2);
     const api = fakeApi({
       fetchDocuments: vi.fn().mockResolvedValue([document]),
-      fetchDocument: vi
-        .fn()
-        .mockResolvedValue({
-          ...document,
-          accessBlob: refreshedAccessBlob,
-          accessVersion: 1,
-        }),
+      fetchDocument: vi.fn().mockResolvedValue({
+        ...document,
+        accessBlob: refreshedAccessBlob,
+        accessVersion: 1,
+      }),
       updateDocumentAccess,
     });
     const store = await LibraryStore.open(api, fakeStorage(), SIGNING, DB_PREFIX, UMK);
@@ -230,6 +243,69 @@ describe("LibraryStore.updateReadingPosition", () => {
     expect(updateDocumentAccess.mock.calls[0][2]).toBe(0);
     expect(updateDocumentAccess.mock.calls[1][2]).toBe(1);
     expect(store.snapshot()[0].lastAccessed).toBe(42);
+  });
+
+  it("mints a fresh access key on a never-accessed document's first write", async () => {
+    const document = documentRowWithoutAccess(1);
+    const updateDocumentAccess = vi.fn().mockResolvedValue(1);
+    const api = fakeApi({
+      fetchDocuments: vi.fn().mockResolvedValue([document]),
+      updateDocumentAccess,
+    });
+    const store = await LibraryStore.open(api, fakeStorage(), SIGNING, DB_PREFIX, UMK);
+
+    await store.updateReadingPosition(1, "new-cfi", 42);
+
+    expect(updateDocumentAccess).toHaveBeenCalledTimes(1);
+    const write = updateDocumentAccess.mock.calls[0][1];
+    expect(write.kind).toBe("first");
+    const accessKey = await decrypt(write.accessKeyWrapped, UMK);
+    const payload = await decryptJson<{ last_accessed: number; last_cfi: string }>(
+      write.accessBlob,
+      accessKey,
+    );
+    expect(payload).toEqual({ last_accessed: 42, last_cfi: "new-cfi" });
+    expect(store.snapshot()[0].lastAccessed).toBe(42);
+  });
+});
+
+describe("LibraryStore.clearLastAccessed", () => {
+  it("sends a clear write and resets the book's lastAccessed to 0", async () => {
+    const { row: document } = await documentRow(1, "p", {
+      lastAccessed: 500,
+      lastCfi: "cfi-1",
+    });
+    const updateDocumentAccess = vi.fn().mockResolvedValue(1);
+    const api = fakeApi({
+      fetchDocuments: vi.fn().mockResolvedValue([document]),
+      updateDocumentAccess,
+    });
+    const store = await LibraryStore.open(api, fakeStorage(), SIGNING, DB_PREFIX, UMK);
+
+    await store.clearLastAccessed(1);
+
+    expect(updateDocumentAccess).toHaveBeenCalledWith(
+      1,
+      { kind: "clear" },
+      0,
+      SIGNING,
+      DB_PREFIX,
+    );
+    expect(store.snapshot()[0].lastAccessed).toBe(0);
+  });
+
+  it("is a no-op for a document with no access state yet", async () => {
+    const document = documentRowWithoutAccess(1);
+    const updateDocumentAccess = vi.fn();
+    const api = fakeApi({
+      fetchDocuments: vi.fn().mockResolvedValue([document]),
+      updateDocumentAccess,
+    });
+    const store = await LibraryStore.open(api, fakeStorage(), SIGNING, DB_PREFIX, UMK);
+
+    await store.clearLastAccessed(1);
+
+    expect(updateDocumentAccess).not.toHaveBeenCalled();
   });
 });
 

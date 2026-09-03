@@ -90,20 +90,43 @@ CREATE TABLE documents (
     content_key_id INTEGER NOT NULL REFERENCES key_store(id),
     content_blob   BLOB    NOT NULL,  -- Encrypt, IKM = content_key_id's unwrapped key
                                        -- plaintext: {content_key (128 random bytes), path}
-    access_key_id  INTEGER NOT NULL REFERENCES key_store(id),
-    access_blob    BLOB    NOT NULL,  -- Encrypt, IKM = access_key_id's unwrapped key
+    access_key_id  INTEGER REFERENCES key_store(id),
+    access_blob    BLOB,              -- Encrypt, IKM = access_key_id's unwrapped key
                                        -- plaintext: {last_accessed, last_cfi}
-    access_version INTEGER NOT NULL DEFAULT 0  -- optimistic-concurrency counter for access_blob, §4
+                                       -- NULL together with access_key_id until first access
+    access_version INTEGER NOT NULL DEFAULT 0,  -- optimistic-concurrency counter for access_blob, §4
+    CHECK ((access_blob IS NULL) = (access_key_id IS NULL))
 ) STRICT;
 CREATE TRIGGER trg_documents_delete_keys AFTER DELETE ON documents
 BEGIN
   DELETE FROM key_store WHERE id = OLD.content_key_id OR id = OLD.access_key_id;
 END;
+-- access_key_id's purpose check only applies when it's actually set --
+-- NULL is a valid, no-access-yet state, not a purpose mismatch.
 CREATE TRIGGER trg_documents_key_purpose BEFORE INSERT ON documents
 WHEN (SELECT purpose FROM key_store WHERE id = NEW.content_key_id) IS NOT 'content_key'
-   OR (SELECT purpose FROM key_store WHERE id = NEW.access_key_id) IS NOT 'access_key'
+   OR (NEW.access_key_id IS NOT NULL
+       AND (SELECT purpose FROM key_store WHERE id = NEW.access_key_id) IS NOT 'access_key')
 BEGIN
   SELECT RAISE(ABORT, 'key_store purpose mismatch for documents row');
+END;
+-- Mirrors the INSERT-time check above for the one other way a row
+-- acquires an access_key_id: PATCH /v1/documents/:id/access's
+-- first-ever write, an UPDATE rather than an INSERT.
+CREATE TRIGGER trg_documents_access_key_purpose BEFORE UPDATE OF access_key_id ON documents
+WHEN NEW.access_key_id IS NOT NULL
+   AND (SELECT purpose FROM key_store WHERE id = NEW.access_key_id) IS NOT 'access_key'
+BEGIN
+  SELECT RAISE(ABORT, 'key_store purpose mismatch for documents row');
+END;
+-- Fires when a document's reading state is explicitly cleared
+-- (access_key_id set back to NULL), so the old key_store row never has
+-- to be tracked and cleaned up by caller code -- the same
+-- cleanup-on-delete philosophy trg_bookmarks_delete_key uses below.
+CREATE TRIGGER trg_documents_clear_access_key AFTER UPDATE OF access_key_id ON documents
+WHEN NEW.access_key_id IS NULL AND OLD.access_key_id IS NOT NULL
+BEGIN
+  DELETE FROM key_store WHERE id = OLD.access_key_id;
 END;
 
 CREATE TABLE bookmarks (
@@ -179,8 +202,9 @@ is SQLite's NULL-safe inequality: `NULL IS NOT 'x'` is always true, so a
 dangling reference aborts the insert just as reliably as a
 wrong-but-present purpose does. Because the purpose-check triggers run
 `BEFORE INSERT`, a new row's `key_store` entries must be inserted first —
-inserting `documents` before its `content_key_id`/`access_key_id` rows
-exist fails validation rather than the other way around.
+inserting `documents` before its `content_key_id` row (and
+`access_key_id`, when supplied at all — §2) exists fails validation
+rather than the other way around.
 
 Unlike plain SQLite, where `foreign_keys` defaults to off per connection,
 D1 enforces it by default and doesn't allow turning it off: `PRAGMA
@@ -356,12 +380,17 @@ It deliberately does *not* also join on `content_key_id`: D1 bills by
 rows read, and a book's content key is only ever needed to actually open
 that book, not to list it. `GET /v1/documents/:id/content` fetches one
 document's `content_blob` + wrapped content key lazily, only when a
-reader session opens that specific document — so a library of thousands
-of books costs the Library screen one `key_store` row per book (the
-access key, genuinely needed for every row's recency sort), not two,
-regardless of how many of those books anyone ever actually opens. EPUB
-content itself stays in R2, fetched and decrypted client-side only at
-that same point.
+reader session opens that specific document. EPUB content itself stays
+in R2, fetched and decrypted client-side only at that same point.
+
+`access_key_id`/`access_blob` are themselves `NULL` together for a
+document nobody has ever opened (§2) — `--ingest` no longer mints an
+access key eagerly for every new document, and the library query's join
+on `access_key_id` is a `LEFT JOIN` for exactly this reason, since an
+`INNER JOIN` would silently drop every unopened book from the list. So
+a library of thousands of books, most never opened, costs the Library
+screen a `key_store` row only for the ones that actually have reading
+state to sort by — not one per book regardless, and never two.
 
 ## 4. Concurrency
 
@@ -373,25 +402,45 @@ syncing reading position near-simultaneously could otherwise silently
 lose whichever update loses the race to land last, with no error raised.
 
 `documents.access_version` exists specifically to close this: every
-update to `access_blob` is a conditional statement,
+write to `access_blob` is a conditional statement guarded by the version
+number the client's own read returned, one of three shapes depending on
+that document's current state (`worker/documentsEndpoint.ts`):
 
 ```sql
+-- Every write after the first: access_key_id is unchanged -- the same
+-- per-row key encrypts every successive access_blob for that row, with
+-- a fresh salt and IV each time (docs/crypto.md); rotating it would
+-- mint a new key_store row on every coalesced reading-state write with
+-- no trigger positioned to clean up the old one, since the
+-- delete-cascading triggers fire on row _deletion_, not on an in-place
+-- *_key_id change.
 UPDATE documents SET access_blob = ?, access_version = access_version + 1
+WHERE id = ? AND access_version = ? AND access_key_id IS NOT NULL
+
+-- A document's first-ever write: no access_key_id exists yet, so this
+-- mints one in the same D1 batch as the guarded UPDATE
+-- (docs/data_model.md §2.1's write-order pattern, not a bare two-step).
+INSERT INTO key_store (purpose, wrapped_key, created_at)
+  VALUES ('access_key', ?, ?);
+UPDATE documents SET access_key_id = last_insert_rowid(), access_blob = ?,
+       access_version = access_version + 1
+WHERE id = ? AND access_version = ? AND access_key_id IS NULL
+
+-- An explicit clear (LibraryStore.clearLastAccessed()): access_key_id
+-- back to NULL fires trg_documents_clear_access_key, so the now-unused
+-- key_store row is cleaned up by the schema itself.
+UPDATE documents SET access_blob = NULL, access_key_id = NULL,
+       access_version = access_version + 1
 WHERE id = ? AND access_version = ?
 ```
 
-using the version number the client's own read returned. `access_key_id`
-itself never changes on these updates — the same per-row key encrypts
-every successive `access_blob` for that row, with a fresh salt and IV
-each time (`docs/crypto.md`); rotating it would mint a new `key_store`
-row on every coalesced reading-state write with no trigger positioned to
-clean up the old one, since the delete-cascading triggers fire on row
-_deletion_, not on an in-place `*_key_id` change. Zero rows affected
-means another write landed first; the Worker returns `412`, and the
-client re-fetches the row via `GET /v1/documents/:id` — the one document
-that actually conflicted, not the whole library via `GET /v1/documents`
-again — reapplies its semantic mutation, and retries, up to a bounded
-limit.
+Zero rows affected means another write landed first; the Worker returns
+`412`, and the client re-fetches the row via `GET /v1/documents/:id` —
+the one document that actually conflicted, not the whole library via
+`GET /v1/documents` again — reapplies its semantic mutation (re-deriving
+which of the three shapes now applies, since a racing first-ever write
+can flip a document from no-access-key to has-one between the client's
+read and its retry), and retries, up to a bounded limit.
 
 Bookmark and share rows don't need this: they're created and deleted, not
 read-modified-and-written-back in place, so there's no analogous

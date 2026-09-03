@@ -52,34 +52,14 @@ class DocumentStore:
     def put_content(self, object_key: str, encrypted: bytes) -> None:
         self.r2.put_object(object_key, encrypted, if_none_match=True)
 
-    def insert_document(
-        self,
-        content_key: bytes,
-        path: str,
-        *,
-        last_accessed: int = 0,
-        last_cfi: str | None = None,
-    ) -> int:
+    def insert_document(self, content_key: bytes, path: str) -> int:
         content_key_id, content_blob = self._content_key_and_blob(content_key, path)
-        access_key_id, access_blob = self._access_key_and_blob(last_accessed, last_cfi)
-        return self._insert_document_row_or_cleanup(
-            content_key_id, content_blob, access_key_id, access_blob
-        )
+        return self._insert_document_row_or_cleanup(content_key_id, content_blob)
 
     def _content_key_and_blob(self, content_key: bytes, path: str) -> tuple[int, bytes]:
         row_key = secrets.token_bytes(128)
         key_id = self.insert_key("content_key", row_key)
         return key_id, self._content_blob(path, content_key, row_key)
-
-    def _access_key_and_blob(
-        self, last_accessed: int, last_cfi: str | None
-    ) -> tuple[int, bytes]:
-        row_key = secrets.token_bytes(128)
-        key_id = self.insert_key("access_key", row_key)
-        blob = self.blob.encrypt_json(
-            {"last_accessed": last_accessed, "last_cfi": last_cfi}, row_key
-        )
-        return key_id, blob
 
     def insert_bookmark(
         self,
@@ -127,27 +107,22 @@ class DocumentStore:
             content_row_key,
         )
 
-    def _insert_document_row_or_cleanup(
-        self, content_key_id, content_blob, access_key_id, access_blob
-    ) -> int:
+    def _insert_document_row_or_cleanup(self, content_key_id, content_blob) -> int:
         try:
-            return self._insert_document_row(
-                content_key_id, content_blob, access_key_id, access_blob
-            )
+            return self._insert_document_row(content_key_id, content_blob)
         except Exception:
             self.delete_key(content_key_id)
-            self.delete_key(access_key_id)
             raise
 
-    def _insert_document_row(
-        self, content_key_id, content_blob, access_key_id, access_blob
-    ) -> int:
+    def _insert_document_row(self, content_key_id, content_blob) -> int:
+        # access_key_id/access_blob start NULL -- a document costs no
+        # key_store row for reading state until PATCH
+        # /v1/documents/:id/access (worker/documentsEndpoint.ts) writes to
+        # it for the first time.
         result = self.d1.execute(
-            "INSERT INTO documents "
-            "(created_at, content_key_id, content_blob, access_key_id, access_blob) "
-            f"VALUES ({_now_ms()}, {content_key_id}, unhex(?), "
-            f"{access_key_id}, unhex(?))",
-            [content_blob, access_blob],
+            "INSERT INTO documents (created_at, content_key_id, content_blob) "
+            f"VALUES ({_now_ms()}, {content_key_id}, unhex(?))",
+            [content_blob],
         )
         return result["meta"]["last_row_id"]
 

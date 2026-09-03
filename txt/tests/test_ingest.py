@@ -78,16 +78,12 @@ class FakeD1:
             self.key_store.pop(key_id, None)
             return {"meta": {}}
         if sql.startswith("INSERT INTO documents"):
-            content_blob, access_blob = params
-            match = re.search(
-                r"VALUES \(\d+, (\d+), unhex\(\?\), (\d+), unhex\(\?\)\)", sql
-            )
+            (content_blob,) = params
+            match = re.search(r"VALUES \(\d+, (\d+), unhex\(\?\)\)", sql)
             id_ = self._alloc_id()
             self.documents[id_] = {
                 "content_key_id": int(match.group(1)),
                 "content_blob": content_blob,
-                "access_key_id": int(match.group(2)),
-                "access_blob": access_blob,
             }
             return {"meta": {"last_row_id": id_}}
         if sql.startswith("INSERT INTO catalog"):

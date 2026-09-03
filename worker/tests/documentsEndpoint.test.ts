@@ -61,6 +61,21 @@ async function insertDocument(): Promise<{
   };
 }
 
+async function insertDocumentWithoutAccess(): Promise<{
+  id: number;
+  contentBlob: Uint8Array;
+  contentKeyWrapped: Uint8Array;
+}> {
+  const contentKey = await insertKey("content_key");
+  const contentBlob = blob(32);
+  const { meta } = await env.DB.prepare(
+    "INSERT INTO documents (created_at, content_key_id, content_blob) VALUES (?, ?, ?)",
+  )
+    .bind(Date.now(), contentKey.id, contentBlob)
+    .run();
+  return { id: meta.last_row_id, contentBlob, contentKeyWrapped: contentKey.wrapped };
+}
+
 async function accessSession(): Promise<{ restore: () => void; headers: HeadersInit }> {
   const restore = mockAccessCertsEndpoint();
   const token = await signTestAccessToken({
@@ -130,6 +145,23 @@ describe("GET /v1/documents", () => {
         const row = body.documents.find((r) => r.id === doc.id);
         expect(row?.access_key_wrapped).toBe(base64Encode(doc.accessKeyWrapped));
       }
+    } finally {
+      restore();
+    }
+  });
+
+  it("lists a never-opened document with null access_blob/access_key_wrapped", async () => {
+    const doc = await insertDocumentWithoutAccess();
+    const { restore, headers } = await accessSession();
+    try {
+      const response = await SELF.fetch("https://example.com/v1/documents", {
+        headers,
+      });
+      const body = (await response.json()) as { documents: Record<string, unknown>[] };
+      const row = body.documents.find((r) => r.id === doc.id);
+      expect(row?.access_blob).toBeNull();
+      expect(row?.access_key_wrapped).toBeNull();
+      expect(row?.access_version).toBe(0);
     } finally {
       restore();
     }
@@ -383,6 +415,159 @@ describe("PATCH /v1/documents/:id/access", () => {
         .bind(doc.id)
         .first<{ access_version: number }>();
       expect(row?.access_version).toBe(1);
+    } finally {
+      restore();
+    }
+  });
+
+  it("mints an access key on a document's first-ever write", async () => {
+    const doc = await insertDocumentWithoutAccess();
+    const { restore, headers: accessHeaders } = await accessSession();
+    try {
+      const accessKeyWrapped = blob(48);
+      const accessBlob = blob(32);
+      const init = await session.signedRequest(
+        "PATCH",
+        `/v1/documents/${doc.id}/access`,
+        {
+          access_blob: base64Encode(accessBlob),
+          access_version: 0,
+          access_key_wrapped: base64Encode(accessKeyWrapped),
+        },
+      );
+      const response = await SELF.fetch(
+        `https://example.com/v1/documents/${doc.id}/access`,
+        { ...init, headers: { ...init.headers, ...accessHeaders } },
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ access_version: 1 });
+
+      const row = await env.DB.prepare(
+        `SELECT d.access_blob, k.wrapped_key AS access_key_wrapped, k.purpose
+         FROM documents d JOIN key_store k ON k.id = d.access_key_id
+         WHERE d.id = ?`,
+      )
+        .bind(doc.id)
+        .first<{
+          access_blob: ArrayBuffer;
+          access_key_wrapped: ArrayBuffer;
+          purpose: string;
+        }>();
+      expect(base64Decode(base64Encode(row!.access_blob))).toEqual(accessBlob);
+      expect(base64Decode(base64Encode(row!.access_key_wrapped))).toEqual(
+        accessKeyWrapped,
+      );
+      expect(row!.purpose).toBe("access_key");
+    } finally {
+      restore();
+    }
+  });
+
+  it("cleans up the minted key_store row when a first-ever write conflicts", async () => {
+    const doc = await insertDocumentWithoutAccess();
+    const { restore, headers: accessHeaders } = await accessSession();
+    try {
+      const keyStoreBefore = (await env.DB.prepare(
+        "SELECT count(*) AS n FROM key_store",
+      ).first<{ n: number }>())!.n;
+      const init = await session.signedRequest(
+        "PATCH",
+        `/v1/documents/${doc.id}/access`,
+        {
+          access_blob: base64Encode(blob(32)),
+          access_version: 5, // wrong -- the document is still at 0
+          access_key_wrapped: base64Encode(blob(48)),
+        },
+      );
+      const response = await SELF.fetch(
+        `https://example.com/v1/documents/${doc.id}/access`,
+        { ...init, headers: { ...init.headers, ...accessHeaders } },
+      );
+      expect(response.status).toBe(412);
+
+      const keyStoreAfter = (await env.DB.prepare(
+        "SELECT count(*) AS n FROM key_store",
+      ).first<{ n: number }>())!.n;
+      expect(keyStoreAfter).toBe(keyStoreBefore);
+    } finally {
+      restore();
+    }
+  });
+
+  it("clears access_blob/access_key_id back to null and deletes the old key_store row", async () => {
+    const doc = await insertDocument();
+    const { restore, headers: accessHeaders } = await accessSession();
+    try {
+      const keyStoreBefore = (await env.DB.prepare(
+        "SELECT count(*) AS n FROM key_store",
+      ).first<{ n: number }>())!.n;
+      const init = await session.signedRequest(
+        "PATCH",
+        `/v1/documents/${doc.id}/access`,
+        { access_version: 0 },
+      );
+      const response = await SELF.fetch(
+        `https://example.com/v1/documents/${doc.id}/access`,
+        { ...init, headers: { ...init.headers, ...accessHeaders } },
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ access_version: 1 });
+
+      const row = await env.DB.prepare(
+        "SELECT access_blob, access_key_id FROM documents WHERE id = ?",
+      )
+        .bind(doc.id)
+        .first<{ access_blob: ArrayBuffer | null; access_key_id: number | null }>();
+      expect(row?.access_blob).toBeNull();
+      expect(row?.access_key_id).toBeNull();
+
+      const keyStoreAfter = (await env.DB.prepare(
+        "SELECT count(*) AS n FROM key_store",
+      ).first<{ n: number }>())!.n;
+      expect(keyStoreAfter).toBe(keyStoreBefore - 1);
+    } finally {
+      restore();
+    }
+  });
+
+  it("clearing an already-unaccessed document is a no-op that still succeeds", async () => {
+    const doc = await insertDocumentWithoutAccess();
+    const { restore, headers: accessHeaders } = await accessSession();
+    try {
+      const init = await session.signedRequest(
+        "PATCH",
+        `/v1/documents/${doc.id}/access`,
+        { access_version: 0 },
+      );
+      const response = await SELF.fetch(
+        `https://example.com/v1/documents/${doc.id}/access`,
+        { ...init, headers: { ...init.headers, ...accessHeaders } },
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ access_version: 1 });
+    } finally {
+      restore();
+    }
+  });
+
+  it("rejects malformed base64 in access_key_wrapped with 400", async () => {
+    const doc = await insertDocumentWithoutAccess();
+    const { restore, headers: accessHeaders } = await accessSession();
+    try {
+      const init = await session.signedRequest(
+        "PATCH",
+        `/v1/documents/${doc.id}/access`,
+        {
+          access_blob: base64Encode(blob(32)),
+          access_version: 0,
+          access_key_wrapped: "not valid base64!!",
+        },
+      );
+      const response = await SELF.fetch(
+        `https://example.com/v1/documents/${doc.id}/access`,
+        { ...init, headers: { ...init.headers, ...accessHeaders } },
+      );
+      expect(response.status).toBe(400);
     } finally {
       restore();
     }

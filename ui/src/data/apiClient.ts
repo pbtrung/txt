@@ -50,10 +50,21 @@ export interface OwnerRecord {
 export interface DocumentRow {
   id: number;
   createdAt: number;
-  accessBlob: Uint8Array;
+  // null together for a document nobody has ever opened
+  // (docs/data_model.md §2) -- no access_key_id/access_blob exists yet.
+  accessBlob: Uint8Array | null;
   accessVersion: number;
-  accessKeyWrapped: Uint8Array;
+  accessKeyWrapped: Uint8Array | null;
 }
+
+/** A PATCH /v1/documents/:id/access write is one of three shapes,
+ * discriminated the same way documentsEndpoint.ts's own AccessWrite is:
+ * "clear" wipes reading state back to NULL, "update" reuses an existing
+ * access_key_id, and "first" mints one because none exists yet. */
+export type AccessWrite =
+  | { kind: "clear" }
+  | { kind: "update"; accessBlob: Uint8Array }
+  | { kind: "first"; accessBlob: Uint8Array; accessKeyWrapped: Uint8Array };
 
 export interface DocumentContent {
   contentBlob: Uint8Array;
@@ -243,7 +254,7 @@ export class ApiClient {
 
   async updateDocumentAccess(
     id: number,
-    accessBlob: Uint8Array,
+    write: AccessWrite,
     accessVersion: number,
     signing: OwnerSigningIdentity,
     dbPrefix: string,
@@ -254,7 +265,7 @@ export class ApiClient {
       `/v1/documents/${id}/access`,
       signing,
       dbPrefix,
-      { access_blob: toBase64(accessBlob), access_version: accessVersion },
+      { ...accessWriteBody(write), access_version: accessVersion },
       signal,
     );
     if (response.status === 412) throw new AccessVersionConflictError();
@@ -415,6 +426,14 @@ function bytesField(
   return fromBase64(stringField(record, key, label));
 }
 
+function nullableBytesField(
+  record: Record<string, unknown>,
+  key: string,
+  label: string,
+): Uint8Array | null {
+  return record[key] === null ? null : bytesField(record, key, label);
+}
+
 function parseOwnerRecord(value: unknown): OwnerRecord {
   const data = objectRecord(value, "owner response");
   return {
@@ -437,10 +456,21 @@ function parseDocumentRow(value: unknown): DocumentRow {
   return {
     id: numberField(data, "id", "document row"),
     createdAt: numberField(data, "created_at", "document row"),
-    accessBlob: bytesField(data, "access_blob", "document row"),
+    accessBlob: nullableBytesField(data, "access_blob", "document row"),
     accessVersion: numberField(data, "access_version", "document row"),
-    accessKeyWrapped: bytesField(data, "access_key_wrapped", "document row"),
+    accessKeyWrapped: nullableBytesField(data, "access_key_wrapped", "document row"),
   };
+}
+
+function accessWriteBody(write: AccessWrite): Record<string, unknown> {
+  if (write.kind === "clear") return {};
+  if (write.kind === "first") {
+    return {
+      access_blob: toBase64(write.accessBlob),
+      access_key_wrapped: toBase64(write.accessKeyWrapped),
+    };
+  }
+  return { access_blob: toBase64(write.accessBlob) };
 }
 
 function parseDocumentContent(value: unknown): DocumentContent {
