@@ -441,6 +441,108 @@ def test_migrates_more_than_one_batch_of_new_documents(tmp_path, d1, engine):
     assert names == {f"{i}.epub" for i in range(1, 24)}
 
 
+def test_catalog_stays_complete_across_multiple_runs_each_spanning_several_batches(
+    tmp_path, d1, engine
+):
+    blob = CryptoBlob(engine)
+    rows = [_row(i, f"{i}.epub") for i in range(1, 26)]  # 25 rows, > BATCH_SIZE
+    content = {
+        _content_key(row, blob): blob.encrypt(b"x", row["txt_key"]) for row in rows
+    }
+    rqlite, r2_old = _setup_old_system(engine, rows, content)
+    r2_new = FakeR2Client()
+
+    first = _migrator(tmp_path, d1, r2_old, r2_new, engine, limit=12)
+    first.rqlite = rqlite
+    first.run()
+    assert len(d1.documents) == 12
+
+    second = _migrator(tmp_path, d1, r2_old, r2_new, engine)
+    second.rqlite = rqlite
+    second.run()
+
+    assert len(d1.documents) == 25
+    names = {entry["catalog"]["name"] for entry in _decode_catalog(d1, r2_new, second)}
+    assert names == {f"{i}.epub" for i in range(1, 26)}
+
+
+def test_catalog_still_publishes_completed_batches_when_a_later_batch_fails(
+    tmp_path, d1, engine
+):
+    blob = CryptoBlob(engine)
+    rows = [_row(i, f"{i}.epub") for i in range(1, 16)]  # 15 rows, > BATCH_SIZE
+    # Only the first 10 rows' content actually exists in the old bucket --
+    # the second batch (rows 11-15) will fail to download.
+    content = {
+        _content_key(row, blob): blob.encrypt(b"x", row["txt_key"]) for row in rows[:10]
+    }
+    rqlite, r2_old = _setup_old_system(engine, rows, content)
+    r2_new = FakeR2Client()
+
+    migrator = _migrator(tmp_path, d1, r2_old, r2_new, engine)
+    migrator.rqlite = rqlite
+
+    with pytest.raises(ValueError, match="missing rqlite content object"):
+        migrator.run()
+
+    # The first batch's documents were inserted and checkpointed...
+    assert len(d1.documents) == 10
+    # ...and the catalog was published for them despite the second
+    # batch's failure -- not silently left stale until some future run
+    # happens to complete with no error at all (docs/data_model.md
+    # §2.1's write-order/recovery guarantee, which this run's own
+    # failure must not defeat).
+    names = {
+        entry["catalog"]["name"] for entry in _decode_catalog(d1, r2_new, migrator)
+    }
+    assert names == {f"{i}.epub" for i in range(1, 11)}
+
+
+def test_rerun_with_nothing_new_still_repairs_a_stale_catalog(tmp_path, d1, engine):
+    blob = CryptoBlob(engine)
+    rows = [_row(i, f"{i}.epub") for i in range(1, 21)]  # 20 rows
+    content = {
+        _content_key(row, blob): blob.encrypt(b"x", row["txt_key"]) for row in rows
+    }
+    rqlite, r2_old = _setup_old_system(engine, rows, content)
+    r2_new = FakeR2Client()
+
+    migrator = _migrator(tmp_path, d1, r2_old, r2_new, engine)
+    migrator.rqlite = rqlite
+    migrator.run()
+    assert len(d1.documents) == 20
+
+    # Simulate the catalog having gone stale relative to D1/the checkpoint
+    # (e.g. every run after the first happened to crash before ever
+    # reaching catalog reconciliation): overwrite the published catalog
+    # object with only its first 3 entries, in place, keeping the same
+    # pointer/catalog_key so the row itself still resolves.
+    row_key = blob.decrypt(
+        d1.key_store[d1.catalog["key_id"]]["wrapped_key"], migrator.store_new.umk
+    )
+    pointer = blob.decrypt_json(d1.catalog["catalog_blob"], row_key)
+    catalog_key = base64.b64decode(pointer["catalog_key"])
+    object_key = f"{migrator.account_new.db_prefix}/catalog/{pointer['catalog_path']}"
+    stale_entries = json.loads(
+        brotli.decompress(blob.decrypt(r2_new.objects[object_key], catalog_key))
+    )[:3]
+    r2_new.objects[object_key] = blob.encrypt(
+        brotli.compress(json.dumps(stale_entries).encode()), catalog_key
+    )
+
+    # A fresh migrator instance (same checkpoint file, same D1/R2) with
+    # nothing left to migrate should still notice the gap and republish
+    # the full catalog -- not silently leave it stale forever just
+    # because there's nothing new in --limit's sense to process.
+    rerun = _migrator(tmp_path, d1, r2_old, r2_new, engine)
+    rerun.rqlite = rqlite
+    rerun.run()
+
+    assert len(d1.documents) == 20  # unchanged -- nothing re-inserted
+    names = {entry["catalog"]["name"] for entry in _decode_catalog(d1, r2_new, rerun)}
+    assert names == {f"{i}.epub" for i in range(1, 21)}
+
+
 def test_second_run_resumes_and_finishes_remaining_documents(tmp_path, d1, engine):
     blob = CryptoBlob(engine)
     rows = [_row(i, f"{i}.epub") for i in range(1, 4)]
