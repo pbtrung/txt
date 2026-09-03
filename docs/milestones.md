@@ -7,10 +7,10 @@ testable slice; later milestones depend on earlier ones being merged and
 green.
 
 **Out of scope for this plan:** migrating the existing R2-hosted SQLCipher
-database and rqlite control data into the new D1 schema. That is a
-separate, later piece of work — do not build a migration path as part of
-any milestone below, and do not delete the current Northflank deployment
-or its data until that separate migration work exists and has been run.
+database and rqlite control data into the new D1 schema. That was a
+separate, later piece of work, not part of any milestone below — see
+Milestone 9's status for the one-time `--migrate-rql` command that did
+it and was removed once the migration was complete.
 
 **Testing standard for every milestone:** a milestone is not done when the
 code compiles — it's done when its tests catch the failure modes below
@@ -385,25 +385,25 @@ migrations`, not this tool's job); `txt/ingest.py` was rewritten to write
 `documents`/`key_store` rows directly and reconcile the R2-hosted catalog
 object via a local checkpoint file (`docs/data_model.md` §2.1 documents
 why a checkpoint is required — a `documents` row alone can't say what its
-catalog entry should contain). `txt/rqlite_client.py`,
-`rqlite_schema.py`, `rqlite_updater.py`, and `firebase_auth.py` had no
+catalog entry should contain). `txt/rqlite_client.py`, `rqlite_schema.py`,
+`rqlite_updater.py`, `firebase_auth.py`, and `sqlite_engine.py` had no
 remaining callers once this landed and were removed entirely.
-(`rqlite_client.py` and `firebase_auth.py` were later reintroduced,
-unchanged from the `master` branch, so `migrate_rql.py` could read a
-not-yet-migrated deployment's `owner_control` row — see below;
-`rqlite_schema.py` and `rqlite_updater.py` stay gone.)
-`ingest.py`'s own rewrite no longer uses `sqlite_engine.py` at all;
 `bucket_cleaner.py`/`db_cleaner.py` were later rewritten against D1 too
 (the R2 allowlist and the `shares` `state='deleting'` retry
-respectively, `txt/bucket_cleaner.py`/`txt/db_cleaner.py`) and don't
-need it either. `db_updater.py` and its test were deleted outright
-rather than rewritten; `database_schema.py` was trimmed down to just
-the predecessor `txt`/`txt_bookmarks` table definitions and
-`open_database`/`configure_database` helpers `migrate_rql.py` still
-needs to open a not-yet-migrated deployment's database — every
+respectively, `txt/bucket_cleaner.py`/`txt/db_cleaner.py`). `db_updater.py`
+and its test were deleted outright rather than rewritten; every
 schema-migration/validation function that only `db_updater.py` called
-was removed alongside it. `sqlite_engine.py` now stays only for
-`migrate_rql.py`.
+was removed alongside it, and `database_schema.py` (the predecessor
+`txt`/`txt_bookmarks` table definitions) went with it.
+
+A one-time `--migrate-rql` command later imported a predecessor
+deployment's rqlite-hosted `owner_control` row and whole R2-hosted
+SQLCipher database into a provisioned D1 owner, briefly reintroducing
+`rqlite_client.py`, `firebase_auth.py`, `sqlite_engine.py`, and a
+trimmed-down `database_schema.py` (just enough to open and read that
+one predecessor database) to do it. Now that the migration is complete,
+`migrate_rql.py` and all four of those supporting modules have been
+removed again.
 
 - The Python maintenance CLI's ingestion path (`txt --ingest`) needs to
   write to D1 and the R2 catalog object instead of a local SQLCipher

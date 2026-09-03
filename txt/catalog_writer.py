@@ -1,8 +1,8 @@
-"""Generic D1+R2 write helpers shared by --ingest and --migrate-rql:
-minting per-row key_store keys, inserting a documents/bookmarks row, and
-maintaining the singleton R2-hosted catalog object (docs/data_model.md
-§2.1, §3). Neither class touches the local filesystem or a source
-format -- callers supply already-read bytes/fields."""
+"""Generic D1+R2 write helpers used by --ingest: minting per-row
+key_store keys, inserting a documents/bookmarks row, and maintaining the
+singleton R2-hosted catalog object (docs/data_model.md §2.1, §3).
+Neither class touches the local filesystem or a source format --
+callers supply already-read bytes/fields."""
 
 import base64
 import json

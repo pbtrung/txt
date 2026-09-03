@@ -152,42 +152,6 @@ txt --clean-bucket creds.json --verbose
 txt --clean-db creds.json --verbose
 ```
 
-## Migrating from the predecessor (rqlite) design
-
-Imports one owner's rqlite-hosted `owner_control` row and whole R2-hosted
-SQLCipher database (docs and code on the `master` branch) into a
-provisioned D1 owner, re-encrypting every EPUB, its reading state, and its
-bookmarks under the D1 owner's own keys. The rqlite/SQLCipher source is
-only ever read, never written. `RQL_CREDS_JSON` holds the source owner's
-`rqlite_admin_username`/`rqlite_admin_password`/`rqlite_operator_url`,
-`firebase_email`/`firebase_password`/`firebase_api_key`, `user_root_key`,
-and `r2_config` for the source R2 bucket; `CF_CREDS_JSON` is the
-destination owner's usual `creds.json` (already provisioned via
-`--init-owner`). `--local-db-dir` holds a local copy of the downloaded
-SQLCipher database (for inspection only) and the recovery checkpoint:
-
-```sh
-txt --migrate-rql rql_creds.json creds.json --local-db-dir ./data --verbose
-```
-
-`--limit N` migrates at most `N` not-yet-migrated documents (oldest first)
-in one run — useful for a small test batch before migrating the rest:
-
-```sh
-txt --migrate-rql rql_creds.json creds.json --local-db-dir ./data --limit 10 --verbose
-```
-
-A run interrupted between a document's insert and its bookmarks resumes
-from the checkpoint without re-uploading or re-inserting the document; a
-document already fully migrated is skipped on the next run except for a
-cheap catalog reconciliation. Not-yet-migrated documents download from
-the old bucket and upload to the new one in parallel batches of 10;
-decrypting and re-encrypting each one still happens one at a time.
-Active public shares (`txt_shares`) are not migrated by this command —
-an existing share URL's capability and content key would need to keep
-working unchanged, which is a materially different problem from
-re-encrypting a document.
-
 ## Development checks
 
 ```sh

@@ -4,7 +4,7 @@ object and writes its documents/key_store rows directly to D1
 endpoints, which are designed for ephemeral browser sessions rather than
 a long-running batch tool with its own Cloudflare API token
 (docs/data_model.md §2.1). The D1/R2 write and catalog-merge machinery
-itself lives in catalog_writer.py, shared with --migrate-rql.
+itself lives in catalog_writer.py.
 
 Recovery: a local JSON checkpoint (`{db_prefix}.ingest-checkpoint.json`
 in --local-db-dir) records `{filename: document_id}` for every file whose

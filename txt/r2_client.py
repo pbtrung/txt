@@ -19,15 +19,13 @@ DOWNLOAD_ERRORS = (
 # transient mid-handshake failure like a bad TLS record MAC gets several
 # chances to succeed before ever reaching this module's own code -- this
 # is a real, observed failure mode for a batch command (--ingest,
-# --migrate-rql) that can issue many, sometimes concurrent, R2 requests in
-# one run. "standard" mode also covers more transient HTTP status codes
-# than the legacy default with better jittered backoff.
+# --clean-bucket) that can issue many sequential R2 requests in one run.
+# "standard" mode also covers more transient HTTP status codes than the
+# legacy default with better jittered backoff.
 CONNECTION_RETRY_CONFIG = {"max_attempts": 8, "mode": "standard"}
-# botocore's own default (10) exactly matches migrate_rql.py's BATCH_SIZE,
-# leaving no headroom for a retry attempt to need a connection while the
-# batch's other 10 workers still hold theirs -- pool exhaustion is a
-# plausible contributor to connection-level flakiness under that many
-# concurrent callers sharing one client.
+# Wider than boto3's own default (10), leaving headroom for a retry
+# attempt to open its own connection without contending with whatever
+# request is already using the client's other pooled connections.
 MAX_POOL_CONNECTIONS = 20
 
 

@@ -12,7 +12,7 @@ class D1Error(RuntimeError):
 # Cloudflare's D1 HTTP API has a known latency tail -- an individual query
 # occasionally takes longer than a single request should reasonably wait
 # for, independent of that query's own cost. A batch command (--ingest,
-# --migrate-rql) issues many sequential D1 calls in one run, so even a
+# --clean-bucket) issues many sequential D1 calls in one run, so even a
 # small per-call chance of a transient timeout/connection error compounds
 # over a large library; retrying those specifically (never a definite
 # 4xx failure, which retrying would only delay reporting) keeps one slow

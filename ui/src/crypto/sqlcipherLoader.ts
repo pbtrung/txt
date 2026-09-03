@@ -1,6 +1,6 @@
 // Loads the prebuilt sqlcipher.wasm Emscripten build (sqlcipher/sqlcipher.js
-// + .wasm -- the same module txt/leancrypto_wasm.py and txt/sqlite_engine.py
-// host via wasmtime on the server side) in the browser.
+// + .wasm -- the same module txt/leancrypto_wasm.py hosts via wasmtime on
+// the server side) in the browser.
 //
 // sqlcipher.js is a UMD/CJS bundle (`module.exports = Sqlite3Wasm`, no
 // `export` keyword), so it can't be `import`-ed as a native ES module. It
