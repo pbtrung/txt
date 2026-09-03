@@ -33,6 +33,16 @@ for var in $required_vars; do
     echo "deploy.sh: $var is missing or empty in $config_json" >&2
     exit 1
   fi
+  # These values are spliced verbatim into a sed replacement below: a
+  # stray '/' breaks sed's own delimiter, and a stray '&' is sed's
+  # "insert the whole match" syntax -- reject both up front with a clear
+  # error instead of a cryptic downstream sed failure or silent mangling.
+  case "$value" in
+    */* | *\&* | *\\*)
+      echo "deploy.sh: $var in $config_json must not contain '/', '&', or '\\'" >&2
+      exit 1
+      ;;
+  esac
   eval "$var=\$value"
 done
 
@@ -50,7 +60,18 @@ D1_DATABASE_NAME="txt-production"
 # idempotent way to do this rather than treating a create error as
 # "already exists" by guesswork.
 find_database_id() {
-  npx wrangler d1 list --json 2>/dev/null |
+  # Captured (not "2>/dev/null"-discarded) so a genuine failure here --
+  # auth, network, wrong account -- surfaces instead of silently looking
+  # identical to "no database found," which would send this script down
+  # the "create a new one" path for the wrong reason.
+  d1_list_status=0
+  d1_list_output=$(npx wrangler d1 list --json 2>&1) || d1_list_status=$?
+  if [ "$d1_list_status" -ne 0 ]; then
+    echo "deploy.sh: 'wrangler d1 list' failed (exit $d1_list_status):" >&2
+    echo "$d1_list_output" >&2
+    exit 1
+  fi
+  printf '%s\n' "$d1_list_output" |
     jq -r --arg name "$D1_DATABASE_NAME" '.[] | select(.name == $name) | .uuid' |
     head -n1
 }
@@ -77,7 +98,15 @@ echo "D1 database '$D1_DATABASE_NAME' id=$DATABASE_ID" >&2
 # which is all the idempotency check needs -- no id to resolve, the
 # bucket name is already the identifier.
 echo "Checking for R2 bucket '$BUCKET_NAME'..." >&2
-if ! npx wrangler r2 bucket info "$BUCKET_NAME" >/dev/null 2>&1; then
+# Captured (not ">/dev/null 2>&1"-discarded): unlike D1 list above, a
+# nonzero exit here is the *expected* signal for "bucket doesn't exist
+# yet", so this can't hard-fail on it -- but the message is still printed
+# rather than thrown away, so a genuine auth/network failure is at least
+# visible instead of silently masquerading as "doesn't exist yet."
+r2_info_status=0
+r2_info_output=$(npx wrangler r2 bucket info "$BUCKET_NAME" 2>&1) || r2_info_status=$?
+if [ "$r2_info_status" -ne 0 ]; then
+  echo "$r2_info_output" >&2
   echo "Creating R2 bucket '$BUCKET_NAME'..." >&2
   # --update-config=false: same reasoning as wrangler d1 create above.
   npx wrangler r2 bucket create "$BUCKET_NAME" --update-config=false

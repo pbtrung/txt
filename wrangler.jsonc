@@ -17,9 +17,10 @@
   },
   // Non-secret, deployment-specific config (docs/auth.md §2). Real values
   // are never committed here, matching the R2 bucket_name pattern below --
-  // scripts/deploy.sh substitutes them from required environment variables.
-  // The placeholders work as-is for local `wrangler dev`/tests, which use
-  // their own fixed test values (worker/vitest.config.ts).
+  // scripts/deploy.sh substitutes them from a gitignored JSON config file
+  // (creds/deploy.json by default, docs/deployment.md §2). The placeholders
+  // work as-is for local `wrangler dev`/tests, which use their own fixed
+  // test values (worker/vitest.config.ts).
   "vars": {
     "OWNER_EMAIL": "replace-me-owner-email",
     "CF_ACCESS_TEAM_DOMAIN": "replace-me-team-domain",
@@ -27,7 +28,7 @@
     "CF_ACCOUNT_ID": "replace-me-account-id",
     // Same placeholder token as r2_buckets[0].bucket_name below --
     // deploy.sh's substitution is a plain literal replace, so one
-    // BUCKET_NAME environment variable fills in both. This one is a
+    // BUCKET_NAME config value fills in both. This one is a
     // runtime-readable string the Worker's own code needs (to name the
     // bucket in R2 temp-access-credentials requests, docs/storage_layout.md
     // §"Credentials"); the binding's bucket_name is a separate, Wrangler-only
@@ -58,11 +59,11 @@
     }
   ],
   // The real bucket name is never committed here -- scripts/deploy.sh
-  // substitutes it from the required BUCKET_NAME environment variable
-  // before deploying. The placeholder is left as-is for local `wrangler
-  // dev`/tests: Miniflare's local R2 emulation doesn't validate that a
-  // bucket by this name actually exists, so it works fine as a local,
-  // harmless storage key.
+  // substitutes it from the required BUCKET_NAME config value (see "vars"
+  // above) before deploying. The placeholder is left as-is for local
+  // `wrangler dev`/tests: Miniflare's local R2 emulation doesn't validate
+  // that a bucket by this name actually exists, so it works fine as a
+  // local, harmless storage key.
   "r2_buckets": [
     {
       "binding": "BUCKET",
