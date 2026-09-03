@@ -419,6 +419,28 @@ def test_limit_migrates_only_the_first_n_documents_by_ascending_id(
     assert names == {"1.epub", "2.epub"}
 
 
+def test_migrates_more_than_one_batch_of_new_documents(tmp_path, d1, engine):
+    blob = CryptoBlob(engine)
+    rows = [_row(i, f"{i}.epub") for i in range(1, 24)]  # > BATCH_SIZE (10)
+    content = {
+        _content_key(row, blob): blob.encrypt(b"x", row["txt_key"]) for row in rows
+    }
+    rqlite, r2_old = _setup_old_system(engine, rows, content)
+    r2_new = FakeR2Client()
+
+    migrator = _migrator(tmp_path, d1, r2_old, r2_new, engine)
+    migrator.rqlite = rqlite
+    migrator.run()
+
+    assert len(d1.documents) == 23
+    content_puts = [k for k, _ in r2_new.put_calls if "/documents/" in k]
+    assert len(content_puts) == 23
+    names = {
+        entry["catalog"]["name"] for entry in _decode_catalog(d1, r2_new, migrator)
+    }
+    assert names == {f"{i}.epub" for i in range(1, 24)}
+
+
 def test_second_run_resumes_and_finishes_remaining_documents(tmp_path, d1, engine):
     blob = CryptoBlob(engine)
     rows = [_row(i, f"{i}.epub") for i in range(1, 4)]

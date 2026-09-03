@@ -39,11 +39,18 @@ class DocumentStore:
         self.umk, self.db_prefix = umk, db_prefix
 
     def upload_content(self, path: str, data: bytes, content_key: bytes) -> str:
-        object_key = f"{self.db_prefix}/documents/{path}"
-        self.r2.put_object(
-            object_key, self.blob.encrypt(data, content_key), if_none_match=True
-        )
+        object_key = self.content_object_key(path)
+        self.put_content(object_key, self.encrypt_content(data, content_key))
         return object_key
+
+    def content_object_key(self, path: str) -> str:
+        return f"{self.db_prefix}/documents/{path}"
+
+    def encrypt_content(self, data: bytes, content_key: bytes) -> bytes:
+        return self.blob.encrypt(data, content_key)
+
+    def put_content(self, object_key: str, encrypted: bytes) -> None:
+        self.r2.put_object(object_key, encrypted, if_none_match=True)
 
     def insert_document(
         self,

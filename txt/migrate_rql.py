@@ -20,6 +20,17 @@ not-yet-migrated rows a single run newly imports, in ascending old
 `txt.id` order -- rows already checkpointed are always reconciled
 regardless of the limit.
 
+Not-yet-migrated rows are downloaded from the old bucket and uploaded
+to the new one in parallel batches of up to `BATCH_SIZE` documents --
+those are plain R2 GET/PUT calls with no shared state, so the network
+latency of many small documents overlaps instead of serializing.
+Decrypting the old content and re-encrypting it under a fresh key
+still happens one document at a time on the main thread between the
+parallel download and upload steps: the AEAD engine
+(`leancrypto_wasm.LeancryptoEngine`) wraps a single wasmtime
+store/instance/linear memory that is not safe to call from more than
+one thread at once.
+
 Not migrated by this command: `txt_shares` (active public shares). That
 is a materially different problem -- an existing share URL's capability
 and content key must keep working, which means copying the exact shared
@@ -31,6 +42,7 @@ import base64
 import json
 import secrets
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -75,6 +87,20 @@ BOOKMARK_ROWS_SQL = (
     "SELECT cfi, page_number, preview, created_at FROM txt_bookmarks "
     "WHERE txt_id = ? ORDER BY id"
 )
+
+# Documents not yet migrated are downloaded from the old bucket and
+# uploaded to the new one in batches of this size, in parallel -- see
+# the module docstring for why only the R2 I/O is parallelized.
+BATCH_SIZE = 10
+
+
+@dataclass(frozen=True)
+class PreparedUpload:
+    object_key: str
+    encrypted: bytes
+    content_key: bytes
+    new_path: str
+    data_len: int
 
 
 @dataclass
@@ -250,18 +276,35 @@ class RqlMigrator:
         return remote
 
     def _migrate_open_database(self, db_old) -> tuple[int, int]:
+        rows = db_old.query(TXT_ROWS_SQL)
+        to_process = self._new_rows_up_to_limit(rows)
+        self._migrate_new_rows_in_batches(to_process)
+        bookmarks = self._reconcile_rows(db_old, rows)
+        return len(to_process), bookmarks
+
+    def _new_rows_up_to_limit(self, rows: list[tuple]) -> list[tuple]:
+        # Drops each row's catalog blob (index 4, only needed by
+        # _reconcile_rows) down to (old_id, txt_key, txt_prefix, path,
+        # last_accessed, last_cfi), the shape the batch pipeline needs.
+        new_rows = [
+            row[:4] + row[5:] for row in rows if str(row[0]) not in self.checkpoint
+        ]
+        return new_rows if self.limit is None else new_rows[: self.limit]
+
+    def _reconcile_rows(self, db_old, rows: list[tuple]) -> int:
         state = self.catalog_new.load_state()
         changed = False
-        migrated = bookmarks = 0
-        for row in db_old.query(TXT_ROWS_SQL):
-            new_bookmarks, is_new, entry_added = self._migrate_row(db_old, row, state)
-            bookmarks += new_bookmarks
-            migrated += 1 if is_new else 0
-            changed = changed or entry_added
-            if self.limit is not None and migrated >= self.limit:
+        bookmarks = 0
+        for old_id, _txt_key, _txt_prefix, _path, catalog_blob, *_rest in rows:
+            entry = self.checkpoint.get(str(old_id))
+            if entry is None:
                 break
+            bookmarks += self._migrate_bookmarks(db_old, old_id, entry)
+            catalog = json.loads(brotli.decompress(catalog_blob))
+            if self.catalog_new.add_entry(state, entry["document_id"], catalog):
+                changed = True
         self._publish_if_changed(state, changed)
-        return migrated, bookmarks
+        return bookmarks
 
     def _publish_if_changed(self, state, changed: bool) -> None:
         if changed:
@@ -272,45 +315,29 @@ class RqlMigrator:
                 "Catalog already reflects every document; no upload needed."
             )
 
-    def _migrate_row(self, db_old, row: tuple, state) -> tuple[int, bool, bool]:
-        old_id, txt_key, txt_prefix, path, catalog_blob, last_accessed, last_cfi = row
-        checkpoint_entry = self.checkpoint.get(str(old_id))
-        is_new = checkpoint_entry is None
-        if is_new:
-            checkpoint_entry = self._insert_new_document(
-                old_id, txt_key, txt_prefix, path, last_accessed, last_cfi
-            )
-        new_bookmarks = self._migrate_bookmarks(db_old, old_id, checkpoint_entry)
-        catalog = json.loads(brotli.decompress(catalog_blob))
-        entry_added = self.catalog_new.add_entry(
-            state, checkpoint_entry["document_id"], catalog
-        )
-        return new_bookmarks, is_new, entry_added
+    def _migrate_new_rows_in_batches(self, rows: list[tuple]) -> None:
+        for i in range(0, len(rows), BATCH_SIZE):
+            self._migrate_batch(rows[i : i + BATCH_SIZE])
 
-    def _insert_new_document(
-        self, old_id, txt_key, txt_prefix, path, last_accessed, last_cfi
-    ) -> dict:
-        data = self._download_and_decrypt(txt_prefix, path, txt_key)
-        content_key = secrets.token_bytes(128)
-        new_path = to_base32_crockford(secrets.token_bytes(32))
-        object_key = self.store_new.upload_content(new_path, data, content_key)
-        document_id = self.store_new.insert_document(
-            content_key, new_path, last_accessed=last_accessed, last_cfi=last_cfi
-        )
-        self._log_new_document(old_id, data, object_key, document_id)
-        entry = {"document_id": document_id, "bookmarks_done": False}
-        self._save_checkpoint_entry(old_id, entry)
-        return entry
+    def _migrate_batch(self, batch: list[tuple]) -> dict[int, dict]:
+        raw_by_id = self._download_batch(batch)
+        prepared = {
+            row[0]: self._prepare_new_content(row, raw_by_id[row[0]]) for row in batch
+        }
+        self._upload_batch(list(prepared.values()))
+        return {
+            row[0]: self._finish_new_document(row, prepared[row[0]]) for row in batch
+        }
 
-    def _log_new_document(self, old_id, data: bytes, object_key: str, document_id: int):
-        self.logger.info(
-            f"txt id={old_id} ({len(data)} byte(s)) -> {object_key} "
-            f"document_id={document_id}"
-        )
+    def _download_batch(self, batch: list[tuple]) -> dict[int, bytes]:
+        with ThreadPoolExecutor(max_workers=BATCH_SIZE) as pool:
+            futures = {
+                pool.submit(self._download_old_object, row[2], row[3]): row[0]
+                for row in batch
+            }
+            return {futures[f]: f.result() for f in as_completed(futures)}
 
-    def _download_and_decrypt(
-        self, txt_prefix: bytes, path: bytes, txt_key: bytes
-    ) -> bytes:
+    def _download_old_object(self, txt_prefix: bytes, path: bytes) -> bytes:
         old_key = (
             f"{self.account_old.db_prefix}/{to_base32_crockford(txt_prefix)}"
             f"/{to_base32_crockford(path)}"
@@ -318,7 +345,52 @@ class RqlMigrator:
         encrypted = self.r2_old.get_object(old_key)
         if encrypted is None:
             raise ValueError(f"missing rqlite content object: {old_key}")
-        return self.blob.decrypt(encrypted, txt_key)
+        return encrypted
+
+    def _prepare_new_content(self, row: tuple, raw: bytes) -> PreparedUpload:
+        _old_id, txt_key, _txt_prefix, _path, _last_accessed, _last_cfi = row
+        data = self.blob.decrypt(raw, txt_key)
+        content_key = secrets.token_bytes(128)
+        new_path = to_base32_crockford(secrets.token_bytes(32))
+        object_key = self.store_new.content_object_key(new_path)
+        encrypted = self.store_new.encrypt_content(data, content_key)
+        return PreparedUpload(object_key, encrypted, content_key, new_path, len(data))
+
+    def _upload_batch(self, prepared: list[PreparedUpload]) -> None:
+        with ThreadPoolExecutor(max_workers=BATCH_SIZE) as pool:
+            futures = [
+                pool.submit(self.store_new.put_content, p.object_key, p.encrypted)
+                for p in prepared
+            ]
+            for future in as_completed(futures):
+                future.result()
+
+    def _finish_new_document(self, row: tuple, prep: PreparedUpload) -> dict:
+        old_id, _txt_key, _txt_prefix, _path, last_accessed, last_cfi = row
+        document_id = self.store_new.insert_document(
+            prep.content_key,
+            prep.new_path,
+            last_accessed=last_accessed,
+            last_cfi=last_cfi,
+        )
+        self._log_new_document(old_id, prep.data_len, prep.object_key, document_id)
+        entry = {"document_id": document_id, "bookmarks_done": False}
+        self._save_checkpoint_entry(old_id, entry)
+        return entry
+
+    def _log_new_document(
+        self, old_id, data_len: int, object_key: str, document_id: int
+    ) -> None:
+        self.logger.info(
+            f"txt id={old_id} ({data_len} byte(s)) -> {object_key} "
+            f"document_id={document_id}"
+        )
+
+    def _insert_new_document(
+        self, old_id, txt_key, txt_prefix, path, last_accessed, last_cfi
+    ) -> dict:
+        row = (old_id, txt_key, txt_prefix, path, last_accessed, last_cfi)
+        return self._migrate_batch([row])[old_id]
 
     def _migrate_bookmarks(self, db_old, old_id: int, checkpoint_entry: dict) -> int:
         if checkpoint_entry["bookmarks_done"]:
