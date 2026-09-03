@@ -1,6 +1,7 @@
 import base64
 import json
 import re
+import secrets
 
 import brotli
 import pytest
@@ -64,6 +65,20 @@ class FakeD1:
         id_ = self._next_id
         self._next_id += 1
         return id_
+
+    def query(self, sql, _params=None):
+        if sql.startswith("SELECT id, content_key_id, content_blob FROM documents"):
+            threshold = int(re.search(r"id > (\d+)", sql).group(1))
+            return [
+                {
+                    "id": id_,
+                    "content_key_id": doc["content_key_id"],
+                    "content_blob": doc["content_blob"],
+                }
+                for id_, doc in sorted(self.documents.items())
+                if id_ > threshold
+            ]
+        raise AssertionError(f"unexpected query: {sql}")
 
     def query_one(self, sql, _params=None):
         if "FROM owner" in sql:
@@ -395,6 +410,44 @@ def test_migrates_documents_reading_state_bookmarks_and_catalog(tmp_path, d1, en
         entry["catalog"]["name"] for entry in _decode_catalog(d1, r2_new, migrator)
     }
     assert names == {"a.epub", "b.epub"}
+
+
+def test_a_lost_checkpoint_entry_is_recovered_by_content_match(tmp_path, d1, engine):
+    blob = CryptoBlob(engine)
+    rows = [_row(1, "1.epub"), _row(2, "2.epub")]
+    content = {
+        _content_key(row, blob): blob.encrypt(
+            f"epub-{row['id']}".encode(), row["txt_key"]
+        )
+        for row in rows
+    }
+    rqlite, r2_old = _setup_old_system(engine, rows, content)
+    r2_new = FakeR2Client()
+
+    migrator = _migrator(tmp_path, d1, r2_old, r2_new, engine)
+    migrator.rqlite = rqlite
+    migrator._prepare_run()
+
+    # Simulate the exact race this recovers from: row 2's content already
+    # made it into D1/R2 from a prior, interrupted run -- the D1 insert
+    # succeeded, but the process died before a checkpoint entry for it was
+    # ever written, so this run's checkpoint has no record of it at all
+    # (and, since reaching bookmarks requires that very entry, none of
+    # its bookmarks were touched either).
+    content_key = secrets.token_bytes(128)
+    path = to_base32_crockford(secrets.token_bytes(32))
+    migrator.store_new.upload_content(path, b"epub-2", content_key)
+    orphan_document_id = migrator.store_new.insert_document(content_key, path)
+
+    migrator.run()
+
+    # Row 1 migrates normally; row 2 is matched to the orphan by content
+    # and reuses it instead of uploading a duplicate.
+    assert len(d1.documents) == 2
+    content_puts = [k for k, _ in r2_new.put_calls if "/documents/" in k]
+    assert len(content_puts) == 2  # the orphan's own upload, plus row 1's
+    assert migrator.checkpoint["2"]["document_id"] == orphan_document_id
+    assert migrator.checkpoint["1"]["document_id"] != orphan_document_id
 
 
 def test_limit_migrates_only_the_first_n_documents_by_ascending_id(

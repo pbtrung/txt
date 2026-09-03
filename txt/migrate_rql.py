@@ -9,16 +9,28 @@ is only ever read, never written.
 SQLCipher database (re-downloaded and overwritten every run, purely for
 inspection -- it is never read back or uploaded), and the recovery
 checkpoint itself, `{new_db_prefix}.migrate-checkpoint.json`, recording
-per old `txt.id`, `{document_id, bookmarks_done}`. A row is only ever
-migrated once: a run interrupted between the document insert and its
-bookmarks resumes by finishing that row's bookmarks without
-re-uploading or re-inserting the document, and a row already fully done
-is skipped entirely except for a cheap catalog reconciliation (the same
-resilience --ingest's checkpoint gives, so a lost or stale D1 catalog
-entry still gets fixed on retry). `--limit` bounds how many
-not-yet-migrated rows a single run newly imports, in ascending old
-`txt.id` order -- rows already checkpointed are always reconciled
-regardless of the limit.
+per old `txt.id`, `{document_id, bookmarks_done}`. It is written to a
+temp file and renamed into place, so an interruption mid-write can
+never corrupt the copy already on disk. A row is only ever migrated
+once: a run interrupted between the document insert and its bookmarks
+resumes by finishing that row's bookmarks without re-uploading or
+re-inserting the document, and a row already fully done is skipped
+entirely except for a cheap catalog reconciliation (the same resilience
+--ingest's checkpoint gives, so a lost or stale D1 catalog entry still
+gets fixed on retry). `--limit` bounds how many not-yet-migrated rows a
+single run newly imports, in ascending old `txt.id` order -- rows
+already checkpointed are always reconciled regardless of the limit.
+
+A narrower race remains even so: a document's D1 insert can succeed and
+then the process can be interrupted before its checkpoint entry is
+written at all, leaving that document orphaned in D1 with nothing
+recording it. Rather than upload a duplicate for it on the next run,
+every documents row past the checkpoint's highest known document_id is
+compared by decrypted content against each row about to be migrated; a
+match reuses the existing document_id (repairing the checkpoint) instead
+of creating a new document, and its bookmarks -- never touched, since
+migrating them requires the very checkpoint entry that was lost -- are
+still migrated normally afterward.
 
 Not-yet-migrated rows are downloaded from the old bucket and uploaded
 to the new one in parallel batches of up to `BATCH_SIZE` documents --
@@ -49,6 +61,7 @@ it -- and was scoped out of this pass.
 """
 
 import base64
+import hashlib
 import json
 import secrets
 from collections.abc import Callable
@@ -222,6 +235,7 @@ class RqlMigrator:
         self.r2_new = deps.r2_new or R2Client(cf_creds.r2_config)
         self.checkpoint_path = self.checkpoint = None
         self.store_new = self.catalog_new = None
+        self._recovery_map_cache = None
 
     def _new_rqlite(self) -> RqliteClient:
         return RqliteClient(
@@ -342,13 +356,68 @@ class RqlMigrator:
 
     def _migrate_batch(self, batch: list[tuple]) -> dict[int, dict]:
         raw_by_id = self._download_batch(batch)
+        plain_by_id = {
+            row[0]: self.blob.decrypt(raw_by_id[row[0]], row[1]) for row in batch
+        }
+        results, to_upload = {}, []
+        for row in batch:
+            document_id = self._recovered_document_id(plain_by_id[row[0]])
+            if document_id is None:
+                to_upload.append(row)
+            else:
+                results[row[0]] = self._recover_entry(row[0], document_id)
+        if to_upload:
+            results.update(self._upload_new_documents(to_upload, plain_by_id))
+        return results
+
+    def _upload_new_documents(
+        self, rows: list[tuple], plain_by_id: dict[int, bytes]
+    ) -> dict[int, dict]:
         prepared = {
-            row[0]: self._prepare_new_content(row, raw_by_id[row[0]]) for row in batch
+            row[0]: self._prepare_new_content(row, plain_by_id[row[0]]) for row in rows
         }
         self._upload_batch(list(prepared.values()))
         return {
-            row[0]: self._finish_new_document(row, prepared[row[0]]) for row in batch
+            row[0]: self._finish_new_document(row, prepared[row[0]]) for row in rows
         }
+
+    def _recovered_document_id(self, data: bytes) -> int | None:
+        return self._recovery_map().get(hashlib.sha256(data).digest())
+
+    def _recover_entry(self, old_id: int, document_id: int) -> dict:
+        self.logger.info(
+            f"txt id={old_id} matches already-uploaded document_id={document_id}; "
+            "reusing it instead of uploading a duplicate"
+        )
+        entry = {"document_id": document_id, "bookmarks_done": False}
+        self._save_checkpoint_entry(old_id, entry)
+        return entry
+
+    def _recovery_map(self) -> dict[bytes, int]:
+        if self._recovery_map_cache is None:
+            self._recovery_map_cache = self._build_recovery_map()
+        return self._recovery_map_cache
+
+    def _build_recovery_map(self) -> dict[bytes, int]:
+        # See the module docstring: content-match every documents row past
+        # the checkpoint's highest known document_id, to recover one this
+        # migrator orphaned without mistaking an unrelated --ingest row.
+        known_max = max(
+            (entry["document_id"] for entry in self.checkpoint.values()), default=0
+        )
+        candidates = self.store_new.d1.query(
+            "SELECT id, content_key_id, content_blob FROM documents "
+            f"WHERE id > {known_max} ORDER BY id"
+        )
+        return {self._document_content_hash(row): row["id"] for row in candidates}
+
+    def _document_content_hash(self, row: dict) -> bytes:
+        row_key = self.store_new.unwrap_key(row["content_key_id"])
+        pointer = self.blob.decrypt_json(row["content_blob"], row_key)
+        content_key = base64.b64decode(pointer["content_key"])
+        object_key = self.store_new.content_object_key(pointer["path"])
+        raw = self.store_new.r2.get_object(object_key)
+        return hashlib.sha256(self.blob.decrypt(raw, content_key)).digest()
 
     def _download_batch(self, batch: list[tuple]) -> dict[int, bytes]:
         with ThreadPoolExecutor(max_workers=BATCH_SIZE) as pool:
@@ -368,9 +437,7 @@ class RqlMigrator:
             raise ValueError(f"missing rqlite content object: {old_key}")
         return encrypted
 
-    def _prepare_new_content(self, row: tuple, raw: bytes) -> PreparedUpload:
-        _old_id, txt_key, _txt_prefix, _path, _last_accessed, _last_cfi = row
-        data = self.blob.decrypt(raw, txt_key)
+    def _prepare_new_content(self, row: tuple, data: bytes) -> PreparedUpload:
         content_key = secrets.token_bytes(128)
         new_path = to_base32_crockford(secrets.token_bytes(32))
         object_key = self.store_new.content_object_key(new_path)
@@ -394,9 +461,9 @@ class RqlMigrator:
             last_accessed=last_accessed,
             last_cfi=last_cfi,
         )
-        self._log_new_document(old_id, prep.data_len, prep.object_key, document_id)
         entry = {"document_id": document_id, "bookmarks_done": False}
         self._save_checkpoint_entry(old_id, entry)
+        self._log_new_document(old_id, prep.data_len, prep.object_key, document_id)
         return entry
 
     def _log_new_document(
@@ -491,4 +558,9 @@ def _load_checkpoint(path: Path) -> dict[str, dict]:
 
 
 def _save_checkpoint(path: Path, checkpoint: dict[str, dict]) -> None:
-    path.write_text(json.dumps(checkpoint, indent=2) + "\n")
+    # Written to a temp file and renamed into place -- path.replace() is
+    # an atomic rename on the same filesystem, so an interruption mid-write
+    # can never truncate/corrupt the checkpoint that's already on disk.
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text(json.dumps(checkpoint, indent=2) + "\n")
+    tmp_path.replace(path)
