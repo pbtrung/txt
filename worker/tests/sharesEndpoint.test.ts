@@ -1,6 +1,6 @@
-// Milestone 7 (docs/milestones.md): GET/POST/DELETE /v1/shares, through
-// the real fetch() handler except where a specific failure mode (R2
-// deletion failure) needs a stubbed binding no HTTP-level mock can reach.
+// GET/POST/DELETE /v1/shares, through the real fetch() handler except
+// where a specific failure mode (R2 deletion failure) needs a stubbed
+// binding no HTTP-level mock can reach.
 import { env, SELF } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import { base64Encode } from "../base64";

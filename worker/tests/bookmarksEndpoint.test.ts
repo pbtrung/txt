@@ -1,6 +1,5 @@
-// Milestone 5 (docs/milestones.md): bookmark listing (read) and
-// create/delete (mutating, ticket + proof), through the real fetch()
-// handler.
+// Bookmark listing (read) and create/delete (mutating, ticket + proof),
+// through the real fetch() handler.
 import { env, SELF } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import { base64Encode } from "../base64";

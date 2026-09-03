@@ -1,7 +1,7 @@
-// Milestone 4 (docs/milestones.md): the layer standing between "past
-// Access" and "can mutate the library" -- tested adversarially against a
-// real P-521 keypair and real crypto.subtle sign/verify, exercising the
-// full ticket-issuance-then-proof flow rather than mocking either half.
+// The layer standing between "past Access" and "can mutate the library"
+// -- tested adversarially against a real P-521 keypair and real
+// crypto.subtle sign/verify, exercising the full ticket-issuance-then-proof
+// flow rather than mocking either half.
 import { beforeEach, describe, expect, it } from "vitest";
 import { issueTicket, verifyTicket } from "../ownerTicket";
 import type { TicketClaims } from "../ownerTicket";

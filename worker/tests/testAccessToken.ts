@@ -1,6 +1,6 @@
 // Shared test-only helper for producing a validly-signed Access JWT and a
 // matching JWKS, so integration tests (worker/tests/index.test.ts and
-// later milestones) can exercise real Access-gated routing through
+// others) can exercise real Access-gated routing through
 // worker/api.ts's actual fetchJwks() call, rather than re-deriving this
 // setup in every test file. worker/tests/access.test.ts deliberately keeps
 // its own inline, more adversarial version of this (it needs to construct

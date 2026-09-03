@@ -56,12 +56,11 @@ export default defineConfig({
     chunkSizeWarningLimit: 1500,
     rollupOptions: {
       output: {
-        // A prior version of this app was crashed by exactly this: a
-        // cross-chunk dynamic import resolved via a relative specifier
-        // that only worked when the entry chunk had a stable src URL --
-        // it didn't when mounted as an inline, no-src module script,
-        // causing the module registry to load and mount a second copy of
-        // the whole app on top of the first ("Failed to execute
+        // A cross-chunk dynamic import resolved via a relative specifier
+        // only works when the entry chunk has a stable src URL, which it
+        // doesn't when mounted as an inline, no-src module script -- that
+        // mismatch causes the module registry to load and mount a second
+        // copy of the whole app on top of the first ("Failed to execute
         // 'removeChild'"). Merging everything into one chunk removes the
         // cross-chunk import entirely, regardless of how the entry ends
         // up being loaded.

@@ -1,11 +1,9 @@
 // docs/auth.md §4.2 / docs/crypto.md §"Owner-proof signatures": the
 // canonical proof bytes and their P-521 verification. This module is pure
-// crypto.subtle logic with no environment-specific dependency (unlike the
-// Blob Format, docs/milestones.md Milestone 2's lesson) -- both the
-// browser (signing, once the UI is wired up in a later milestone) and the
-// Worker (verifying, here) can use the exact same canonical-bytes
-// construction, and should, rather than risk two independently-written
-// implementations drifting apart.
+// crypto.subtle logic with no environment-specific dependency -- both the
+// browser (signing, ui/src/data/ownerProof.ts) and the Worker (verifying,
+// here) use the exact same canonical-bytes construction, rather than risk
+// two independently-written implementations drifting apart.
 import type { TicketClaims } from "./ownerTicket";
 import {
   base64Decode,

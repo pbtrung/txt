@@ -5,8 +5,7 @@ Worker attempts the R2 object delete, and the row stays there for
 retry if that delete fails (a `503`) -- `'creating'` is a browser-local
 marker that never reaches D1 at all. A `'deleting'` row is therefore
 the only persisted stale state in this design: D1 alone is
-authoritative here, unlike the predecessor design's separate rqlite
-control store needing reconciliation against a local SQLCipher file.
+authoritative here.
 """
 
 from .account_data import parse_owner_account

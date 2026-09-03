@@ -1,6 +1,6 @@
-// Milestone 5 (docs/milestones.md): GET /v1/documents (the N+1-avoidance
-// join) and PATCH /v1/documents/:id/access (the access_version optimistic
-// concurrency path), through the real fetch() handler.
+// GET /v1/documents (the N+1-avoidance join) and PATCH
+// /v1/documents/:id/access (the access_version optimistic concurrency
+// path), through the real fetch() handler.
 import { env, SELF } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import { base64Decode, base64Encode } from "../base64";
@@ -395,9 +395,9 @@ describe("PATCH /v1/documents/:id/access", () => {
     }
   });
 
-  // The concurrency case docs/milestones.md's Milestone 5 calls out
-  // specifically: two overlapping requests racing for the same stale
-  // version, simulated for real rather than reasoned about on paper.
+  // The concurrency case docs/data_model.md §4 calls out specifically:
+  // two overlapping requests racing for the same stale version, simulated
+  // for real rather than reasoned about on paper.
   it("lets exactly one of two concurrent updates against the same access_version win, the other gets 412", async () => {
     const doc = await insertDocument();
     const { restore, headers: accessHeaders } = await accessSession();

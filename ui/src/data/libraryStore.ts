@@ -1,11 +1,9 @@
-// Replaces the old whole-file SQLCipher database (databaseStore.ts,
-// libraryDb.ts, schema.ts, sqlite.ts): the owner's library now lives in
-// D1 behind /v1/*, fetched and decrypted client-side, with no local
-// database file at all (docs/data_model.md §3). This is the one place
-// that holds `umk` for as long as the session is unlocked, and the one
-// place every document/bookmark row-level blob gets unwrapped or
-// re-wrapped -- readerDocument.ts, readingState.ts, and shares.ts all go
-// through it rather than touching `umk` themselves.
+// The owner's library lives in D1 behind /v1/*, fetched and decrypted
+// client-side, with no local database file at all (docs/data_model.md
+// §3). This is the one place that holds `umk` for as long as the session
+// is unlocked, and the one place every document/bookmark row-level blob
+// gets unwrapped or re-wrapped -- readerDocument.ts, readingState.ts, and
+// shares.ts all go through it rather than touching `umk` themselves.
 import { decrypt, decryptJson, encrypt, encryptJson } from "../crypto/cryptoBlob";
 import { fromBase64 } from "../util/base64";
 import { errorMessage } from "../util/errorMessage";

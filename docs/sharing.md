@@ -25,7 +25,10 @@ share_path}` — the owner's own durable record of a share it created,
   so the owner's browser can list active shares and know what to submit
   for revocation, without needing local-only browser storage. This blob
   plays no part in redemption (§3.3) — the grant does.
-- `active`/`creating`/`deleting` state and timestamps.
+- `active`/`deleting` state and timestamps. The column's `CHECK` also
+  permits `creating`, reserved for a possible future two-phase create, but
+  every insert writes `active` directly (§3.2) — nothing persists
+  `creating` today.
 
 D1 never stores the raw capability, the share content key, or the
 plaintext object path outside that one wrapped blob.

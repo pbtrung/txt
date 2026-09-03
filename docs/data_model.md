@@ -189,6 +189,8 @@ CREATE TABLE shares (
                                           -- plaintext: {share_id, share_content_key
                                           --             (128 random bytes), share_path}
     state             TEXT    NOT NULL CHECK (state IN ('creating', 'active', 'deleting')),
+                                          -- 'creating' is reserved but unused: every
+                                          -- insert writes 'active' directly (docs/sharing.md §3.2)
     created_at        INTEGER NOT NULL,
     UNIQUE (object_path_hash)
 ) STRICT;
@@ -232,9 +234,9 @@ rather than the other way around.
 Unlike plain SQLite, where `foreign_keys` defaults to off per connection,
 D1 enforces it by default and doesn't allow turning it off: `PRAGMA
 foreign_keys = OFF` runs without error but a subsequent read of the pragma
-still reports it on, and a dangling reference is still rejected. `docs/
-milestones.md`'s Milestone 1 confirmed this empirically (`worker/tests/
-db.test.ts`) rather than assuming it — `bookmarks.document_id ON DELETE
+still reports it on, and a dangling reference is still rejected — confirmed
+empirically (`worker/tests/db.test.ts`) rather than assumed —
+`bookmarks.document_id ON DELETE
 CASCADE` and `shares.document_id ON DELETE RESTRICT` can be relied on. The
 `key_store` cleanup/purpose-check triggers don't depend on this either
 way — plain `CREATE TRIGGER` objects fire on the `INSERT`/`DELETE` event

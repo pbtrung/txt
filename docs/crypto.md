@@ -178,9 +178,9 @@ Given a blob and the same IKM used to encrypt it:
 
 ## Composite KEM support
 
-The Python leancrypto wrapper exposes composite keypair generation for
-owner provisioning. It does not currently wrap encapsulation or
-decapsulation, and no persisted application record or browser/Worker flow
+The Python leancrypto wrapper's composite keypair generation is used only
+for owner provisioning; encapsulation and decapsulation are intentionally
+unwrapped, since no persisted application record or browser/Worker flow
 invokes those operations. Public sharing instead creates an independent
 128-byte symmetric content key and places it only in the URL fragment and
 the owner's D1 database (`docs/data_model.md`); the shared EPUB copy

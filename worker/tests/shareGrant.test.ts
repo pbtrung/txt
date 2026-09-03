@@ -1,5 +1,5 @@
-// Milestone 2 (docs/milestones.md): the share grant envelope
-// (docs/crypto.md §"Share grant envelope") is genuinely Worker-side crypto
+// The share grant envelope (docs/crypto.md §"Share grant envelope") is
+// genuinely Worker-side crypto
 // -- the Worker is the only party holding SHARE_GRANT_KEY, so it's the
 // only party that can ever produce or open a grant.
 import { describe, expect, it } from "vitest";

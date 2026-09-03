@@ -1,7 +1,6 @@
-// Milestone 3 (docs/milestones.md): Access JWT verification
-// (docs/auth.md §2), tested adversarially against a real RSA keypair and
-// real crypto.subtle RS256 signing/verification -- not a mocked signature
-// check.
+// Access JWT verification (docs/auth.md §2), tested adversarially against
+// a real RSA keypair and real crypto.subtle RS256 signing/verification --
+// not a mocked signature check.
 import { beforeAll, describe, expect, it } from "vitest";
 import { AccessVerificationError, verifyAccessJwt } from "../access";
 

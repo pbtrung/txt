@@ -6,8 +6,7 @@
 // (https://developers.cloudflare.com/r2/examples/authenticate-r2-temp-credentials/).
 // R2 validates the embedded JWT's signature itself when the credential
 // is actually used; minting needs no network call and no separate
-// Cloudflare API token, unlike the account-level temp-access-credentials
-// API this replaced.
+// Cloudflare API token.
 import { SignJWT } from "jose";
 import type { ProofContext } from "./requireProof";
 import { requireVar } from "./requireVar";
@@ -142,10 +141,10 @@ export async function handlePostR2Credentials(
     ]);
   } catch (error) {
     // Local signing has no network dependency left to fail -- this is
-    // always a configuration problem (a missing/invalid secret) now, not
-    // an upstream outage, hence 500 rather than the old 502. Server-side
-    // only: log the real reason (`requireVar()` throws for a missing
-    // secret exactly like it does for vars) so `wrangler tail` can see it.
+    // always a configuration problem (a missing/invalid secret), hence a
+    // plain 500 rather than an upstream-outage status. Server-side only:
+    // log the real reason (`requireVar()` throws for a missing secret
+    // exactly like it does for vars) so `wrangler tail` can see it.
     console.error(
       `POST /v1/r2-credentials: mintCredential failed: ${error instanceof Error ? error.message : String(error)}`,
     );

@@ -3,9 +3,7 @@
 The input EPUB is never modified. The output EPUB preserves ZIP member metadata
 and keeps the required ``mimetype`` member first and uncompressed.
 
-Copied from ../replace_epub_images.py (a standalone script maintained outside
-this repo) rather than reimplemented, plus replace_images_dir() to drive it
-over a whole directory for --replace-images.
+replace_images_dir() drives this over a whole directory for --replace-images.
 """
 
 from __future__ import annotations

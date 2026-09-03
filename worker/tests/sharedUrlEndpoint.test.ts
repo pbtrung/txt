@@ -1,5 +1,5 @@
-// Milestone 7 (docs/milestones.md): POST /v1/shared-url, and the full
-// create -> redeem -> revoke -> redeem-again lifecycle through the real
+// POST /v1/shared-url, and the full create -> redeem -> revoke ->
+// redeem-again lifecycle through the real
 // fetch() handler. Credential minting is local (no network call to mock,
 // worker/tests/r2CredentialsEndpoint.test.ts already covers that request
 // shape in isolation); what's under test here is grant decryption, the

@@ -46,16 +46,16 @@ def test_load_owner_creds_reads_owner_and_d1_fields(owner_creds_path):
     assert creds.cf_d1_api_token == "token789"
 
 
-def test_load_owner_creds_ignores_legacy_extra_fields(tmp_path):
+def test_load_owner_creds_ignores_unknown_fields(tmp_path):
     path = tmp_path / "owner_creds.json"
-    data = {**VALID_OWNER, "asset_base_url": "https://reader.example.com"}
-    data["r2_config"] = {**data["r2_config"], "read_only_access_key_id": "old"}
+    data = {**VALID_OWNER, "extra_field": "unexpected"}
+    data["r2_config"] = {**data["r2_config"], "another_extra_field": "unexpected"}
     path.write_text(json.dumps(data))
 
     creds = load_owner_creds(str(path))
 
-    assert not hasattr(creds, "asset_base_url")
-    assert not hasattr(creds.r2_config, "read_only_access_key_id")
+    assert not hasattr(creds, "extra_field")
+    assert not hasattr(creds.r2_config, "another_extra_field")
 
 
 def test_load_owner_creds_rejects_malformed_owner_email(tmp_path):

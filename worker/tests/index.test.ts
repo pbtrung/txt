@@ -1,7 +1,7 @@
-// Milestones 0 and 3 (docs/milestones.md): confirm the Worker actually
-// boots and routes correctly inside the real Workers runtime, and that
-// Access gating is enforced for real by the actual fetch() handler -- not
-// just that verifyAccessJwt() is correct in isolation (worker/tests/
+// Confirm the Worker actually boots and routes correctly inside the real
+// Workers runtime, and that Access gating is enforced for real by the
+// actual fetch() handler -- not just that verifyAccessJwt() is correct in
+// isolation (worker/tests/
 // access.test.ts already covers that).
 import { env, SELF } from "cloudflare:test";
 import { describe, expect, it } from "vitest";

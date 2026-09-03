@@ -1,7 +1,7 @@
-// Milestone 1 (docs/milestones.md): the schema in worker/migrations/
-// applied against a real D1 binding (not a mocked SQLite), specifically
-// targeting the correctness issues docs/data_model.md already flags and
-// fixed on paper -- confirm they're actually fixed, not just documented.
+// The schema in worker/migrations/ applied against a real D1 binding (not
+// a mocked SQLite), specifically targeting the correctness issues
+// docs/data_model.md flags -- confirm they're actually enforced, not just
+// documented.
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 

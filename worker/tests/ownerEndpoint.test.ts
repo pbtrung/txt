@@ -1,7 +1,7 @@
-// Milestone 4 (docs/milestones.md): GET /v1/owner (docs/auth.md §4.1)
-// through the real fetch() handler -- a real D1 owner row, a real Access
-// session, and a real HS256 ticket the response's own ticket must verify
-// against, not just a call into handleGetOwner() in isolation.
+// GET /v1/owner (docs/auth.md §4.1) through the real fetch() handler -- a
+// real D1 owner row, a real Access session, and a real HS256 ticket the
+// response's own ticket must verify against, not just a call into
+// handleGetOwner() in isolation.
 import { env, SELF } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { verifyTicket } from "../ownerTicket";

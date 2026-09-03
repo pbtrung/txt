@@ -141,8 +141,7 @@ fi
 # Created inside the repo root, not /tmp: wrangler.jsonc's relative paths
 # (migrations_dir, main, assets.directory) resolve against the config
 # file's own directory, so a --config file living somewhere else (e.g.
-# /tmp) silently breaks them -- this is what caused migrations_dir to
-# resolve to a nonexistent /tmp/worker/migrations the first time.
+# /tmp) would silently break them.
 config=$(mktemp ./wrangler.deploy.XXXXXX.jsonc)
 trap 'rm -f "$config"' EXIT HUP INT TERM
 sed -e "$sed_script" wrangler.jsonc > "$config"

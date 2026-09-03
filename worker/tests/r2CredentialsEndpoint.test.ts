@@ -1,5 +1,5 @@
-// Milestone 6 (docs/milestones.md): POST /v1/r2-credentials, through the
-// real fetch() handler. Credentials are minted entirely locally (signed
+// POST /v1/r2-credentials, through the real fetch() handler. Credentials
+// are minted entirely locally (signed
 // JWTs, docs/storage_layout.md §"Credentials") -- no network call to
 // mock, so what's under test is the Worker's own claim shape
 // (bucket/scope/paths per credential, decoded and verified against the

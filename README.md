@@ -11,12 +11,10 @@ short-lived, exact-object R2 URL and decrypt that shared copy in the browser.
 
 See [authentication](docs/auth.md), [data model](docs/data_model.md),
 [storage layout](docs/storage_layout.md), [sharing](docs/sharing.md),
-[cryptography](docs/crypto.md), [deployment](docs/deployment.md), and the
-[implementation plan](docs/milestones.md) for the complete design. The design
-is decided; implementation is in progress per `docs/milestones.md`. The
-Python CLI's `--init-owner`, `--ingest`, `--clean-bucket`, `--clean-db`,
-`--update-db`, and `--check-catalog`, and the browser UI, target the
-Cloudflare/D1 design described here.
+[cryptography](docs/crypto.md), and [deployment](docs/deployment.md) for the
+complete design. The Python CLI's `--init-owner`, `--ingest`,
+`--clean-bucket`, `--clean-db`, `--update-db`, and `--check-catalog`, and the
+browser UI, target the Cloudflare/D1 design described here.
 
 ## Architecture
 
@@ -186,6 +184,8 @@ python3 -m ruff check .
 python3 -m ruff format --check .
 npm run ui:test
 npm run ui:typecheck
+npm run worker:test
+npm run worker:typecheck
 npm run lint
 npm run format:check
 npm run ui:build

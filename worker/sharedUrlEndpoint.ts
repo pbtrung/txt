@@ -79,8 +79,8 @@ export async function handlePostSharedUrl(
     );
   } catch {
     // Local signing has no network dependency left to fail -- this is
-    // always a configuration problem now, not an upstream outage, hence
-    // 500 rather than the old 502 (worker/r2CredentialsEndpoint.ts).
+    // always a configuration problem, hence a plain 500 rather than an
+    // upstream-outage status (worker/r2CredentialsEndpoint.ts).
     return new Response("failed to mint R2 credential", { status: 500 });
   }
 

@@ -1,7 +1,6 @@
 // docs/sharing.md §3.1/§3.2/§3.4: listing, creating, and revoking shares.
 // The Worker never decrypts `owner_blob` -- it's opaque, client-encrypted
-// bytes (docs/auth.md's trust boundary; docs/sharing.md was corrected to
-// say so while implementing this). Every plaintext value the Worker
+// bytes (docs/auth.md's trust boundary). Every plaintext value the Worker
 // needs (share_id, share_path, document_id) travels as its own body
 // field instead.
 import { sealGrant } from "./shareGrant";

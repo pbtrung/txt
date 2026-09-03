@@ -214,7 +214,7 @@ Before exposing a deployment, verify:
 10. A `PUT` against `{db_prefix}/catalog/*` using the read-only credential
     from `POST /v1/r2-credentials` is actually rejected by R2 — a scope
     the code only claims to enforce isn't verified until it's tried
-    against a real credential (`docs/milestones.md` Milestone 6).
+    against a real credential.
 
 ## 8. Free-tier budget
 

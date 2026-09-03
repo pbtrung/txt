@@ -1,7 +1,7 @@
 // Ports txt/crypto_blob.py's blob format exactly (docs/crypto.md's
 // Encrypt/Decrypt blob format): magic(2)||version(2)||salt(64)||
-// ciphertext||tag(64), AD = magic||version||salt (context isn't implemented
-// yet, so HKDF's info is always empty).
+// ciphertext||tag(64), AD = magic||version||salt. The format has no
+// caller-supplied context, so HKDF's info is always empty.
 import { aeadDecrypt, aeadEncrypt, hkdfSha3_512 } from "./aead";
 import { brotliCompress, brotliDecompress } from "./brotli";
 
