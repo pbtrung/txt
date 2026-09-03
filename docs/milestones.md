@@ -361,8 +361,8 @@ WAF rules aren't something `wrangler dev` simulates locally.
 
 ## Milestone 9 — Ingestion tooling
 
-**Status: `--init-owner` and `--ingest` done and tested against the D1
-design; `--update-db`/`--clean-bucket`/`--clean-db` deferred to their own
+**Status: `--init-owner`, `--ingest`, `--clean-bucket`, and `--clean-db`
+done and tested against the D1 design; `--update-db` deferred to its own
 pass.** Decided the Worker-endpoints-vs-D1-HTTP-API question in favor of
 D1's own HTTP query API (`txt/d1_client.py`) — the Worker's ticket/proof
 protocol is designed for ephemeral browser sessions, not a long-running
@@ -377,12 +377,15 @@ why a checkpoint is required — a `documents` row alone can't say what its
 catalog entry should contain). `txt/rqlite_client.py`,
 `rqlite_schema.py`, `rqlite_updater.py`, and `firebase_auth.py` had no
 remaining callers once this landed and were removed entirely.
-`ingest.py`'s own rewrite no longer uses `sqlite_engine.py` at all, but
-that module stays: `db_updater.py`, `bucket_cleaner.py`, and
-`db_cleaner.py` still target the rqlite-era design (a whole downloaded
-SQLCipher file, `self.owner.rqlite`) and still need it. Those three
-aren't wired into `cli.py` until they get the same D1 rewrite — their
-tests skip themselves at import time rather than fail.
+`ingest.py`'s own rewrite no longer uses `sqlite_engine.py` at all;
+`bucket_cleaner.py`/`db_cleaner.py` were later rewritten against D1 too
+(the R2 allowlist and the `shares` `state='deleting'` retry
+respectively, `txt/bucket_cleaner.py`/`txt/db_cleaner.py`) and don't
+need it either — `sqlite_engine.py` now stays only for `db_updater.py`,
+which still targets the rqlite-era design (a whole downloaded SQLCipher
+file, `self.owner.rqlite`) and isn't wired into `cli.py` until it gets
+the same D1 rewrite; its test skips itself at import time rather than
+fail.
 
 - The Python maintenance CLI's ingestion path (`txt --ingest`,
   `txt --update-db`) needs to write to D1 and the R2 catalog object

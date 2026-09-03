@@ -14,10 +14,10 @@ See [authentication](docs/auth.md), [data model](docs/data_model.md),
 [cryptography](docs/crypto.md), [deployment](docs/deployment.md), and the
 [implementation plan](docs/milestones.md) for the complete design. The design
 is decided; implementation is in progress per `docs/milestones.md`. The
-Python CLI's `--init-owner` and `--ingest`, and the browser UI, target the
-Cloudflare/D1 design described here; `--update-db`, `--clean-bucket`, and
-`--clean-db` still target the design's predecessor (rqlite) and aren't
-reachable from the CLI until they're rewritten.
+Python CLI's `--init-owner`, `--ingest`, `--clean-bucket`, and `--clean-db`,
+and the browser UI, target the Cloudflare/D1 design described here;
+`--update-db` still targets the design's predecessor (rqlite) and isn't
+reachable from the CLI until it's rewritten.
 
 ## Architecture
 
@@ -137,10 +137,27 @@ txt --replace-images ./source ./without-images
 ```
 
 **Not yet available** ([`docs/milestones.md`](docs/milestones.md)
-Milestone 9): migrating the catalog/reading-state schema (`--update-db`) and
-cleaning up unreferenced R2 objects or stale share rows (`--clean-bucket`,
-`--clean-db`) still target the design's predecessor (rqlite) internally and
-aren't currently reachable from the CLI, pending their own rewrite for D1.
+Milestone 9): migrating the catalog/reading-state schema (`--update-db`)
+still targets the design's predecessor (rqlite) internally and isn't
+currently reachable from the CLI, pending its own rewrite for D1.
+
+## Cleaning up stale R2 objects and share rows
+
+`--clean-bucket` deletes R2 objects no `documents`/`catalog` row
+references, without ever touching anything under `{db_prefix}/shared/`
+(the browser can legitimately upload a shared copy moments before
+registering it, so an unregistered object there isn't necessarily
+abandoned). `--clean-db` retries a `shares` row stuck at
+`state = 'deleting'` — the only persisted stale state in the D1 design —
+by re-attempting its R2 object delete and then removing the row. Both
+take the owner's usual `creds.json` and support `--dry-run` to report
+what would be deleted without deleting it:
+
+```sh
+txt --clean-bucket creds.json --dry-run --verbose
+txt --clean-bucket creds.json --verbose
+txt --clean-db creds.json --verbose
+```
 
 ## Migrating from the predecessor (rqlite) design
 
@@ -170,10 +187,13 @@ txt --migrate-rql rql_creds.json creds.json --local-db-dir ./data --limit 10 --v
 A run interrupted between a document's insert and its bookmarks resumes
 from the checkpoint without re-uploading or re-inserting the document; a
 document already fully migrated is skipped on the next run except for a
-cheap catalog reconciliation. Active public shares (`txt_shares`) are not
-migrated by this command — an existing share URL's capability and content
-key would need to keep working unchanged, which is a materially different
-problem from re-encrypting a document.
+cheap catalog reconciliation. Not-yet-migrated documents download from
+the old bucket and upload to the new one in parallel batches of 10;
+decrypting and re-encrypting each one still happens one at a time.
+Active public shares (`txt_shares`) are not migrated by this command —
+an existing share URL's capability and content key would need to keep
+working unchanged, which is a materially different problem from
+re-encrypting a document.
 
 ## Development checks
 
