@@ -136,6 +136,53 @@ describe("GET /v1/documents", () => {
   });
 });
 
+describe("GET /v1/documents/:id", () => {
+  it("returns the same shape as the library list, for one document only", async () => {
+    const [docA, docB] = await Promise.all([insertDocument(), insertDocument()]);
+    const { restore, headers } = await accessSession();
+    try {
+      const response = await SELF.fetch(`https://example.com/v1/documents/${docA.id}`, {
+        headers,
+      });
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as Record<string, unknown>;
+      expect(body.id).toBe(docA.id);
+      expect(body.access_blob).toBe(base64Encode(docA.accessBlob));
+      expect(body.access_key_wrapped).toBe(base64Encode(docA.accessKeyWrapped));
+      expect(body.access_blob).not.toBe(base64Encode(docB.accessBlob));
+    } finally {
+      restore();
+    }
+  });
+
+  it("returns 404 for a document that doesn't exist", async () => {
+    const { restore, headers } = await accessSession();
+    try {
+      const response = await SELF.fetch("https://example.com/v1/documents/999999", {
+        headers,
+      });
+      expect(response.status).toBe(404);
+    } finally {
+      restore();
+    }
+  });
+
+  it("rejects a non-integer id with 400", async () => {
+    const { restore, headers } = await accessSession();
+    try {
+      const response = await SELF.fetch(
+        "https://example.com/v1/documents/not-a-number",
+        {
+          headers,
+        },
+      );
+      expect(response.status).toBe(400);
+    } finally {
+      restore();
+    }
+  });
+});
+
 describe("GET /v1/documents/:id/content", () => {
   it("returns the document's content key and blob, not any other document's", async () => {
     const [docA, docB] = await Promise.all([insertDocument(), insertDocument()]);

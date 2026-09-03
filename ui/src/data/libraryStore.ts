@@ -340,8 +340,7 @@ export class LibraryStore {
 
   private async refreshAccessSecret(txtId: number): Promise<void> {
     const secret = this.requireSecret(txtId);
-    const documents = await this.api.fetchDocuments();
-    const document = documents.find((row) => row.id === txtId);
+    const document = await this.api.fetchDocument(txtId);
     if (!document) throw new Error("document not found");
     const access = parseAccessPayload(
       await decryptJson<unknown>(document.accessBlob, secret.accessKey),

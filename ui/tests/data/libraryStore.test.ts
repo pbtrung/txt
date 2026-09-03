@@ -99,6 +99,7 @@ async function bookmarkSummaryRow(
 function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
   return {
     fetchDocuments: vi.fn().mockResolvedValue([]),
+    fetchDocument: vi.fn().mockResolvedValue(null),
     fetchDocumentContent: vi.fn().mockResolvedValue(null),
     fetchCatalog: vi.fn().mockResolvedValue(null),
     fetchBookmarksSummary: vi.fn().mockResolvedValue([]),
@@ -211,12 +212,14 @@ describe("LibraryStore.updateReadingPosition", () => {
       .mockRejectedValueOnce(new AccessVersionConflictError())
       .mockResolvedValueOnce(2);
     const api = fakeApi({
-      fetchDocuments: vi
+      fetchDocuments: vi.fn().mockResolvedValue([document]),
+      fetchDocument: vi
         .fn()
-        .mockResolvedValueOnce([document])
-        .mockResolvedValueOnce([
-          { ...document, accessBlob: refreshedAccessBlob, accessVersion: 1 },
-        ]),
+        .mockResolvedValue({
+          ...document,
+          accessBlob: refreshedAccessBlob,
+          accessVersion: 1,
+        }),
       updateDocumentAccess,
     });
     const store = await LibraryStore.open(api, fakeStorage(), SIGNING, DB_PREFIX, UMK);

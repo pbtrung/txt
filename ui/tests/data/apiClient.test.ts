@@ -202,6 +202,29 @@ describe("ApiClient reads", () => {
     await expect(new ApiClient().fetchDocumentContent(999)).resolves.toBeNull();
   });
 
+  it("parses one document", async () => {
+    const bytes = toBase64(new Uint8Array([1]));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse(200, {
+          id: 1,
+          created_at: 0,
+          access_blob: bytes,
+          access_version: 0,
+          access_key_wrapped: bytes,
+        }),
+      ),
+    );
+    const document = await new ApiClient().fetchDocument(1);
+    expect(document?.id).toBe(1);
+  });
+
+  it("returns null for a document 404", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(404, {})));
+    await expect(new ApiClient().fetchDocument(999)).resolves.toBeNull();
+  });
+
   it("parses a null catalog", async () => {
     vi.stubGlobal(
       "fetch",

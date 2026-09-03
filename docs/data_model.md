@@ -388,8 +388,10 @@ row on every coalesced reading-state write with no trigger positioned to
 clean up the old one, since the delete-cascading triggers fire on row
 _deletion_, not on an in-place `*_key_id` change. Zero rows affected
 means another write landed first; the Worker returns `412`, and the
-client re-fetches the row, reapplies its semantic mutation, and retries,
-up to a bounded limit.
+client re-fetches the row via `GET /v1/documents/:id` — the one document
+that actually conflicted, not the whole library via `GET /v1/documents`
+again — reapplies its semantic mutation, and retries, up to a bounded
+limit.
 
 Bookmark and share rows don't need this: they're created and deleted, not
 read-modified-and-written-back in place, so there's no analogous

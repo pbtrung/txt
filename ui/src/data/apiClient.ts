@@ -156,6 +156,17 @@ export class ApiClient {
     return data.documents.map(parseDocumentRow);
   }
 
+  /** Refreshes one document's access_blob/access_version after a 412
+   * conflict (docs/data_model.md §4) -- never as part of the retry loop's
+   * normal path, and never by re-fetching the whole library just to find
+   * the one row that changed. */
+  async fetchDocument(id: number, signal?: AbortSignal): Promise<DocumentRow | null> {
+    const response = await this.get(`/v1/documents/${id}`, signal);
+    if (response.status === 404) return null;
+    requireOk(response, "fetch document");
+    return parseDocumentRow(await response.json());
+  }
+
   /** Fetched lazily, only when a reader session actually opens this
    * document -- never as part of fetchDocuments()'s library-wide list,
    * which would bill D1 a content_key_id key_store row for every book

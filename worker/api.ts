@@ -13,6 +13,7 @@ import { requireProof, ProofRequiredError } from "./requireProof";
 import type { ProofContext } from "./requireProof";
 import {
   handleGetDocuments,
+  handleGetDocument,
   handleGetDocumentContent,
   handlePatchDocumentAccess,
 } from "./documentsEndpoint";
@@ -61,6 +62,12 @@ const ROUTES: Record<string, Partial<Record<string, Route>>> = {
   },
   "/v1/documents": {
     GET: { handler: (_request, env) => handleGetDocuments(env) },
+  },
+  // One document's own row -- refreshing a single document's
+  // access_blob/access_version after a 412 (docs/data_model.md §4)
+  // without re-reading the whole library, see documentsEndpoint.ts.
+  "/v1/documents/:id": {
+    GET: { handler: (_request, env, ctx) => handleGetDocument(env, ctx.params.id) },
   },
   "/v1/catalog": {
     GET: { handler: (_request, env) => handleGetCatalog(env) },

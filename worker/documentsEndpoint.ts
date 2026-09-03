@@ -22,25 +22,46 @@ interface DocumentRow {
 // key_store row nobody reads unless that specific book is actually opened;
 // GET /v1/documents/:id/content below fetches that pair lazily, only for
 // the one document a reader session actually opens.
-const LIBRARY_QUERY = `
+const LIBRARY_QUERY_BASE = `
   SELECT d.id, d.created_at, d.access_blob, d.access_version,
          ak.wrapped_key AS access_key_wrapped
   FROM documents d
   JOIN key_store ak ON ak.id = d.access_key_id
-  ORDER BY d.id
 `;
 
+function documentJson(row: DocumentRow) {
+  return {
+    id: row.id,
+    created_at: row.created_at,
+    access_blob: base64Encode(row.access_blob),
+    access_version: row.access_version,
+    access_key_wrapped: base64Encode(row.access_key_wrapped),
+  };
+}
+
 export async function handleGetDocuments(env: Env): Promise<Response> {
-  const { results } = await env.DB.prepare(LIBRARY_QUERY).all<DocumentRow>();
-  return Response.json({
-    documents: results.map((row) => ({
-      id: row.id,
-      created_at: row.created_at,
-      access_blob: base64Encode(row.access_blob),
-      access_version: row.access_version,
-      access_key_wrapped: base64Encode(row.access_key_wrapped),
-    })),
-  });
+  const { results } = await env.DB.prepare(
+    `${LIBRARY_QUERY_BASE} ORDER BY d.id`,
+  ).all<DocumentRow>();
+  return Response.json({ documents: results.map(documentJson) });
+}
+
+// One document's own row, in the exact shape LIBRARY_QUERY returns for
+// it -- used to refresh a single document's access_blob/access_version
+// after a 412 conflict (docs/data_model.md §4) without re-reading every
+// other document in the library just to find the one that changed.
+export async function handleGetDocument(env: Env, idParam: string): Promise<Response> {
+  const id = Number(idParam);
+  if (!Number.isInteger(id) || id <= 0) {
+    return new Response("invalid document id", { status: 400 });
+  }
+  const row = await env.DB.prepare(`${LIBRARY_QUERY_BASE} WHERE d.id = ?`)
+    .bind(id)
+    .first<DocumentRow>();
+  if (!row) {
+    return new Response("document not found", { status: 404 });
+  }
+  return Response.json(documentJson(row));
 }
 
 interface DocumentContentRow {
