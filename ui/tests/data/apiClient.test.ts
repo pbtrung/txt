@@ -66,11 +66,57 @@ describe("ApiClient Access-challenge detection", () => {
     );
   });
 
-  it("treats a fetch() failure as AccessRequiredError", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
-    await expect(new ApiClient().fetchOwner()).rejects.toBeInstanceOf(
-      AccessRequiredError,
-    );
+  it("treats a persistent fetch() failure as AccessRequiredError, after retries are exhausted", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockRejectedValue(new TypeError("Failed to fetch")),
+      );
+      const result = expect(new ApiClient().fetchOwner()).rejects.toBeInstanceOf(
+        AccessRequiredError,
+      );
+      // Covers withNetworkRetries()'s three backoff delays (250+500+1000ms)
+      // before it finally gives up.
+      await vi.advanceTimersByTimeAsync(2000);
+      await result;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // Regression: fetchSameOrigin() used to convert every fetch() rejection
+  // straight to AccessRequiredError, which silently defeated retries for a
+  // plain transient network error (offline, DNS blip) -- not just a
+  // cross-origin Access-redirect failure, which looks identical at this
+  // layer.
+  it("retries a transient network failure and succeeds", async () => {
+    vi.useFakeTimers();
+    try {
+      const bytes = toBase64(new Uint8Array([1, 2, 3]));
+      vi.stubGlobal(
+        "fetch",
+        vi
+          .fn()
+          .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+          .mockResolvedValueOnce(
+            jsonResponse(200, {
+              wrapped_umk: bytes,
+              sign_public_key: bytes,
+              wrapped_sign_private_key: bytes,
+              kem_public_key: bytes,
+              wrapped_kem_private_key: bytes,
+              encrypted_credentials: bytes,
+              ticket: "t",
+            }),
+          ),
+      );
+      const result = new ApiClient().fetchOwner();
+      await vi.advanceTimersByTimeAsync(250);
+      await expect(result).resolves.toMatchObject({ ticket: "t" });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   // Regression: requireProof.ts and other Worker error paths respond with

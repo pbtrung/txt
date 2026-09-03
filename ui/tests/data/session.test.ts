@@ -18,7 +18,6 @@ async function wrappedOwner(
   const privateDer = new Uint8Array(
     await crypto.subtle.exportKey("pkcs8", pair.privateKey),
   );
-  const kemPrivateKey = crypto.getRandomValues(new Uint8Array(3224));
   return {
     publicKey: pair.publicKey,
     owner: {
@@ -28,7 +27,9 @@ async function wrappedOwner(
       ),
       wrappedSignPrivateKey: await encrypt(privateDer, umk),
       kemPublicKey: crypto.getRandomValues(new Uint8Array(1624)),
-      wrappedKemPrivateKey: await encrypt(kemPrivateKey, umk),
+      // unwrapOwner() deliberately never decrypts this (session.ts) -- any
+      // bytes are fine here, it just needs to be present on the shape.
+      wrappedKemPrivateKey: crypto.getRandomValues(new Uint8Array(3224)),
       encryptedCredentials: await encryptJson(payload, umk),
       ticket: "header.payload.signature",
     },
@@ -54,7 +55,6 @@ describe("unwrapOwner (real crypto)", () => {
     expect(result.signing.ticket).toBe("header.payload.signature");
     expect(result.signing.userHandle).toEqual(new Uint8Array(32).fill(7));
     expect(result.signing.privateKey.extractable).toBe(false);
-    expect(result.kemPrivateKey.byteLength).toBe(3224);
     const message = new TextEncoder().encode("proof");
     const signature = await crypto.subtle.sign(
       { name: "ECDSA", hash: "SHA-512" },

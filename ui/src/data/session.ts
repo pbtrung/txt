@@ -20,9 +20,6 @@ export interface UnwrappedOwner {
   displayName: string;
   dbPrefix: string;
   signing: OwnerSigningIdentity;
-  // Held only -- docs/crypto.md's Composite KEM support: nothing in this
-  // app currently encapsulates or decapsulates with it.
-  kemPrivateKey: Uint8Array;
 }
 
 export async function unwrapOwner(
@@ -36,13 +33,15 @@ export async function unwrapOwner(
   );
   const userHandle = parseUserHandle(credentials.user_handle);
   const signingPrivateKey = await importSigningKey(owner.wrappedSignPrivateKey, umk);
-  const kemPrivateKey = await decrypt(owner.wrappedKemPrivateKey, umk);
+  // docs/crypto.md's Composite KEM support: owner.wrappedKemPrivateKey is
+  // deliberately left wrapped here -- nothing in this app currently
+  // encapsulates or decapsulates with it, so there's no reason to hold
+  // decrypted KEM private key material in memory until something does.
   return {
     umk,
     displayName: credentials.display_name,
     dbPrefix: credentials.db_prefix,
     signing: { ticket: owner.ticket, userHandle, privateKey: signingPrivateKey },
-    kemPrivateKey,
   };
 }
 

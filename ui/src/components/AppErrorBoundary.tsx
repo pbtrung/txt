@@ -17,7 +17,14 @@ export class AppErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: unknown, info: ErrorInfo) {
-    console.error("Unhandled UI error", error, info.componentStack);
+    // Dev-only: nothing else in this app logs a raw error/stack to the
+    // production console (monitoring.ts's Sentry path redacts before
+    // reporting instead), and this boundary wraps the public shared-reader
+    // page too, where the URL fragment must never end up in a log
+    // (docs/deployment.md §5).
+    if (import.meta.env.DEV) {
+      console.error("Unhandled UI error", error, info.componentStack);
+    }
   }
 
   private reload = () => window.location.reload();

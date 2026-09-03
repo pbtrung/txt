@@ -5,6 +5,7 @@
 // (ownerProof.ts) over the exact body bytes it sends.
 import type { OwnerSigningIdentity } from "./ownerProof";
 import { signOwnerProof } from "./ownerProof";
+import { withNetworkRetries } from "./networkRequest";
 import { fromBase64, toBase64 } from "../util/base64";
 import { objectRecord, stringField } from "../util/validation";
 
@@ -103,12 +104,15 @@ export interface R2CredentialSet {
 async function fetchSameOrigin(path: string, init: RequestInit): Promise<Response> {
   let response: Response;
   try {
-    response = await fetch(path, init);
-  } catch {
     // A cross-origin failure following Access's own redirect surfaces as a
-    // generic fetch TypeError, indistinguishable from a transient network
-    // error at this layer -- docs/auth.md §1 treats it the same as the
-    // redirect case below.
+    // generic fetch TypeError, indistinguishable at this layer from a
+    // transient network error (offline, DNS, connection reset) -- both
+    // throw the exact same shape. withNetworkRetries() gives the transient
+    // case a real chance to recover before either is treated as "not
+    // logged in" below; a persistent failure either way still ends up
+    // there once retries are exhausted, per docs/auth.md §1.
+    response = await withNetworkRetries(() => fetch(path, init));
+  } catch {
     throw new AccessRequiredError();
   }
   if (isAccessChallenge(response)) {

@@ -125,16 +125,10 @@ export class LibraryStore {
         ? await this.loadCatalogEntries(catalogRow.keyWrapped, catalogRow.catalogBlob)
         : new Map<number, CatalogEntry>();
       const summaryByDocument = new Map(summaries.map((row) => [row.documentId, row]));
-      const secrets = new Map<number, DocumentSecret>();
-      const books = await Promise.all(
-        documents.map(async (document) => {
-          const secret = await this.unwrapDocumentSecret(document);
-          secrets.set(document.id, secret);
-          const catalog = catalogEntries.get(document.id);
-          const summary = summaryByDocument.get(document.id);
-          const bookmarks = summary ? [await this.unwrapBookmarkSummary(summary)] : [];
-          return this.toLibraryBook(document.id, catalog, secret, summary, bookmarks);
-        }),
+      const { secrets, books } = await this.buildBooks(
+        documents,
+        catalogEntries,
+        summaryByDocument,
       );
       this.secrets = secrets;
       this.books = books;
@@ -142,6 +136,49 @@ export class LibraryStore {
     } catch (error) {
       this.emit({ pending: false, error: errorMessage(error) });
       throw error;
+    }
+  }
+
+  // One malformed or partially-migrated document row must not hide every
+  // other valid book in the library -- unwrap each independently and skip
+  // (rather than abort the whole reload for) any that fails.
+  private async buildBooks(
+    documents: DocumentRow[],
+    catalogEntries: Map<number, CatalogEntry>,
+    summaryByDocument: Map<number, BookmarkSummaryRow>,
+  ): Promise<{ secrets: Map<number, DocumentSecret>; books: LibraryBook[] }> {
+    const results = await Promise.all(
+      documents.map((document) =>
+        this.tryBuildBook(document, catalogEntries, summaryByDocument),
+      ),
+    );
+    const secrets = new Map<number, DocumentSecret>();
+    const books: LibraryBook[] = [];
+    for (const result of results) {
+      if (!result) continue;
+      secrets.set(result.txtId, result.secret);
+      books.push(result.book);
+    }
+    return { secrets, books };
+  }
+
+  private async tryBuildBook(
+    document: DocumentRow,
+    catalogEntries: Map<number, CatalogEntry>,
+    summaryByDocument: Map<number, BookmarkSummaryRow>,
+  ): Promise<{ txtId: number; secret: DocumentSecret; book: LibraryBook } | null> {
+    try {
+      const secret = await this.unwrapDocumentSecret(document);
+      const catalog = catalogEntries.get(document.id);
+      const summary = summaryByDocument.get(document.id);
+      const bookmarks = summary ? [await this.unwrapBookmarkSummary(summary)] : [];
+      const book = this.toLibraryBook(document.id, catalog, secret, summary, bookmarks);
+      return { txtId: document.id, secret, book };
+    } catch (error) {
+      console.error(
+        `LibraryStore: skipping document ${document.id}: ${errorMessage(error)}`,
+      );
+      return null;
     }
   }
 

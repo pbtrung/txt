@@ -152,6 +152,33 @@ describe("LibraryStore.open", () => {
     expect(document2?.title).toBe("Book One");
   });
 
+  it("skips a malformed document row instead of failing the whole reload", async () => {
+    const { row: good } = await documentRow(
+      1,
+      { path: "p1" },
+      { lastAccessed: 10, lastCfi: null },
+    );
+    const { row: bad } = await documentRow(
+      2,
+      { path: "p2" },
+      { lastAccessed: 0, lastCfi: null },
+    );
+    const badAccessKey = crypto.getRandomValues(new Uint8Array(128));
+    // last_accessed must be a number -- this fails parseAccessPayload(),
+    // overriding the well-formed access fields documentRow() built.
+    bad.accessBlob = await encryptJson({ last_accessed: "not-a-number" }, badAccessKey);
+    bad.accessKeyWrapped = await wrapKey(badAccessKey);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const api = fakeApi({ fetchDocuments: vi.fn().mockResolvedValue([good, bad]) });
+
+    const store = await LibraryStore.open(api, fakeStorage(), SIGNING, DB_PREFIX, UMK);
+
+    expect(store.snapshot().map((book) => book.txtId)).toEqual([1]);
+    expect(store.statusSnapshot().error).toBeNull();
+    expect(consoleError).toHaveBeenCalledWith(expect.stringContaining("document 2"));
+    consoleError.mockRestore();
+  });
+
   it("falls back to placeholder catalog fields for a document missing from the catalog", async () => {
     const { row: document } = await documentRow(
       2,
