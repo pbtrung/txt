@@ -32,6 +32,7 @@ const PHASES = [
   "Requesting owner record",
   "Unwrapping keys",
   "Requesting storage access",
+  "Loading your library",
 ] as const;
 
 export interface VaultSession {
@@ -78,11 +79,8 @@ class SessionResolver {
       unwrapped.dbPrefix,
       credentials,
     );
-    // Not awaited: docs/auth.md §5 ends unlock at R2 credentials, and
-    // loading the library is the Library screen's own concern (its
-    // useLibraryBooks() shows a loading state while this finishes in the
-    // background) rather than something the whole session should block on.
-    const library = LibraryStore.create(
+    this.onPhase(4);
+    const library = await LibraryStore.open(
       api,
       storage,
       unwrapped.signing,

@@ -57,12 +57,6 @@ export interface BookmarkRecord {
 export interface LibraryStoreStatus {
   pending: boolean;
   error: string | null;
-  // False only before the very first reload() has settled (success or
-  // failure) -- lets a caller tell "still loading for the first time"
-  // apart from "loaded, currently refreshing in the background" without
-  // guessing from an empty book list (a real empty library looks the
-  // same as one that hasn't loaded yet otherwise).
-  loadedOnce: boolean;
 }
 
 interface CatalogEntry {
@@ -85,11 +79,7 @@ interface DocumentSecret {
 export class LibraryStore {
   private books: LibraryBook[] = [];
   private secrets = new Map<number, DocumentSecret>();
-  private status: LibraryStoreStatus = {
-    pending: true,
-    error: null,
-    loadedOnce: false,
-  };
+  private status: LibraryStoreStatus = { pending: false, error: null };
   private listeners = new Set<() => void>();
 
   private constructor(
@@ -100,20 +90,15 @@ export class LibraryStore {
     private readonly umk: Uint8Array,
   ) {}
 
-  // Synchronous: the first reload() starts in the background rather than
-  // being awaited here, so unlocking a session never blocks on loading
-  // the whole library (VaultContext.tsx) -- the Library screen shows its
-  // own loading state (useLibraryBooks.ts, via statusSnapshot()) while
-  // it's in flight instead.
-  static create(
+  static async open(
     api: ApiClient,
     storage: R2Session,
     signing: OwnerSigningIdentity,
     dbPrefix: string,
     umk: Uint8Array,
-  ): LibraryStore {
+  ): Promise<LibraryStore> {
     const store = new LibraryStore(api, storage, signing, dbPrefix, umk);
-    store.reload().catch(() => {}); // failure surfaces via statusSnapshot()
+    await store.reload();
     return store;
   }
 
@@ -131,7 +116,7 @@ export class LibraryStore {
   }
 
   async reload(): Promise<void> {
-    this.emit({ pending: true, error: null, loadedOnce: this.status.loadedOnce });
+    this.emit({ pending: true, error: null });
     try {
       const [documents, catalogRow, summaries] = await Promise.all([
         this.api.fetchDocuments(),
@@ -149,9 +134,9 @@ export class LibraryStore {
       );
       this.secrets = secrets;
       this.books = books;
-      this.emit({ pending: false, error: null, loadedOnce: true });
+      this.emit({ pending: false, error: null });
     } catch (error) {
-      this.emit({ pending: false, error: errorMessage(error), loadedOnce: true });
+      this.emit({ pending: false, error: errorMessage(error) });
       throw error;
     }
   }

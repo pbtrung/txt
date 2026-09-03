@@ -13,7 +13,7 @@ interface SharedReadingRecord {
   bookmarks: BookmarkRecord[];
 }
 
-const EMPTY_STATUS = { pending: false, error: null, loadedOnce: true } as const;
+const EMPTY_STATUS = { pending: false, error: null } as const;
 
 export function sharedLastCfi(shareId: string): string | null {
   return readRecord(shareId).lastCfi;
