@@ -41,7 +41,7 @@ describe("R2Client.getObject", () => {
     expect([...(result ?? [])]).toEqual([1, 2, 3]);
     expect(fetchMock).toHaveBeenCalledWith(
       "https://acct.r2.cloudflarestorage.com/b/some/key",
-      { signal: expect.any(AbortSignal) },
+      { signal: expect.any(AbortSignal), cache: "no-store" },
     );
   });
 

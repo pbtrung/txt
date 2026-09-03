@@ -25,7 +25,16 @@ export class R2Client {
 
   async getObject(key: string): Promise<Uint8Array | null> {
     return withNetworkRetries(async (signal) => {
-      const response = await this.aws.fetch(`${this.base}/${key}`, { signal });
+      // aws4fetch signs via the Authorization header, not a per-request
+      // query-string signature, so this request's URL is identical every
+      // time it's made -- without "no-store", the browser's own HTTP
+      // cache could serve a stale cached body for the one R2 object this
+      // design ever overwrites in place (the catalog), even after a
+      // later publish() genuinely replaced it server-side.
+      const response = await this.aws.fetch(`${this.base}/${key}`, {
+        signal,
+        cache: "no-store",
+      });
       if (response.status === 404) return null;
       this.requireSuccess(response, `R2 GET ${key}`);
       return new Uint8Array(await response.arrayBuffer());
