@@ -9,7 +9,6 @@ npm-debug.log*
 .env.*
 *.tsbuildinfo
 .wrangler/
-.lua-tools/
 worker/worker-configuration.d.ts
 wrangler.deploy.*.jsonc
 
@@ -31,3 +30,8 @@ dist/
 *.log
 creds/
 replaced_txt_*/
+
+# --local-db-dir: README's own example location, plus the checkpoint
+# file --ingest writes there (docs/data_model.md §2.1).
+/data/
+*.ingest-checkpoint.json
