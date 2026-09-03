@@ -441,6 +441,27 @@ def test_migrates_more_than_one_batch_of_new_documents(tmp_path, d1, engine):
     assert names == {f"{i}.epub" for i in range(1, 24)}
 
 
+def test_catalog_is_published_once_per_batch_not_once_per_run(tmp_path, d1, engine):
+    blob = CryptoBlob(engine)
+    rows = [_row(i, f"{i}.epub") for i in range(1, 24)]  # 23 rows -> 3 batches of 10
+    content = {
+        _content_key(row, blob): blob.encrypt(b"x", row["txt_key"]) for row in rows
+    }
+    rqlite, r2_old = _setup_old_system(engine, rows, content)
+    r2_new = FakeR2Client()
+
+    migrator = _migrator(tmp_path, d1, r2_old, r2_new, engine)
+    migrator.rqlite = rqlite
+    migrator.run()
+
+    # A run migrating thousands of documents can take a long time, so the
+    # catalog object must grow visibly along the way -- one PUT per batch,
+    # not one PUT at the very end of the whole run.
+    db_prefix = migrator.account_new.db_prefix
+    catalog_puts = [k for k, _ in r2_new.put_calls if f"{db_prefix}/catalog/" in k]
+    assert len(catalog_puts) == 3
+
+
 def test_catalog_stays_complete_across_multiple_runs_each_spanning_several_batches(
     tmp_path, d1, engine
 ):

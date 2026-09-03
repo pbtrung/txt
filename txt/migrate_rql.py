@@ -31,11 +31,15 @@ parallel download and upload steps: the AEAD engine
 store/instance/linear memory that is not safe to call from more than
 one thread at once.
 
-Catalog reconciliation (and its one publish per run) always runs even
-if a batch raises partway through -- a transient failure a few batches
-into a large run must not leave every document inserted before it
-checkpointed in D1 with no catalog entry at all, silently stuck until
-some future run happens to complete with no error whatsoever.
+Catalog reconciliation runs after every batch, not once at the end of
+the whole run -- a run migrating thousands of documents can take a
+long time, and the catalog object grows along the way instead of
+sitting at its starting size until the last batch finishes. It also
+always runs even when a batch raises, for the batch that failed and
+every one before it: a transient failure partway into a large run
+must not leave a document already checkpointed in D1 with no catalog
+entry at all, silently stuck until some future run happens to
+complete with no error whatsoever.
 
 Not migrated by this command: `txt_shares` (active public shares). That
 is a materially different problem -- an existing share URL's capability
@@ -284,18 +288,24 @@ class RqlMigrator:
     def _migrate_open_database(self, db_old) -> tuple[int, int]:
         rows = db_old.query(TXT_ROWS_SQL)
         to_process = self._new_rows_up_to_limit(rows)
-        # _reconcile_rows (which publishes the catalog) always runs, even
-        # if a later batch raises -- otherwise a batch failing partway
-        # through (a transient network error, say) would leave every
-        # document successfully inserted before it checkpointed in D1 but
-        # never reflected in the catalog object, since that would
-        # otherwise only ever get published once, at the very end of a
-        # run that completes with no error at all.
-        try:
-            self._migrate_new_rows_in_batches(to_process)
-        finally:
-            bookmarks = self._reconcile_rows(db_old, rows)
+        bookmarks = self._migrate_batches(db_old, rows, to_process)
         return len(to_process), bookmarks
+
+    def _migrate_batches(
+        self, db_old, rows: list[tuple], to_process: list[tuple]
+    ) -> int:
+        # See the module docstring: _reconcile_rows (which publishes the
+        # catalog) runs after *every* batch, even one that raises, and
+        # once upfront when there's nothing new to migrate at all.
+        if not to_process:
+            return self._reconcile_rows(db_old, rows)
+        bookmarks = 0
+        for i in range(0, len(to_process), BATCH_SIZE):
+            try:
+                self._migrate_batch(to_process[i : i + BATCH_SIZE])
+            finally:
+                bookmarks = self._reconcile_rows(db_old, rows)
+        return bookmarks
 
     def _new_rows_up_to_limit(self, rows: list[tuple]) -> list[tuple]:
         # Drops each row's catalog blob (index 4, only needed by
@@ -329,10 +339,6 @@ class RqlMigrator:
             self.logger.verbose(
                 "Catalog already reflects every document; no upload needed."
             )
-
-    def _migrate_new_rows_in_batches(self, rows: list[tuple]) -> None:
-        for i in range(0, len(rows), BATCH_SIZE):
-            self._migrate_batch(rows[i : i + BATCH_SIZE])
 
     def _migrate_batch(self, batch: list[tuple]) -> dict[int, dict]:
         raw_by_id = self._download_batch(batch)
