@@ -43,7 +43,6 @@
     "@cloudflare/vitest-pool-workers": "^0.22.0",
     "@cloudflare/workers-types": "^5.20260902.1",
     "@eslint/js": "^10.0.1",
-    "@johnnymorganz/stylua-bin": "^2.5.2",
     "@tailwindcss/vite": "^4.3.3",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^7.0.1",
