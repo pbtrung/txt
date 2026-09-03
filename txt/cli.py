@@ -3,7 +3,9 @@ from pathlib import Path
 
 import click
 
+from .bucket_cleaner import BucketCleaner
 from .creds import load_owner_creds
+from .db_cleaner import DbCleaner
 from .edit_epub import EpubEditor
 from .ingest import TxtIngester
 from .logger import Logger
@@ -76,6 +78,24 @@ from .replace_images import ImageReplacer
     metavar="N",
     help="Migrate at most N not-yet-migrated documents, for --migrate-rql",
 )
+@click.option(
+    "--clean-bucket",
+    "clean_bucket_creds_path",
+    metavar="CREDS_JSON",
+    help="Delete R2 objects not referenced by the D1 owner's documents/catalog",
+)
+@click.option(
+    "--clean-db",
+    "clean_db_creds_path",
+    metavar="CREDS_JSON",
+    help="Retry cleanup of any 'shares' row stuck in state='deleting'",
+)
+@click.option(
+    "--dry-run",
+    "dry_run",
+    is_flag=True,
+    help="Report what --clean-bucket/--clean-db would delete without deleting it",
+)
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose progress logging")
 @click.pass_context
 def cli(ctx: click.Context, **opts) -> None:
@@ -135,12 +155,22 @@ def _dispatch_migrate_rql(opts: dict, logger: Logger) -> None:
     )
 
 
+def _dispatch_clean_bucket(opts: dict, logger: Logger) -> None:
+    _run_clean_bucket(opts["clean_bucket_creds_path"], opts["dry_run"], logger)
+
+
+def _dispatch_clean_db(opts: dict, logger: Logger) -> None:
+    _run_clean_db(opts["clean_db_creds_path"], opts["dry_run"], logger)
+
+
 COMMAND_HANDLERS = (
     ("owner_creds_path", _dispatch_init_owner),
     ("replace_images_dirs", _dispatch_replace_images),
     ("edit_epub_dirs", _dispatch_edit_epub),
     ("ingest_src_dir", _dispatch_ingest),
     ("migrate_rql_creds", _dispatch_migrate_rql),
+    ("clean_bucket_creds_path", _dispatch_clean_bucket),
+    ("clean_db_creds_path", _dispatch_clean_db),
 )
 
 
@@ -184,6 +214,16 @@ def _run_migrate_rql(
     RqlMigrator(
         rql_creds, cf_creds, cf_creds_path, Path(local_db_dir), logger, limit=limit
     ).run()
+
+
+def _run_clean_bucket(creds_path: str, dry_run: bool, logger: Logger) -> None:
+    creds = load_owner_creds(creds_path)
+    BucketCleaner(creds, creds_path, logger, dry_run=dry_run).run()
+
+
+def _run_clean_db(creds_path: str, dry_run: bool, logger: Logger) -> None:
+    creds = load_owner_creds(creds_path)
+    DbCleaner(creds, creds_path, logger, dry_run=dry_run).run()
 
 
 def run(argv: list | None = None) -> None:
