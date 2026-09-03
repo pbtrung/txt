@@ -87,13 +87,14 @@ async function accessSession(): Promise<{ restore: () => void; headers: HeadersI
   return { restore, headers: { "Cf-Access-Jwt-Assertion": token } };
 }
 
-describe("GET /v1/documents", () => {
-  it("returns an empty list for a library with zero documents", async () => {
+describe("GET /v1/documents/recent-access", () => {
+  it("returns an empty list for a library with zero accessed documents", async () => {
     const { restore, headers } = await accessSession();
     try {
-      const response = await SELF.fetch("https://example.com/v1/documents", {
-        headers,
-      });
+      const response = await SELF.fetch(
+        "https://example.com/v1/documents/recent-access",
+        { headers },
+      );
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ documents: [] });
     } finally {
@@ -101,28 +102,27 @@ describe("GET /v1/documents", () => {
     }
   });
 
-  it("returns the correct joined row for a library with one document", async () => {
+  it("returns the correct joined row for a library with one accessed document", async () => {
     const doc = await insertDocument();
     const { restore, headers } = await accessSession();
     try {
-      const response = await SELF.fetch("https://example.com/v1/documents", {
-        headers,
-      });
+      const response = await SELF.fetch(
+        "https://example.com/v1/documents/recent-access",
+        { headers },
+      );
       const body = (await response.json()) as { documents: Record<string, unknown>[] };
-      expect(body.documents).toHaveLength(1);
-      const row = body.documents[0];
-      expect(row.id).toBe(doc.id);
-      expect(row.content_blob).toBeUndefined();
-      expect(row.content_key_wrapped).toBeUndefined();
-      expect(row.access_blob).toBe(base64Encode(doc.accessBlob));
-      expect(row.access_key_wrapped).toBe(base64Encode(doc.accessKeyWrapped));
-      expect(row.access_version).toBe(0);
+      const row = body.documents.find((r) => r.id === doc.id);
+      expect(row?.content_blob).toBeUndefined();
+      expect(row?.content_key_wrapped).toBeUndefined();
+      expect(row?.access_blob).toBe(base64Encode(doc.accessBlob));
+      expect(row?.access_key_wrapped).toBe(base64Encode(doc.accessKeyWrapped));
+      expect(row?.access_version).toBe(0);
     } finally {
       restore();
     }
   });
 
-  it("returns every document's own access key, not cross-joined, for a library with many documents", async () => {
+  it("returns every accessed document's own access key, not cross-joined", async () => {
     const docs = await Promise.all([
       insertDocument(),
       insertDocument(),
@@ -130,17 +130,18 @@ describe("GET /v1/documents", () => {
     ]);
     const { restore, headers } = await accessSession();
     try {
-      const response = await SELF.fetch("https://example.com/v1/documents", {
-        headers,
-      });
+      const response = await SELF.fetch(
+        "https://example.com/v1/documents/recent-access",
+        { headers },
+      );
       const body = (await response.json()) as { documents: Record<string, unknown>[] };
       // D1 storage carries over from the prior test in this file (only
       // reset between files), so this asserts against the actual current
-      // total rather than a count that assumes a clean slate.
-      const { n: totalDocuments } = (await env.DB.prepare(
-        "SELECT count(*) AS n FROM documents",
+      // accessed total rather than a count that assumes a clean slate.
+      const { n: accessedDocuments } = (await env.DB.prepare(
+        "SELECT count(*) AS n FROM documents WHERE access_key_id IS NOT NULL",
       ).first<{ n: number }>())!;
-      expect(body.documents).toHaveLength(totalDocuments);
+      expect(body.documents).toHaveLength(accessedDocuments);
       for (const doc of docs) {
         const row = body.documents.find((r) => r.id === doc.id);
         expect(row?.access_key_wrapped).toBe(base64Encode(doc.accessKeyWrapped));
@@ -150,18 +151,16 @@ describe("GET /v1/documents", () => {
     }
   });
 
-  it("lists a never-opened document with null access_blob/access_key_wrapped", async () => {
+  it("excludes a never-opened document entirely", async () => {
     const doc = await insertDocumentWithoutAccess();
     const { restore, headers } = await accessSession();
     try {
-      const response = await SELF.fetch("https://example.com/v1/documents", {
-        headers,
-      });
+      const response = await SELF.fetch(
+        "https://example.com/v1/documents/recent-access",
+        { headers },
+      );
       const body = (await response.json()) as { documents: Record<string, unknown>[] };
-      const row = body.documents.find((r) => r.id === doc.id);
-      expect(row?.access_blob).toBeNull();
-      expect(row?.access_key_wrapped).toBeNull();
-      expect(row?.access_version).toBe(0);
+      expect(body.documents.find((r) => r.id === doc.id)).toBeUndefined();
     } finally {
       restore();
     }
@@ -194,6 +193,23 @@ describe("GET /v1/documents/:id", () => {
         headers,
       });
       expect(response.status).toBe(404);
+    } finally {
+      restore();
+    }
+  });
+
+  it("returns null access_blob/access_key_wrapped for a never-opened document", async () => {
+    const doc = await insertDocumentWithoutAccess();
+    const { restore, headers } = await accessSession();
+    try {
+      const response = await SELF.fetch(`https://example.com/v1/documents/${doc.id}`, {
+        headers,
+      });
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as Record<string, unknown>;
+      expect(body.access_blob).toBeNull();
+      expect(body.access_key_wrapped).toBeNull();
+      expect(body.access_version).toBe(0);
     } finally {
       restore();
     }

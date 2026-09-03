@@ -157,9 +157,14 @@ export class ApiClient {
     return parseOwnerRecord(await response.json());
   }
 
-  async fetchDocuments(signal?: AbortSignal): Promise<DocumentRow[]> {
-    const response = await this.get("/v1/documents", signal);
-    requireOk(response, "fetch documents");
+  /** Every document with real reading state (docs/data_model.md §3) --
+   * not "all documents": the Library screen's identity/browse source is
+   * the catalog object (GET /v1/catalog), not this. Used only for the
+   * recency sort and Recent shelf, and to seed LibraryStore's cached
+   * access secrets for documents already known to have been opened. */
+  async fetchRecentAccess(signal?: AbortSignal): Promise<DocumentRow[]> {
+    const response = await this.get("/v1/documents/recent-access", signal);
+    requireOk(response, "fetch recently accessed documents");
     const data = objectRecord(await response.json(), "documents response");
     if (!Array.isArray(data.documents)) {
       throw new Error("documents response is missing documents");
@@ -167,10 +172,11 @@ export class ApiClient {
     return data.documents.map(parseDocumentRow);
   }
 
-  /** Refreshes one document's access_blob/access_version after a 412
-   * conflict (docs/data_model.md §4) -- never as part of the retry loop's
-   * normal path, and never by re-fetching the whole library just to find
-   * the one row that changed. */
+  /** One document's own row -- to refresh access_blob/access_version
+   * after a 412 conflict (docs/data_model.md §4) without re-fetching
+   * every accessed document to find the one that changed, or to lazily
+   * load access state the first time a never-opened document is read
+   * (LibraryStore.ensureSecret()). */
   async fetchDocument(id: number, signal?: AbortSignal): Promise<DocumentRow | null> {
     const response = await this.get(`/v1/documents/${id}`, signal);
     if (response.status === 404) return null;
@@ -179,9 +185,9 @@ export class ApiClient {
   }
 
   /** Fetched lazily, only when a reader session actually opens this
-   * document -- never as part of fetchDocuments()'s library-wide list,
-   * which would bill D1 a content_key_id key_store row for every book
-   * regardless of whether it's ever opened. */
+   * document -- never as part of fetchRecentAccess()'s cross-library
+   * list, which would bill D1 a content_key_id key_store row for every
+   * accessed book regardless of whether it's the one being opened now. */
   async fetchDocumentContent(
     id: number,
     signal?: AbortSignal,

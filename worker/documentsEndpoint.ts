@@ -1,6 +1,6 @@
-// docs/data_model.md §3: library listing, one document's content, and
-// reading-state updates. GET /v1/documents and GET /v1/documents/:id/content
-// are reads (Access session only, docs/auth.md §4.3); PATCH
+// docs/data_model.md §3: recently-accessed listing, one document's own
+// row, one document's content, and reading-state updates. The reads
+// (GET) need only an Access session (docs/auth.md §4.3); PATCH
 // /v1/documents/:id/access is mutating (ticket + proof) and implements the
 // optimistic-concurrency update docs/data_model.md §4 specifies -- a
 // conditional UPDATE on access_version, 412 on conflict.
@@ -15,22 +15,6 @@ interface DocumentRow {
   access_key_wrapped: ArrayBuffer | null;
 }
 
-// The Library screen never needs a document's content key -- only
-// access_blob (for the recency sort) and access_key_id to decrypt it -- so
-// this join skips content_key_id entirely. Joining it here too, for every
-// row, on every Library-screen load, would bill D1 for a content_key_id
-// key_store row nobody reads unless that specific book is actually opened;
-// GET /v1/documents/:id/content below fetches that pair lazily, only for
-// the one document a reader session actually opens. A LEFT JOIN, not an
-// INNER JOIN: a document nobody has ever opened has no access_key_id at
-// all (docs/data_model.md §2), and must still be listed.
-const LIBRARY_QUERY_BASE = `
-  SELECT d.id, d.created_at, d.access_blob, d.access_version,
-         ak.wrapped_key AS access_key_wrapped
-  FROM documents d
-  LEFT JOIN key_store ak ON ak.id = d.access_key_id
-`;
-
 function documentJson(row: DocumentRow) {
   return {
     id: row.id,
@@ -42,25 +26,50 @@ function documentJson(row: DocumentRow) {
   };
 }
 
-export async function handleGetDocuments(env: Env): Promise<Response> {
-  const { results } = await env.DB.prepare(
-    `${LIBRARY_QUERY_BASE} ORDER BY d.id`,
-  ).all<DocumentRow>();
+// The Library screen's identity/browse source is the R2 catalog object
+// (docs/data_model.md §2.1), not this table -- it never needs every
+// document, only the ones with real reading state, for the recency sort
+// and Recent shelf. An INNER JOIN (not LEFT): a document nobody has ever
+// opened has no access_key_id at all (§2), and is excluded, not listed
+// with nulls. The explicit WHERE (redundant with the INNER JOIN) is what
+// lets the query planner match idx_documents_access_key_id, the partial
+// index added for exactly this query -- without it, D1 would have to
+// examine every documents row (it bills by rows examined, not returned)
+// to find the ones with a non-null access_key_id.
+const RECENT_ACCESS_QUERY = `
+  SELECT d.id, d.created_at, d.access_blob, d.access_version,
+         ak.wrapped_key AS access_key_wrapped
+  FROM documents d
+  JOIN key_store ak ON ak.id = d.access_key_id
+  WHERE d.access_key_id IS NOT NULL
+  ORDER BY d.id
+`;
+
+export async function handleGetRecentAccess(env: Env): Promise<Response> {
+  const { results } = await env.DB.prepare(RECENT_ACCESS_QUERY).all<DocumentRow>();
   return Response.json({ documents: results.map(documentJson) });
 }
 
-// One document's own row, in the exact shape LIBRARY_QUERY returns for
-// it -- used to refresh a single document's access_blob/access_version
-// after a 412 conflict (docs/data_model.md §4) without re-reading every
-// other document in the library just to find the one that changed.
+// One document's own row -- unlike RECENT_ACCESS_QUERY, a LEFT JOIN,
+// since the specific document asked for may not have been opened yet
+// (LibraryStore.ensureSecret(), opening a book for the first time) or
+// may need refreshing after a 412 conflict (docs/data_model.md §4)
+// without re-reading every other accessed document to find the one
+// that changed.
+const DOCUMENT_ACCESS_QUERY = `
+  SELECT d.id, d.created_at, d.access_blob, d.access_version,
+         ak.wrapped_key AS access_key_wrapped
+  FROM documents d
+  LEFT JOIN key_store ak ON ak.id = d.access_key_id
+  WHERE d.id = ?
+`;
+
 export async function handleGetDocument(env: Env, idParam: string): Promise<Response> {
   const id = Number(idParam);
   if (!Number.isInteger(id) || id <= 0) {
     return new Response("invalid document id", { status: 400 });
   }
-  const row = await env.DB.prepare(`${LIBRARY_QUERY_BASE} WHERE d.id = ?`)
-    .bind(id)
-    .first<DocumentRow>();
+  const row = await env.DB.prepare(DOCUMENT_ACCESS_QUERY).bind(id).first<DocumentRow>();
   if (!row) {
     return new Response("document not found", { status: 404 });
   }

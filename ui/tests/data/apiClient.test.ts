@@ -159,27 +159,26 @@ describe("ApiClient reads", () => {
     expect([...owner.wrappedUmk]).toEqual([1, 2, 3]);
   });
 
-  it("parses documents", async () => {
+  it("parses recently accessed documents", async () => {
     const bytes = toBase64(new Uint8Array([1]));
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(
-        jsonResponse(200, {
-          documents: [
-            {
-              id: 1,
-              created_at: 0,
-              access_blob: bytes,
-              access_version: 0,
-              access_key_wrapped: bytes,
-            },
-          ],
-        }),
-      ),
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse(200, {
+        documents: [
+          {
+            id: 1,
+            created_at: 0,
+            access_blob: bytes,
+            access_version: 0,
+            access_key_wrapped: bytes,
+          },
+        ],
+      }),
     );
-    const documents = await new ApiClient().fetchDocuments();
+    vi.stubGlobal("fetch", fetchMock);
+    const documents = await new ApiClient().fetchRecentAccess();
     expect(documents).toHaveLength(1);
     expect(documents[0].id).toBe(1);
+    expect(fetchMock.mock.calls[0][0]).toBe("/v1/documents/recent-access");
   });
 
   it("parses one document's content", async () => {

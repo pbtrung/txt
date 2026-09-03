@@ -216,7 +216,11 @@ the layer standing between "past Access" and "can mutate the library":**
 ## Milestone 5 — Document and reading-state endpoints
 
 **Status: done, Worker and client sides both.** `GET /v1/documents`
-returns the N+1-avoiding join; `PATCH /v1/documents/:id/access`
+returned the N+1-avoiding join (later split into
+`GET /v1/documents/recent-access`, filtered to documents with real
+reading state, and `GET /v1/documents/:id` for one document, once
+identity moved to the catalog object and access state became optional
+per document — `docs/data_model.md` §2/§3); `PATCH /v1/documents/:id/access`
 implements the `access_version` optimistic-concurrency update;
 `GET`/`POST`/`DELETE /v1/bookmarks` and `GET /v1/bookmarks/summary` (a
 later addition, for the Library screen's bookmark badges without an

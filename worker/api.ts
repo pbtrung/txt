@@ -12,7 +12,7 @@ import { handleGetOwner } from "./ownerEndpoint";
 import { requireProof, ProofRequiredError } from "./requireProof";
 import type { ProofContext } from "./requireProof";
 import {
-  handleGetDocuments,
+  handleGetRecentAccess,
   handleGetDocument,
   handleGetDocumentContent,
   handlePatchDocumentAccess,
@@ -60,12 +60,18 @@ const ROUTES: Record<string, Partial<Record<string, Route>>> = {
     // handleApi() has already verified it before invoking the handler.
     GET: { handler: (_request, env, ctx) => handleGetOwner(env, ctx.access!) },
   },
-  "/v1/documents": {
-    GET: { handler: (_request, env) => handleGetDocuments(env) },
+  // Every document with real reading state (the Recent shelf's source,
+  // not "all documents" -- see documentsEndpoint.ts). Registered before
+  // "/v1/documents/:id" below -- findRoute() matches in insertion order,
+  // and both patterns have the same segment count, so "recent-access"
+  // would otherwise be captured as an :id.
+  "/v1/documents/recent-access": {
+    GET: { handler: (_request, env) => handleGetRecentAccess(env) },
   },
   // One document's own row -- refreshing a single document's
   // access_blob/access_version after a 412 (docs/data_model.md §4)
-  // without re-reading the whole library, see documentsEndpoint.ts.
+  // without re-reading every accessed document, or lazily loading it the
+  // first time a never-opened document is read, see documentsEndpoint.ts.
   "/v1/documents/:id": {
     GET: { handler: (_request, env, ctx) => handleGetDocument(env, ctx.params.id) },
   },

@@ -16,7 +16,7 @@ import {
 import { LibraryStore, truncateUtf8 } from "../../src/data/libraryStore";
 import type { OwnerSigningIdentity } from "../../src/data/ownerProof";
 import type { R2Session } from "../../src/data/r2Session";
-import { toBase64 } from "../../src/util/base64";
+import { fromBase64, toBase64 } from "../../src/util/base64";
 
 const UMK = crypto.getRandomValues(new Uint8Array(128));
 const SIGNING = {} as OwnerSigningIdentity;
@@ -26,6 +26,12 @@ async function wrapKey(key: Uint8Array): Promise<Uint8Array> {
   return encrypt(key, UMK);
 }
 
+// A document that has been opened at least once -- what
+// fetchRecentAccess()/fetchDocument() return for it (docs/data_model.md
+// §2/§3). Visibility in the library still needs a matching catalogRow()
+// entry: identity/browse metadata is catalog-driven now, not documents-
+// driven, so a book with access state but no catalog entry is invisible
+// (see the "invisible until next ingestion run" test below).
 async function documentRow(
   id: number,
   path: string,
@@ -55,6 +61,10 @@ async function documentRow(
   return { row, accessKey: accessKeyRow, content };
 }
 
+// A document that has never been opened: fetchRecentAccess() never
+// returns it (that's the whole point of the endpoint), but
+// fetchDocument() still can -- LibraryStore.ensureSecret() calls it
+// lazily the first time such a document's reading position is written.
 function documentRowWithoutAccess(id: number): DocumentRow {
   return {
     id,
@@ -113,7 +123,7 @@ async function bookmarkSummaryRow(
 
 function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
   return {
-    fetchDocuments: vi.fn().mockResolvedValue([]),
+    fetchRecentAccess: vi.fn().mockResolvedValue([]),
     fetchDocument: vi.fn().mockResolvedValue(null),
     fetchDocumentContent: vi.fn().mockResolvedValue(null),
     fetchCatalog: vi.fn().mockResolvedValue(null),
@@ -145,7 +155,7 @@ describe("LibraryStore.open", () => {
     const summary = await bookmarkSummaryRow(9, 1, "cfi-1", 2);
 
     const api = fakeApi({
-      fetchDocuments: vi.fn().mockResolvedValue([document]),
+      fetchRecentAccess: vi.fn().mockResolvedValue([document]),
       fetchDocumentContent: vi.fn().mockResolvedValue(content),
       fetchCatalog: vi.fn().mockResolvedValue(catalog),
       fetchBookmarksSummary: vi.fn().mockResolvedValue([summary]),
@@ -173,7 +183,7 @@ describe("LibraryStore.open", () => {
     expect(document2?.title).toBe("Book One");
   });
 
-  it("skips a malformed document row instead of failing the whole reload", async () => {
+  it("a malformed access_blob doesn't hide the book, just defaults its recency", async () => {
     const { row: good } = await documentRow(1, "p1", {
       lastAccessed: 10,
       lastCfi: null,
@@ -184,29 +194,85 @@ describe("LibraryStore.open", () => {
     // overriding the well-formed access fields documentRow() built.
     bad.accessBlob = await encryptJson({ last_accessed: "not-a-number" }, badAccessKey);
     bad.accessKeyWrapped = await wrapKey(badAccessKey);
+    const { row: catalog, objectBytes } = await catalogRow([
+      { documentId: 1, title: "Good" },
+      { documentId: 2, title: "Bad Access State" },
+    ]);
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const api = fakeApi({ fetchDocuments: vi.fn().mockResolvedValue([good, bad]) });
+    const api = fakeApi({
+      fetchRecentAccess: vi.fn().mockResolvedValue([good, bad]),
+      fetchCatalog: vi.fn().mockResolvedValue(catalog),
+    });
 
-    const store = await LibraryStore.open(api, fakeStorage(), SIGNING, DB_PREFIX, UMK);
+    const store = await LibraryStore.open(
+      api,
+      fakeStorage(objectBytes),
+      SIGNING,
+      DB_PREFIX,
+      UMK,
+    );
 
-    expect(store.snapshot().map((book) => book.txtId)).toEqual([1]);
-    expect(store.statusSnapshot().error).toBeNull();
-    expect(consoleError).toHaveBeenCalledWith(expect.stringContaining("document 2"));
+    // Both books still appear -- the catalog, not access state, decides
+    // visibility -- but the one whose access_blob failed to decrypt
+    // falls back to never-accessed defaults instead of losing the book.
+    const good_ = store.snapshot().find((book) => book.txtId === 1);
+    const bad_ = store.snapshot().find((book) => book.txtId === 2);
+    expect(good_?.lastAccessed).toBe(10);
+    expect(bad_?.lastAccessed).toBe(0);
+    expect(consoleError).toHaveBeenCalledWith(
+      expect.stringContaining("access state for document 2"),
+    );
     consoleError.mockRestore();
   });
 
-  it("falls back to placeholder catalog fields for a document missing from the catalog", async () => {
+  it("skips a malformed catalog entry instead of failing the whole reload", async () => {
+    const { row: catalog } = await catalogRow([{ documentId: 1, title: "Good" }]);
+    // Corrupt the one entry's document_id so parseCatalogEntry() throws
+    // for it specifically, alongside a second, well-formed entry.
+    const rowKey = await decrypt(catalog.keyWrapped, UMK);
+    const pointer = await decryptJson<{ catalog_key: string; catalog_path: string }>(
+      catalog.catalogBlob,
+      rowKey,
+    );
+    const catalogKey = fromBase64(pointer.catalog_key);
+    const entries = [
+      { document_id: 1, catalog: { title: "Good", authors: [], subjects: [] } },
+      {
+        document_id: "not-a-number",
+        catalog: { title: "Bad", authors: [], subjects: [] },
+      },
+    ];
+    const brokenObjectBytes = await encryptJson(entries, catalogKey);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const api = fakeApi({ fetchCatalog: vi.fn().mockResolvedValue(catalog) });
+
+    const store = await LibraryStore.open(
+      api,
+      fakeStorage(brokenObjectBytes),
+      SIGNING,
+      DB_PREFIX,
+      UMK,
+    );
+
+    expect(store.snapshot().map((book) => book.txtId)).toEqual([1]);
+    expect(consoleError).toHaveBeenCalledWith(
+      expect.stringContaining("malformed catalog entry"),
+    );
+    consoleError.mockRestore();
+  });
+
+  it("leaves a document with access state but no catalog entry invisible", async () => {
     const { row: document } = await documentRow(2, "p", {
       lastAccessed: 0,
       lastCfi: null,
     });
-    const api = fakeApi({ fetchDocuments: vi.fn().mockResolvedValue([document]) });
+    const api = fakeApi({ fetchRecentAccess: vi.fn().mockResolvedValue([document]) });
     const store = await LibraryStore.open(api, fakeStorage(), SIGNING, DB_PREFIX, UMK);
 
-    const [book] = store.snapshot();
-    expect(book.title).toBe("Untitled");
-    expect(book.bookmarkCount).toBe(0);
-    expect(book.bookmarks).toEqual([]);
+    // docs/data_model.md §2.1: a documents row not yet reflected in the
+    // catalog is invisible until the next ingestion run, not shown with
+    // placeholder metadata -- ingestion re-runs are what reconcile it.
+    expect(store.snapshot()).toEqual([]);
   });
 });
 
@@ -218,6 +284,9 @@ describe("LibraryStore.updateReadingPosition", () => {
       { lastAccessed: 0, lastCfi: null },
       0,
     );
+    const { row: catalog, objectBytes } = await catalogRow([
+      { documentId: 1, title: "Book" },
+    ]);
     const refreshedAccessBlob = await encryptJson(
       { last_accessed: 0, last_cfi: "server-wins" },
       accessKey,
@@ -227,7 +296,8 @@ describe("LibraryStore.updateReadingPosition", () => {
       .mockRejectedValueOnce(new AccessVersionConflictError())
       .mockResolvedValueOnce(2);
     const api = fakeApi({
-      fetchDocuments: vi.fn().mockResolvedValue([document]),
+      fetchRecentAccess: vi.fn().mockResolvedValue([document]),
+      fetchCatalog: vi.fn().mockResolvedValue(catalog),
       fetchDocument: vi.fn().mockResolvedValue({
         ...document,
         accessBlob: refreshedAccessBlob,
@@ -235,7 +305,13 @@ describe("LibraryStore.updateReadingPosition", () => {
       }),
       updateDocumentAccess,
     });
-    const store = await LibraryStore.open(api, fakeStorage(), SIGNING, DB_PREFIX, UMK);
+    const store = await LibraryStore.open(
+      api,
+      fakeStorage(objectBytes),
+      SIGNING,
+      DB_PREFIX,
+      UMK,
+    );
 
     await store.updateReadingPosition(1, "new-cfi", 42);
 
@@ -246,16 +322,28 @@ describe("LibraryStore.updateReadingPosition", () => {
   });
 
   it("mints a fresh access key on a never-accessed document's first write", async () => {
-    const document = documentRowWithoutAccess(1);
+    const { row: catalog, objectBytes } = await catalogRow([
+      { documentId: 1, title: "Book" },
+    ]);
     const updateDocumentAccess = vi.fn().mockResolvedValue(1);
     const api = fakeApi({
-      fetchDocuments: vi.fn().mockResolvedValue([document]),
+      // Never in fetchRecentAccess()'s result -- ensureSecret() must
+      // fetch it lazily via fetchDocument() instead.
+      fetchCatalog: vi.fn().mockResolvedValue(catalog),
+      fetchDocument: vi.fn().mockResolvedValue(documentRowWithoutAccess(1)),
       updateDocumentAccess,
     });
-    const store = await LibraryStore.open(api, fakeStorage(), SIGNING, DB_PREFIX, UMK);
+    const store = await LibraryStore.open(
+      api,
+      fakeStorage(objectBytes),
+      SIGNING,
+      DB_PREFIX,
+      UMK,
+    );
 
     await store.updateReadingPosition(1, "new-cfi", 42);
 
+    expect(api.fetchDocument).toHaveBeenCalledWith(1);
     expect(updateDocumentAccess).toHaveBeenCalledTimes(1);
     const write = updateDocumentAccess.mock.calls[0][1];
     expect(write.kind).toBe("first");
@@ -275,12 +363,22 @@ describe("LibraryStore.clearLastAccessed", () => {
       lastAccessed: 500,
       lastCfi: "cfi-1",
     });
+    const { row: catalog, objectBytes } = await catalogRow([
+      { documentId: 1, title: "Book" },
+    ]);
     const updateDocumentAccess = vi.fn().mockResolvedValue(1);
     const api = fakeApi({
-      fetchDocuments: vi.fn().mockResolvedValue([document]),
+      fetchRecentAccess: vi.fn().mockResolvedValue([document]),
+      fetchCatalog: vi.fn().mockResolvedValue(catalog),
       updateDocumentAccess,
     });
-    const store = await LibraryStore.open(api, fakeStorage(), SIGNING, DB_PREFIX, UMK);
+    const store = await LibraryStore.open(
+      api,
+      fakeStorage(objectBytes),
+      SIGNING,
+      DB_PREFIX,
+      UMK,
+    );
 
     await store.clearLastAccessed(1);
 
@@ -295,17 +393,14 @@ describe("LibraryStore.clearLastAccessed", () => {
   });
 
   it("is a no-op for a document with no access state yet", async () => {
-    const document = documentRowWithoutAccess(1);
     const updateDocumentAccess = vi.fn();
-    const api = fakeApi({
-      fetchDocuments: vi.fn().mockResolvedValue([document]),
-      updateDocumentAccess,
-    });
+    const api = fakeApi({ updateDocumentAccess });
     const store = await LibraryStore.open(api, fakeStorage(), SIGNING, DB_PREFIX, UMK);
 
     await store.clearLastAccessed(1);
 
     expect(updateDocumentAccess).not.toHaveBeenCalled();
+    expect(api.fetchDocument).not.toHaveBeenCalled();
   });
 });
 
@@ -315,16 +410,26 @@ describe("LibraryStore bookmarks", () => {
       lastAccessed: 0,
       lastCfi: null,
     });
+    const { row: catalog, objectBytes } = await catalogRow([
+      { documentId: 1, title: "Book" },
+    ]);
     const summaryAfter = await bookmarkSummaryRow(5, 1, "new-cfi", 1);
     const api = fakeApi({
-      fetchDocuments: vi.fn().mockResolvedValue([document]),
+      fetchRecentAccess: vi.fn().mockResolvedValue([document]),
+      fetchCatalog: vi.fn().mockResolvedValue(catalog),
       fetchBookmarksSummary: vi
         .fn()
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([summaryAfter]),
       createBookmark: vi.fn().mockResolvedValue(5),
     });
-    const store = await LibraryStore.open(api, fakeStorage(), SIGNING, DB_PREFIX, UMK);
+    const store = await LibraryStore.open(
+      api,
+      fakeStorage(objectBytes),
+      SIGNING,
+      DB_PREFIX,
+      UMK,
+    );
     expect(store.snapshot()[0].bookmarkCount).toBe(0);
 
     await store.saveBookmark(1, "new-cfi", 3, "preview text");

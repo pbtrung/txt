@@ -128,6 +128,13 @@ WHEN NEW.access_key_id IS NULL AND OLD.access_key_id IS NOT NULL
 BEGIN
   DELETE FROM key_store WHERE id = OLD.access_key_id;
 END;
+-- §3's GET /v1/documents/recent-access filters to access_key_id IS NOT
+-- NULL. A partial index, not a full one: the column is NULL for most
+-- rows in a library with many never-opened books, and D1 bills by rows
+-- examined -- without this, that filter would still have to examine
+-- every documents row to find the ones it actually wants.
+CREATE INDEX idx_documents_access_key_id ON documents(access_key_id)
+WHERE access_key_id IS NOT NULL;
 
 CREATE TABLE bookmarks (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -267,11 +274,14 @@ in hand, rather than this duplicating it.
 
 Everything needed to actually _open_ a document (`content_key`, its EPUB
 `path`) is authoritative in `documents.content_blob`, fetched on demand
-by `GET /v1/documents/:id/content` (§3) rather than the Worker's library
-query, which never touches it. The catalog object exists purely to make
-the Library screen's initial browse/search list fast: fetching and
-decrypting one object that already holds every document's display
-fields is strictly cheaper than N D1 rows and N per-row decrypts.
+by `GET /v1/documents/:id/content` (§3) — none of the Library screen's
+own queries touch it. The catalog object is in fact the Library screen's
+_only_ source for browse/search identity and display fields (§3):
+fetching and decrypting one object that already holds every document's
+display fields is strictly cheaper than a `documents` row and a decrypt
+per book, and is what makes that identity available at all for a book
+that has never been opened and so has no row in
+`GET /v1/documents/recent-access`'s result.
 
 **Written by** the Python ingestion tool (`txt --ingest`) directly, over
 D1's own HTTP query API (`txt/d1_client.py`) — not the Worker's
@@ -366,31 +376,50 @@ D1 statements inside a D1 transaction. There is no local database file
 the browser downloads or uploads; reading the library requires a round
 trip to the Worker rather than opening a fully offline local copy.
 
-Because `access_blob` encrypts `last_accessed` and `last_cfi` together,
-D1 cannot `ORDER BY` reading state — the Library screen's recency sort
-happens client-side, after `GET /v1/documents` returns every `documents`
-row and a separate `GET /v1/catalog` returns the catalog pointer row, for
-the browser to decrypt and sort locally. The `GET /v1/documents` query
-joins `documents` against `key_store` on `access_key_id` only, rather
-than fetching each row's access key with a separate query per row,
-avoiding an N+1 pattern that would multiply D1's per-query overhead
-across the whole library on every Library-screen load.
+**Identity and browse metadata is catalog-driven, not documents-driven.**
+`GET /v1/catalog` (§2.1) returns every book's `document_id`,
+title/authors/subjects/publisher in one R2-hosted object; that alone is
+what the Library screen's full browse/search list and book identity come
+from. A `documents` row whose catalog entry hasn't been written yet is
+invisible in the Library screen until the next `--ingest` run reconciles
+it (§2.1's write-order guarantee) — an accepted, self-correcting
+transient, not a bug: there is no per-document `documents` query that
+could show it any sooner without also risking a fabricated "Untitled"
+placeholder for a book with no real metadata at all.
 
-It deliberately does *not* also join on `content_key_id`: D1 bills by
-rows read, and a book's content key is only ever needed to actually open
-that book, not to list it. `GET /v1/documents/:id/content` fetches one
-document's `content_blob` + wrapped content key lazily, only when a
-reader session opens that specific document. EPUB content itself stays
-in R2, fetched and decrypted client-side only at that same point.
+**Reading state — `last_accessed`/`last_cfi` — comes from D1, and only
+for documents that actually have any.** Because `access_blob` encrypts
+both together, D1 cannot `ORDER BY` reading state — the Library screen's
+recency sort and Recent shelf happen client-side, after
+`GET /v1/documents/recent-access` returns every document that has ever
+been opened (`access_key_id IS NOT NULL`, §2 — a document nobody has
+opened has no access key to return in the first place). That query joins
+`documents` against `key_store` on `access_key_id` rather than fetching
+each row's access key with a separate query per row (avoiding an N+1
+pattern that would multiply D1's per-query overhead across the whole
+library on every Library-screen load) and filters via the partial index
+on `access_key_id` (§2) rather than examining every `documents` row (D1
+bills by rows examined, not rows returned) to find the ones that
+qualify. So a library of thousands of books, most never opened, costs
+the Library screen a `key_store` row only for the ones that actually
+have reading state to sort by — never one per book regardless, and
+never a `content_key_id` row at all (next paragraph).
 
-`access_key_id`/`access_blob` are themselves `NULL` together for a
-document nobody has ever opened (§2) — `--ingest` no longer mints an
-access key eagerly for every new document, and the library query's join
-on `access_key_id` is a `LEFT JOIN` for exactly this reason, since an
-`INNER JOIN` would silently drop every unopened book from the list. So
-a library of thousands of books, most never opened, costs the Library
-screen a `key_store` row only for the ones that actually have reading
-state to sort by — not one per book regardless, and never two.
+`GET /v1/documents/:id` — one specific document, a `LEFT JOIN` since the
+one document asked for may not have been opened yet — serves two
+narrower needs instead: refreshing a single document's
+`access_blob`/`access_version` after a `412` conflict (§4) without
+re-fetching every accessed document to find the one that changed, and
+lazily loading access state the first time a never-opened document's
+reading position is written (`ui/src/data/libraryStore.ts`'s
+`ensureSecret()`).
+
+`GET /v1/documents/:id/content` fetches one document's `content_blob` +
+wrapped content key lazily, only when a reader session opens that
+specific document — deliberately not part of any bulk query, D1-billed
+or not, since a book's content key is only ever needed to actually open
+that book. EPUB content itself stays in R2, fetched and decrypted
+client-side only at that same point.
 
 ## 4. Concurrency
 
@@ -436,11 +465,12 @@ WHERE id = ? AND access_version = ?
 
 Zero rows affected means another write landed first; the Worker returns
 `412`, and the client re-fetches the row via `GET /v1/documents/:id` —
-the one document that actually conflicted, not the whole library via
-`GET /v1/documents` again — reapplies its semantic mutation (re-deriving
-which of the three shapes now applies, since a racing first-ever write
-can flip a document from no-access-key to has-one between the client's
-read and its retry), and retries, up to a bounded limit.
+the one document that actually conflicted, not every accessed document
+via `GET /v1/documents/recent-access` again — reapplies its semantic
+mutation (re-deriving which of the three shapes now applies, since a
+racing first-ever write can flip a document from no-access-key to
+has-one between the client's read and its retry), and retries, up to a
+bounded limit.
 
 Bookmark and share rows don't need this: they're created and deleted, not
 read-modified-and-written-back in place, so there's no analogous

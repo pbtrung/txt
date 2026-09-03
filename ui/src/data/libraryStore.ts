@@ -115,21 +115,32 @@ export class LibraryStore {
     return () => this.listeners.delete(listener);
   }
 
+  // Identity/browse metadata (title, authors, subjects, publisher) comes
+  // from the catalog object, not documents -- every book the Library
+  // screen can show is a catalog entry, so this drives book-building from
+  // catalogEntries rather than a fetched documents list. A documents row
+  // whose catalog entry hasn't been written yet is invisible here until
+  // the next --ingest run reconciles it (docs/data_model.md §2.1) --
+  // that's an accepted, self-correcting transient, not a bug: the
+  // alternative (driving from documents, catalog as a lookup) would show
+  // a document with no catalog entry as a fabricated "Untitled" book with
+  // no real metadata at all -- see docs/data_model.md §3.
   async reload(): Promise<void> {
     this.emit({ pending: true, error: null });
     try {
-      const [documents, catalogRow, summaries] = await Promise.all([
-        this.api.fetchDocuments(),
+      const [recentAccess, catalogRow, summaries] = await Promise.all([
+        this.api.fetchRecentAccess(),
         this.api.fetchCatalog(),
         this.api.fetchBookmarksSummary(),
       ]);
       const catalogEntries = catalogRow
         ? await this.loadCatalogEntries(catalogRow.keyWrapped, catalogRow.catalogBlob)
         : new Map<number, CatalogEntry>();
+      const secrets = await this.buildSecrets(recentAccess);
       const summaryByDocument = new Map(summaries.map((row) => [row.documentId, row]));
-      const { secrets, books } = await this.buildBooks(
-        documents,
+      const books = await this.buildBooksFromCatalog(
         catalogEntries,
+        secrets,
         summaryByDocument,
       );
       this.secrets = secrets;
@@ -141,63 +152,77 @@ export class LibraryStore {
     }
   }
 
-  // One malformed or partially-migrated document row must not hide every
-  // other valid book in the library -- unwrap each independently and skip
-  // (rather than abort the whole reload for) any that fails.
-  private async buildBooks(
-    documents: DocumentRow[],
-    catalogEntries: Map<number, CatalogEntry>,
-    summaryByDocument: Map<number, BookmarkSummaryRow>,
-  ): Promise<{ secrets: Map<number, DocumentSecret>; books: LibraryBook[] }> {
-    const results = await Promise.all(
-      documents.map((document) =>
-        this.tryBuildBook(document, catalogEntries, summaryByDocument),
-      ),
+  // A malformed access_blob for one document must not hide every other
+  // valid book -- unwrap each independently and skip (log, don't throw)
+  // any that fails, same resilience principle as tryBuildBook() below.
+  private async buildSecrets(
+    rows: DocumentRow[],
+  ): Promise<Map<number, DocumentSecret>> {
+    const entries = await Promise.all(
+      rows.map(async (row): Promise<[number, DocumentSecret] | null> => {
+        try {
+          return [row.id, await this.unwrapDocumentSecret(row)];
+        } catch (error) {
+          console.error(
+            `LibraryStore: skipping access state for document ${row.id}: ${errorMessage(error)}`,
+          );
+          return null;
+        }
+      }),
     );
-    const secrets = new Map<number, DocumentSecret>();
-    const books: LibraryBook[] = [];
-    for (const result of results) {
-      if (!result) continue;
-      secrets.set(result.txtId, result.secret);
-      books.push(result.book);
-    }
-    return { secrets, books };
+    return new Map(entries.filter((entry) => entry !== null));
   }
 
-  private async tryBuildBook(
-    document: DocumentRow,
+  private async buildBooksFromCatalog(
     catalogEntries: Map<number, CatalogEntry>,
+    secrets: Map<number, DocumentSecret>,
     summaryByDocument: Map<number, BookmarkSummaryRow>,
-  ): Promise<{ txtId: number; secret: DocumentSecret; book: LibraryBook } | null> {
+  ): Promise<LibraryBook[]> {
+    const results = await Promise.all(
+      [...catalogEntries].map(([documentId, catalog]) =>
+        this.tryBuildBook(
+          documentId,
+          catalog,
+          secrets.get(documentId),
+          summaryByDocument.get(documentId),
+        ),
+      ),
+    );
+    return results.filter((book) => book !== null);
+  }
+
+  // One malformed bookmark summary must not hide every other valid book
+  // -- unwrap independently and skip (rather than abort the whole
+  // reload for) any that fails.
+  private async tryBuildBook(
+    txtId: number,
+    catalog: CatalogEntry,
+    secret: DocumentSecret | undefined,
+    summary: BookmarkSummaryRow | undefined,
+  ): Promise<LibraryBook | null> {
     try {
-      const secret = await this.unwrapDocumentSecret(document);
-      const catalog = catalogEntries.get(document.id);
-      const summary = summaryByDocument.get(document.id);
       const bookmarks = summary ? [await this.unwrapBookmarkSummary(summary)] : [];
-      const book = this.toLibraryBook(document.id, catalog, secret, summary, bookmarks);
-      return { txtId: document.id, secret, book };
+      return this.toLibraryBook(txtId, catalog, secret, summary, bookmarks);
     } catch (error) {
-      console.error(
-        `LibraryStore: skipping document ${document.id}: ${errorMessage(error)}`,
-      );
+      console.error(`LibraryStore: skipping document ${txtId}: ${errorMessage(error)}`);
       return null;
     }
   }
 
   private toLibraryBook(
     txtId: number,
-    catalog: CatalogEntry | undefined,
-    secret: DocumentSecret,
+    catalog: CatalogEntry,
+    secret: DocumentSecret | undefined,
     summary: BookmarkSummaryRow | undefined,
     bookmarks: LibraryBookmark[],
   ): LibraryBook {
     return {
       txtId,
-      title: catalog?.title ?? "Untitled",
-      authors: catalog?.authors ?? [],
-      subjects: catalog?.subjects ?? [],
-      publisher: catalog?.publisher ?? null,
-      lastAccessed: secret.lastAccessed,
+      title: catalog.title,
+      authors: catalog.authors,
+      subjects: catalog.subjects,
+      publisher: catalog.publisher,
+      lastAccessed: secret?.lastAccessed ?? 0,
       bookmarkCount: summary?.count ?? 0,
       lastBookmarked: summary?.createdAt ?? null,
       latestBookmarkCfi: bookmarks[0]?.cfi ?? null,
@@ -274,20 +299,22 @@ export class LibraryStore {
     | { contentKey: Uint8Array; path: string; lastCfi: string | null; title: string }
     | undefined
   > {
-    const secret = this.secrets.get(txtId);
-    if (!secret) return undefined;
+    const book = this.books.find((candidate) => candidate.txtId === txtId);
+    if (!book) return undefined;
     const content = await this.api.fetchDocumentContent(txtId);
     if (!content) return undefined;
     const contentRowKey = await decrypt(content.contentKeyWrapped, this.umk);
     const pointer = parseContentPointer(
       await decryptJson<unknown>(content.contentBlob, contentRowKey),
     );
-    const title = this.books.find((book) => book.txtId === txtId)?.title ?? "Untitled";
     return {
       contentKey: fromBase64(pointer.content_key),
       path: pointer.path,
-      lastCfi: secret.lastCfi,
-      title,
+      // undefined for a document never accessed before -- not in
+      // fetchRecentAccess()'s result, so no secret was ever cached for
+      // it; that's exactly the never-read state lastCfi: null means.
+      lastCfi: this.secrets.get(txtId)?.lastCfi ?? null,
+      title: book.title,
     };
   }
 
@@ -298,7 +325,7 @@ export class LibraryStore {
    * too: there is no cheaper "forget recency, keep position" state once
    * access_blob itself is what's cleared. */
   async clearLastAccessed(txtId: number): Promise<void> {
-    if (this.requireSecret(txtId).accessKey === null) return;
+    if (!this.secrets.get(txtId)?.accessKey) return;
     await this.withVersionConflictRetry(txtId, () => this.writeClearAccess(txtId));
   }
 
@@ -317,7 +344,7 @@ export class LibraryStore {
     cfi: string | null,
     lastAccessed: number | null,
   ): Promise<void> {
-    const secret = this.requireSecret(txtId);
+    const secret = await this.ensureSecret(txtId);
     const next = {
       lastAccessed: lastAccessed ?? secret.lastAccessed,
       lastCfi: cfi ?? secret.lastCfi,
@@ -347,7 +374,7 @@ export class LibraryStore {
   }
 
   private async writeClearAccess(txtId: number): Promise<void> {
-    const secret = this.requireSecret(txtId);
+    const secret = await this.ensureSecret(txtId);
     if (secret.accessKey === null) return; // a concurrent write already cleared this
     const accessVersion = await this.api.updateDocumentAccess(
       txtId,
@@ -455,9 +482,18 @@ export class LibraryStore {
     this.emit(this.status);
   }
 
-  private requireSecret(txtId: number): DocumentSecret {
-    const secret = this.secrets.get(txtId);
-    if (!secret) throw new Error("document not found");
+  // Lazily seeds a never-before-accessed document's secret from the
+  // server (docs/data_model.md §2 -- it isn't in fetchRecentAccess()'s
+  // result until it has real access state) rather than assuming one is
+  // already cached, since reload() only bulk-fetches the already-accessed
+  // subset.
+  private async ensureSecret(txtId: number): Promise<DocumentSecret> {
+    const cached = this.secrets.get(txtId);
+    if (cached) return cached;
+    const document = await this.api.fetchDocument(txtId);
+    if (!document) throw new Error("document not found");
+    const secret = await this.unwrapDocumentSecret(document);
+    this.secrets.set(txtId, secret);
     return secret;
   }
 
@@ -560,31 +596,43 @@ function parseCatalogPointer(value: unknown): CatalogPointer {
   };
 }
 
+// One malformed catalog entry must not hide every other valid book --
+// the catalog is now the sole identity/browse source (reload() above),
+// so losing the whole array to one bad entry would be a much bigger
+// regression here than it was when documents drove the book list.
 function parseCatalogEntries(value: unknown): [number, CatalogEntry][] {
   if (!Array.isArray(value)) throw new Error("catalog object must be an array");
-  return value.map((entry) => {
-    const data = objectRecord(entry, "catalog entry");
-    const documentId = data.document_id;
-    if (typeof documentId !== "number") {
-      throw new Error("catalog entry is missing document_id");
+  const entries: [number, CatalogEntry][] = [];
+  value.forEach((entry, index) => {
+    try {
+      entries.push(parseCatalogEntry(entry));
+    } catch (error) {
+      console.error(
+        `LibraryStore: skipping malformed catalog entry ${index}: ${errorMessage(error)}`,
+      );
     }
-    const catalog = objectRecord(data.catalog, "catalog entry catalog");
-    const publisher = catalog.publisher;
-    if (
-      publisher !== undefined &&
-      publisher !== null &&
-      typeof publisher !== "string"
-    ) {
-      throw new Error("catalog entry has an invalid publisher");
-    }
-    return [
-      documentId,
-      {
-        title: stringField(catalog, "title", "catalog entry"),
-        authors: stringArrayField(catalog, "authors", "catalog entry"),
-        subjects: stringArrayField(catalog, "subjects", "catalog entry"),
-        publisher: publisher ?? null,
-      },
-    ];
   });
+  return entries;
+}
+
+function parseCatalogEntry(entry: unknown): [number, CatalogEntry] {
+  const data = objectRecord(entry, "catalog entry");
+  const documentId = data.document_id;
+  if (typeof documentId !== "number") {
+    throw new Error("catalog entry is missing document_id");
+  }
+  const catalog = objectRecord(data.catalog, "catalog entry catalog");
+  const publisher = catalog.publisher;
+  if (publisher !== undefined && publisher !== null && typeof publisher !== "string") {
+    throw new Error("catalog entry has an invalid publisher");
+  }
+  return [
+    documentId,
+    {
+      title: stringField(catalog, "title", "catalog entry"),
+      authors: stringArrayField(catalog, "authors", "catalog entry"),
+      subjects: stringArrayField(catalog, "subjects", "catalog entry"),
+      publisher: publisher ?? null,
+    },
+  ];
 }
