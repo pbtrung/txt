@@ -1,27 +1,48 @@
 import pytest
+import requests
 
 from txt.d1_client import D1Client, D1Error
 
 
 class FakeResponse:
-    def __init__(self, payload):
+    def __init__(self, payload, status_code=200):
         self.payload = payload
+        self.status_code = status_code
 
     def raise_for_status(self):
-        pass
+        if self.status_code >= 400:
+            raise requests.exceptions.HTTPError(f"status {self.status_code}")
 
     def json(self):
         return self.payload
 
 
 class FakeSession:
-    def __init__(self, payload):
+    def __init__(self, payload, status_code=200):
         self.payload = payload
+        self.status_code = status_code
         self.calls = []
 
     def post(self, url, **kwargs):
         self.calls.append((url, kwargs))
-        return FakeResponse(self.payload)
+        return FakeResponse(self.payload, self.status_code)
+
+
+class ScriptedSession:
+    """A session whose post() replays one scripted outcome per call --
+    an exception to raise, or a FakeResponse to return -- for exercising
+    D1Client's retry-then-succeed and retry-then-give-up paths."""
+
+    def __init__(self, outcomes):
+        self.outcomes = list(outcomes)
+        self.calls = 0
+
+    def post(self, url, **kwargs):
+        self.calls += 1
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
 
 
 def _client(session):
@@ -130,3 +151,47 @@ def test_malformed_response_without_a_result_list_raises_d1_error():
 
     with pytest.raises(D1Error, match="malformed"):
         _client(session).query("SELECT 1")
+
+
+SUCCESS_RESPONSE = FakeResponse(
+    {"success": True, "result": [{"success": True, "results": []}]}
+)
+
+
+def test_retries_a_transient_read_timeout_and_succeeds(monkeypatch):
+    monkeypatch.setattr("txt.d1_client.time.sleep", lambda _seconds: None)
+    session = ScriptedSession(
+        [requests.exceptions.ReadTimeout("timed out"), SUCCESS_RESPONSE]
+    )
+
+    _client(session).query("SELECT 1")
+
+    assert session.calls == 2
+
+
+def test_retries_a_5xx_response_and_succeeds(monkeypatch):
+    monkeypatch.setattr("txt.d1_client.time.sleep", lambda _seconds: None)
+    session = ScriptedSession([FakeResponse({}, status_code=502), SUCCESS_RESPONSE])
+
+    _client(session).query("SELECT 1")
+
+    assert session.calls == 2
+
+
+def test_gives_up_after_exhausting_retries_on_persistent_timeouts(monkeypatch):
+    monkeypatch.setattr("txt.d1_client.time.sleep", lambda _seconds: None)
+    session = ScriptedSession([requests.exceptions.ReadTimeout("timed out")] * 4)
+
+    with pytest.raises(requests.exceptions.ReadTimeout):
+        _client(session).query("SELECT 1")
+
+    assert session.calls == 4
+
+
+def test_does_not_retry_a_4xx_response():
+    session = FakeSession({"errors": [{"message": "bad token"}]}, status_code=401)
+
+    with pytest.raises(requests.exceptions.HTTPError):
+        _client(session).query("SELECT 1")
+
+    assert len(session.calls) == 1

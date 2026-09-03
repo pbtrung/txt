@@ -1,3 +1,4 @@
+import time
 from collections.abc import Sequence
 from typing import Any
 
@@ -6,6 +7,22 @@ import requests
 
 class D1Error(RuntimeError):
     pass
+
+
+# Cloudflare's D1 HTTP API has a known latency tail -- an individual query
+# occasionally takes longer than a single request should reasonably wait
+# for, independent of that query's own cost. A batch command (--ingest,
+# --migrate-rql) issues many sequential D1 calls in one run, so even a
+# small per-call chance of a transient timeout/connection error compounds
+# over a large library; retrying those specifically (never a definite
+# 4xx failure, which retrying would only delay reporting) keeps one slow
+# request from aborting an otherwise-healthy run.
+MAX_ATTEMPTS = 4  # 1 initial + 3 retries
+RETRY_DELAY_SECONDS = 1.0
+RETRYABLE_EXCEPTIONS = (
+    requests.exceptions.ConnectionError,
+    requests.exceptions.Timeout,
+)
 
 
 class D1Client:
@@ -36,14 +53,33 @@ class D1Client:
 
     def _request(self, sql: str, params: Sequence | None) -> dict:
         body = {"sql": sql, "params": _encode_params(params or [])}
-        response = self.session.post(
-            self.base_url, headers=self.headers, json=body, timeout=(3.05, 10)
-        )
+        response = self._post_with_retries(body)
         response.raise_for_status()
         payload = response.json()
         if not payload.get("success"):
             raise D1Error(_error_message(payload))
         return _first_result_entry(payload)
+
+    def _post_with_retries(self, body: dict):
+        for attempt in range(MAX_ATTEMPTS):
+            last_attempt = attempt == MAX_ATTEMPTS - 1
+            try:
+                response = self._post_once(body)
+            except RETRYABLE_EXCEPTIONS:
+                if last_attempt:
+                    raise
+                time.sleep(RETRY_DELAY_SECONDS * 2**attempt)
+                continue
+            if response.status_code >= 500 and not last_attempt:
+                time.sleep(RETRY_DELAY_SECONDS * 2**attempt)
+                continue
+            return response
+        raise AssertionError("unreachable")  # the last attempt always returns/raises
+
+    def _post_once(self, body: dict):
+        return self.session.post(
+            self.base_url, headers=self.headers, json=body, timeout=(3.05, 10)
+        )
 
 
 def _first_result_entry(payload: dict) -> dict:
