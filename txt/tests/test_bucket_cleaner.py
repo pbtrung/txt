@@ -1,7 +1,9 @@
 import base64
+import re
 
 import pytest
 
+import txt.bucket_cleaner as bucket_cleaner_module
 from txt.account_data import parse_owner_account
 from txt.bucket_cleaner import BucketCleaner
 from txt.creds import OwnerCreds, R2Config
@@ -66,14 +68,17 @@ class FakeD1:
 
     def query(self, sql, _params=None):
         if sql.strip().startswith("SELECT k.wrapped_key AS key_wrapped"):
-            return [
-                {
-                    "key_wrapped": self.key_store[key_id]["wrapped_key"],
-                    "content_blob": blob,
-                }
-                for key_id, blob in self.documents
-            ]
+            return self._document_rows(sql)
         raise AssertionError(f"unexpected query: {sql}")
+
+    def _document_rows(self, sql):
+        match = re.search(r"LIMIT (\d+) OFFSET (\d+)", sql)
+        limit, offset = int(match.group(1)), int(match.group(2))
+        page = self.documents[offset : offset + limit]
+        return [
+            {"key_wrapped": self.key_store[key_id]["wrapped_key"], "content_blob": blob}
+            for key_id, blob in page
+        ]
 
     def query_one(self, sql, _params=None):
         if "FROM owner" in sql:
@@ -264,6 +269,30 @@ def test_reports_detailed_per_category_stats(d1, engine):
     assert "shared: 1 object(s), 6 byte(s)." in messages
     assert "other: 1 object(s), 1 byte(s)." in messages
     assert "stale: 2 object(s), 3 byte(s)." in messages
+
+
+def test_reads_document_references_across_multiple_pages(d1, engine, monkeypatch):
+    monkeypatch.setattr(bucket_cleaner_module, "PAGE_SIZE", 2)
+    umk, account = _account(d1, engine)
+    blob = CryptoBlob(engine)
+    for i in range(5):
+        d1.add_document(f"book-{i}", umk, blob)
+    r2 = FakeR2Client()
+    r2.objects = {f"{account.db_prefix}/documents/book-{i}": b"x" for i in range(5)}
+
+    cleaner = _cleaner(d1, r2, engine)
+    cleaner.run()
+
+    # All 5 references were read across 3 pages of size 2 (2, 2, 1) -- if
+    # pagination dropped or duplicated a row, some of these would show up
+    # as stale and get deleted.
+    assert r2.deleted == []
+    reads = [m for m in cleaner.logger.info_messages if "document reference(s)" in m]
+    assert reads == [
+        "Read 2 document reference(s)...",
+        "Read 4 document reference(s)...",
+        "Read 5 document reference(s)...",
+    ]
 
 
 def test_dry_run_deletes_nothing_but_still_reports(d1, engine):

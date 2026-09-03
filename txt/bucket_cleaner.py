@@ -22,9 +22,14 @@ from .r2_client import R2Client
 
 DOCUMENT_KEYS_SQL = (
     "SELECT k.wrapped_key AS key_wrapped, d.content_blob "
-    "FROM documents d JOIN key_store k ON k.id = d.content_key_id"
+    "FROM documents d JOIN key_store k ON k.id = d.content_key_id ORDER BY d.id"
 )
 CATALOG_ROW_SQL = "SELECT key_id, catalog_blob FROM catalog WHERE singleton = 1"
+
+# Documents are read from D1 a page at a time -- a library with many
+# thousands of rows risks a single unbounded SELECT hitting D1's own
+# response size limits or a request timeout.
+PAGE_SIZE = 1000
 
 
 class BucketCleaner:
@@ -66,8 +71,16 @@ class BucketCleaner:
         return keys
 
     def _document_keys(self, umk: bytes, db_prefix: str) -> set[str]:
-        rows = self.owner.d1.query(DOCUMENT_KEYS_SQL)
-        return {self._document_path(row, umk, db_prefix) for row in rows}
+        keys, offset = set(), 0
+        while True:
+            rows = self.owner.d1.query(
+                f"{DOCUMENT_KEYS_SQL} LIMIT {PAGE_SIZE} OFFSET {offset}"
+            )
+            keys.update(self._document_path(row, umk, db_prefix) for row in rows)
+            self.logger.info(f"Read {len(keys):,} document reference(s)...")
+            if len(rows) < PAGE_SIZE:
+                return keys
+            offset += PAGE_SIZE
 
     def _document_path(self, row: dict, umk: bytes, db_prefix: str) -> str:
         row_key = self.blob.decrypt(row["key_wrapped"], umk)
