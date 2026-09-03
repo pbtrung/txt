@@ -15,9 +15,7 @@ See [authentication](docs/auth.md), [data model](docs/data_model.md),
 [implementation plan](docs/milestones.md) for the complete design. The design
 is decided; implementation is in progress per `docs/milestones.md`. The
 Python CLI's `--init-owner`, `--ingest`, `--clean-bucket`, and `--clean-db`,
-and the browser UI, target the Cloudflare/D1 design described here;
-`--update-db` still targets the design's predecessor (rqlite) and isn't
-reachable from the CLI until it's rewritten.
+and the browser UI, target the Cloudflare/D1 design described here.
 
 ## Architecture
 
@@ -135,11 +133,6 @@ Prepare EPUBs or replace their images:
 txt --edit-epub ./source ./edited --verbose
 txt --replace-images ./source ./without-images
 ```
-
-**Not yet available** ([`docs/milestones.md`](docs/milestones.md)
-Milestone 9): migrating the catalog/reading-state schema (`--update-db`)
-still targets the design's predecessor (rqlite) internally and isn't
-currently reachable from the CLI, pending its own rewrite for D1.
 
 ## Cleaning up stale R2 objects and share rows
 

@@ -362,8 +362,12 @@ WAF rules aren't something `wrangler dev` simulates locally.
 ## Milestone 9 — Ingestion tooling
 
 **Status: `--init-owner`, `--ingest`, `--clean-bucket`, and `--clean-db`
-done and tested against the D1 design; `--update-db` deferred to its own
-pass.** Decided the Worker-endpoints-vs-D1-HTTP-API question in favor of
+done and tested against the D1 design.** `--update-db` (migrating the
+predecessor design's own catalog/reading-state schema) was removed
+outright rather than rewritten for D1 — schema changes in this design
+are `wrangler d1 migrations`, not this tool's job, so there was no D1
+equivalent for it to become. Decided the Worker-endpoints-vs-D1-HTTP-API
+question in favor of
 D1's own HTTP query API (`txt/d1_client.py`) — the Worker's ticket/proof
 protocol is designed for ephemeral browser sessions, not a long-running
 CLI carrying its own Cloudflare API token, matching how `r2_client.py`
@@ -381,28 +385,25 @@ remaining callers once this landed and were removed entirely.
 `bucket_cleaner.py`/`db_cleaner.py` were later rewritten against D1 too
 (the R2 allowlist and the `shares` `state='deleting'` retry
 respectively, `txt/bucket_cleaner.py`/`txt/db_cleaner.py`) and don't
-need it either — `sqlite_engine.py` now stays only for `db_updater.py`,
-which still targets the rqlite-era design (a whole downloaded SQLCipher
-file, `self.owner.rqlite`) and isn't wired into `cli.py` until it gets
-the same D1 rewrite; its test skips itself at import time rather than
-fail.
+need it either. `db_updater.py` and its test were deleted outright
+rather than rewritten; `database_schema.py` was trimmed down to just
+the predecessor `txt`/`txt_bookmarks` table definitions and
+`open_database`/`configure_database` helpers `migrate_rql.py` still
+needs to open a not-yet-migrated deployment's database — every
+schema-migration/validation function that only `db_updater.py` called
+was removed alongside it. `sqlite_engine.py` now stays only for
+`migrate_rql.py`.
 
-- The Python maintenance CLI's ingestion path (`txt --ingest`,
-  `txt --update-db`) needs to write to D1 and the R2 catalog object
-  instead of a local SQLCipher file — decide whether it calls the
-  deployed Worker's endpoints or D1's own HTTP API directly, and update
-  `docs/data_model.md` §2.1's "Written by" note with the answer once
-  decided.
+- The Python maintenance CLI's ingestion path (`txt --ingest`) needs to
+  write to D1 and the R2 catalog object instead of a local SQLCipher
+  file — decide whether it calls the deployed Worker's endpoints or
+  D1's own HTTP API directly, and update `docs/data_model.md` §2.1's
+  "Written by" note with the answer once decided.
 - The catalog-object write order from `docs/data_model.md` §2.1 (D1 rows
   first, then the catalog rewrite, with idempotent reconciliation on
   re-run) needs to be implemented exactly as designed, not
   approximated — this is the piece that keeps a crashed ingestion run
   self-healing instead of corrupt.
-- `sqlite_engine.py` (the whole-file SQLCipher-via-WASM engine) has no
-  remaining caller once Milestone 5 lands — remove it rather than
-  leaving dead code. `leancrypto_wasm.py` and `crypto_blob.py` stay:
-  ingestion still writes Blob-Format-encrypted rows for `documents`,
-  `catalog`, and `key_store`.
 
 **Test:**
 
