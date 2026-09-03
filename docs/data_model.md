@@ -135,6 +135,16 @@ END;
 -- every documents row to find the ones it actually wants.
 CREATE INDEX idx_documents_access_key_id ON documents(access_key_id)
 WHERE access_key_id IS NOT NULL;
+-- D1 enforces foreign keys, so every `DELETE FROM key_store` -- fired by
+-- trg_documents_delete_keys, trg_documents_clear_access_key,
+-- trg_bookmarks_delete_key, trg_shares_delete_key below, and the direct
+-- cleanup delete after a failed first-access-write batch -- must verify
+-- no row in any table referencing key_store(id) still points at the key
+-- being deleted. Without an index on the referencing column, D1 pays for
+-- that verification with a full table scan (it bills by rows examined),
+-- repeated once per key_store row deleted -- content_key_id is every
+-- document's own key, so this covers trg_documents_delete_keys too.
+CREATE INDEX idx_documents_content_key_id ON documents(content_key_id);
 
 CREATE TABLE bookmarks (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -145,6 +155,8 @@ CREATE TABLE bookmarks (
                                      -- plaintext: {cfi, page_number, preview}
 ) STRICT;
 CREATE INDEX idx_bookmarks_document_id ON bookmarks(document_id, created_at, id);
+-- Same key_store foreign-key-check reasoning as idx_documents_content_key_id.
+CREATE INDEX idx_bookmarks_key_id ON bookmarks(key_id);
 
 -- Per-document cap of 20, enforced in the database rather than in every
 -- caller. Ordered by id: monotonic, and immune to client clock skew.
@@ -180,6 +192,10 @@ CREATE TABLE shares (
     created_at        INTEGER NOT NULL,
     UNIQUE (object_path_hash)
 ) STRICT;
+-- Same key_store foreign-key-check reasoning as idx_documents_content_key_id.
+-- catalog.key_id is not indexed: catalog is a singleton table (at most
+-- one row), so scanning it costs nothing.
+CREATE INDEX idx_shares_key_id ON shares(key_id);
 CREATE TRIGGER trg_shares_delete_key AFTER DELETE ON shares
 BEGIN
   DELETE FROM key_store WHERE id = OLD.key_id;
