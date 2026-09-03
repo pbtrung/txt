@@ -79,7 +79,9 @@ def test_client_built_with_read_write_creds_and_endpoint(monkeypatch):
     assert captured["kwargs"]["aws_access_key_id"] == "rw-id"
     assert captured["kwargs"]["aws_secret_access_key"] == "rw-secret"
     assert captured["kwargs"]["region_name"] == "auto"
-    assert "config" not in captured["kwargs"]
+    config = captured["kwargs"]["config"]
+    assert config.retries == r2_client_module.CONNECTION_RETRY_CONFIG
+    assert config.max_pool_connections == r2_client_module.MAX_POOL_CONNECTIONS
 
 
 def test_client_applies_optional_read_timeout(monkeypatch):
@@ -94,6 +96,7 @@ def test_client_applies_optional_read_timeout(monkeypatch):
     R2Client(CONFIG, read_timeout=15)
 
     assert captured["config"].read_timeout == 15
+    assert captured["config"].retries == r2_client_module.CONNECTION_RETRY_CONFIG
 
 
 def test_put_object_forwards_bucket_key_and_body(monkeypatch):
@@ -181,6 +184,24 @@ def test_get_object_with_etag_reports_partial_read_timeout(monkeypatch):
     assert exc.value.downloaded == 3
     assert exc.value.total == 6
     assert body.closed
+
+
+def test_get_object_wraps_a_connection_error_once_botocores_own_retries_are_exhausted(
+    monkeypatch,
+):
+    fake = FakeS3Client()
+
+    def raise_ssl_error(**kwargs):
+        raise botocore.exceptions.SSLError(
+            endpoint_url="https://x.r2.cloudflarestorage.com/t/key",
+            error=Exception("bad record mac"),
+        )
+
+    fake.get_object = raise_ssl_error
+    monkeypatch.setattr(r2_client_module.boto3, "client", lambda *a, **k: fake)
+
+    with pytest.raises(r2_client_module.R2DownloadError, match="0 bytes"):
+        R2Client(CONFIG).get_object("t/key")
 
 
 def test_etag_is_required_only_for_etag_reads(monkeypatch):

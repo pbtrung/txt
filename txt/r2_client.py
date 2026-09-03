@@ -12,7 +12,23 @@ DOWNLOAD_ERRORS = (
     botocore.exceptions.IncompleteReadError,
     botocore.exceptions.ReadTimeoutError,
     botocore.exceptions.ResponseStreamingError,
+    botocore.exceptions.ConnectionError,  # includes SSLError, EndpointConnectionError
 )
+# botocore retries botocore.exceptions.ConnectionError (which SSLError and
+# EndpointConnectionError inherit from) and ReadTimeoutError itself, so a
+# transient mid-handshake failure like a bad TLS record MAC gets several
+# chances to succeed before ever reaching this module's own code -- this
+# is a real, observed failure mode for a batch command (--ingest,
+# --migrate-rql) that can issue many, sometimes concurrent, R2 requests in
+# one run. "standard" mode also covers more transient HTTP status codes
+# than the legacy default with better jittered backoff.
+CONNECTION_RETRY_CONFIG = {"max_attempts": 8, "mode": "standard"}
+# botocore's own default (10) exactly matches migrate_rql.py's BATCH_SIZE,
+# leaving no headroom for a retry attempt to need a connection while the
+# batch's other 10 workers still hold theirs -- pool exhaustion is a
+# plausible contributor to connection-level flakiness under that many
+# concurrent callers sharing one client.
+MAX_POOL_CONNECTIONS = 20
 
 
 @dataclass(frozen=True)
@@ -80,7 +96,12 @@ class R2Client:
     def _get_object_response(self, key: str) -> dict | None:
         try:
             return self._s3.get_object(Bucket=self.bucket, Key=key)
-        except botocore.exceptions.ReadTimeoutError as exc:
+        except (
+            botocore.exceptions.ReadTimeoutError,
+            botocore.exceptions.ConnectionError,
+        ) as exc:
+            # Only reached once botocore's own retries (CONNECTION_RETRY_CONFIG)
+            # are exhausted -- a persistent, not transient, failure by then.
             raise R2DownloadError(key, 0, None, exc) from exc
         except botocore.exceptions.ClientError as exc:
             if exc.response.get("Error", {}).get("Code") in ("NoSuchKey", "404"):
@@ -156,15 +177,19 @@ def _is_precondition_failure(error: botocore.exceptions.ClientError) -> bool:
 
 
 def _client_kwargs(config: R2Config, read_timeout: int | None) -> dict:
-    kwargs = {
+    config_kwargs = {
+        "retries": CONNECTION_RETRY_CONFIG,
+        "max_pool_connections": MAX_POOL_CONNECTIONS,
+    }
+    if read_timeout is not None:
+        config_kwargs["read_timeout"] = read_timeout
+    return {
         "endpoint_url": config.endpoint,
         "aws_access_key_id": config.read_write_access_key_id,
         "aws_secret_access_key": config.read_write_secret_access_key,
         "region_name": config.region,
+        "config": Config(**config_kwargs),
     }
-    if read_timeout is not None:
-        kwargs["config"] = Config(read_timeout=read_timeout)
-    return kwargs
 
 
 def _content_length(response: dict) -> int | None:
