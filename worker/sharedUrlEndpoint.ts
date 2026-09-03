@@ -8,16 +8,11 @@
 import { AwsClient } from "aws4fetch";
 import { openGrant } from "./shareGrant";
 import { createMintCredential } from "./r2CredentialsEndpoint";
-import { base64Encode, base64UrlDecode } from "./base64";
-import { decodeBase64Secret } from "./ownerEndpoint";
+import { base64Decode, base64Encode, base64UrlDecode, sha256 } from "./base64";
 import { requireVar } from "./requireVar";
 import { SHARE_ID_LEN } from "./shareValidation";
 
 const PRESIGN_TTL_SECONDS = 60;
-
-async function sha256(bytes: Uint8Array): Promise<Uint8Array> {
-  return new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
-}
 
 export async function handlePostSharedUrl(
   request: Request,
@@ -55,7 +50,7 @@ export async function handlePostSharedUrl(
     objectPath = await openGrant(
       grantBytes,
       shareIdHash,
-      decodeBase64Secret(env.SHARE_GRANT_KEY),
+      base64Decode(env.SHARE_GRANT_KEY),
     );
   } catch {
     return new Response("malformed capability or grant", { status: 400 });

@@ -6,13 +6,6 @@ import { issueTicket } from "./ownerTicket";
 import type { AccessJwtClaims } from "./access";
 import { base64Decode, base64Encode, base64UrlEncode } from "./base64";
 
-/** Decodes a standard-base64 secret string (the convention every `wrangler
- * secret put` value in this app uses, matching `openssl rand -base64 32`'s
- * own output) into raw bytes. */
-export function decodeBase64Secret(value: string): Uint8Array {
-  return base64Decode(value);
-}
-
 interface OwnerRow {
   wrapped_umk: ArrayBuffer;
   sign_public_key: ArrayBuffer;
@@ -64,7 +57,7 @@ export async function handleGetOwner(
       sign_public_key: base64UrlEncode(row.sign_public_key),
       db_binding_hash: base64UrlEncode(row.db_prefix_hash),
     },
-    decodeBase64Secret(env.TICKET_SIGNING_KEY),
+    base64Decode(env.TICKET_SIGNING_KEY),
   );
 
   return Response.json({

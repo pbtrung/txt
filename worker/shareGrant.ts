@@ -5,6 +5,8 @@
 // the Blob Format (ui/src/crypto/), which the Worker never needs: the
 // Worker holds SHARE_GRANT_KEY itself, so it's the only party able to do
 // anything with a grant either way.
+import { concat } from "./base64";
+
 const VERSION = 0x01;
 const SALT_LEN = 32;
 const NONCE_LEN = 12;
@@ -13,16 +15,6 @@ const MIN_LEN = 1 + SALT_LEN + NONCE_LEN + TAG_LEN; // 61
 
 const KEY_INFO_PREFIX = new TextEncoder().encode("txt:share-grant-key:v1");
 const AD_PREFIX = new TextEncoder().encode("txt:share-grant:v1");
-
-function concat(...parts: Uint8Array[]): Uint8Array {
-  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
-  let offset = 0;
-  for (const part of parts) {
-    out.set(part, offset);
-    offset += part.length;
-  }
-  return out;
-}
 
 // Binds the derived key (via HKDF's `info`) and the AEAD additional data to
 // this specific share's `idHash` -- decrypting under a different share's

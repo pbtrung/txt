@@ -5,21 +5,16 @@
 // needs (share_id, share_path, document_id) travels as its own body
 // field instead.
 import { sealGrant } from "./shareGrant";
-import { base64Decode, base64Encode, base64UrlDecode, base64UrlEncode } from "./base64";
-import { decodeBase64Secret } from "./ownerEndpoint";
+import {
+  base64Decode,
+  base64Encode,
+  base64UrlDecode,
+  base64UrlEncode,
+  sha256,
+} from "./base64";
 import { isValidSharePath, SHARE_ID_LEN } from "./shareValidation";
 import type { ProofContext } from "./requireProof";
-
-async function sha256(bytes: Uint8Array): Promise<Uint8Array> {
-  return new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
-}
-
-function requireBucket(env: Env): R2Bucket {
-  if (!env.BUCKET) {
-    throw new Error("BUCKET is not configured");
-  }
-  return env.BUCKET;
-}
+import { requireBinding } from "./requireVar";
 
 interface ShareRow {
   share_id_hash: ArrayBuffer;
@@ -267,7 +262,7 @@ export async function handlePostShares(
   const grant = await sealGrant(
     objectPath,
     shareIdHash,
-    decodeBase64Secret(env.SHARE_GRANT_KEY),
+    base64Decode(env.SHARE_GRANT_KEY),
   );
   return Response.json({ registered: true, grant: base64UrlEncode(grant) });
 }
@@ -320,7 +315,7 @@ export async function handleDeleteShares(
   try {
     // R2's delete() is idempotent for a missing key -- no separate 404
     // handling needed for that case (docs/sharing.md §3.4).
-    await requireBucket(env).delete(objectPath);
+    await requireBinding(env.BUCKET, "BUCKET").delete(objectPath);
   } catch {
     // Row stays 'deleting': already revoked, retryable (docs/sharing.md §3.4).
     return new Response("R2 deletion failed, retry", { status: 503 });

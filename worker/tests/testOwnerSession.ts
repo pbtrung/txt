@@ -6,8 +6,7 @@ import { env } from "cloudflare:test";
 import { issueTicket } from "../ownerTicket";
 import { buildCanonicalProofBytes } from "../ownerProof";
 import type { ProofEnvelope } from "../ownerProof";
-import { base64Encode, base64UrlEncode } from "../base64";
-import { decodeBase64Secret } from "../ownerEndpoint";
+import { base64Decode, base64Encode, base64UrlEncode } from "../base64";
 
 function blob(length: number): Uint8Array {
   const bytes = new Uint8Array(length);
@@ -74,7 +73,7 @@ export async function createTestOwnerSession(): Promise<TestOwnerSession> {
       sign_public_key: base64UrlEncode(signPublicKey),
       db_binding_hash: base64UrlEncode(dbPrefixHash),
     },
-    decodeBase64Secret(env.TICKET_SIGNING_KEY),
+    base64Decode(env.TICKET_SIGNING_KEY),
   );
 
   async function signedRequest(

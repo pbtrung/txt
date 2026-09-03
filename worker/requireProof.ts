@@ -8,7 +8,6 @@ import { verifyTicket, TicketVerificationError } from "./ownerTicket";
 import { verifyProof, ProofVerificationError } from "./ownerProof";
 import type { ProofEnvelope } from "./ownerProof";
 import { base64Decode } from "./base64";
-import { decodeBase64Secret } from "./ownerEndpoint";
 
 const TICKET_HEADER = "X-Owner-Ticket";
 const PROOF_HEADER = "X-Owner-Proof";
@@ -88,7 +87,7 @@ export async function requireProof(
   try {
     ticketClaims = await verifyTicket(
       ticketToken,
-      decodeBase64Secret(env.TICKET_SIGNING_KEY),
+      base64Decode(env.TICKET_SIGNING_KEY),
     );
   } catch (error) {
     if (error instanceof TicketVerificationError) {

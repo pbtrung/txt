@@ -5,7 +5,7 @@
 import { env, SELF } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { verifyTicket } from "../ownerTicket";
-import { decodeBase64Secret } from "../ownerEndpoint";
+import { base64Decode } from "../base64";
 import { mockAccessCertsEndpoint, signTestAccessToken } from "./testAccessToken";
 
 function blob(length: number): Uint8Array {
@@ -106,7 +106,7 @@ describe("GET /v1/owner", () => {
 
       const claims = await verifyTicket(
         body.ticket,
-        decodeBase64Secret(env.TICKET_SIGNING_KEY),
+        base64Decode(env.TICKET_SIGNING_KEY),
       );
       expect(claims.sub).toBe(env.OWNER_EMAIL);
       const toBase64Url = (bytes: Uint8Array) =>

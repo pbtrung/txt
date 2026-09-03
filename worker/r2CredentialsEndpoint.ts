@@ -11,6 +11,7 @@
 import { SignJWT } from "jose";
 import type { ProofContext } from "./requireProof";
 import { requireVar } from "./requireVar";
+import { sha256 } from "./base64";
 
 const BROWSER_CREDENTIAL_TTL_SECONDS = 15 * 60;
 
@@ -112,8 +113,8 @@ async function signScopedJwt(input: SignScopedJwtInput): Promise<string> {
 }
 
 async function sha256Hex(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
-  return Array.from(new Uint8Array(digest))
+  const digest = await sha256(new TextEncoder().encode(value));
+  return Array.from(digest)
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
 }

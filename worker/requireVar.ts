@@ -10,3 +10,13 @@ export function requireVar(value: string | undefined, name: string): string {
   }
   return value;
 }
+
+// Same "missing configuration" guard as requireVar(), generalized for a
+// non-string binding (e.g. R2Bucket) that has no "replace-me-*" placeholder
+// convention to check against -- just presence.
+export function requireBinding<T>(value: T | undefined, name: string): T {
+  if (!value) {
+    throw new Error(`${name} is not configured`);
+  }
+  return value;
+}

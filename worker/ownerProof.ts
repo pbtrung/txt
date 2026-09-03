@@ -7,7 +7,13 @@
 // construction, and should, rather than risk two independently-written
 // implementations drifting apart.
 import type { TicketClaims } from "./ownerTicket";
-import { base64Decode, base64UrlDecode, base64UrlEncode } from "./base64";
+import {
+  base64Decode,
+  base64UrlDecode,
+  base64UrlEncode,
+  concat,
+  sha256,
+} from "./base64";
 
 export interface ProofEnvelope {
   version: 1;
@@ -29,24 +35,10 @@ export class ProofVerificationError extends Error {
   }
 }
 
-function concat(...parts: Uint8Array[]): Uint8Array {
-  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
-  let offset = 0;
-  for (const part of parts) {
-    out.set(part, offset);
-    offset += part.length;
-  }
-  return out;
-}
-
 function u64be(value: number): Uint8Array {
   const buf = new ArrayBuffer(8);
   new DataView(buf).setBigUint64(0, BigInt(value), false);
   return new Uint8Array(buf);
-}
-
-async function sha256(bytes: Uint8Array): Promise<Uint8Array> {
-  return new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
 }
 
 export interface CanonicalProofInput {
