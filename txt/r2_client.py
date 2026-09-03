@@ -144,18 +144,26 @@ class R2Client:
     def list_keys(
         self, prefix: str, on_progress: Callable[[int], None] | None = None
     ) -> list[str]:
-        keys, token = [], None
+        return [key for key, _size in self.list_objects(prefix, on_progress)]
+
+    def list_objects(
+        self, prefix: str, on_progress: Callable[[int], None] | None = None
+    ) -> list[tuple[str, int]]:
+        objects, token = [], None
         while True:
-            kwargs = {"Bucket": self.bucket, "Prefix": prefix, "MaxKeys": 1000}
-            if token:
-                kwargs["ContinuationToken"] = token
-            resp = self._s3.list_objects_v2(**kwargs)
-            keys.extend(obj["Key"] for obj in resp.get("Contents", []))
+            resp = self._list_objects_page(prefix, token)
+            objects.extend(_page_objects(resp))
             if on_progress is not None:
-                on_progress(len(keys))
+                on_progress(len(objects))
             if not resp.get("IsTruncated"):
-                return keys
+                return objects
             token = resp["NextContinuationToken"]
+
+    def _list_objects_page(self, prefix: str, token: str | None) -> dict:
+        kwargs = {"Bucket": self.bucket, "Prefix": prefix, "MaxKeys": 1000}
+        if token:
+            kwargs["ContinuationToken"] = token
+        return self._s3.list_objects_v2(**kwargs)
 
     def delete_keys(
         self, keys: list[str], on_progress: Callable[[int], None] | None = None
@@ -168,6 +176,10 @@ class R2Client:
             _raise_delete_errors(response)
             if on_progress is not None:
                 on_progress(i + len(batch))
+
+
+def _page_objects(resp: dict) -> list[tuple[str, int]]:
+    return [(obj["Key"], obj.get("Size", 0)) for obj in resp.get("Contents", [])]
 
 
 def _is_precondition_failure(error: botocore.exceptions.ClientError) -> bool:

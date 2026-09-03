@@ -5,6 +5,11 @@ documents/catalog rows (docs/data_model.md). The entire
 registering it with `POST /v1/shares` (docs/sharing.md §4), so an
 object can legitimately exist there moments before its row is written,
 and this tool has no way to tell that apart from an abandoned upload.
+
+Before deleting anything, it reports object count and total byte size
+per storage_layout.md prefix (document/catalog/shared), plus an "other"
+bucket for any key matching none of them (unexpected, but not fatal --
+it's just treated as stale) and a "stale" total across all of them.
 """
 
 from .account_data import parse_owner_account
@@ -45,10 +50,11 @@ class BucketCleaner:
         umk, payload = self.owner.load_current_owner()
         account = parse_owner_account(payload)
         allowlist = self._build_allowlist(umk, account.db_prefix)
-        bucket_keys = self._bucket_keys()
-        stale = self._stale_keys(account.db_prefix, allowlist, bucket_keys)
+        bucket_objects = self._bucket_objects()
+        stale = self._stale_keys(account.db_prefix, allowlist, bucket_objects)
+        self._report_stats(account.db_prefix, bucket_objects, stale)
         self._report_stale(stale)
-        self._delete_stale(stale)
+        self._delete_stale(stale, bucket_objects)
 
     def _build_allowlist(self, umk: bytes, db_prefix: str) -> set[str]:
         self.logger.info("Reading D1 references...")
@@ -82,39 +88,68 @@ class BucketCleaner:
         pointer = self.blob.decrypt_json(row["catalog_blob"], row_key)
         return pointer["catalog_path"]
 
-    def _bucket_keys(self) -> set[str]:
+    def _bucket_objects(self) -> dict[str, int]:
         self.logger.info("Listing all R2 bucket objects...")
-        bucket_keys = set(
-            self.r2.list_keys(
-                "",
-                lambda count: self.logger.info(f"Listed {count:,} bucket object(s)..."),
-            )
+        objects = self.r2.list_objects(
+            "", lambda count: self.logger.info(f"Listed {count:,} bucket object(s)...")
         )
-        self.logger.info(f"Finished listing {len(bucket_keys):,} bucket object(s).")
-        return bucket_keys
+        self.logger.info(f"Finished listing {len(objects):,} bucket object(s).")
+        return dict(objects)
 
     def _stale_keys(
-        self, db_prefix: str, allowlist: set[str], bucket_keys: set[str]
+        self, db_prefix: str, allowlist: set[str], bucket_objects: dict[str, int]
     ) -> list[str]:
+        bucket_keys = set(bucket_objects)
         shared_prefix = f"{db_prefix}/shared/"
         shared = {key for key in bucket_keys if key.startswith(shared_prefix)}
         retained = (bucket_keys & allowlist) | shared
-        stale = sorted(bucket_keys - retained)
-        self.logger.info(
-            f"{len(bucket_keys)} bucket object(s), {len(retained)} retained "
-            f"({len(shared)} shared), {len(stale)} stale."
-        )
-        return stale
+        return sorted(bucket_keys - retained)
+
+    def _report_stats(
+        self, db_prefix: str, bucket_objects: dict[str, int], stale: list[str]
+    ) -> None:
+        self._log_category("bucket total", bucket_objects, set(bucket_objects))
+        accounted = self._log_prefix_categories(db_prefix, bucket_objects)
+        self._log_category("other", bucket_objects, set(bucket_objects) - accounted)
+        self._log_category("stale", bucket_objects, set(stale))
+
+    def _log_prefix_categories(
+        self, db_prefix: str, bucket_objects: dict[str, int]
+    ) -> set[str]:
+        categories = {
+            "document": f"{db_prefix}/documents/",
+            "catalog": f"{db_prefix}/catalog/",
+            "shared": f"{db_prefix}/shared/",
+        }
+        accounted = set()
+        for name, prefix in categories.items():
+            keys = {k for k in bucket_objects if k.startswith(prefix)}
+            accounted |= keys
+            self._log_category(name, bucket_objects, keys)
+        return accounted
+
+    def _log_category(
+        self, name: str, bucket_objects: dict[str, int], keys: set[str]
+    ) -> None:
+        size = sum(bucket_objects[k] for k in keys)
+        self.logger.info(f"{name}: {len(keys):,} object(s), {size:,} byte(s).")
 
     def _report_stale(self, stale: list[str]) -> None:
         for key in stale:
             action = "Would delete" if self.dry_run else "Deleting"
             self.logger.verbose(f"{action} {key}")
 
-    def _delete_stale(self, stale: list[str]) -> None:
+    def _delete_stale(self, stale: list[str], bucket_objects: dict[str, int]) -> None:
+        stale_size = sum(bucket_objects[k] for k in stale)
         if self.dry_run:
-            self.logger.info(f"Dry run: would delete {len(stale)} object(s).")
+            self.logger.info(
+                f"Dry run: would delete {len(stale):,} object(s), "
+                f"{stale_size:,} byte(s)."
+            )
             return
+        self._delete_stale_keys(stale, stale_size)
+
+    def _delete_stale_keys(self, stale: list[str], stale_size: int) -> None:
         if stale:
             self.logger.info(f"Deleting {len(stale):,} stale object(s)...")
         self.r2.delete_keys(
@@ -123,4 +158,4 @@ class BucketCleaner:
                 f"Deleted {count:,}/{len(stale):,} stale object(s)..."
             ),
         )
-        self.logger.info(f"Deleted {len(stale)} object(s).")
+        self.logger.info(f"Deleted {len(stale):,} object(s), {stale_size:,} byte(s).")

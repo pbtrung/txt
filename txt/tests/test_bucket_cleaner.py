@@ -155,8 +155,8 @@ class FakeR2Client:
     def get_object(self, key):
         return self.objects.get(key)
 
-    def list_keys(self, prefix, on_progress=None):
-        return list(self.objects)
+    def list_objects(self, prefix, on_progress=None):
+        return [(key, len(body)) for key, body in self.objects.items()]
 
     def delete_keys(self, keys, on_progress=None):
         self.deleted.extend(keys)
@@ -240,6 +240,32 @@ def test_retains_every_object_under_the_shared_prefix(d1, engine):
     assert r2.deleted == [f"{account.db_prefix}/stale"]
 
 
+def test_reports_detailed_per_category_stats(d1, engine):
+    umk, account = _account(d1, engine)
+    blob = CryptoBlob(engine)
+    d1.add_document("book-path", umk, blob)
+    d1.set_catalog("catalog-path", umk, blob)
+    r2 = FakeR2Client()
+    r2.objects = {
+        f"{account.db_prefix}/documents/book-path": b"12345",
+        f"{account.db_prefix}/documents/orphan-path": b"ab",
+        f"{account.db_prefix}/catalog/catalog-path": b"catalog!!",
+        f"{account.db_prefix}/shared/{'e' * 52}": b"shared",
+        "unrelated/key": b"x",
+    }
+
+    cleaner = _cleaner(d1, r2, engine)
+    cleaner.run()
+
+    messages = cleaner.logger.info_messages
+    assert "bucket total: 5 object(s), 23 byte(s)." in messages
+    assert "document: 2 object(s), 7 byte(s)." in messages
+    assert "catalog: 1 object(s), 9 byte(s)." in messages
+    assert "shared: 1 object(s), 6 byte(s)." in messages
+    assert "other: 1 object(s), 1 byte(s)." in messages
+    assert "stale: 2 object(s), 3 byte(s)." in messages
+
+
 def test_dry_run_deletes_nothing_but_still_reports(d1, engine):
     _umk, account = _account(d1, engine)
     r2 = FakeR2Client()
@@ -250,4 +276,7 @@ def test_dry_run_deletes_nothing_but_still_reports(d1, engine):
 
     assert r2.deleted == []
     assert f"Would delete {account.db_prefix}/stale" in cleaner.logger.verbose_messages
-    assert cleaner.logger.info_messages[-1] == "Dry run: would delete 1 object(s)."
+    assert (
+        cleaner.logger.info_messages[-1]
+        == "Dry run: would delete 1 object(s), 5 byte(s)."
+    )

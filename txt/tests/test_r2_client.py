@@ -52,7 +52,7 @@ class FakeS3Client:
     ):
         index = 0 if ContinuationToken is None else int(ContinuationToken)
         page = self._pages[index]
-        resp = {"Contents": [{"Key": value} for value in page]}
+        resp = {"Contents": [_content_entry(item) for item in page]}
         if index + 1 < len(self._pages):
             resp["IsTruncated"] = True
             resp["NextContinuationToken"] = str(index + 1)
@@ -61,6 +61,13 @@ class FakeS3Client:
     def delete_objects(self, Bucket, Delete):
         self.delete_calls.append((Bucket, [o["Key"] for o in Delete["Objects"]]))
         return self._delete_responses.pop(0) if self._delete_responses else {}
+
+
+def _content_entry(item):
+    if isinstance(item, tuple):
+        key, size = item
+        return {"Key": key, "Size": size}
+    return {"Key": item}
 
 
 def test_client_built_with_read_write_creds_and_endpoint(monkeypatch):
@@ -244,6 +251,20 @@ def test_list_keys_single_page(monkeypatch):
     monkeypatch.setattr(r2_client_module.boto3, "client", lambda *a, **k: fake)
 
     assert R2Client(CONFIG).list_keys("b/") == ["only"]
+
+
+def test_list_objects_returns_keys_with_sizes(monkeypatch):
+    fake = FakeS3Client(pages=[[("a", 5), ("b", 10)]])
+    monkeypatch.setattr(r2_client_module.boto3, "client", lambda *a, **k: fake)
+
+    assert R2Client(CONFIG).list_objects("") == [("a", 5), ("b", 10)]
+
+
+def test_list_objects_follows_pagination(monkeypatch):
+    fake = FakeS3Client(pages=[[("a", 1)], [("b", 2)]])
+    monkeypatch.setattr(r2_client_module.boto3, "client", lambda *a, **k: fake)
+
+    assert R2Client(CONFIG).list_objects("") == [("a", 1), ("b", 2)]
 
 
 def test_delete_keys_batches_at_1000(monkeypatch):
