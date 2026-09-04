@@ -32,6 +32,7 @@ import {
 } from "./sharesEndpoint";
 import { handlePostSharedUrl } from "./sharedUrlEndpoint";
 import { requireVar } from "./requireVar";
+import { timeNetwork, type RequestTiming } from "./requestTiming";
 
 export interface RequestContext {
   access: AccessJwtClaims | undefined;
@@ -157,11 +158,13 @@ const JWKS_CACHE_TTL_MS = 60 * 60 * 1000; // Access's signing keys rotate infreq
 
 let cachedJwks: { value: unknown; fetchedAt: number } | null = null;
 
-async function fetchJwks(teamDomain: string): Promise<unknown> {
+async function fetchJwks(teamDomain: string, timing: RequestTiming): Promise<unknown> {
   if (cachedJwks && Date.now() - cachedJwks.fetchedAt < JWKS_CACHE_TTL_MS) {
     return cachedJwks.value;
   }
-  const response = await fetch(`https://${teamDomain}/cdn-cgi/access/certs`);
+  const response = await timeNetwork(timing, () =>
+    fetch(`https://${teamDomain}/cdn-cgi/access/certs`),
+  );
   if (!response.ok) {
     throw new Error(`failed to fetch Access JWKS: ${response.status}`);
   }
@@ -170,7 +173,11 @@ async function fetchJwks(teamDomain: string): Promise<unknown> {
   return value;
 }
 
-async function requireAccess(request: Request, env: Env): Promise<AccessJwtClaims> {
+async function requireAccess(
+  request: Request,
+  env: Env,
+  timing: RequestTiming,
+): Promise<AccessJwtClaims> {
   const token = request.headers.get(ACCESS_HEADER);
   if (!token) {
     throw new Error("missing Access session");
@@ -178,7 +185,7 @@ async function requireAccess(request: Request, env: Env): Promise<AccessJwtClaim
   const teamDomain = requireVar(env.CF_ACCESS_TEAM_DOMAIN, "CF_ACCESS_TEAM_DOMAIN");
   return verifyAccessJwt({
     token,
-    fetchJwks: () => fetchJwks(teamDomain),
+    fetchJwks: () => fetchJwks(teamDomain, timing),
     audience: requireVar(env.CF_ACCESS_AUD, "CF_ACCESS_AUD"),
     issuer: `https://${teamDomain}`,
     ownerEmail: requireVar(env.OWNER_EMAIL, "OWNER_EMAIL"),
@@ -200,6 +207,7 @@ function accessCheckSkipped(env: Env): boolean {
 async function resolveAccess(
   request: Request,
   env: Env,
+  timing: RequestTiming,
 ): Promise<AccessJwtClaims | null> {
   if (accessCheckSkipped(env)) {
     return {
@@ -210,7 +218,7 @@ async function resolveAccess(
     };
   }
   try {
-    return await requireAccess(request, env);
+    return await requireAccess(request, env, timing);
   } catch (error) {
     // The client-facing response stays a uniform 401 (docs/auth.md §2) --
     // this is server-side only, visible via `wrangler tail`, and is the
@@ -264,6 +272,7 @@ export async function handleApi(
   request: Request,
   env: Env,
   url: URL,
+  timing: RequestTiming,
 ): Promise<Response> {
   const found = findRoute(url.pathname);
   if (!found) {
@@ -276,7 +285,7 @@ export async function handleApi(
 
   let access: AccessJwtClaims | undefined;
   if (!route.public) {
-    const resolved = await resolveAccess(request, env);
+    const resolved = await resolveAccess(request, env, timing);
     if (!resolved) {
       // Deliberately uniform: which check failed isn't revealed to the
       // caller (docs/auth.md's Access session is either present and valid,

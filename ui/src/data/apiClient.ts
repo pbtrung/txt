@@ -5,7 +5,6 @@
 // (ownerProof.ts) over the exact body bytes it sends.
 import type { OwnerSigningIdentity } from "./ownerProof";
 import { signOwnerProof } from "./ownerProof";
-import { logD1QueryMeta } from "./d1MetaLog";
 import { withNetworkRetries } from "./networkRequest";
 import { fromBase64, toBase64 } from "../util/base64";
 import { objectRecord, stringField } from "../util/validation";
@@ -133,7 +132,6 @@ async function fetchSameOrigin(path: string, init: RequestInit): Promise<Respons
   if (isAccessChallenge(response)) {
     throw new AccessRequiredError();
   }
-  logD1QueryMeta(response);
   return response;
 }
 

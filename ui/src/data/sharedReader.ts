@@ -1,7 +1,6 @@
 import { decrypt } from "../crypto/cryptoBlob";
 import { fromBase64 } from "../util/base64";
 import { objectRecord, stringField } from "../util/validation";
-import { logD1QueryMeta } from "./d1MetaLog";
 import { extraMetadataFields, parseEpubOpf } from "./epubOpf";
 import { withNetworkRetries } from "./networkRequest";
 import { fieldStrings } from "./opfMetadata";
@@ -60,7 +59,6 @@ export async function loadSharedReaderDocument(
       body: JSON.stringify({ share_id: reference.id, grant: reference.grant }),
       signal,
     });
-    logD1QueryMeta(response);
     if (!response.ok) {
       if (response.status === 404) throw new Error("This shared book is unavailable.");
       throw new Error(`Could not download this shared book (${response.status}).`);
