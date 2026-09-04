@@ -5,6 +5,7 @@
 // access.test.ts already covers that).
 import { env, SELF } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
+import { D1_META_HEADER } from "../d1Logging";
 import { mockAccessCertsEndpoint, signTestAccessToken } from "./testAccessToken";
 
 function validTestClaims(): Record<string, unknown> {
@@ -121,6 +122,46 @@ describe("GET /v1/access-check (docs/auth.md's same-tab Access login round trip)
     } finally {
       restore();
     }
+  });
+});
+
+describe("X-D1-Meta response header (ui/src/data/d1MetaLog.ts's browser-side source)", () => {
+  it("is an empty array for a route that never touches D1", async () => {
+    const restore = mockAccessCertsEndpoint();
+    try {
+      const token = await signTestAccessToken(validTestClaims());
+      const response = await SELF.fetch("https://example.com/v1/health", {
+        headers: { "Cf-Access-Jwt-Assertion": token },
+      });
+      expect(JSON.parse(response.headers.get(D1_META_HEADER) ?? "")).toEqual([]);
+    } finally {
+      restore();
+    }
+  });
+
+  it("carries every D1 query's rows_read/rows_written for a route that queries D1", async () => {
+    const restore = mockAccessCertsEndpoint();
+    try {
+      const token = await signTestAccessToken(validTestClaims());
+      const response = await SELF.fetch(
+        "https://example.com/v1/documents/recent-access",
+        { headers: { "Cf-Access-Jwt-Assertion": token } },
+      );
+      const queries = JSON.parse(response.headers.get(D1_META_HEADER) ?? "");
+      expect(queries).toHaveLength(1);
+      expect(queries[0]).toMatchObject({
+        sql: expect.stringContaining("FROM documents"),
+        rows_read: expect.any(Number),
+        rows_written: 0,
+      });
+    } finally {
+      restore();
+    }
+  });
+
+  it("is absent from a static asset response, which never reaches the D1-wrapping branch", async () => {
+    const response = await SELF.fetch("https://example.com/");
+    expect(response.headers.get(D1_META_HEADER)).toBeNull();
   });
 });
 
