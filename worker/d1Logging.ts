@@ -1,29 +1,37 @@
-// Wraps the D1 binding so every query's own `meta` -- rows_read,
-// rows_written, duration, and friends, the D1 HTTP API's documented
-// response shape -- prints to the Worker's own console: `wrangler tail`
-// in production, stdout in `worker:dev`/`worker:test`. Applied once, in
-// worker/index.ts before `env` ever reaches handleApi(), so every
-// existing and future call site across worker/*Endpoint.ts gets this for
-// free without being touched individually. index.ts also sums every
-// entry's own duration to get this request's total D1 wait time, folded
-// into its "Worker wait time" log line (worker/requestTiming.ts) -- D1
-// wait, like any I/O wait, isn't part of what Cloudflare bills as CPU
-// time.
+// Wraps the D1 binding so every query prints to the Worker's own console
+// (`wrangler tail` in production, stdout in `worker:dev`/`worker:test`)
+// and contributes to this request's D1 wait time (summed by index.ts into
+// its "Worker wait time" log line, worker/requestTiming.ts) -- D1 wait,
+// like any I/O wait, isn't part of what Cloudflare bills as CPU time.
+// Applied once, in worker/index.ts before `env` ever reaches handleApi(),
+// so every existing and future call site across worker/*Endpoint.ts gets
+// this for free without being touched individually.
 //
-// first()/raw() never return a D1Result at all (confirmed against
-// @cloudflare/workers-types' D1PreparedStatement), so there's no
-// rows_read/rows_written to report for either -- but both still make a
-// real D1 round trip, so their wall-clock duration is measured directly
-// (performance.now(), not D1's own meta) and counted the same as any
-// other query's wait time. Almost every endpoint calls first() (a single-
-// row lookup), so leaving it unmeasured would misattribute most of this
-// app's actual D1 wait time to CPU time -- confirmed against a real
-// GET /v1/catalog log line showing 0.00ms of D1 wait next to a highly
-// implausible 52ms of "CPU time" (Workers' own free-tier limit is 10ms),
-// before this fix.
+// Every method here measures its own real wall-clock time directly
+// (performance.now(), stored as D1QueryLog.durationMs) rather than
+// trusting D1's own self-reported meta.duration for the wait-time
+// aggregate: meta.duration reflects D1's own query-execution accounting
+// (there's a separate, narrower meta.timings.sql_duration_ms explicitly
+// documented as excluding network time, implying the top-level duration
+// field's scope is its own thing, not "everything this await cost") and
+// empirically undercounts the actual round trip a real deployed request
+// experiences -- confirmed against real logs showing 30-38ms of "CPU
+// time" next to a near-zero summed meta.duration for endpoints that only
+// ever do one simple query. meta.duration is still recorded and logged
+// as d1ReportedMs, purely as informational D1-reported context.
+//
+// first()/raw() never return a D1Result/meta at all (confirmed against
+// @cloudflare/workers-types), so rowsRead/rowsWritten/changes/lastRowId/
+// d1ReportedMs are null for those two -- but they still make a real D1
+// round trip, so their measured wall-clock duration counts the same as
+// any other query's wait time. Almost every endpoint calls first() for
+// its single-row lookup, so leaving it unmeasured (as an earlier version
+// of this file did) misattributed most of this app's actual D1 wait time
+// to CPU time.
 //
 // exec()/withSession()/dump() are declared for completeness but unused
 // anywhere in this codebase (grepped) -- they pass through unwrapped too.
+import { formatMs } from "./formatMs";
 
 const REAL = Symbol("real D1PreparedStatement");
 
@@ -34,33 +42,17 @@ interface LoggedStatement extends D1PreparedStatement {
 export interface D1QueryLog {
   sql: string;
   durationMs: number;
-  // null for first()/raw(), which never return a D1Meta to read these from.
+  // meta.duration, informational only -- null for first()/raw(), which
+  // never return a D1Meta to read it from.
+  d1ReportedMs: number | null;
   rowsRead: number | null;
   rowsWritten: number | null;
   changes: number | null;
   lastRowId: number | null;
 }
 
-function fromMeta(sql: string, meta: D1Meta): D1QueryLog {
-  return {
-    sql: sql.trim().replace(/\s+/g, " "),
-    durationMs: meta.duration,
-    rowsRead: meta.rows_read,
-    rowsWritten: meta.rows_written,
-    changes: meta.changes,
-    lastRowId: meta.last_row_id,
-  };
-}
-
-function fromDuration(sql: string, durationMs: number): D1QueryLog {
-  return {
-    sql: sql.trim().replace(/\s+/g, " "),
-    durationMs,
-    rowsRead: null,
-    rowsWritten: null,
-    changes: null,
-    lastRowId: null,
-  };
+function normalizeSql(sql: string): string {
+  return sql.trim().replace(/\s+/g, " ");
 }
 
 function record(entry: D1QueryLog, queries: D1QueryLog[]): void {
@@ -69,7 +61,8 @@ function record(entry: D1QueryLog, queries: D1QueryLog[]): void {
     "D1 query:",
     JSON.stringify({
       sql: entry.sql,
-      duration_ms: entry.durationMs.toFixed(2),
+      duration_ms: formatMs(entry.durationMs),
+      d1_reported_ms: entry.d1ReportedMs === null ? null : formatMs(entry.d1ReportedMs),
       rows_read: entry.rowsRead,
       rows_written: entry.rowsWritten,
       changes: entry.changes,
@@ -78,14 +71,47 @@ function record(entry: D1QueryLog, queries: D1QueryLog[]): void {
   );
 }
 
-async function timeCall<T>(
+async function timeUnmetered(
+  sql: string,
+  queries: D1QueryLog[],
+  call: () => Promise<unknown>,
+): Promise<unknown> {
+  const start = performance.now();
+  const result = await call();
+  record(
+    {
+      sql: normalizeSql(sql),
+      durationMs: performance.now() - start,
+      d1ReportedMs: null,
+      rowsRead: null,
+      rowsWritten: null,
+      changes: null,
+      lastRowId: null,
+    },
+    queries,
+  );
+  return result;
+}
+
+async function timeMetered<T extends { meta: D1Meta }>(
   sql: string,
   queries: D1QueryLog[],
   call: () => Promise<T>,
 ): Promise<T> {
   const start = performance.now();
   const result = await call();
-  record(fromDuration(sql, performance.now() - start), queries);
+  record(
+    {
+      sql: normalizeSql(sql),
+      durationMs: performance.now() - start,
+      d1ReportedMs: result.meta.duration,
+      rowsRead: result.meta.rows_read,
+      rowsWritten: result.meta.rows_written,
+      changes: result.meta.changes,
+      lastRowId: result.meta.last_row_id,
+    },
+    queries,
+  );
   return result;
 }
 
@@ -99,23 +125,17 @@ function wrapStatement(
     bind: (...values: unknown[]) =>
       wrapStatement(statement.bind(...values), sql, queries),
     first: ((...args: unknown[]) =>
-      timeCall(sql, queries, () =>
+      timeUnmetered(sql, queries, () =>
         (statement.first as (...a: unknown[]) => Promise<unknown>)(...args),
       )) as D1PreparedStatement["first"],
     raw: ((options?: { columnNames?: boolean }) =>
-      timeCall(sql, queries, () =>
+      timeUnmetered(sql, queries, () =>
         (statement.raw as (o?: { columnNames?: boolean }) => Promise<unknown>)(options),
       )) as D1PreparedStatement["raw"],
-    run: async <T = Record<string, unknown>>() => {
-      const result = await statement.run<T>();
-      record(fromMeta(sql, result.meta), queries);
-      return result;
-    },
-    all: async <T = Record<string, unknown>>() => {
-      const result = await statement.all<T>();
-      record(fromMeta(sql, result.meta), queries);
-      return result;
-    },
+    run: <T = Record<string, unknown>>() =>
+      timeMetered(sql, queries, () => statement.run<T>()),
+    all: <T = Record<string, unknown>>() =>
+      timeMetered(sql, queries, () => statement.all<T>()),
   };
 }
 
@@ -125,6 +145,12 @@ function wrapStatement(
 // always present. Unwrapping back to the real statement (rather than
 // handing the runtime our wrapper object) is what lets batch() itself
 // stay a thin pass-through to the real D1Database.batch().
+//
+// The whole batch is one round trip, so only the first result's log entry
+// carries the measured wall-clock duration; the rest record 0 for it (but
+// still their own real d1ReportedMs/rows from D1's own per-statement
+// meta) -- otherwise index.ts summing every entry's durationMs would
+// multiply one batch's wait time by its statement count.
 //
 // `queries` is a plain array supplied by the caller (one per request,
 // index.ts) rather than module-level state: a Worker isolate can be
@@ -137,10 +163,23 @@ export function withD1QueryLogging(db: D1Database, queries: D1QueryLog[]): D1Dat
       const entries = statements.map(
         (statement) => (statement as LoggedStatement)[REAL],
       );
+      const start = performance.now();
       const results = await db.batch<T>(entries.map((entry) => entry.statement));
-      results.forEach((result, index) =>
-        record(fromMeta(entries[index].sql, result.meta), queries),
-      );
+      const batchMs = performance.now() - start;
+      results.forEach((result, index) => {
+        record(
+          {
+            sql: normalizeSql(entries[index].sql),
+            durationMs: index === 0 ? batchMs : 0,
+            d1ReportedMs: result.meta.duration,
+            rowsRead: result.meta.rows_read,
+            rowsWritten: result.meta.rows_written,
+            changes: result.meta.changes,
+            lastRowId: result.meta.last_row_id,
+          },
+          queries,
+        );
+      });
       return results;
     },
     exec: (query) => db.exec(query),

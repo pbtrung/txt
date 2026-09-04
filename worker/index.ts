@@ -12,6 +12,7 @@
 // wrangler.jsonc's bindings (worker/worker-configuration.d.ts).
 import { handleApi } from "./api";
 import { withD1QueryLogging, type D1QueryLog } from "./d1Logging";
+import { formatMs } from "./formatMs";
 import { createRequestTiming } from "./requestTiming";
 
 function sumDurationMs(queries: D1QueryLog[]): number {
@@ -47,15 +48,15 @@ export default {
     const cpuMs = Math.max(0, totalMs - waitMs);
     console.log(
       "Worker CPU time:",
-      JSON.stringify({ path: url.pathname, cpu_ms: cpuMs.toFixed(2) }),
+      JSON.stringify({ path: url.pathname, cpu_ms: formatMs(cpuMs) }),
     );
     console.log(
       "Worker wait time:",
       JSON.stringify({
         path: url.pathname,
-        wait_ms: waitMs.toFixed(2),
-        db_ms: dbWaitMs.toFixed(2),
-        network_ms: timing.networkWaitMs.toFixed(2),
+        wait_ms: formatMs(waitMs),
+        db_ms: formatMs(dbWaitMs),
+        network_ms: formatMs(timing.networkWaitMs),
       }),
     );
     return response;
