@@ -28,7 +28,9 @@ export function ReaderInfoPanel({
     >
       <h2 className="mb-1 text-lg font-semibold">{document.title}</h2>
       {document.authors.length > 0 && (
-        <p className="mb-3 text-base-content/60">{document.authors.join(", ")}</p>
+        <p className="reader-info-authors mb-3 text-base-content/60">
+          {document.authors.join(", ")}
+        </p>
       )}
       <MetadataList document={document} />
     </DrawerPanel>

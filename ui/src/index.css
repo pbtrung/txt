@@ -451,6 +451,16 @@
   overscroll-behavior: contain;
 }
 
+/* daisyUI's .card-body p rule (flex-grow: 1) assumes a card's body
+   paragraph is its one stretchy description, filling the space above
+   trailing actions. The Info panel's author line is a direct child of
+   that same .card-body but isn't meant to stretch -- without this, it
+   absorbs the drawer's whole leftover height, shoving the metadata list
+   down to the panel's bottom edge. */
+.reader-info-authors {
+  flex-grow: 0;
+}
+
 /* A compact, theme-aware tooltip for icon-only controls. React Aria owns
    hover/focus timing, positioning, and the accessible description. */
 .aria-tooltip {
