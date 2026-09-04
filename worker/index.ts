@@ -11,12 +11,13 @@
 // `Env` is the global ambient type `wrangler types` generates from
 // wrangler.jsonc's bindings (worker/worker-configuration.d.ts).
 import { handleApi } from "./api";
+import { withD1QueryLogging } from "./d1Logging";
 
 export default {
   fetch(request: Request, env: Env): Promise<Response> | Response {
     const url = new URL(request.url);
     if (url.pathname.startsWith("/v1/")) {
-      return handleApi(request, env, url);
+      return handleApi(request, { ...env, DB: withD1QueryLogging(env.DB) }, url);
     }
     return env.ASSETS.fetch(request);
   },
