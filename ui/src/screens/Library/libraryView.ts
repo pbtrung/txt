@@ -13,6 +13,7 @@ interface BrowseFilter {
 
 export type LibraryView =
   | { kind: "recent" }
+  | { kind: "bookmarks" }
   | { kind: "shares" }
   | { kind: "books"; filter: BrowseFilter | null }
   | { kind: "entries"; dimension: BrowseDimension };
@@ -32,6 +33,7 @@ const SINGULAR_LABEL: Record<BrowseDimension, string> = {
 
 export function viewTitle(view: LibraryView): string {
   if (view.kind === "recent") return "Recent";
+  if (view.kind === "bookmarks") return "Bookmarks";
   if (view.kind === "shares") return "Shares";
   if (view.kind === "entries") return DIMENSION_LABEL[view.dimension];
   if (!view.filter) return "All Books";

@@ -202,13 +202,13 @@ describe("LibraryScreen", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("database failed");
   });
 
-  it("opens on Recent and lists recent activity", () => {
+  it("opens on Recent and lists only recently accessed books", () => {
     renderScreen(LIBRARY);
     expect(screen.getByRole("heading", { name: "Recent" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Dune/ })).toBeInTheDocument();
     expect(
-      screen.getByRole("link", { name: /A Wizard of Earthsea/ }),
-    ).toBeInTheDocument();
+      screen.queryByRole("link", { name: /A Wizard of Earthsea/ }),
+    ).not.toBeInTheDocument();
   });
 
   it("filters by search query", async () => {
@@ -473,8 +473,10 @@ describe("LibraryScreen", () => {
 
     const rows = screen.getAllByRole("row");
     expect(rows).toHaveLength(2);
-    expect(screen.getAllByLabelText("3 bookmarks")).toHaveLength(2);
-    expect(screen.getAllByLabelText(/Last accessed/)).toHaveLength(2);
+    // Shares never shows bookmark or last-accessed badges -- only Bookmarks
+    // and Recent access show their own badge, respectively.
+    expect(screen.queryByLabelText("3 bookmarks")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Last accessed/)).not.toBeInTheDocument();
     expect(screen.getAllByText("A very long author name")).toHaveLength(2);
     expect(screen.getByRole("grid", { name: "Shares" })).toHaveClass(
       "overflow-x-hidden",
@@ -489,8 +491,9 @@ describe("LibraryScreen", () => {
     expect(onSelectShare).toHaveBeenCalledWith(shares[0].shareIdHash);
   });
 
-  it("opens a bookmark row at the book's newest bookmark", () => {
+  it("opens a bookmark row at the book's newest bookmark", async () => {
     renderScreen(LIBRARY);
+    await userEvent.click(screen.getByRole("button", { name: /^Bookmarks/ }));
     const bookmarks = screen.getByRole("region", { name: "Bookmarks" });
     const link = bookmarks.querySelector("a");
 
@@ -501,7 +504,7 @@ describe("LibraryScreen", () => {
     );
   });
 
-  it("marks active books and shows bookmark/access badges before authors", async () => {
+  it("marks active books but shows no badges in All Books", async () => {
     const accessed = new Date(2026, 7, 17, 14, 5, 9).getTime();
     renderScreen([
       book({
@@ -516,16 +519,33 @@ describe("LibraryScreen", () => {
     const row = screen.getByRole("row", { name: /Active book/ });
     expect(screen.getByRole("grid", { name: "Books" })).toContainElement(row);
     expect(row.querySelector(".book-row-icon")).toHaveClass("book-row-icon-active");
-    expect(row.querySelector(".book-row-meta")).toHaveClass("pl-0");
-    expect(screen.getByLabelText("2 bookmarks")).toHaveClass("gap-1", "font-semibold");
-    expect(within(screen.getByLabelText("2 bookmarks")).getByText("2")).toHaveClass(
-      "book-row-badge-text",
-    );
-    expect(screen.getByLabelText("Last accessed 14:05:09 17/08/26")).toHaveClass(
-      "gap-1",
-      "font-semibold",
-    );
+    // All Books never shows any badge -- not the bookmark count, not the
+    // last-accessed time -- those are exclusive to Bookmarks and Recent
+    // access respectively, so the row always falls back to author-only
+    // spacing regardless of this book's actual access/bookmark state.
+    expect(row.querySelector(".book-row-meta")).toHaveClass("pl-1");
+    expect(screen.queryByLabelText("2 bookmarks")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Last accessed/)).not.toBeInTheDocument();
     expect(screen.getByText("A very long author name")).toHaveClass("truncate");
+  });
+
+  it("shows the bookmark count and latest page number in the Bookmarks view", async () => {
+    renderScreen([
+      book({
+        title: "Marked book",
+        authors: ["A very long author name"],
+        bookmarkCount: 2,
+        lastBookmarked: 200,
+        bookmarks: [{ id: 1, cfi: "page-9", pageNumber: 9, createdAt: 200 }],
+      }),
+    ]);
+    await userEvent.click(screen.getByRole("button", { name: /^Bookmarks/ }));
+
+    const row = screen.getByRole("row", { name: /Marked book/ });
+    expect(screen.getByRole("grid", { name: "Bookmarks" })).toContainElement(row);
+    expect(within(row).getByLabelText("2 bookmarks")).toBeInTheDocument();
+    expect(within(row).getByLabelText("Page 9")).toBeInTheDocument();
+    expect(within(row).queryByLabelText(/Last accessed/)).toBeNull();
   });
 
   it("adds one space after the icon only for author-only metadata", async () => {
@@ -549,11 +569,12 @@ describe("LibraryScreen", () => {
     expect(document.querySelector(".library-sidebar")).toHaveClass("library-pane-col");
     expect(document.querySelector(".library-search-col")).toHaveClass("min-w-0");
     const recent = screen.getByRole("button", { name: /^Recent/ });
-    expect(recent).toHaveTextContent("2");
+    expect(recent).toHaveTextContent("1");
     expect(recent.querySelector(".badge")).toHaveClass("font-bold");
     expect(recent).toHaveClass("btn-active");
     expect(recent).toHaveClass("border-b", "border-base-300");
     expect(recent).toHaveClass("rounded-none");
+    expect(screen.getByRole("button", { name: /^Bookmarks/ })).toHaveTextContent("1");
     expect(screen.getByRole("button", { name: /^All Books/ })).toHaveTextContent("2");
     expect(screen.getByRole("button", { name: /^Authors/ })).toHaveTextContent("2");
     expect(screen.getByRole("button", { name: /^Subjects/ })).toHaveTextContent("2");
@@ -638,66 +659,79 @@ describe("LibraryScreen", () => {
     bounds.mockRestore();
   });
 
-  it("shows recent access and bookmarked books in the Recent view", () => {
+  it("shows only recent access in the Recent view, never bookmarks", () => {
     const accessed = new Date(2026, 7, 19, 10, 11, 12).getTime();
-    const latestBookmark = new Date(2026, 7, 19, 9, 8, 7).getTime();
-    const olderBookmark = new Date(2026, 7, 18, 8, 7, 6).getTime();
     renderScreen([
       book({
         txtId: 1,
         title: "Recent book",
         lastAccessed: accessed,
         bookmarkCount: 2,
-        lastBookmarked: latestBookmark,
-        bookmarks: [
-          { id: 1, cfi: "page-9", pageNumber: 9, createdAt: latestBookmark },
-          { id: 2, cfi: "page-4", pageNumber: 4, createdAt: olderBookmark },
-        ],
+        lastBookmarked: 200,
+        bookmarks: [{ id: 1, cfi: "page-9", pageNumber: 9, createdAt: 200 }],
       }),
     ]);
 
     expect(screen.getByRole("heading", { name: "Recent" })).toBeInTheDocument();
     const accessRegion = screen.getByRole("region", { name: "Recent access" });
-    const bookmarkRegion = screen.getByRole("region", { name: "Bookmarks" });
     expect(accessRegion).toHaveTextContent("Recent book");
-    expect(bookmarkRegion).toHaveTextContent("Recent book");
     expect(
       within(accessRegion).getByLabelText("Last accessed 10:11:12 19/08/26"),
     ).toBeVisible();
-    expect(
-      within(bookmarkRegion).getByLabelText("Bookmarked 09:08:07 19/08/26"),
-    ).toBeVisible();
-    expect(
-      within(bookmarkRegion).getByLabelText("Bookmarked 08:07:06 18/08/26"),
-    ).toBeVisible();
-    expect(within(bookmarkRegion).queryByLabelText(/Last accessed/)).toBeNull();
-    expect(screen.getByLabelText("Page 9")).toBeInTheDocument();
-    expect(screen.getByLabelText("Page 4")).toBeInTheDocument();
-    expect(
-      within(bookmarkRegion)
-        .getAllByRole("link")
-        .map((link) =>
-          new URL(link.getAttribute("href")!, "https://txt.test").searchParams.get(
-            "cfi",
-          ),
-        ),
-    ).toEqual(["page-9", "page-4"]);
-    expect(within(bookmarkRegion).queryByLabelText("2 bookmarks")).toBeNull();
+    expect(within(accessRegion).queryByLabelText("2 bookmarks")).toBeNull();
+    expect(within(accessRegion).queryByLabelText("Page 9")).toBeNull();
+    expect(screen.queryByRole("region", { name: "Bookmarks" })).not.toBeInTheDocument();
   });
 
-  it("blocks and reports each Recent deletion without overlapping work", async () => {
-    const accessCompletions: Array<() => void> = [];
-    const bookmarkCompletions: Array<() => void> = [];
+  it("blocks and reports Recent access deletion", async () => {
+    const completions: Array<() => void> = [];
     const clearLastAccessed = vi.fn().mockImplementation(
       () =>
         new Promise<void>((resolve) => {
-          accessCompletions.push(resolve);
+          completions.push(resolve);
         }),
     );
+    const reload = vi.fn();
+    renderLibrary(
+      {
+        status: "ready",
+        books: [book({ title: "Active book", lastAccessed: 100 })],
+        reload,
+      },
+      vi.fn(),
+      { clearLastAccessed },
+    );
+    const accessDelete = screen.getByRole("button", {
+      name: "Delete recent access",
+    });
+
+    await userEvent.click(accessDelete);
+    fireEvent.click(accessDelete);
+
+    expect(clearLastAccessed).toHaveBeenCalledOnce();
+    expect(screen.getByTestId("library-operation-surface")).toHaveAttribute("inert");
+    expect(document.querySelector(".library-operation-blocker")).not.toBeNull();
+    expect(libraryToast()).toHaveTextContent("Deleting recent access: Active book");
+    expect(libraryToast()).toHaveTextContent("Saving encrypted library");
+
+    await act(async () => completions[0]());
+    await waitFor(() =>
+      expect(libraryToast()).toHaveTextContent("Recent access deleted"),
+    );
+    expect(screen.getByTestId("library-operation-surface")).not.toHaveAttribute(
+      "inert",
+    );
+    expect(clearLastAccessed).toHaveBeenCalledWith(expect.any(Number));
+    expect(accessDelete.querySelector("svg")).not.toBeNull();
+    await waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
+  });
+
+  it("blocks and reports bookmark deletion in the Bookmarks view", async () => {
+    const completions: Array<() => void> = [];
     const deleteBookmark = vi.fn().mockImplementation(
       () =>
         new Promise<void>((resolve) => {
-          bookmarkCompletions.push(resolve);
+          completions.push(resolve);
         }),
     );
     const reload = vi.fn();
@@ -707,7 +741,6 @@ describe("LibraryScreen", () => {
         books: [
           book({
             title: "Active book",
-            lastAccessed: 100,
             bookmarkCount: 1,
             lastBookmarked: 200,
             bookmarks: [{ id: 5, cfi: "saved-place", pageNumber: 12, createdAt: 200 }],
@@ -716,45 +749,26 @@ describe("LibraryScreen", () => {
         reload,
       },
       vi.fn(),
-      { clearLastAccessed, deleteBookmark },
+      { deleteBookmark },
     );
-    const accessDelete = screen.getByRole("button", {
-      name: "Delete recent access",
-    });
+    await userEvent.click(screen.getByRole("button", { name: /^Bookmarks/ }));
     const bookmarkDelete = screen.getByRole("button", {
       name: "Delete bookmark",
     });
 
-    await userEvent.click(accessDelete);
+    await userEvent.click(bookmarkDelete);
     fireEvent.click(bookmarkDelete);
 
-    expect(clearLastAccessed).toHaveBeenCalledOnce();
-    expect(screen.getByTestId("library-operation-surface")).toHaveAttribute("inert");
-    expect(document.querySelector(".library-operation-blocker")).not.toBeNull();
-    expect(libraryToast()).toHaveTextContent("Deleting recent access: Active book");
-    expect(libraryToast()).toHaveTextContent("Saving encrypted library");
-
-    await act(async () => accessCompletions[0]());
-    await waitFor(() =>
-      expect(libraryToast()).toHaveTextContent("Recent access deleted"),
-    );
-    expect(screen.getByTestId("library-operation-surface")).not.toHaveAttribute(
-      "inert",
-    );
-
-    await userEvent.click(bookmarkDelete);
     expect(libraryToast()).toHaveTextContent("Deleting bookmark: Active book");
     expect(libraryToast()).toHaveTextContent("Saving encrypted library");
     expect(screen.getByTestId("library-operation-surface")).toHaveAttribute("inert");
 
-    await act(async () => bookmarkCompletions[0]());
+    await act(async () => completions[0]());
     await waitFor(() => expect(libraryToast()).toHaveTextContent("Bookmark deleted"));
 
-    expect(clearLastAccessed).toHaveBeenCalledWith(expect.any(Number));
     expect(deleteBookmark).toHaveBeenCalledWith(5);
-    expect(accessDelete.querySelector("svg")).not.toBeNull();
     expect(bookmarkDelete.querySelector("svg")).not.toBeNull();
-    await waitFor(() => expect(reload).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
   });
 
   it("shows the bookmark deletion action on hover", async () => {
@@ -766,6 +780,7 @@ describe("LibraryScreen", () => {
         bookmarks: [{ id: 1, cfi: "marked-place", pageNumber: 6, createdAt: 200 }],
       }),
     ]);
+    await userEvent.click(screen.getByRole("button", { name: /^Bookmarks/ }));
     const remove = screen.getByRole("button", {
       name: "Delete bookmark",
     });

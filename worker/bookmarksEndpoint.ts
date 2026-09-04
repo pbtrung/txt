@@ -54,9 +54,26 @@ interface BookmarkSummaryRow {
 // (a plaintext aggregate -- no decryption needed) and its single latest
 // bookmark's id + wrapped key + blob (the id lets the client delete this
 // exact bookmark directly, without a separate lookup), for the Library
-// screen's bookmark badge and "recently bookmarked" section without an
-// N+1 fetch across every book.
+// screen's Bookmarks nav entry, capped to its own top 10.
+//
+// Finding those 10 documents first (recent_docs, idx_bookmarks_created_at,
+// 0005) rather than ranking every document's bookmarks and limiting
+// afterward is what actually saves D1 rows examined (it bills by rows
+// examined, not returned): DISTINCT + ORDER BY + LIMIT walks bookmarks in
+// created_at-descending order and stops as soon as 10 distinct document_ids
+// are found, rather than requiring a pass over every row the way the
+// window functions below would if run against the whole table. Capped by
+// trg_bookmarks_cap's 20-per-document limit regardless of how large
+// bookmarks grows overall, the worst case is (10 - 1) * 20 rows examined,
+// not the table size (verified empirically). The window functions then
+// only run against those 10 documents' own rows (at most 20 each, via
+// idx_bookmarks_document_id) to get each one's count and latest bookmark.
+const RECENT_BOOKMARKS_LIMIT = 10;
 const BOOKMARKS_SUMMARY_QUERY = `
+  WITH recent_docs AS (
+    SELECT DISTINCT document_id FROM bookmarks INDEXED BY idx_bookmarks_created_at
+    ORDER BY created_at DESC LIMIT ${RECENT_BOOKMARKS_LIMIT}
+  )
   SELECT id, document_id, key_wrapped, bookmark_blob, created_at, count
   FROM (
     SELECT b.id, b.document_id, k.wrapped_key AS key_wrapped, b.bookmark_blob, b.created_at,
@@ -66,8 +83,10 @@ const BOOKMARKS_SUMMARY_QUERY = `
            ) AS rn
     FROM bookmarks b
     JOIN key_store k ON k.id = b.key_id
+    WHERE b.document_id IN (SELECT document_id FROM recent_docs)
   )
   WHERE rn = 1
+  ORDER BY created_at DESC
 `;
 
 export async function handleGetBookmarksSummary(env: Env): Promise<Response> {

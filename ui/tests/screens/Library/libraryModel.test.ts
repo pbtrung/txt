@@ -2,11 +2,12 @@ import { describe, expect, it } from "vitest";
 import type { LibraryBook } from "../../../src/data/libraryStore";
 import {
   allBooksSorted,
+  bookmarkedBookCount,
   booksForDimensionValue,
   browseEntries,
   createBookSearch,
   parseSearch,
-  recentBookCount,
+  recentAccessCount,
   recentlyAccessed,
   recentlyBookmarked,
 } from "../../../src/screens/Library/libraryModel";
@@ -67,8 +68,8 @@ describe("allBooksSorted", () => {
 });
 
 describe("recent books", () => {
-  it("limits access items and bookmark entries to the seven newest", () => {
-    const books = Array.from({ length: 9 }, (_, index) =>
+  it("limits access items and bookmarked books to the ten newest", () => {
+    const books = Array.from({ length: 12 }, (_, index) =>
       book({
         txtId: index + 1,
         title: `Book ${index + 1}`,
@@ -87,36 +88,29 @@ describe("recent books", () => {
     );
 
     expect(recentlyAccessed(books).map((item) => item.txtId)).toEqual([
-      9, 8, 7, 6, 5, 4, 3,
+      12, 11, 10, 9, 8, 7, 6, 5, 4, 3,
     ]);
-    expect(recentlyBookmarked(books).map((item) => item.book.txtId)).toEqual([
-      9, 8, 7, 6, 5, 4, 3,
+    expect(recentlyBookmarked(books).map((item) => item.txtId)).toEqual([
+      12, 11, 10, 9, 8, 7, 6, 5, 4, 3,
     ]);
   });
 
-  it("limits multiple bookmarks from one book to seven entries", () => {
-    const marked = book({
-      bookmarkCount: 9,
-      bookmarks: Array.from({ length: 9 }, (_, index) => ({
-        id: index + 1,
-        cfi: `bookmark-${index + 1}`,
-        pageNumber: index + 1,
-        createdAt: index + 1,
-      })),
-    });
-
-    expect(
-      recentlyBookmarked([marked]).map((item) => item.bookmark.pageNumber),
-    ).toEqual([9, 8, 7, 6, 5, 4, 3]);
+  it("excludes books with no bookmarks from recentlyBookmarked", () => {
+    const books = [
+      book({ txtId: 1, bookmarkCount: 1, lastBookmarked: 10 }),
+      book({ txtId: 2 }),
+    ];
+    expect(recentlyBookmarked(books).map((item) => item.txtId)).toEqual([1]);
   });
 
-  it("counts each active book only once", () => {
+  it("counts recent access and bookmarked books independently", () => {
     const books = [
       book({ txtId: 1, lastAccessed: 10, bookmarkCount: 2 }),
       book({ txtId: 2, bookmarkCount: 1 }),
       book({ txtId: 3 }),
     ];
-    expect(recentBookCount(books)).toBe(2);
+    expect(recentAccessCount(books)).toBe(1);
+    expect(bookmarkedBookCount(books)).toBe(2);
   });
 });
 

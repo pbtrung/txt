@@ -161,6 +161,18 @@ CREATE TABLE bookmarks (
 CREATE INDEX idx_bookmarks_document_id ON bookmarks(document_id, created_at, id);
 -- Same key_store foreign-key-check reasoning as idx_documents_content_key_id.
 CREATE INDEX idx_bookmarks_key_id ON bookmarks(key_id);
+-- GET /v1/bookmarks/summary (worker/bookmarksEndpoint.ts) finds its top 10
+-- most-recently-bookmarked documents with `SELECT DISTINCT document_id
+-- FROM bookmarks ORDER BY created_at DESC LIMIT 10` -- idx_bookmarks_document_id
+-- above is keyed on document_id first, so it can't serve a scan ordered by
+-- created_at alone. With this index, that scan walks created_at in
+-- descending order and stops as soon as 10 distinct document_ids are
+-- found, rather than requiring a pass over every bookmarks row (D1 bills
+-- by rows examined) the way ranking every document first would. Bounded
+-- by trg_bookmarks_cap's 20-per-document cap regardless of how large
+-- bookmarks grows overall: worst case (10 - 1) * 20 rows examined, not
+-- the table size.
+CREATE INDEX idx_bookmarks_created_at ON bookmarks(created_at);
 
 -- Per-document cap of 20, enforced in the database rather than in every
 -- caller. Ordered by id: monotonic, and immune to client clock skew.

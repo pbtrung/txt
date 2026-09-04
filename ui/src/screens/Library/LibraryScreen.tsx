@@ -118,7 +118,7 @@ export function LibraryScreen() {
     try {
       progress("Saving encrypted library");
       await apply();
-      progress("Refreshing Recent");
+      progress("Refreshing library");
       library.reload();
       showLibraryToast({ status: "success", message: success }, SUCCESS_TOAST_MS);
     } catch (error) {

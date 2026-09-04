@@ -1,0 +1,11 @@
+-- worker/bookmarksEndpoint.ts's BOOKMARKS_SUMMARY_QUERY finds its top 10
+-- most-recently-bookmarked documents with a `SELECT DISTINCT document_id
+-- FROM bookmarks ORDER BY created_at DESC LIMIT 10` -- idx_bookmarks_document_id
+-- (0001) is keyed on document_id first, so it can't serve a scan ordered by
+-- created_at alone. Without this index, D1 examines every bookmarks row
+-- (it bills by rows examined) to answer that; with it, the scan walks
+-- created_at in descending order and stops as soon as 10 distinct
+-- document_ids are found -- bounded by trg_bookmarks_cap's 20-per-document
+-- cap regardless of how large bookmarks grows overall (worst case
+-- (LIMIT - 1) * 20 rows, verified empirically, not the table size).
+CREATE INDEX idx_bookmarks_created_at ON bookmarks(created_at);

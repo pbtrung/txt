@@ -1,7 +1,7 @@
 // Pure search/sort/browse logic over an already-loaded LibraryBook[]
 // (ui/src/data/libraryStore.ts).
 import Fuse, { type IFuseOptions } from "fuse.js";
-import type { LibraryBook, LibraryBookmark } from "../../data/libraryStore";
+import type { LibraryBook } from "../../data/libraryStore";
 
 const SEARCH_OPTIONS: IFuseOptions<LibraryBook> = {
   keys: [
@@ -21,27 +21,32 @@ export function allBooksSorted(books: LibraryBook[]): LibraryBook[] {
   return [...books].sort((a, b) => a.title.localeCompare(b.title));
 }
 
+const RECENT_LIST_LIMIT = 10;
+
 export function recentlyAccessed(books: LibraryBook[]): LibraryBook[] {
   return [...books]
     .filter((book) => book.lastAccessed > 0)
     .sort((a, b) => b.lastAccessed - a.lastAccessed)
-    .slice(0, 7);
+    .slice(0, RECENT_LIST_LIMIT);
 }
 
-interface RecentBookmark {
-  book: LibraryBook;
-  bookmark: LibraryBookmark;
+// One row per book (never per individual bookmark, matching the server's
+// own BOOKMARKS_SUMMARY_QUERY, which already collapses to each document's
+// single latest bookmark) -- the worker caps this to its own top 10 by
+// created_at, so the slice below is defense-in-depth, not the primary cap.
+export function recentlyBookmarked(books: LibraryBook[]): LibraryBook[] {
+  return [...books]
+    .filter((book) => book.bookmarkCount > 0)
+    .sort((a, b) => (b.lastBookmarked ?? 0) - (a.lastBookmarked ?? 0))
+    .slice(0, RECENT_LIST_LIMIT);
 }
 
-export function recentlyBookmarked(books: LibraryBook[]): RecentBookmark[] {
-  return books
-    .flatMap((book) => book.bookmarks.map((bookmark) => ({ book, bookmark })))
-    .sort((a, b) => b.bookmark.createdAt - a.bookmark.createdAt)
-    .slice(0, 7);
+export function recentAccessCount(books: LibraryBook[]): number {
+  return books.filter((book) => book.lastAccessed > 0).length;
 }
 
-export function recentBookCount(books: LibraryBook[]): number {
-  return books.filter((book) => book.lastAccessed > 0 || book.bookmarkCount > 0).length;
+export function bookmarkedBookCount(books: LibraryBook[]): number {
+  return books.filter((book) => book.bookmarkCount > 0).length;
 }
 
 export interface BookSearchIndex {

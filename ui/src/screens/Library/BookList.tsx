@@ -8,10 +8,17 @@ import {
 } from "react-aria-components";
 import { Bookmark, BookOpen, BookX, Clock3, FileText } from "lucide-react";
 import { IconButton } from "../../components/IconButton";
-import type { LibraryBook, LibraryBookmark } from "../../data/libraryStore";
+import type { LibraryBook } from "../../data/libraryStore";
 import { classNames } from "../../util/classNames";
 
 const ROW_HEIGHT_PX = 72;
+
+// "access" (Recent access rows only) shows a last-accessed-time badge;
+// "bookmark" (the Bookmarks view only) shows the book's latest bookmark's
+// page number and its total count; "none" (every other list -- All Books,
+// each browse dimension, Shares) shows neither. Never more than one kind
+// in the same row.
+type BookBadges = "none" | "access" | "bookmark";
 
 export function BookList({
   books,
@@ -80,14 +87,14 @@ export function BookRow({
   rowId,
   book,
   initialCfi,
-  bookmark,
+  badges = "access",
   onRemove,
   removeLabel,
 }: {
   rowId?: string | number;
   book: LibraryBook;
   initialCfi?: string | null;
-  bookmark?: LibraryBookmark;
+  badges?: BookBadges;
   onRemove: () => void;
   removeLabel: string;
 }) {
@@ -101,8 +108,8 @@ export function BookRow({
     >
       <BookLinkRow
         book={book}
-        initialCfi={bookmark?.cfi ?? initialCfi}
-        bookmark={bookmark}
+        initialCfi={initialCfi}
+        badges={badges}
         hasRemoveAction
       />
       <IconButton
@@ -118,12 +125,12 @@ export function BookRow({
 function BookLinkRow({
   book,
   initialCfi,
-  bookmark,
+  badges = "access",
   hasRemoveAction = false,
 }: {
   book: LibraryBook;
   initialCfi?: string | null;
-  bookmark?: LibraryBookmark;
+  badges?: BookBadges;
   hasRemoveAction?: boolean;
 }) {
   const active = book.lastAccessed > 0 || book.bookmarkCount > 0;
@@ -135,7 +142,7 @@ function BookLinkRow({
         hasRemoveAction && "pr-12",
       )}
     >
-      <BookRowDetails book={book} active={active} bookmark={bookmark} />
+      <BookRowDetails book={book} active={active} badges={badges} />
     </Link>
   );
 }
@@ -144,7 +151,7 @@ function BookRowContent({ book }: { book: LibraryBook }) {
   const active = book.lastAccessed > 0 || book.bookmarkCount > 0;
   return (
     <div className="block h-full rounded-box px-2 py-2 text-base-content book-row">
-      <BookRowDetails book={book} active={active} />
+      <BookRowDetails book={book} active={active} badges="none" />
     </div>
   );
 }
@@ -152,11 +159,11 @@ function BookRowContent({ book }: { book: LibraryBook }) {
 function BookRowDetails({
   book,
   active,
-  bookmark,
+  badges,
 }: {
   book: LibraryBook;
   active: boolean;
-  bookmark?: LibraryBookmark;
+  badges: BookBadges;
 }) {
   return (
     <span className="block min-w-0 overflow-hidden">
@@ -171,7 +178,7 @@ function BookRowDetails({
         </span>
         <span className="min-w-0 flex-1 truncate font-medium">{book.title}</span>
       </span>
-      <BookMetadata book={book} bookmark={bookmark} />
+      <BookMetadata book={book} badges={badges} />
     </span>
   );
 }
@@ -188,15 +195,12 @@ function readerPath(txtId: number, initialCfi?: string | null): string {
   return `${path}?${new URLSearchParams({ cfi: initialCfi })}`;
 }
 
-function BookMetadata({
-  book,
-  bookmark,
-}: {
-  book: LibraryBook;
-  bookmark?: LibraryBookmark;
-}) {
+function BookMetadata({ book, badges }: { book: LibraryBook; badges: BookBadges }) {
+  const latestBookmark = book.bookmarks[0];
   const hasBadges =
-    Boolean(bookmark) || book.bookmarkCount > 0 || book.lastAccessed > 0;
+    badges === "bookmark"
+      ? book.bookmarkCount > 0
+      : badges === "access" && book.lastAccessed > 0;
   const authorOnly = book.authors.length > 0 && !hasBadges;
   return (
     <span
@@ -205,17 +209,16 @@ function BookMetadata({
         authorOnly ? "pl-1" : "pl-0",
       )}
     >
-      {bookmark ? (
-        <BookmarkPageBadge pageNumber={bookmark.pageNumber} />
-      ) : (
-        book.bookmarkCount > 0 && <BookmarkBadge count={book.bookmarkCount} />
+      {badges === "bookmark" && (
+        <>
+          {latestBookmark && (
+            <BookmarkPageBadge pageNumber={latestBookmark.pageNumber} />
+          )}
+          {book.bookmarkCount > 0 && <BookmarkBadge count={book.bookmarkCount} />}
+        </>
       )}
-      {bookmark ? (
-        <ActivityTimeBadge label="Bookmarked" timestamp={bookmark.createdAt} />
-      ) : (
-        book.lastAccessed > 0 && (
-          <ActivityTimeBadge label="Last accessed" timestamp={book.lastAccessed} />
-        )
+      {badges === "access" && book.lastAccessed > 0 && (
+        <ActivityTimeBadge timestamp={book.lastAccessed} />
       )}
       {book.authors.length > 0 && (
         <span className="min-w-0 truncate text-sm text-base-content/60">
@@ -239,18 +242,12 @@ function BookmarkPageBadge({ pageNumber }: { pageNumber: number | null }) {
   );
 }
 
-function ActivityTimeBadge({
-  label,
-  timestamp,
-}: {
-  label: "Bookmarked" | "Last accessed";
-  timestamp: number;
-}) {
+function ActivityTimeBadge({ timestamp }: { timestamp: number }) {
   const formatted = formatLastAccessed(timestamp);
   return (
     <span
       className="badge badge-sm shrink-0 gap-1 border border-base-300 bg-base-200 font-semibold"
-      aria-label={`${label} ${formatted}`}
+      aria-label={`Last accessed ${formatted}`}
     >
       <Clock3 className="size-3" aria-hidden="true" />
       <span className="book-row-badge-text">{formatted}</span>

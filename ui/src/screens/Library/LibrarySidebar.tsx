@@ -5,7 +5,12 @@ import { IconButton } from "../../components/IconButton";
 import type { LibraryBook } from "../../data/libraryStore";
 import type { BookShare } from "../../data/shares";
 import { classNames } from "../../util/classNames";
-import { browseEntries, recentBookCount, type BrowseDimension } from "./libraryModel";
+import {
+  bookmarkedBookCount,
+  browseEntries,
+  recentAccessCount,
+  type BrowseDimension,
+} from "./libraryModel";
 import { DIMENSIONS, DIMENSION_LABEL, type LibraryView } from "./libraryView";
 
 export function LibrarySidebar({
@@ -48,9 +53,15 @@ function LibraryNav({
       <div className="flex flex-col">
         <NavRow
           label="Recent"
-          count={recentBookCount(books)}
+          count={recentAccessCount(books)}
           active={view.kind === "recent"}
           onPress={() => onNavigate({ kind: "recent" })}
+        />
+        <NavRow
+          label="Bookmarks"
+          count={bookmarkedBookCount(books)}
+          active={view.kind === "bookmarks"}
+          onPress={() => onNavigate({ kind: "bookmarks" })}
         />
         <NavRow
           label="Shares"

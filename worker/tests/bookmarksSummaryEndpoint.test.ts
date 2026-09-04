@@ -142,4 +142,38 @@ describe("GET /v1/bookmarks/summary", () => {
     const response = await SELF.fetch("https://example.com/v1/bookmarks/summary");
     expect(response.status).toBe(401);
   });
+
+  // Runs last deliberately: this D1 instance isn't reset between tests in
+  // this file, and dominating (far-future) timestamps guarantee these 12
+  // documents rank above whatever earlier tests already inserted -- placing
+  // it last keeps that domination from swamping *their* fixed small
+  // timestamps out of the top 10 in turn.
+  it("caps the result to the 10 most recently bookmarked documents", async () => {
+    const base = Date.now() * 1000;
+    const documentIds: number[] = [];
+    for (let i = 0; i < 12; i++) {
+      const documentId = await insertDocument();
+      await insertBookmark(documentId, base + i);
+      documentIds.push(documentId);
+    }
+
+    const { restore, headers } = await accessSession();
+    try {
+      const response = await SELF.fetch("https://example.com/v1/bookmarks/summary", {
+        headers,
+      });
+      const body = (await response.json()) as {
+        summaries: { document_id: number; created_at: number }[];
+      };
+      expect(body.summaries.length).toBeLessThanOrEqual(10);
+      const mine = body.summaries.filter((row) =>
+        documentIds.includes(row.document_id),
+      );
+      expect(mine.map((row) => row.document_id)).toEqual(
+        [...documentIds].reverse().slice(0, 10),
+      );
+    } finally {
+      restore();
+    }
+  });
 });

@@ -56,7 +56,9 @@ export function LibraryContent({
     <div className="library-content-pane flex min-w-0 flex-1 flex-col overflow-hidden">
       <ContentHeader view={view} onNavigate={onNavigate} />
       {view.kind === "recent" ? (
-        <RecentBooks {...{ books, onClearAccess, onDeleteBookmark }} />
+        <RecentBooks {...{ books, onClearAccess }} />
+      ) : view.kind === "bookmarks" ? (
+        <BookmarksView {...{ books, onDeleteBookmark }} />
       ) : view.kind === "shares" ? (
         <SharesList
           {...{
@@ -183,15 +185,12 @@ function ContentHeader({
 function RecentBooks({
   books,
   onClearAccess,
-  onDeleteBookmark,
 }: {
   books: LibraryBook[];
   onClearAccess: (txtId: number) => void;
-  onDeleteBookmark: (txtId: number, bookmarkId: number) => void;
 }) {
   const accessed = useMemo(() => recentlyAccessed(books), [books]);
-  const bookmarked = useMemo(() => recentlyBookmarked(books), [books]);
-  if (!accessed.length && !bookmarked.length) {
+  if (!accessed.length) {
     return <EmptyStateContainer message="No recent activity yet." />;
   }
   return (
@@ -202,7 +201,6 @@ function RecentBooks({
         removeLabel={() => "Delete recent access"}
         onRemove={onClearAccess}
       />
-      <RecentBookmarks items={bookmarked} onDeleteBookmark={onDeleteBookmark} />
     </div>
   );
 }
@@ -238,32 +236,42 @@ function RecentSection({
   );
 }
 
-function RecentBookmarks({
-  items,
+// Its own top-level nav destination (not nested under Recent): the top 10
+// most-recently-bookmarked books, one row each -- its own bookmark count
+// plus its latest bookmark's page number, no last-accessed time (that
+// belongs to Recent access, not here). No inner heading: ContentHeader
+// already renders "Bookmarks" as this view's title.
+function BookmarksView({
+  books,
   onDeleteBookmark,
 }: {
-  items: ReturnType<typeof recentlyBookmarked>;
+  books: LibraryBook[];
   onDeleteBookmark: (txtId: number, bookmarkId: number) => void;
 }) {
-  if (!items.length) return null;
+  const bookmarked = useMemo(() => recentlyBookmarked(books), [books]);
+  if (!bookmarked.length) {
+    return <EmptyStateContainer message="No bookmarks yet." />;
+  }
   return (
-    <section className="mb-3" aria-label="Bookmarks">
-      <h3 className="mb-0 px-2 py-2 text-base font-semibold text-base-content/60">
-        Bookmarks
-      </h3>
-      <GridList aria-label="Bookmarks" className="book-row-grid">
-        {items.map(({ book, bookmark }) => (
-          <BookRow
-            key={`${book.txtId}-${bookmark.cfi}`}
-            rowId={`bookmark-${book.txtId}-${bookmark.cfi}`}
-            book={book}
-            bookmark={bookmark}
-            removeLabel="Delete bookmark"
-            onRemove={() => onDeleteBookmark(book.txtId, bookmark.id)}
-          />
-        ))}
-      </GridList>
-    </section>
+    <div className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-2 md:px-3">
+      <section aria-label="Bookmarks">
+        <GridList aria-label="Bookmarks" className="book-row-grid">
+          {bookmarked.map((book) => (
+            <BookRow
+              key={book.txtId}
+              book={book}
+              initialCfi={book.latestBookmarkCfi}
+              badges="bookmark"
+              removeLabel="Delete bookmark"
+              onRemove={() => {
+                const latest = book.bookmarks[0];
+                if (latest) onDeleteBookmark(book.txtId, latest.id);
+              }}
+            />
+          ))}
+        </GridList>
+      </section>
+    </div>
   );
 }
 
