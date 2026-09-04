@@ -11,8 +11,17 @@
 // time.
 //
 // first()/raw() never return a D1Result at all (confirmed against
-// @cloudflare/workers-types' D1PreparedStatement) -- there is no meta to
-// log for either, so both pass straight through to the real statement.
+// @cloudflare/workers-types' D1PreparedStatement), so there's no
+// rows_read/rows_written to report for either -- but both still make a
+// real D1 round trip, so their wall-clock duration is measured directly
+// (performance.now(), not D1's own meta) and counted the same as any
+// other query's wait time. Almost every endpoint calls first() (a single-
+// row lookup), so leaving it unmeasured would misattribute most of this
+// app's actual D1 wait time to CPU time -- confirmed against a real
+// GET /v1/catalog log line showing 0.00ms of D1 wait next to a highly
+// implausible 52ms of "CPU time" (Workers' own free-tier limit is 10ms),
+// before this fix.
+//
 // exec()/withSession()/dump() are declared for completeness but unused
 // anywhere in this codebase (grepped) -- they pass through unwrapped too.
 
@@ -25,31 +34,59 @@ interface LoggedStatement extends D1PreparedStatement {
 export interface D1QueryLog {
   sql: string;
   durationMs: number;
-  rows_read: number;
-  rows_written: number;
-  changes: number;
-  last_row_id: number;
+  // null for first()/raw(), which never return a D1Meta to read these from.
+  rowsRead: number | null;
+  rowsWritten: number | null;
+  changes: number | null;
+  lastRowId: number | null;
 }
 
-function toQueryLog(sql: string, meta: D1Meta): D1QueryLog {
+function fromMeta(sql: string, meta: D1Meta): D1QueryLog {
   return {
     sql: sql.trim().replace(/\s+/g, " "),
     durationMs: meta.duration,
-    rows_read: meta.rows_read,
-    rows_written: meta.rows_written,
+    rowsRead: meta.rows_read,
+    rowsWritten: meta.rows_written,
     changes: meta.changes,
-    last_row_id: meta.last_row_id,
+    lastRowId: meta.last_row_id,
   };
 }
 
-function logMeta(sql: string, meta: D1Meta, queries: D1QueryLog[]): void {
-  const entry = toQueryLog(sql, meta);
+function fromDuration(sql: string, durationMs: number): D1QueryLog {
+  return {
+    sql: sql.trim().replace(/\s+/g, " "),
+    durationMs,
+    rowsRead: null,
+    rowsWritten: null,
+    changes: null,
+    lastRowId: null,
+  };
+}
+
+function record(entry: D1QueryLog, queries: D1QueryLog[]): void {
   queries.push(entry);
-  const { durationMs, ...rest } = entry;
   console.log(
     "D1 query:",
-    JSON.stringify({ ...rest, duration_ms: durationMs.toFixed(2) }),
+    JSON.stringify({
+      sql: entry.sql,
+      duration_ms: entry.durationMs.toFixed(2),
+      rows_read: entry.rowsRead,
+      rows_written: entry.rowsWritten,
+      changes: entry.changes,
+      last_row_id: entry.lastRowId,
+    }),
   );
+}
+
+async function timeCall<T>(
+  sql: string,
+  queries: D1QueryLog[],
+  call: () => Promise<T>,
+): Promise<T> {
+  const start = performance.now();
+  const result = await call();
+  record(fromDuration(sql, performance.now() - start), queries);
+  return result;
 }
 
 function wrapStatement(
@@ -61,16 +98,22 @@ function wrapStatement(
     [REAL]: { statement, sql },
     bind: (...values: unknown[]) =>
       wrapStatement(statement.bind(...values), sql, queries),
-    first: statement.first.bind(statement),
-    raw: statement.raw.bind(statement),
+    first: ((...args: unknown[]) =>
+      timeCall(sql, queries, () =>
+        (statement.first as (...a: unknown[]) => Promise<unknown>)(...args),
+      )) as D1PreparedStatement["first"],
+    raw: ((options?: { columnNames?: boolean }) =>
+      timeCall(sql, queries, () =>
+        (statement.raw as (o?: { columnNames?: boolean }) => Promise<unknown>)(options),
+      )) as D1PreparedStatement["raw"],
     run: async <T = Record<string, unknown>>() => {
       const result = await statement.run<T>();
-      logMeta(sql, result.meta, queries);
+      record(fromMeta(sql, result.meta), queries);
       return result;
     },
     all: async <T = Record<string, unknown>>() => {
       const result = await statement.all<T>();
-      logMeta(sql, result.meta, queries);
+      record(fromMeta(sql, result.meta), queries);
       return result;
     },
   };
@@ -96,7 +139,7 @@ export function withD1QueryLogging(db: D1Database, queries: D1QueryLog[]): D1Dat
       );
       const results = await db.batch<T>(entries.map((entry) => entry.statement));
       results.forEach((result, index) =>
-        logMeta(entries[index].sql, result.meta, queries),
+        record(fromMeta(entries[index].sql, result.meta), queries),
       );
       return results;
     },
