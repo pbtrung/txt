@@ -31,15 +31,18 @@ function documentJson(row: DocumentRow) {
 // document, only the ones with real reading state, for the recency sort
 // and Recent shelf. An INNER JOIN (not LEFT): a document nobody has ever
 // opened has no access_key_id at all (§2), and is excluded, not listed
-// with nulls. The explicit WHERE (redundant with the INNER JOIN) is what
-// lets the query planner match idx_documents_access_key_id, the partial
-// index added for exactly this query -- without it, D1 would have to
-// examine every documents row (it bills by rows examined, not returned)
-// to find the ones with a non-null access_key_id.
+// with nulls. The explicit WHERE (redundant with the INNER JOIN) matches
+// idx_documents_access_key_id's own partial-index condition, but D1 never
+// runs ANALYZE, so the planner has no cardinality stats to tell it the
+// index is selective and picks a full SCAN of documents anyway (verified
+// against a real D1 database). INDEXED BY forces the seek deterministically
+// regardless of ANALYZE state -- without it, D1 bills for examining every
+// documents row (it bills by rows examined, not returned) to find the
+// ones with a non-null access_key_id.
 const RECENT_ACCESS_QUERY = `
   SELECT d.id, d.created_at, d.access_blob, d.access_version,
          ak.wrapped_key AS access_key_wrapped
-  FROM documents d
+  FROM documents d INDEXED BY idx_documents_access_key_id
   JOIN key_store ak ON ak.id = d.access_key_id
   WHERE d.access_key_id IS NOT NULL
   ORDER BY d.id

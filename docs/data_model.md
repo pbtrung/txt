@@ -132,7 +132,11 @@ END;
 -- NULL. A partial index, not a full one: the column is NULL for most
 -- rows in a library with many never-opened books, and D1 bills by rows
 -- examined -- without this, that filter would still have to examine
--- every documents row to find the ones it actually wants.
+-- every documents row to find the ones it actually wants. D1 never runs
+-- ANALYZE, so the query planner has no cardinality stats to recognize
+-- the index as selective on its own; the query forces it with INDEXED BY
+-- (worker/documentsEndpoint.ts) rather than relying on the planner to
+-- find it.
 CREATE INDEX idx_documents_access_key_id ON documents(access_key_id)
 WHERE access_key_id IS NOT NULL;
 -- D1 enforces foreign keys, so every `DELETE FROM key_store` -- fired by
