@@ -12,7 +12,7 @@
 // wrangler.jsonc's bindings (worker/worker-configuration.d.ts).
 import { handleApi } from "./api";
 import { withD1QueryLogging, type D1QueryLog } from "./d1Logging";
-import { formatMs } from "./formatMs";
+import { formatMeasuredMs } from "./formatMs";
 import { createRequestTiming } from "./requestTiming";
 
 function sumDurationMs(queries: D1QueryLog[]): number {
@@ -43,20 +43,24 @@ export default {
     // Cloudflare bills Workers by CPU time, which excludes I/O wait
     // (worker/requestTiming.ts) -- clamped to 0 since this is measured
     // wall-clock time minus measured wait, not Cloudflare's own internal
-    // accounting, and either can be individually noisy at sub-millisecond
-    // scale.
+    // accounting, and either can be individually noisy at the 1ms
+    // resolution performance.now() actually has in this runtime
+    // (formatMs.ts). A request whose own routing/JSON/crypto work
+    // genuinely finishes under 1ms -- true for most of this app's simple
+    // read endpoints -- legitimately reports 0.00 here; that's the
+    // timer's real floor, not a broken measurement.
     const cpuMs = Math.max(0, totalMs - waitMs);
     console.log(
       "Worker CPU time:",
-      JSON.stringify({ path: url.pathname, cpu_ms: formatMs(cpuMs) }),
+      JSON.stringify({ path: url.pathname, cpu_ms: formatMeasuredMs(cpuMs) }),
     );
     console.log(
       "Worker wait time:",
       JSON.stringify({
         path: url.pathname,
-        wait_ms: formatMs(waitMs),
-        db_ms: formatMs(dbWaitMs),
-        network_ms: formatMs(timing.networkWaitMs),
+        wait_ms: formatMeasuredMs(waitMs),
+        db_ms: formatMeasuredMs(dbWaitMs),
+        network_ms: formatMeasuredMs(timing.networkWaitMs),
       }),
     );
     return response;

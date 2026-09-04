@@ -31,7 +31,7 @@
 //
 // exec()/withSession()/dump() are declared for completeness but unused
 // anywhere in this codebase (grepped) -- they pass through unwrapped too.
-import { formatMs } from "./formatMs";
+import { formatMeasuredMs, formatReportedMs } from "./formatMs";
 
 const REAL = Symbol("real D1PreparedStatement");
 
@@ -61,8 +61,9 @@ function record(entry: D1QueryLog, queries: D1QueryLog[]): void {
     "D1 query:",
     JSON.stringify({
       sql: entry.sql,
-      duration_ms: formatMs(entry.durationMs),
-      d1_reported_ms: entry.d1ReportedMs === null ? null : formatMs(entry.d1ReportedMs),
+      duration_ms: formatMeasuredMs(entry.durationMs),
+      d1_reported_ms:
+        entry.d1ReportedMs === null ? null : formatReportedMs(entry.d1ReportedMs),
       rows_read: entry.rowsRead,
       rows_written: entry.rowsWritten,
       changes: entry.changes,
