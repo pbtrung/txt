@@ -182,6 +182,9 @@ function ContentHeader({
   );
 }
 
+// No inner heading: ContentHeader already renders "Recent" as this view's
+// title. aria-label keeps "Recent access" as an accessible landmark name
+// without showing it as visible text.
 function RecentBooks({
   books,
   onClearAccess,
@@ -195,44 +198,19 @@ function RecentBooks({
   }
   return (
     <div className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-2 md:px-3">
-      <RecentSection
-        title="Recent access"
-        books={accessed}
-        removeLabel={() => "Delete recent access"}
-        onRemove={onClearAccess}
-      />
+      <section aria-label="Recent access">
+        <GridList aria-label="Recent access" className="book-row-grid">
+          {accessed.map((book) => (
+            <BookRow
+              key={book.txtId}
+              book={book}
+              removeLabel="Delete recent access"
+              onRemove={() => onClearAccess(book.txtId)}
+            />
+          ))}
+        </GridList>
+      </section>
     </div>
-  );
-}
-
-function RecentSection({
-  title,
-  books,
-  removeLabel,
-  onRemove,
-}: {
-  title: string;
-  books: LibraryBook[];
-  removeLabel: (book: LibraryBook) => string;
-  onRemove: (txtId: number) => void;
-}) {
-  if (!books.length) return null;
-  return (
-    <section className="mb-3" aria-label={title}>
-      <h3 className="mb-0 px-2 py-2 text-base font-semibold text-base-content/60">
-        {title}
-      </h3>
-      <GridList aria-label={title} className="book-row-grid">
-        {books.map((book) => (
-          <BookRow
-            key={book.txtId}
-            book={book}
-            removeLabel={removeLabel(book)}
-            onRemove={() => onRemove(book.txtId)}
-          />
-        ))}
-      </GridList>
-    </section>
   );
 }
 
