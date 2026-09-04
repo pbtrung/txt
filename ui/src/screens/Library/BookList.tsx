@@ -138,7 +138,7 @@ function BookLinkRow({
     <Link
       href={readerPath(book.txtId, initialCfi)}
       className={classNames(
-        "block h-full rounded-box px-2 py-2 text-base-content no-underline book-row",
+        "flex h-full flex-col justify-center rounded-box px-2 py-2 text-base-content no-underline book-row",
         hasRemoveAction && "pr-12",
       )}
     >
@@ -150,7 +150,7 @@ function BookLinkRow({
 function BookRowContent({ book }: { book: LibraryBook }) {
   const active = book.lastAccessed > 0 || book.bookmarkCount > 0;
   return (
-    <div className="block h-full rounded-box px-2 py-2 text-base-content book-row">
+    <div className="flex h-full flex-col justify-center rounded-box px-2 py-2 text-base-content book-row">
       <BookRowDetails book={book} active={active} badges="none" />
     </div>
   );
@@ -211,10 +211,10 @@ function BookMetadata({ book, badges }: { book: LibraryBook; badges: BookBadges 
     >
       {badges === "bookmark" && (
         <>
+          {book.bookmarkCount > 0 && <BookmarkBadge count={book.bookmarkCount} />}
           {latestBookmark && (
             <BookmarkPageBadge pageNumber={latestBookmark.pageNumber} />
           )}
-          {book.bookmarkCount > 0 && <BookmarkBadge count={book.bookmarkCount} />}
         </>
       )}
       {badges === "access" && book.lastAccessed > 0 && (
