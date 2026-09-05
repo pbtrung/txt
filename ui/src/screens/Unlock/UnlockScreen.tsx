@@ -51,12 +51,14 @@ export function UnlockScreen() {
       ) : status === "access-required" ? (
         <div role="alert" className="alert alert-warning mb-0 block text-left">
           <p className="mb-2">You need a Cloudflare Access session before unlocking.</p>
-          <Button
-            className="btn btn-sm"
-            onPress={() => window.location.assign("/v1/access-check")}
-          >
-            Log in with Cloudflare Access
-          </Button>
+          <div className="flex justify-center">
+            <Button
+              className="btn btn-sm"
+              onPress={() => window.location.assign("/v1/access-check")}
+            >
+              Log in with Cloudflare Access
+            </Button>
+          </div>
         </div>
       ) : (
         <FileTrigger
