@@ -115,16 +115,12 @@ describe("UnlockScreen", () => {
       );
 
       expect(screen.getByRole("status")).toHaveTextContent(
-        "No Cloudflare Access session found. Redirecting to log in in 3…",
+        "No Cloudflare Access session found.Redirecting in 3 seconds…",
       );
       act(() => vi.advanceTimersByTime(1000));
-      expect(screen.getByRole("status")).toHaveTextContent(
-        "Redirecting to log in in 2…",
-      );
+      expect(screen.getByRole("status")).toHaveTextContent("Redirecting in 2 seconds…");
       act(() => vi.advanceTimersByTime(1000));
-      expect(screen.getByRole("status")).toHaveTextContent(
-        "Redirecting to log in in 1…",
-      );
+      expect(screen.getByRole("status")).toHaveTextContent("Redirecting in 1 second…");
       expect(assignMock).not.toHaveBeenCalled();
       act(() => vi.advanceTimersByTime(1000));
       expect(assignMock).toHaveBeenCalledWith("/v1/access-check");

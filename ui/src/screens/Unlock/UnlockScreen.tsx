@@ -44,7 +44,9 @@ function AccessRedirectCountdown() {
 
   return (
     <p role="status" className="mb-0 text-base-content/60">
-      No Cloudflare Access session found. Redirecting to log in in {countdown}…
+      No Cloudflare Access session found.
+      <br />
+      Redirecting in {countdown} second{countdown === 1 ? "" : "s"}…
     </p>
   );
 }
