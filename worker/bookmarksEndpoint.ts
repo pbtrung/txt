@@ -41,13 +41,24 @@ export async function handleGetBookmarks(env: Env, url: URL): Promise<Response> 
   });
 }
 
-interface BookmarkSummaryRow {
+export interface BookmarkSummaryRow {
   id: number;
   document_id: number;
   key_wrapped: ArrayBuffer;
   bookmark_blob: ArrayBuffer;
   created_at: number;
   count: number;
+}
+
+export function bookmarkSummaryJson(row: BookmarkSummaryRow) {
+  return {
+    id: row.id,
+    document_id: row.document_id,
+    count: row.count,
+    key_wrapped: base64Encode(row.key_wrapped),
+    bookmark_blob: base64Encode(row.bookmark_blob),
+    created_at: row.created_at,
+  };
 }
 
 // One row per document that has at least one bookmark: its total count
@@ -69,7 +80,12 @@ interface BookmarkSummaryRow {
 // only run against those 10 documents' own rows (at most 20 each, via
 // idx_bookmarks_document_id) to get each one's count and latest bookmark.
 const RECENT_BOOKMARKS_LIMIT = 10;
-const BOOKMARKS_SUMMARY_QUERY = `
+// Reused by libraryEndpoint.ts's GET /v1/library, which combines this
+// with RECENT_ACCESS_QUERY/CATALOG_QUERY into one request; GET
+// /v1/bookmarks/summary below stays its own route too, for
+// reloadBookmarksSummary()'s standalone refresh after a single bookmark
+// create/delete (ui/src/data/libraryStore.ts).
+export const BOOKMARKS_SUMMARY_QUERY = `
   WITH recent_docs AS (
     SELECT DISTINCT document_id FROM bookmarks INDEXED BY idx_bookmarks_created_at
     ORDER BY created_at DESC LIMIT ${RECENT_BOOKMARKS_LIMIT}
@@ -93,16 +109,7 @@ export async function handleGetBookmarksSummary(env: Env): Promise<Response> {
   const { results } = await env.DB.prepare(
     BOOKMARKS_SUMMARY_QUERY,
   ).all<BookmarkSummaryRow>();
-  return Response.json({
-    summaries: results.map((row) => ({
-      id: row.id,
-      document_id: row.document_id,
-      count: row.count,
-      key_wrapped: base64Encode(row.key_wrapped),
-      bookmark_blob: base64Encode(row.bookmark_blob),
-      created_at: row.created_at,
-    })),
-  });
+  return Response.json({ summaries: results.map(bookmarkSummaryJson) });
 }
 
 export async function handlePostBookmark(

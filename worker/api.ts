@@ -12,18 +12,17 @@ import { handleGetOwner } from "./ownerEndpoint";
 import { requireProof, ProofRequiredError } from "./requireProof";
 import type { ProofContext } from "./requireProof";
 import {
-  handleGetRecentAccess,
   handleGetDocument,
   handleGetDocumentContent,
   handlePatchDocumentAccess,
 } from "./documentsEndpoint";
-import { handleGetCatalog } from "./catalogEndpoint";
 import {
   handleGetBookmarks,
   handleGetBookmarksSummary,
   handlePostBookmark,
   handleDeleteBookmark,
 } from "./bookmarksEndpoint";
+import { handleGetLibrary } from "./libraryEndpoint";
 import { handlePostR2Credentials } from "./r2CredentialsEndpoint";
 import {
   handleGetShares,
@@ -74,14 +73,6 @@ const ROUTES: Record<string, Partial<Record<string, Route>>> = {
     // handleApi() has already verified it before invoking the handler.
     GET: { handler: (_request, env, ctx) => handleGetOwner(env, ctx.access!) },
   },
-  // Every document with real reading state (the Recent shelf's source,
-  // not "all documents" -- see documentsEndpoint.ts). Registered before
-  // "/v1/documents/:id" below -- findRoute() matches in insertion order,
-  // and both patterns have the same segment count, so "recent-access"
-  // would otherwise be captured as an :id.
-  "/v1/documents/recent-access": {
-    GET: { handler: (_request, env) => handleGetRecentAccess(env) },
-  },
   // One document's own row -- refreshing a single document's
   // access_blob/access_version after a 412 (docs/data_model.md §4)
   // without re-reading every accessed document, or lazily loading it the
@@ -89,8 +80,10 @@ const ROUTES: Record<string, Partial<Record<string, Route>>> = {
   "/v1/documents/:id": {
     GET: { handler: (_request, env, ctx) => handleGetDocument(env, ctx.params.id) },
   },
-  "/v1/catalog": {
-    GET: { handler: (_request, env) => handleGetCatalog(env) },
+  // The recently-accessed listing, the singleton catalog row, and the
+  // bookmarks summary, combined into one request -- see libraryEndpoint.ts.
+  "/v1/library": {
+    GET: { handler: (_request, env) => handleGetLibrary(env) },
   },
   "/v1/documents/:id/access": {
     PATCH: {

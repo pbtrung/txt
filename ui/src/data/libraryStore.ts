@@ -126,11 +126,11 @@ export class LibraryStore {
   async reload(): Promise<void> {
     this.emit({ pending: true, error: null });
     try {
-      const [recentAccess, catalogRow, summaries] = await Promise.all([
-        this.api.fetchRecentAccess(),
-        this.api.fetchCatalog(),
-        this.api.fetchBookmarksSummary(),
-      ]);
+      const {
+        documents: recentAccess,
+        catalog: catalogRow,
+        summaries,
+      } = await this.api.fetchLibrary();
       const catalogEntries = catalogRow
         ? await this.loadCatalogEntries(catalogRow.keyWrapped, catalogRow.catalogBlob)
         : new Map<number, CatalogEntry>();
@@ -309,7 +309,7 @@ export class LibraryStore {
       contentKey: fromBase64(pointer.content_key),
       path: pointer.path,
       // undefined for a document never accessed before -- not in
-      // fetchRecentAccess()'s result, so no secret was ever cached for
+      // fetchLibrary()'s documents, so no secret was ever cached for
       // it; that's exactly the never-read state lastCfi: null means.
       lastCfi: this.secrets.get(txtId)?.lastCfi ?? null,
       title: book.title,
@@ -481,8 +481,8 @@ export class LibraryStore {
   }
 
   // Lazily seeds a never-before-accessed document's secret from the
-  // server (docs/data_model.md §2 -- it isn't in fetchRecentAccess()'s
-  // result until it has real access state) rather than assuming one is
+  // server (docs/data_model.md §2 -- it isn't in fetchLibrary()'s
+  // documents until it has real access state) rather than assuming one is
   // already cached, since reload() only bulk-fetches the already-accessed
   // subset.
   private async ensureSecret(txtId: number): Promise<DocumentSecret> {

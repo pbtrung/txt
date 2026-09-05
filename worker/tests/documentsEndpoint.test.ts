@@ -1,6 +1,10 @@
-// GET /v1/documents (the N+1-avoidance join) and PATCH
+// GET /v1/documents/:id, GET /v1/documents/:id/content, and PATCH
 // /v1/documents/:id/access (the access_version optimistic concurrency
-// path), through the real fetch() handler.
+// path), through the real fetch() handler. The recently-accessed listing
+// query this file's insertDocument()/insertDocumentWithoutAccess()
+// helpers also serve (the N+1-avoidance join) is covered by
+// libraryEndpoint.test.ts, its GET /v1/library now being the only route
+// that runs it.
 import { env, SELF } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import { base64Decode, base64Encode } from "../base64";
@@ -86,86 +90,6 @@ async function accessSession(): Promise<{ restore: () => void; headers: HeadersI
   });
   return { restore, headers: { "Cf-Access-Jwt-Assertion": token } };
 }
-
-describe("GET /v1/documents/recent-access", () => {
-  it("returns an empty list for a library with zero accessed documents", async () => {
-    const { restore, headers } = await accessSession();
-    try {
-      const response = await SELF.fetch(
-        "https://example.com/v1/documents/recent-access",
-        { headers },
-      );
-      expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({ documents: [] });
-    } finally {
-      restore();
-    }
-  });
-
-  it("returns the correct joined row for a library with one accessed document", async () => {
-    const doc = await insertDocument();
-    const { restore, headers } = await accessSession();
-    try {
-      const response = await SELF.fetch(
-        "https://example.com/v1/documents/recent-access",
-        { headers },
-      );
-      const body = (await response.json()) as { documents: Record<string, unknown>[] };
-      const row = body.documents.find((r) => r.id === doc.id);
-      expect(row?.content_blob).toBeUndefined();
-      expect(row?.content_key_wrapped).toBeUndefined();
-      expect(row?.access_blob).toBe(base64Encode(doc.accessBlob));
-      expect(row?.access_key_wrapped).toBe(base64Encode(doc.accessKeyWrapped));
-      expect(row?.access_version).toBe(0);
-    } finally {
-      restore();
-    }
-  });
-
-  it("returns every accessed document's own access key, not cross-joined", async () => {
-    const docs = await Promise.all([
-      insertDocument(),
-      insertDocument(),
-      insertDocument(),
-    ]);
-    const { restore, headers } = await accessSession();
-    try {
-      const response = await SELF.fetch(
-        "https://example.com/v1/documents/recent-access",
-        { headers },
-      );
-      const body = (await response.json()) as { documents: Record<string, unknown>[] };
-      // D1 storage carries over from the prior test in this file (only
-      // reset between files), so this asserts against the actual current
-      // accessed total rather than a count that assumes a clean slate.
-      const { n: accessedDocuments } = (await env.DB.prepare(
-        "SELECT count(*) AS n FROM documents WHERE access_key_id IS NOT NULL",
-      ).first<{ n: number }>())!;
-      expect(body.documents).toHaveLength(accessedDocuments);
-      for (const doc of docs) {
-        const row = body.documents.find((r) => r.id === doc.id);
-        expect(row?.access_key_wrapped).toBe(base64Encode(doc.accessKeyWrapped));
-      }
-    } finally {
-      restore();
-    }
-  });
-
-  it("excludes a never-opened document entirely", async () => {
-    const doc = await insertDocumentWithoutAccess();
-    const { restore, headers } = await accessSession();
-    try {
-      const response = await SELF.fetch(
-        "https://example.com/v1/documents/recent-access",
-        { headers },
-      );
-      const body = (await response.json()) as { documents: Record<string, unknown>[] };
-      expect(body.documents.find((r) => r.id === doc.id)).toBeUndefined();
-    } finally {
-      restore();
-    }
-  });
-});
 
 describe("GET /v1/documents/:id", () => {
   it("returns the same shape as the library list, for one document only", async () => {

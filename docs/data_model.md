@@ -128,15 +128,15 @@ WHEN NEW.access_key_id IS NULL AND OLD.access_key_id IS NOT NULL
 BEGIN
   DELETE FROM key_store WHERE id = OLD.access_key_id;
 END;
--- §3's GET /v1/documents/recent-access filters to access_key_id IS NOT
--- NULL. A partial index, not a full one: the column is NULL for most
--- rows in a library with many never-opened books, and D1 bills by rows
--- examined -- without this, that filter would still have to examine
--- every documents row to find the ones it actually wants. D1 never runs
--- ANALYZE, so the query planner has no cardinality stats to recognize
--- the index as selective on its own; the query forces it with INDEXED BY
--- (worker/documentsEndpoint.ts) rather than relying on the planner to
--- find it.
+-- §3's GET /v1/library filters its recently-accessed-documents query to
+-- access_key_id IS NOT NULL. A partial index, not a full one: the
+-- column is NULL for most rows in a library with many never-opened
+-- books, and D1 bills by rows examined -- without this, that filter
+-- would still have to examine every documents row to find the ones it
+-- actually wants. D1 never runs ANALYZE, so the query planner has no
+-- cardinality stats to recognize the index as selective on its own; the
+-- query forces it with INDEXED BY (worker/documentsEndpoint.ts) rather
+-- than relying on the planner to find it.
 CREATE INDEX idx_documents_access_key_id ON documents(access_key_id)
 WHERE access_key_id IS NOT NULL;
 -- D1 enforces foreign keys, so every `DELETE FROM key_store` -- fired by
@@ -314,8 +314,8 @@ _only_ source for browse/search identity and display fields (§3):
 fetching and decrypting one object that already holds every document's
 display fields is strictly cheaper than a `documents` row and a decrypt
 per book, and is what makes that identity available at all for a book
-that has never been opened and so has no row in
-`GET /v1/documents/recent-access`'s result.
+that has never been opened and so has no row in `GET /v1/library`'s
+`documents` field.
 
 **Written by** the Python ingestion tool (`txt --ingest`) directly, over
 D1's own HTTP query API (`txt/d1_client.py`) — not the Worker's
@@ -410,34 +410,49 @@ D1 statements inside a D1 transaction. There is no local database file
 the browser downloads or uploads; reading the library requires a round
 trip to the Worker rather than opening a fully offline local copy.
 
+**`GET /v1/library` (`worker/libraryEndpoint.ts`) is the Library screen's
+one-request load, combining three otherwise-independent D1 queries.**
+Cloudflare bills a Worker by request count as well as CPU time
+(`docs/deployment.md` §8), and the Library screen always needs all three
+together on every load, so they're one route rather than three, run as a
+single `env.DB.batch()` (one D1 round trip too):
+
 **Identity and browse metadata is catalog-driven, not documents-driven.**
-`GET /v1/catalog` (§2.1) returns every book's `document_id`,
-title/authors/subjects/publisher in one R2-hosted object; that alone is
-what the Library screen's full browse/search list and book identity come
-from. A `documents` row whose catalog entry hasn't been written yet is
-invisible in the Library screen until the next `--ingest` run reconciles
-it (§2.1's write-order guarantee) — an accepted, self-correcting
-transient, not a bug: there is no per-document `documents` query that
-could show it any sooner without also risking a fabricated "Untitled"
-placeholder for a book with no real metadata at all.
+The response's `catalog` field (§2.1's singleton row) returns every
+book's `document_id`, title/authors/subjects/publisher in one R2-hosted
+object; that alone is what the Library screen's full browse/search list
+and book identity come from. A `documents` row whose catalog entry
+hasn't been written yet is invisible in the Library screen until the
+next `--ingest` run reconciles it (§2.1's write-order guarantee) — an
+accepted, self-correcting transient, not a bug: there is no per-document
+`documents` query that could show it any sooner without also risking a
+fabricated "Untitled" placeholder for a book with no real metadata at
+all.
 
 **Reading state — `last_accessed`/`last_cfi` — comes from D1, and only
 for documents that actually have any.** Because `access_blob` encrypts
 both together, D1 cannot `ORDER BY` reading state — the Library screen's
-recency sort and Recent shelf happen client-side, after
-`GET /v1/documents/recent-access` returns every document that has ever
-been opened (`access_key_id IS NOT NULL`, §2 — a document nobody has
-opened has no access key to return in the first place). That query joins
-`documents` against `key_store` on `access_key_id` rather than fetching
-each row's access key with a separate query per row (avoiding an N+1
-pattern that would multiply D1's per-query overhead across the whole
-library on every Library-screen load) and filters via the partial index
-on `access_key_id` (§2) rather than examining every `documents` row (D1
+recency sort and Recent shelf happen client-side, after the response's
+`documents` field returns every document that has ever been opened
+(`access_key_id IS NOT NULL`, §2 — a document nobody has opened has no
+access key to return in the first place). That query joins `documents`
+against `key_store` on `access_key_id` rather than fetching each row's
+access key with a separate query per row (avoiding an N+1 pattern that
+would multiply D1's per-query overhead across the whole library on
+every Library-screen load) and filters via the partial index on
+`access_key_id` (§2) rather than examining every `documents` row (D1
 bills by rows examined, not rows returned) to find the ones that
 qualify. So a library of thousands of books, most never opened, costs
 the Library screen a `key_store` row only for the ones that actually
 have reading state to sort by — never one per book regardless, and
 never a `content_key_id` row at all (next paragraph).
+
+**The response's `summaries` field** is `GET /v1/bookmarks/summary`'s own
+query (§2.2) — count and latest bookmark per document, for the Library
+screen's Bookmarks nav entry. That route still exists on its own too:
+`ui/src/data/libraryStore.ts`'s `reloadBookmarksSummary()` calls it alone
+after creating or deleting a single bookmark, which doesn't need the
+other two queries re-run.
 
 `GET /v1/documents/:id` — one specific document, a `LEFT JOIN` since the
 one document asked for may not have been opened yet — serves two
@@ -499,8 +514,8 @@ WHERE id = ? AND access_version = ?
 
 Zero rows affected means another write landed first; the Worker returns
 `412`, and the client re-fetches the row via `GET /v1/documents/:id` —
-the one document that actually conflicted, not every accessed document
-via `GET /v1/documents/recent-access` again — reapplies its semantic
+the one document that actually conflicted, not a full `GET /v1/library`
+reload of every accessed document again — reapplies its semantic
 mutation (re-deriving which of the three shapes now applies, since a
 racing first-ever write can flip a document from no-access-key to
 has-one between the client's read and its retry), and retries, up to a

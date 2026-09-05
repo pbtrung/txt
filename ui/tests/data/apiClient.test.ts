@@ -159,7 +159,7 @@ describe("ApiClient reads", () => {
     expect([...owner.wrappedUmk]).toEqual([1, 2, 3]);
   });
 
-  it("parses recently accessed documents", async () => {
+  it("parses the combined library response", async () => {
     const bytes = toBase64(new Uint8Array([1]));
     const fetchMock = vi.fn().mockResolvedValue(
       jsonResponse(200, {
@@ -172,13 +172,39 @@ describe("ApiClient reads", () => {
             access_key_wrapped: bytes,
           },
         ],
+        catalog: { key_wrapped: bytes, catalog_blob: bytes },
+        summaries: [
+          {
+            id: 1,
+            document_id: 1,
+            count: 1,
+            key_wrapped: bytes,
+            bookmark_blob: bytes,
+            created_at: 0,
+          },
+        ],
       }),
     );
     vi.stubGlobal("fetch", fetchMock);
-    const documents = await new ApiClient().fetchRecentAccess();
-    expect(documents).toHaveLength(1);
-    expect(documents[0].id).toBe(1);
-    expect(fetchMock.mock.calls[0][0]).toBe("/v1/documents/recent-access");
+    const library = await new ApiClient().fetchLibrary();
+    expect(library.documents).toHaveLength(1);
+    expect(library.documents[0].id).toBe(1);
+    expect(library.catalog).not.toBeNull();
+    expect(library.summaries).toHaveLength(1);
+    expect(fetchMock.mock.calls[0][0]).toBe("/v1/library");
+  });
+
+  it("parses a null catalog in the combined library response", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          jsonResponse(200, { documents: [], catalog: null, summaries: [] }),
+        ),
+    );
+    const library = await new ApiClient().fetchLibrary();
+    expect(library.catalog).toBeNull();
   });
 
   it("parses one document's content", async () => {
@@ -222,14 +248,6 @@ describe("ApiClient reads", () => {
   it("returns null for a document 404", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(404, {})));
     await expect(new ApiClient().fetchDocument(999)).resolves.toBeNull();
-  });
-
-  it("parses a null catalog", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(jsonResponse(200, { catalog: null })),
-    );
-    await expect(new ApiClient().fetchCatalog()).resolves.toBeNull();
   });
 
   it("fetches bookmarks with the document_id query param", async () => {

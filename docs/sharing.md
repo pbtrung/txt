@@ -61,8 +61,8 @@ object path.
 
 Owner-only, Access session only (no proof — a read, `docs/auth.md`
 §4.3). Returns every `shares` row, joined against `key_store` for its
-`key_wrapped` (avoiding N+1, the same pattern as
-`GET /v1/documents/recent-access`, `docs/data_model.md` §3), so the
+`key_wrapped` (avoiding N+1, the same pattern as `GET /v1/library`'s
+recently-accessed-documents query, `docs/data_model.md` §3), so the
 browser can decrypt each `owner_blob`
 locally to list active shares and know what to submit for revocation
 (§1):

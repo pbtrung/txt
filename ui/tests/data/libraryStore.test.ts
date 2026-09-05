@@ -27,8 +27,8 @@ async function wrapKey(key: Uint8Array): Promise<Uint8Array> {
 }
 
 // A document that has been opened at least once -- what
-// fetchRecentAccess()/fetchDocument() return for it (docs/data_model.md
-// §2/§3). Visibility in the library still needs a matching catalogRow()
+// fetchLibrary()'s documents/fetchDocument() return for it
+// (docs/data_model.md §2/§3). Visibility in the library still needs a matching catalogRow()
 // entry: identity/browse metadata is catalog-driven now, not documents-
 // driven, so a book with access state but no catalog entry is invisible
 // (see the "invisible until next ingestion run" test below).
@@ -61,9 +61,9 @@ async function documentRow(
   return { row, accessKey: accessKeyRow, content };
 }
 
-// A document that has never been opened: fetchRecentAccess() never
-// returns it (that's the whole point of the endpoint), but
-// fetchDocument() still can -- LibraryStore.ensureSecret() calls it
+// A document that has never been opened: fetchLibrary()'s documents
+// never includes it (that's the whole point of the underlying query),
+// but fetchDocument() still can -- LibraryStore.ensureSecret() calls it
 // lazily the first time such a document's reading position is written.
 function documentRowWithoutAccess(id: number): DocumentRow {
   return {
@@ -123,10 +123,11 @@ async function bookmarkSummaryRow(
 
 function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
   return {
-    fetchRecentAccess: vi.fn().mockResolvedValue([]),
+    fetchLibrary: vi
+      .fn()
+      .mockResolvedValue({ documents: [], catalog: null, summaries: [] }),
     fetchDocument: vi.fn().mockResolvedValue(null),
     fetchDocumentContent: vi.fn().mockResolvedValue(null),
-    fetchCatalog: vi.fn().mockResolvedValue(null),
     fetchBookmarksSummary: vi.fn().mockResolvedValue([]),
     fetchBookmarks: vi.fn().mockResolvedValue([]),
     updateDocumentAccess: vi.fn(),
@@ -155,10 +156,10 @@ describe("LibraryStore.open", () => {
     const summary = await bookmarkSummaryRow(9, 1, "cfi-1", 2);
 
     const api = fakeApi({
-      fetchRecentAccess: vi.fn().mockResolvedValue([document]),
+      fetchLibrary: vi
+        .fn()
+        .mockResolvedValue({ documents: [document], catalog, summaries: [summary] }),
       fetchDocumentContent: vi.fn().mockResolvedValue(content),
-      fetchCatalog: vi.fn().mockResolvedValue(catalog),
-      fetchBookmarksSummary: vi.fn().mockResolvedValue([summary]),
     });
     const store = await LibraryStore.open(
       api,
@@ -200,8 +201,9 @@ describe("LibraryStore.open", () => {
     ]);
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const api = fakeApi({
-      fetchRecentAccess: vi.fn().mockResolvedValue([good, bad]),
-      fetchCatalog: vi.fn().mockResolvedValue(catalog),
+      fetchLibrary: vi
+        .fn()
+        .mockResolvedValue({ documents: [good, bad], catalog, summaries: [] }),
     });
 
     const store = await LibraryStore.open(
@@ -244,7 +246,11 @@ describe("LibraryStore.open", () => {
     ];
     const brokenObjectBytes = await encryptJson(entries, catalogKey);
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const api = fakeApi({ fetchCatalog: vi.fn().mockResolvedValue(catalog) });
+    const api = fakeApi({
+      fetchLibrary: vi
+        .fn()
+        .mockResolvedValue({ documents: [], catalog, summaries: [] }),
+    });
 
     const store = await LibraryStore.open(
       api,
@@ -266,7 +272,11 @@ describe("LibraryStore.open", () => {
       lastAccessed: 0,
       lastCfi: null,
     });
-    const api = fakeApi({ fetchRecentAccess: vi.fn().mockResolvedValue([document]) });
+    const api = fakeApi({
+      fetchLibrary: vi
+        .fn()
+        .mockResolvedValue({ documents: [document], catalog: null, summaries: [] }),
+    });
     const store = await LibraryStore.open(api, fakeStorage(), SIGNING, DB_PREFIX, UMK);
 
     // docs/data_model.md §2.1: a documents row not yet reflected in the
@@ -296,8 +306,9 @@ describe("LibraryStore.updateReadingPosition", () => {
       .mockRejectedValueOnce(new AccessVersionConflictError())
       .mockResolvedValueOnce(2);
     const api = fakeApi({
-      fetchRecentAccess: vi.fn().mockResolvedValue([document]),
-      fetchCatalog: vi.fn().mockResolvedValue(catalog),
+      fetchLibrary: vi
+        .fn()
+        .mockResolvedValue({ documents: [document], catalog, summaries: [] }),
       fetchDocument: vi.fn().mockResolvedValue({
         ...document,
         accessBlob: refreshedAccessBlob,
@@ -327,9 +338,11 @@ describe("LibraryStore.updateReadingPosition", () => {
     ]);
     const updateDocumentAccess = vi.fn().mockResolvedValue(1);
     const api = fakeApi({
-      // Never in fetchRecentAccess()'s result -- ensureSecret() must
-      // fetch it lazily via fetchDocument() instead.
-      fetchCatalog: vi.fn().mockResolvedValue(catalog),
+      // Never in fetchLibrary()'s documents -- ensureSecret() must fetch
+      // it lazily via fetchDocument() instead.
+      fetchLibrary: vi
+        .fn()
+        .mockResolvedValue({ documents: [], catalog, summaries: [] }),
       fetchDocument: vi.fn().mockResolvedValue(documentRowWithoutAccess(1)),
       updateDocumentAccess,
     });
@@ -368,8 +381,9 @@ describe("LibraryStore.clearLastAccessed", () => {
     ]);
     const updateDocumentAccess = vi.fn().mockResolvedValue(1);
     const api = fakeApi({
-      fetchRecentAccess: vi.fn().mockResolvedValue([document]),
-      fetchCatalog: vi.fn().mockResolvedValue(catalog),
+      fetchLibrary: vi
+        .fn()
+        .mockResolvedValue({ documents: [document], catalog, summaries: [] }),
       updateDocumentAccess,
     });
     const store = await LibraryStore.open(
@@ -415,12 +429,10 @@ describe("LibraryStore bookmarks", () => {
     ]);
     const summaryAfter = await bookmarkSummaryRow(5, 1, "new-cfi", 1);
     const api = fakeApi({
-      fetchRecentAccess: vi.fn().mockResolvedValue([document]),
-      fetchCatalog: vi.fn().mockResolvedValue(catalog),
-      fetchBookmarksSummary: vi
+      fetchLibrary: vi
         .fn()
-        .mockResolvedValueOnce([])
-        .mockResolvedValueOnce([summaryAfter]),
+        .mockResolvedValue({ documents: [document], catalog, summaries: [] }),
+      fetchBookmarksSummary: vi.fn().mockResolvedValue([summaryAfter]),
       createBookmark: vi.fn().mockResolvedValue(5),
     });
     const store = await LibraryStore.open(

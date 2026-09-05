@@ -92,6 +92,13 @@ export interface BookmarkSummaryRow {
   createdAt: number;
 }
 
+/** fetchLibrary()'s combined result -- see its own doc comment below. */
+export interface LibraryResponse {
+  documents: DocumentRow[];
+  catalog: CatalogRow | null;
+  summaries: BookmarkSummaryRow[];
+}
+
 export interface ShareRow {
   shareIdHash: Uint8Array;
   documentId: number;
@@ -157,21 +164,6 @@ export class ApiClient {
     return parseOwnerRecord(await response.json());
   }
 
-  /** Every document with real reading state (docs/data_model.md §3) --
-   * not "all documents": the Library screen's identity/browse source is
-   * the catalog object (GET /v1/catalog), not this. Used only for the
-   * recency sort and Recent shelf, and to seed LibraryStore's cached
-   * access secrets for documents already known to have been opened. */
-  async fetchRecentAccess(signal?: AbortSignal): Promise<DocumentRow[]> {
-    const response = await this.get("/v1/documents/recent-access", signal);
-    requireOk(response, "fetch recently accessed documents");
-    const data = objectRecord(await response.json(), "documents response");
-    if (!Array.isArray(data.documents)) {
-      throw new Error("documents response is missing documents");
-    }
-    return data.documents.map(parseDocumentRow);
-  }
-
   /** One document's own row -- to refresh access_blob/access_version
    * after a 412 conflict (docs/data_model.md §4) without re-fetching
    * every accessed document to find the one that changed, or to lazily
@@ -185,8 +177,8 @@ export class ApiClient {
   }
 
   /** Fetched lazily, only when a reader session actually opens this
-   * document -- never as part of fetchRecentAccess()'s cross-library
-   * list, which would bill D1 a content_key_id key_store row for every
+   * document -- never as part of fetchLibrary()'s cross-library list,
+   * which would bill D1 a content_key_id key_store row for every
    * accessed book regardless of whether it's the one being opened now. */
   async fetchDocumentContent(
     id: number,
@@ -198,11 +190,31 @@ export class ApiClient {
     return parseDocumentContent(await response.json());
   }
 
-  async fetchCatalog(signal?: AbortSignal): Promise<CatalogRow | null> {
-    const response = await this.get("/v1/catalog", signal);
-    requireOk(response, "fetch catalog");
-    const data = objectRecord(await response.json(), "catalog response");
-    return data.catalog === null ? null : parseCatalogRow(data.catalog);
+  /** The Library screen's one-request combination of the recently-accessed
+   * listing (docs/data_model.md §3 -- not "all documents": the catalog
+   * object below is the identity/browse source, this is only the recency
+   * sort/Recent shelf and LibraryStore's cached access secrets), the
+   * singleton catalog row, and the bookmarks summary. Each used to be its
+   * own GET request; combined server-side (worker/libraryEndpoint.ts) so
+   * the Library screen's reload() costs one Worker request instead of
+   * three. fetchBookmarksSummary() below stays separate for
+   * reloadBookmarksSummary()'s standalone refresh after a single
+   * bookmark create/delete. */
+  async fetchLibrary(signal?: AbortSignal): Promise<LibraryResponse> {
+    const response = await this.get("/v1/library", signal);
+    requireOk(response, "fetch library");
+    const data = objectRecord(await response.json(), "library response");
+    if (!Array.isArray(data.documents)) {
+      throw new Error("library response is missing documents");
+    }
+    if (!Array.isArray(data.summaries)) {
+      throw new Error("library response is missing summaries");
+    }
+    return {
+      documents: data.documents.map(parseDocumentRow),
+      catalog: data.catalog === null ? null : parseCatalogRow(data.catalog),
+      summaries: data.summaries.map(parseBookmarkSummaryRow),
+    };
   }
 
   async fetchBookmarks(

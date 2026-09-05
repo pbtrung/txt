@@ -1,13 +1,16 @@
-// docs/data_model.md §3: recently-accessed listing, one document's own
-// row, one document's content, and reading-state updates. The reads
-// (GET) need only an Access session (docs/auth.md §4.3); PATCH
-// /v1/documents/:id/access is mutating (ticket + proof) and implements the
-// optimistic-concurrency update docs/data_model.md §4 specifies -- a
-// conditional UPDATE on access_version, 412 on conflict.
+// docs/data_model.md §3: one document's own row, one document's content,
+// and reading-state updates. The reads (GET) need only an Access session
+// (docs/auth.md §4.3); PATCH /v1/documents/:id/access is mutating (ticket
+// + proof) and implements the optimistic-concurrency update
+// docs/data_model.md §4 specifies -- a conditional UPDATE on
+// access_version, 412 on conflict. The recently-accessed listing query
+// this file also owns (RECENT_ACCESS_QUERY, below) has no GET route of
+// its own -- it's one of the three queries libraryEndpoint.ts's GET
+// /v1/library combines into a single request.
 import { base64Decode, base64Encode } from "./base64";
 import type { ProofContext } from "./requireProof";
 
-interface DocumentRow {
+export interface DocumentRow {
   id: number;
   created_at: number;
   access_blob: ArrayBuffer | null;
@@ -15,7 +18,7 @@ interface DocumentRow {
   access_key_wrapped: ArrayBuffer | null;
 }
 
-function documentJson(row: DocumentRow) {
+export function documentJson(row: DocumentRow) {
   return {
     id: row.id,
     created_at: row.created_at,
@@ -39,7 +42,11 @@ function documentJson(row: DocumentRow) {
 // regardless of ANALYZE state -- without it, D1 bills for examining every
 // documents row (it bills by rows examined, not returned) to find the
 // ones with a non-null access_key_id.
-const RECENT_ACCESS_QUERY = `
+// Reused by libraryEndpoint.ts's GET /v1/library, the only remaining
+// caller now that the Library screen's reload() no longer fetches this
+// standalone (there is no longer a GET /v1/documents/recent-access route
+// of its own).
+export const RECENT_ACCESS_QUERY = `
   SELECT d.id, d.created_at, d.access_blob, d.access_version,
          ak.wrapped_key AS access_key_wrapped
   FROM documents d INDEXED BY idx_documents_access_key_id
@@ -47,11 +54,6 @@ const RECENT_ACCESS_QUERY = `
   WHERE d.access_key_id IS NOT NULL
   ORDER BY d.id
 `;
-
-export async function handleGetRecentAccess(env: Env): Promise<Response> {
-  const { results } = await env.DB.prepare(RECENT_ACCESS_QUERY).all<DocumentRow>();
-  return Response.json({ documents: results.map(documentJson) });
-}
 
 // One document's own row -- unlike RECENT_ACCESS_QUERY, a LEFT JOIN,
 // since the specific document asked for may not have been opened yet
