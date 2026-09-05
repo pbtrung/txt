@@ -46,7 +46,7 @@ function AccessRedirectCountdown() {
     <p role="status" className="mb-0 text-base-content/60">
       No Cloudflare Access session found.
       <br />
-      Redirecting in {countdown} second{countdown === 1 ? "" : "s"}…
+      Redirect in {countdown} second{countdown === 1 ? "" : "s"}…
     </p>
   );
 }
