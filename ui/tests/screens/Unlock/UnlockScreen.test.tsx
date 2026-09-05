@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
@@ -44,9 +44,6 @@ describe("UnlockScreen", () => {
     );
     expect(
       screen.queryByRole("button", { name: "Choose File" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Log in with Cloudflare Access" }),
     ).not.toBeInTheDocument();
   });
 
@@ -105,22 +102,36 @@ describe("UnlockScreen", () => {
     );
   });
 
-  it("offers a Cloudflare Access login link when a session is required", async () => {
+  it("counts down and redirects to Cloudflare Access when a session is required", () => {
+    vi.useFakeTimers();
     const assignMock = vi.fn();
     vi.stubGlobal("location", { ...window.location, assign: assignMock });
-    mockVault({ status: "access-required" });
-    render(
-      <MemoryRouter>
-        <UnlockScreen />
-      </MemoryRouter>,
-    );
+    try {
+      mockVault({ status: "access-required" });
+      render(
+        <MemoryRouter>
+          <UnlockScreen />
+        </MemoryRouter>,
+      );
 
-    const button = screen.getByRole("button", {
-      name: "Log in with Cloudflare Access",
-    });
-    await userEvent.click(button);
-    expect(assignMock).toHaveBeenCalledWith("/v1/access-check");
-    vi.unstubAllGlobals();
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "No Cloudflare Access session found. Redirecting to log in in 3…",
+      );
+      act(() => vi.advanceTimersByTime(1000));
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Redirecting to log in in 2…",
+      );
+      act(() => vi.advanceTimersByTime(1000));
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Redirecting to log in in 1…",
+      );
+      expect(assignMock).not.toHaveBeenCalled();
+      act(() => vi.advanceTimersByTime(1000));
+      expect(assignMock).toHaveBeenCalledWith("/v1/access-check");
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
   });
 
   it("navigates to /library once unlocked", () => {

@@ -9,12 +9,45 @@
 // the file (never itself stored anywhere) was lost across the full-page
 // navigation Access's own login redirect requires -- the owner had to
 // pick it again once back. Probing first means "Choose File" only ever
-// appears once a session is already known to work.
-import { useEffect } from "react";
+// appears once a session is already known to work. A missing session
+// redirects on its own after a short countdown rather than waiting on a
+// click -- there's nothing else useful to do on this screen without one.
+import { useEffect, useState } from "react";
 import { BookOpen } from "lucide-react";
 import { Button, FileTrigger } from "react-aria-components";
 import { useNavigate } from "react-router-dom";
 import { useVault } from "../../state/VaultContext";
+
+const REDIRECT_COUNTDOWN_SECONDS = 3;
+
+// A fresh instance every time the "access-required" branch below starts
+// rendering (React mounts it anew whenever the parent switches back to
+// this branch) -- its own useState(3) initializer is the countdown reset,
+// so the countdown effect only ever calls setCountdown from inside the
+// interval's own callback, never synchronously in the effect body.
+function AccessRedirectCountdown() {
+  const [countdown, setCountdown] = useState(REDIRECT_COUNTDOWN_SECONDS);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCountdown((remaining) => {
+        if (remaining <= 1) {
+          clearInterval(interval);
+          window.location.assign("/v1/access-check");
+          return 0;
+        }
+        return remaining - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <p role="status" className="mb-0 text-base-content/60">
+      No Cloudflare Access session found. Redirecting to log in in {countdown}…
+    </p>
+  );
+}
 
 export function UnlockScreen() {
   const { status, error, progress, unlock } = useVault();
@@ -49,17 +82,7 @@ export function UnlockScreen() {
           Checking Cloudflare Access session…
         </p>
       ) : status === "access-required" ? (
-        <div role="alert" className="alert alert-warning mb-0 block text-left">
-          <p className="mb-2">You need a Cloudflare Access session before unlocking.</p>
-          <div className="flex justify-center">
-            <Button
-              className="btn btn-sm"
-              onPress={() => window.location.assign("/v1/access-check")}
-            >
-              Log in with Cloudflare Access
-            </Button>
-          </div>
-        </div>
+        <AccessRedirectCountdown />
       ) : (
         <FileTrigger
           acceptedFileTypes={["application/json"]}
