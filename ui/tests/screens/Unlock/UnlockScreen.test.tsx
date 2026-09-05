@@ -32,6 +32,36 @@ describe("UnlockScreen", () => {
     expect(screen.getByRole("button", { name: "Choose File" })).toBeInTheDocument();
   });
 
+  it("shows a checking status instead of Choose File while probing for a session", () => {
+    mockVault({ status: "checking-access" });
+    render(
+      <MemoryRouter>
+        <UnlockScreen />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Checking Cloudflare Access session…",
+    );
+    expect(
+      screen.queryByRole("button", { name: "Choose File" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Log in with Cloudflare Access" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("hides Choose File while a session is required, so a picked file can't be lost again", () => {
+    mockVault({ status: "access-required" });
+    render(
+      <MemoryRouter>
+        <UnlockScreen />
+      </MemoryRouter>,
+    );
+    expect(
+      screen.queryByRole("button", { name: "Choose File" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("calls unlock() with the chosen file", async () => {
     const unlock = vi.fn().mockResolvedValue(undefined);
     mockVault({ unlock });
