@@ -106,7 +106,10 @@ export async function verifyProof(input: VerifyProofInput): Promise<void> {
       `unsupported proof version: ${String(proof.version)}`,
     );
   }
-  if (typeof proof.expires_at !== "number" || proof.expires_at <= now) {
+  if (!Number.isSafeInteger(proof.expires_at)) {
+    throw new ProofVerificationError("proof expires_at must be an integer");
+  }
+  if (proof.expires_at <= now) {
     throw new ProofVerificationError("proof expired");
   }
   if (proof.expires_at - now > MAX_PROOF_TTL_SECONDS) {

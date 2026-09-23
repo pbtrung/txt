@@ -81,7 +81,7 @@ class FakeD1:
             return self.owner
         raise AssertionError(f"unexpected query_one: {sql}")
 
-    def execute(self, sql, params=None):
+    def execute(self, sql, params=None, *, idempotent=False):
         sql = sql.strip()
         if sql.startswith("INSERT INTO owner"):
             return self._insert_owner(params)

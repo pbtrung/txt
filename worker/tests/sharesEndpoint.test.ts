@@ -4,7 +4,7 @@
 import { env, SELF } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import { base64Encode } from "../base64";
-import { handleDeleteShares } from "../sharesEndpoint";
+import { handleDeleteShares, handlePostShares } from "../sharesEndpoint";
 import type { ProofContext } from "../requireProof";
 import { createTestOwnerSession } from "./testOwnerSession";
 import type { TestOwnerSession } from "./testOwnerSession";
@@ -249,6 +249,27 @@ describe("POST /v1/shares", () => {
     } finally {
       restore();
     }
+  });
+});
+
+describe("POST /v1/shares error mapping", () => {
+  it("lets an unexpected D1 failure reach the server-error path, not 400/409", async () => {
+    const failure = new Error("D1_ERROR: Network connection lost.");
+    const statement = { bind: () => statement, first: () => Promise.resolve(null) };
+    const DB = { prepare: () => statement, batch: () => Promise.reject(failure) };
+    const brokenDbEnv = { ...env, DB } as unknown as Env;
+    const proof: ProofContext = {
+      bodyJson: {
+        document_id: 1,
+        share_id: base64UrlEncode(blob(32)),
+        share_path: sharePath(),
+        key_wrapped: base64Encode(blob(48)),
+        owner_blob: base64Encode(blob(64)),
+      },
+      userHandle: blob(32),
+      dbPrefix: "a".repeat(52),
+    };
+    await expect(handlePostShares(brokenDbEnv, proof)).rejects.toBe(failure);
   });
 });
 

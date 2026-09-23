@@ -3,6 +3,7 @@
 import { env, SELF } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import { base64Encode } from "../base64";
+import { handlePostBookmark } from "../bookmarksEndpoint";
 import { createTestOwnerSession } from "./testOwnerSession";
 import type { TestOwnerSession } from "./testOwnerSession";
 import { mockAccessCertsEndpoint, signTestAccessToken } from "./testAccessToken";
@@ -123,6 +124,54 @@ describe("POST /v1/bookmarks", () => {
       });
       expect(response.status).toBe(400);
       expect(await countRows("key_store")).toBe(keyStoreBefore);
+    } finally {
+      restore();
+    }
+  });
+});
+
+describe("POST /v1/bookmarks error mapping", () => {
+  function fakeEnv(error: Error): Env {
+    const statement = { bind: () => statement };
+    const DB = { prepare: () => statement, batch: () => Promise.reject(error) };
+    return { ...env, DB } as unknown as Env;
+  }
+  const proof = {
+    bodyJson: {
+      document_id: 1,
+      key_wrapped: base64Encode(blob(48)),
+      bookmark_blob: base64Encode(blob(32)),
+    },
+    userHandle: blob(32),
+    dbPrefix: "a".repeat(52),
+  };
+
+  it("lets an unexpected D1 failure reach the server-error path, not 400", async () => {
+    const failure = new Error("D1_ERROR: Network connection lost.");
+    await expect(handlePostBookmark(fakeEnv(failure), proof)).rejects.toBe(failure);
+  });
+
+  it("rejects a fractional proof expires_at with 400, not a server error", async () => {
+    const documentId = await insertDocument();
+    const { restore, headers: accessHeaders } = await accessSession();
+    try {
+      const init = await session.signedRequest("POST", "/v1/bookmarks", {
+        document_id: documentId,
+        key_wrapped: base64Encode(blob(48)),
+        bookmark_blob: base64Encode(blob(32)),
+      });
+      const headers = init.headers as Record<string, string>;
+      const envelope = JSON.parse(headers["X-Owner-Proof"]) as { expires_at: number };
+      envelope.expires_at += 0.5;
+      const response = await SELF.fetch("https://example.com/v1/bookmarks", {
+        ...init,
+        headers: {
+          ...headers,
+          "X-Owner-Proof": JSON.stringify(envelope),
+          ...accessHeaders,
+        },
+      });
+      expect(response.status).toBe(400);
     } finally {
       restore();
     }

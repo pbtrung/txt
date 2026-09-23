@@ -6,6 +6,7 @@
 // decrypted CFI from its last listing fetch, deletes the old row before
 // creating the new one when it finds a match.
 import { base64Decode, base64Encode } from "./base64";
+import { isForeignKeyViolation } from "./d1Errors";
 import type { ProofContext } from "./requireProof";
 
 interface BookmarkRow {
@@ -112,51 +113,77 @@ export async function handleGetBookmarksSummary(env: Env): Promise<Response> {
   return Response.json({ summaries: results.map(bookmarkSummaryJson) });
 }
 
-export async function handlePostBookmark(
-  env: Env,
-  proof: ProofContext,
-): Promise<Response> {
-  const documentId = proof.bodyJson.document_id;
-  const keyWrappedB64 = proof.bodyJson.key_wrapped;
-  const bookmarkBlobB64 = proof.bodyJson.bookmark_blob;
+function parseBookmarkBody(
+  body: Record<string, unknown>,
+): { documentId: number; keyWrapped: Uint8Array; bookmarkBlob: Uint8Array } | Response {
+  const {
+    document_id: documentId,
+    key_wrapped: keyWrapped,
+    bookmark_blob: blob,
+  } = body;
   if (
     typeof documentId !== "number" ||
     !Number.isInteger(documentId) ||
-    typeof keyWrappedB64 !== "string" ||
-    typeof bookmarkBlobB64 !== "string"
+    typeof keyWrapped !== "string" ||
+    typeof blob !== "string"
   ) {
     return new Response("missing or invalid document_id/key_wrapped/bookmark_blob", {
       status: 400,
     });
   }
-  let keyWrapped: Uint8Array;
-  let bookmarkBlob: Uint8Array;
   try {
-    keyWrapped = base64Decode(keyWrappedB64);
-    bookmarkBlob = base64Decode(bookmarkBlobB64);
+    return {
+      documentId,
+      keyWrapped: base64Decode(keyWrapped),
+      bookmarkBlob: base64Decode(blob),
+    };
   } catch {
     return new Response("malformed key_wrapped/bookmark_blob", { status: 400 });
   }
+}
 
-  // One D1 batch (not two separate statements): docs/data_model.md §4's
-  // atomicity guarantee only covers a single statement or batch, and
-  // nothing else in this schema reconciles a key_store row left behind
-  // by an interruption between two independently-awaited statements.
-  // last_insert_rowid() lets the second statement reference the first's
-  // id within the same batch/transaction.
+// One D1 batch (not two separate statements): docs/data_model.md §4's
+// atomicity guarantee only covers a single statement or batch, and
+// nothing else in this schema reconciles a key_store row left behind
+// by an interruption between two independently-awaited statements.
+// last_insert_rowid() lets the second statement reference the first's
+// id within the same batch/transaction.
+async function insertBookmark(
+  env: Env,
+  documentId: number,
+  keyWrapped: Uint8Array,
+  bookmarkBlob: Uint8Array,
+): Promise<number> {
+  const [, bookmarkResult] = await env.DB.batch([
+    env.DB.prepare(
+      "INSERT INTO key_store (purpose, wrapped_key, created_at) VALUES ('bookmark_key', ?, ?)",
+    ).bind(keyWrapped, Date.now()),
+    env.DB.prepare(
+      "INSERT INTO bookmarks (document_id, created_at, key_id, bookmark_blob) VALUES (?, ?, last_insert_rowid(), ?)",
+    ).bind(documentId, Date.now(), bookmarkBlob),
+  ]);
+  return bookmarkResult.meta.last_row_id;
+}
+
+export async function handlePostBookmark(
+  env: Env,
+  proof: ProofContext,
+): Promise<Response> {
+  const parsed = parseBookmarkBody(proof.bodyJson);
+  if (parsed instanceof Response) return parsed;
   try {
-    const [, bookmarkResult] = await env.DB.batch([
-      env.DB.prepare(
-        "INSERT INTO key_store (purpose, wrapped_key, created_at) VALUES ('bookmark_key', ?, ?)",
-      ).bind(keyWrapped, Date.now()),
-      env.DB.prepare(
-        "INSERT INTO bookmarks (document_id, created_at, key_id, bookmark_blob) VALUES (?, ?, last_insert_rowid(), ?)",
-      ).bind(documentId, Date.now(), bookmarkBlob),
-    ]);
-    return Response.json({ id: bookmarkResult.meta.last_row_id });
-  } catch {
-    // documentId doesn't reference a real documents row -- the whole
-    // batch (including the key_store insert) rolled back atomically.
+    const id = await insertBookmark(
+      env,
+      parsed.documentId,
+      parsed.keyWrapped,
+      parsed.bookmarkBlob,
+    );
+    return Response.json({ id });
+  } catch (error) {
+    // Only a documentId that doesn't reference a real documents row is the
+    // caller's fault -- the whole batch (including the key_store insert)
+    // rolled back atomically. Any other D1 failure is a server error.
+    if (!isForeignKeyViolation(error)) throw error;
     return new Response("invalid document_id", { status: 400 });
   }
 }

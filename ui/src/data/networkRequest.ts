@@ -17,7 +17,10 @@ export async function withNetworkRetries<T>(
   }
 }
 
-async function withNetworkTimeout<T>(
+/** One attempt, bounded by the same timeout withNetworkRetries() applies
+ * per attempt -- for a request that must never be replayed automatically,
+ * since a timed-out attempt may still have been committed server-side. */
+export async function withNetworkTimeout<T>(
   operation: (signal: AbortSignal) => Promise<T>,
 ): Promise<T> {
   const controller = new AbortController();

@@ -292,6 +292,38 @@ describe("ApiClient proofed mutations", () => {
     );
   });
 
+  // A lost response may still have committed server-side (a bookmark POST
+  // has no idempotency key), so a mutation is never replayed automatically.
+  it("does not retry a mutation after a network failure", async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new TypeError("Failed to fetch"));
+    vi.stubGlobal("fetch", fetchMock);
+    const signing = await testSigning();
+    await expect(
+      new ApiClient().createBookmark(
+        7,
+        new Uint8Array([1]),
+        new Uint8Array([2]),
+        signing,
+        "a".repeat(52),
+      ),
+    ).rejects.toBeInstanceOf(AccessRequiredError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes an abort signal through to fetch() so a timeout cancels it", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { id: 1 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const signing = await testSigning();
+    await new ApiClient().createBookmark(
+      7,
+      new Uint8Array([1]),
+      new Uint8Array([2]),
+      signing,
+      "a".repeat(52),
+    );
+    expect(fetchMock.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
+  });
+
   it("throws AccessVersionConflictError on 412", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(412, {})));
     const signing = await testSigning();

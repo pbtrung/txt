@@ -261,6 +261,27 @@ function findRoute(
   return null;
 }
 
+// Deliberately uniform: which check failed isn't revealed to the caller
+// (docs/auth.md's Access session is either present and valid, or the
+// request doesn't get further than this).
+async function authorize(
+  request: Request,
+  env: Env,
+  url: URL,
+  route: Route,
+  timing: RequestTiming,
+): Promise<Omit<RequestContext, "params"> | Response> {
+  const access = route.public ? undefined : await resolveAccess(request, env, timing);
+  if (access === null) return new Response("Unauthorized", { status: 401 });
+  if (!route.requiresProof) return { access };
+  try {
+    return { access, proof: await requireProof(request, env, url) };
+  } catch (error) {
+    if (!(error instanceof ProofRequiredError)) throw error;
+    return new Response(error.message, { status: error.status });
+  }
+}
+
 export async function handleApi(
   request: Request,
   env: Env,
@@ -268,37 +289,10 @@ export async function handleApi(
   timing: RequestTiming,
 ): Promise<Response> {
   const found = findRoute(url.pathname);
-  if (!found) {
-    return new Response("Not Found", { status: 404 });
-  }
+  if (!found) return new Response("Not Found", { status: 404 });
   const route = found.methods[request.method];
-  if (!route) {
-    return new Response("Method Not Allowed", { status: 405 });
-  }
-
-  let access: AccessJwtClaims | undefined;
-  if (!route.public) {
-    const resolved = await resolveAccess(request, env, timing);
-    if (!resolved) {
-      // Deliberately uniform: which check failed isn't revealed to the
-      // caller (docs/auth.md's Access session is either present and valid,
-      // or the request doesn't get further than this).
-      return new Response("Unauthorized", { status: 401 });
-    }
-    access = resolved;
-  }
-
-  let proof: ProofContext | undefined;
-  if (route.requiresProof) {
-    try {
-      proof = await requireProof(request, env, url);
-    } catch (error) {
-      if (error instanceof ProofRequiredError) {
-        return new Response(error.message, { status: error.status });
-      }
-      throw error;
-    }
-  }
-
-  return route.handler(request, env, { access, params: found.params, proof });
+  if (!route) return new Response("Method Not Allowed", { status: 405 });
+  const authorized = await authorize(request, env, url, route, timing);
+  if (authorized instanceof Response) return authorized;
+  return route.handler(request, env, { ...authorized, params: found.params });
 }

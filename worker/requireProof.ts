@@ -58,7 +58,9 @@ function requireProofEnvelope(header: string | null): ProofEnvelope {
   const envelope = parsed as Partial<ProofEnvelope>;
   if (
     envelope.version !== 1 ||
-    typeof envelope.expires_at !== "number" ||
+    // A fractional expires_at would otherwise pass verifyProof()'s range
+    // check and then throw inside the canonical bytes' BigInt conversion.
+    !Number.isSafeInteger(envelope.expires_at) ||
     typeof envelope.request_id !== "string" ||
     typeof envelope.signature !== "string"
   ) {

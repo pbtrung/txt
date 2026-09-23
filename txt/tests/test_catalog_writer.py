@@ -13,7 +13,6 @@ class FakeD1:
     def __init__(self):
         self.key_store = {}
         self.documents = {}
-        self.bookmarks = {}
         self.catalog = None
         self._next_id = 1
 
@@ -31,7 +30,10 @@ class FakeD1:
             return {"wrapped_key": row["wrapped_key"]} if row else None
         raise AssertionError(f"unexpected query_one: {sql}")
 
-    def execute(self, sql, params=None):
+    def insert_row(self, sql, params, _lookup_sql, _lookup_params):
+        return self.execute(sql, params)["meta"]["last_row_id"]
+
+    def execute(self, sql, params=None, *, idempotent=False):
         sql = sql.strip()
         if sql.startswith("INSERT INTO key_store"):
             return self._insert_key(sql, params)
@@ -41,8 +43,6 @@ class FakeD1:
             return {"meta": {}}
         if sql.startswith("INSERT INTO documents"):
             return self._insert_document(sql, params)
-        if sql.startswith("INSERT INTO bookmarks"):
-            return self._insert_bookmark(sql, params)
         if sql.startswith("INSERT INTO catalog"):
             return self._insert_catalog(sql, params)
         if sql.startswith("UPDATE catalog"):
@@ -69,23 +69,11 @@ class FakeD1:
         }
         return {"meta": {"last_row_id": id_}}
 
-    def _insert_bookmark(self, sql, params):
-        (bookmark_blob,) = params
-        match = re.search(r"VALUES \((\d+), (\d+), (\d+), unhex\(\?\)\)", sql)
-        id_ = self._alloc_id()
-        self.bookmarks[id_] = {
-            "document_id": int(match.group(1)),
-            "created_at": int(match.group(2)),
-            "key_id": int(match.group(3)),
-            "bookmark_blob": bookmark_blob,
-        }
-        return {"meta": {"last_row_id": id_}}
-
     def _insert_catalog(self, sql, params):
         (catalog_blob,) = params
         key_id = int(re.search(r"VALUES \(1, (\d+),", sql).group(1))
         self.catalog = {"key_id": key_id, "catalog_blob": catalog_blob}
-        return {"meta": {}}
+        return {"meta": {"last_row_id": 1}}
 
 
 class FakeR2Client:
@@ -117,7 +105,7 @@ def test_insert_document_starts_with_no_access_state(store):
 
 
 def test_insert_document_failure_leaves_no_orphaned_key_store_rows(store):
-    def failing_insert(sql, params=None):
+    def failing_insert(sql, params=None, **_kwargs):
         if sql.startswith("INSERT INTO documents"):
             raise RuntimeError("simulated D1 failure")
         return FakeD1.execute(store.d1, sql, params)
@@ -126,31 +114,6 @@ def test_insert_document_failure_leaves_no_orphaned_key_store_rows(store):
 
     with pytest.raises(RuntimeError, match="simulated D1 failure"):
         store.insert_document(b"c" * 128, "path123")
-
-    assert store.d1.key_store == {}
-
-
-def test_insert_bookmark_round_trips_cfi_page_and_preview(store):
-    bookmark_id = store.insert_bookmark(7, "epubcfi(/6/4)", 12, "Fear.", 555)
-
-    row = store.d1.bookmarks[bookmark_id]
-    assert row["document_id"] == 7
-    assert row["created_at"] == 555
-    row_key = store.unwrap_key(row["key_id"])
-    payload = store.blob.decrypt_json(row["bookmark_blob"], row_key)
-    assert payload == {"cfi": "epubcfi(/6/4)", "page_number": 12, "preview": "Fear."}
-
-
-def test_insert_bookmark_failure_leaves_no_orphaned_key_store_row(store):
-    def failing_insert(sql, params=None):
-        if sql.startswith("INSERT INTO bookmarks"):
-            raise RuntimeError("simulated D1 failure")
-        return FakeD1.execute(store.d1, sql, params)
-
-    store.d1.execute = failing_insert
-
-    with pytest.raises(RuntimeError, match="simulated D1 failure"):
-        store.insert_bookmark(7, "epubcfi(/6/4)", None, "", 0)
 
     assert store.d1.key_store == {}
 

@@ -61,36 +61,17 @@ class DocumentStore:
         key_id = self.insert_key("content_key", row_key)
         return key_id, self._content_blob(path, content_key, row_key)
 
-    def insert_bookmark(
-        self,
-        document_id: int,
-        cfi: str,
-        page_number: int | None,
-        preview: str,
-        created_at: int,
-    ) -> int:
-        key_id, blob = self._bookmark_key_and_blob(cfi, page_number, preview)
-        return self._insert_bookmark_row_or_cleanup(
-            document_id, key_id, blob, created_at
-        )
-
-    def _bookmark_key_and_blob(
-        self, cfi: str, page_number: int | None, preview: str
-    ) -> tuple[int, bytes]:
-        row_key = secrets.token_bytes(128)
-        key_id = self.insert_key("bookmark_key", row_key)
-        blob = self.blob.encrypt_json(
-            {"cfi": cfi, "page_number": page_number, "preview": preview}, row_key
-        )
-        return key_id, blob
-
     def insert_key(self, purpose: str, plain_key: bytes) -> int:
-        result = self.d1.execute(
+        # Each wrapped key is a fresh random ciphertext, so it identifies
+        # exactly the row this insert writes (D1Client.insert_row()).
+        wrapped_key = self.blob.encrypt(plain_key, self.umk)
+        return self.d1.insert_row(
             "INSERT INTO key_store (purpose, wrapped_key, created_at) "
             f"VALUES (?, unhex(?), {_now_ms()})",
-            [purpose, self.blob.encrypt(plain_key, self.umk)],
+            [purpose, wrapped_key],
+            "SELECT id FROM key_store WHERE wrapped_key = unhex(?)",
+            [wrapped_key],
         )
-        return result["meta"]["last_row_id"]
 
     def unwrap_key(self, key_id: int) -> bytes:
         row = self.d1.query_one(
@@ -99,7 +80,7 @@ class DocumentStore:
         return self.blob.decrypt(row["wrapped_key"], self.umk)
 
     def delete_key(self, key_id: int) -> None:
-        self.d1.execute(f"DELETE FROM key_store WHERE id = {key_id}")
+        self.d1.execute(f"DELETE FROM key_store WHERE id = {key_id}", idempotent=True)
 
     def _content_blob(self, path: str, content_key: bytes, content_row_key: bytes):
         return self.blob.encrypt_json(
@@ -119,27 +100,13 @@ class DocumentStore:
         # key_store row for reading state until PATCH
         # /v1/documents/:id/access (worker/documentsEndpoint.ts) writes to
         # it for the first time.
-        result = self.d1.execute(
+        return self.d1.insert_row(
             "INSERT INTO documents (created_at, content_key_id, content_blob) "
             f"VALUES ({_now_ms()}, {content_key_id}, unhex(?))",
             [content_blob],
+            "SELECT id FROM documents WHERE content_blob = unhex(?)",
+            [content_blob],
         )
-        return result["meta"]["last_row_id"]
-
-    def _insert_bookmark_row_or_cleanup(
-        self, document_id, key_id, bookmark_blob, created_at
-    ) -> int:
-        try:
-            result = self.d1.execute(
-                "INSERT INTO bookmarks "
-                "(document_id, created_at, key_id, bookmark_blob) "
-                f"VALUES ({document_id}, {created_at}, {key_id}, unhex(?))",
-                [bookmark_blob],
-            )
-            return result["meta"]["last_row_id"]
-        except Exception:
-            self.delete_key(key_id)
-            raise
 
 
 class CatalogWriter:
@@ -208,10 +175,12 @@ class CatalogWriter:
 
     def _create_row(self, state: CatalogState, catalog_blob: bytes) -> None:
         key_id = self.store.insert_key("catalog_key", state.row_key)
-        self.store.d1.execute(
+        self.store.d1.insert_row(
             "INSERT INTO catalog (singleton, key_id, catalog_blob, updated_at) "
             f"VALUES (1, {key_id}, unhex(?), {_now_ms()})",
             [catalog_blob],
+            f"SELECT singleton AS id FROM catalog WHERE key_id = {key_id}",
+            [],
         )
 
     def _update_row(self, key_id: int, catalog_blob: bytes) -> None:
@@ -219,6 +188,7 @@ class CatalogWriter:
             f"UPDATE catalog SET catalog_blob = unhex(?), updated_at = {_now_ms()} "
             f"WHERE singleton = 1 AND key_id = {key_id}",
             [catalog_blob],
+            idempotent=True,  # sets absolute values; a replay changes nothing
         )
 
 

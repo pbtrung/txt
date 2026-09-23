@@ -62,7 +62,10 @@ class FakeD1:
             return {"wrapped_key": row["wrapped_key"]} if row else None
         raise AssertionError(f"unexpected query_one: {sql}")
 
-    def execute(self, sql, params=None):
+    def insert_row(self, sql, params, _lookup_sql, _lookup_params):
+        return self.execute(sql, params)["meta"]["last_row_id"]
+
+    def execute(self, sql, params=None, *, idempotent=False):
         sql = sql.strip()
         if sql.startswith("INSERT INTO owner"):
             self.owner = dict(zip(OWNER_PARAM_FIELDS, params, strict=True))
@@ -90,7 +93,7 @@ class FakeD1:
             (catalog_blob,) = params
             key_id = int(re.search(r"VALUES \(1, (\d+),", sql).group(1))
             self.catalog = {"key_id": key_id, "catalog_blob": catalog_blob}
-            return {"meta": {}}
+            return {"meta": {"last_row_id": 1}}
         if sql.startswith("UPDATE catalog"):
             (catalog_blob,) = params
             self.catalog["catalog_blob"] = catalog_blob
@@ -267,7 +270,7 @@ def test_invalid_document_id_leaves_no_orphaned_key_store_rows(tmp_path, d1, eng
 
     real_execute = d1.execute
 
-    def failing_documents_insert(sql, params=None):
+    def failing_documents_insert(sql, params=None, **_kwargs):
         if sql.startswith("INSERT INTO documents"):
             raise RuntimeError("simulated D1 failure")
         return real_execute(sql, params)

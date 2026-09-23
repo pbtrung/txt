@@ -145,6 +145,25 @@ describe("POST /v1/shared-url", () => {
     expect(response.status).toBe(400);
   });
 
+  it("rejects an oversized body with 413 before parsing it", async () => {
+    const response = await SELF.fetch("https://example.com/v1/shared-url", {
+      method: "POST",
+      body: JSON.stringify({ share_id: "a".repeat(43), grant: "a".repeat(4096) }),
+    });
+    expect(response.status).toBe(413);
+  });
+
+  it("rejects a grant over 512 decoded bytes with 400", async () => {
+    // 690 characters fits under the body limit but exceeds the grant limit.
+    const response = await redeem(blob(32), base64UrlEncode(blob(517)));
+    expect(response.status).toBe(400);
+  });
+
+  it("rejects a share_id that isn't exactly 32 bytes with 400", async () => {
+    const response = await redeem(blob(33), base64UrlEncode(blob(80)));
+    expect(response.status).toBe(400);
+  });
+
   it("rejects an unknown share_id (well-formed but unregistered) with 404", async () => {
     // A grant that decrypts fine but for a share_id with no shares row.
     const shareId = blob(32);

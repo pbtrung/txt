@@ -5,7 +5,7 @@
 // (ownerProof.ts) over the exact body bytes it sends.
 import type { OwnerSigningIdentity } from "./ownerProof";
 import { signOwnerProof } from "./ownerProof";
-import { withNetworkRetries } from "./networkRequest";
+import { withNetworkRetries, withNetworkTimeout } from "./networkRequest";
 import { fromBase64, toBase64 } from "../util/base64";
 import { objectRecord, stringField } from "../util/validation";
 
@@ -122,24 +122,42 @@ export interface R2CredentialSet {
   catalog: R2TempCredential;
 }
 
-async function fetchSameOrigin(path: string, init: RequestInit): Promise<Response> {
+// A cross-origin failure following Access's own redirect surfaces as a
+// generic fetch TypeError, indistinguishable at this layer from a
+// transient network error (offline, DNS, connection reset) -- both throw
+// the exact same shape. withNetworkRetries() gives the transient case a
+// real chance to recover before either is treated as "not logged in"
+// below; a persistent failure either way still ends up there once retries
+// are exhausted, per docs/auth.md §1. Only reads are retried: a mutation
+// whose response was lost may already have committed (a bookmark POST has
+// no server-side idempotency), so it gets one timed attempt and its caller
+// decides whether a fresh, freshly-signed attempt is safe.
+async function fetchSameOrigin(
+  path: string,
+  init: RequestInit,
+  retry: boolean,
+): Promise<Response> {
+  const attempt = (signal: AbortSignal) =>
+    fetch(path, { ...init, signal: combineSignals(init.signal, signal) });
   let response: Response;
   try {
-    // A cross-origin failure following Access's own redirect surfaces as a
-    // generic fetch TypeError, indistinguishable at this layer from a
-    // transient network error (offline, DNS, connection reset) -- both
-    // throw the exact same shape. withNetworkRetries() gives the transient
-    // case a real chance to recover before either is treated as "not
-    // logged in" below; a persistent failure either way still ends up
-    // there once retries are exhausted, per docs/auth.md §1.
-    response = await withNetworkRetries(() => fetch(path, init));
+    response = await (retry
+      ? withNetworkRetries(attempt)
+      : withNetworkTimeout(attempt));
   } catch {
     throw new AccessRequiredError();
   }
-  if (isAccessChallenge(response)) {
-    throw new AccessRequiredError();
-  }
+  if (isAccessChallenge(response)) throw new AccessRequiredError();
   return response;
+}
+
+// Aborts the in-flight fetch() itself on the helper's own timeout, not
+// just the promise wrapping it, as well as on the caller's own signal.
+function combineSignals(
+  caller: AbortSignal | null | undefined,
+  timeout: AbortSignal,
+): AbortSignal {
+  return caller ? AbortSignal.any([caller, timeout]) : timeout;
 }
 
 /** True only for a response that actually left this origin (a redirect,
@@ -387,7 +405,7 @@ export class ApiClient {
   }
 
   private async get(path: string, signal?: AbortSignal): Promise<Response> {
-    return fetchSameOrigin(this.url(path), { signal });
+    return fetchSameOrigin(this.url(path), { signal }, true);
   }
 
   private async proofed(
@@ -405,16 +423,20 @@ export class ApiClient {
       path,
       bodyFields,
     );
-    return fetchSameOrigin(this.url(path), {
-      method,
-      headers: {
-        "Content-Type": "application/json",
-        [TICKET_HEADER]: signing.ticket,
-        [PROOF_HEADER]: JSON.stringify(envelope),
+    return fetchSameOrigin(
+      this.url(path),
+      {
+        method,
+        headers: {
+          "Content-Type": "application/json",
+          [TICKET_HEADER]: signing.ticket,
+          [PROOF_HEADER]: JSON.stringify(envelope),
+        },
+        body: new Uint8Array(body),
+        signal,
       },
-      body: new Uint8Array(body),
-      signal,
-    });
+      false,
+    );
   }
 
   private url(path: string): string {

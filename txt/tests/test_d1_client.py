@@ -1,7 +1,7 @@
 import pytest
 import requests
 
-from txt.d1_client import D1Client, D1Error
+from txt.d1_client import D1AmbiguousWriteError, D1Client, D1Error
 
 
 class FakeResponse:
@@ -195,3 +195,91 @@ def test_does_not_retry_a_4xx_response():
         _client(session).query("SELECT 1")
 
     assert len(session.calls) == 1
+
+
+def _insert_response(row_id):
+    return FakeResponse(
+        {
+            "success": True,
+            "result": [{"success": True, "meta": {"last_row_id": row_id}}],
+        }
+    )
+
+
+def _lookup_response(rows):
+    return FakeResponse(
+        {"success": True, "result": [{"success": True, "results": rows}]}
+    )
+
+
+def test_execute_never_replays_a_write_after_a_timeout():
+    session = ScriptedSession([requests.exceptions.ReadTimeout("timed out")])
+
+    with pytest.raises(D1AmbiguousWriteError):
+        _client(session).execute("INSERT INTO t DEFAULT VALUES")
+
+    assert session.calls == 1
+
+
+def test_execute_never_replays_a_write_after_a_5xx():
+    session = ScriptedSession([FakeResponse({}, status_code=502)])
+
+    with pytest.raises(D1AmbiguousWriteError):
+        _client(session).execute("INSERT INTO t DEFAULT VALUES")
+
+    assert session.calls == 1
+
+
+def test_execute_retries_a_write_declared_idempotent(monkeypatch):
+    monkeypatch.setattr("txt.d1_client.time.sleep", lambda _seconds: None)
+    session = ScriptedSession(
+        [requests.exceptions.ReadTimeout("timed out"), SUCCESS_RESPONSE]
+    )
+
+    _client(session).execute("DELETE FROM t WHERE id = 1", idempotent=True)
+
+    assert session.calls == 2
+
+
+def test_insert_row_returns_the_committed_row_instead_of_replaying():
+    session = ScriptedSession(
+        [requests.exceptions.ReadTimeout("timed out"), _lookup_response([{"id": 9}])]
+    )
+
+    row_id = _client(session).insert_row(
+        "INSERT INTO t (b) VALUES (unhex(?))", [b"x"], "SELECT id FROM t", []
+    )
+
+    assert row_id == 9
+    assert session.calls == 2  # the failed insert and its lookup -- no replay
+
+
+def test_insert_row_replays_only_once_the_lookup_finds_nothing(monkeypatch):
+    monkeypatch.setattr("txt.d1_client.time.sleep", lambda _seconds: None)
+    session = ScriptedSession(
+        [
+            FakeResponse({}, status_code=503),
+            _lookup_response([]),
+            _insert_response(4),
+        ]
+    )
+
+    row_id = _client(session).insert_row(
+        "INSERT INTO t (b) VALUES (unhex(?))", [b"x"], "SELECT id FROM t", []
+    )
+
+    assert row_id == 4
+    assert session.calls == 3
+
+
+def test_insert_row_gives_up_after_every_attempt_is_confirmed_uncommitted(monkeypatch):
+    monkeypatch.setattr("txt.d1_client.time.sleep", lambda _seconds: None)
+    outcomes = [requests.exceptions.ReadTimeout("timed out"), _lookup_response([])]
+    session = ScriptedSession(outcomes * 4)
+
+    with pytest.raises(D1AmbiguousWriteError):
+        _client(session).insert_row(
+            "INSERT INTO t (b) VALUES (unhex(?))", [b"x"], "SELECT id FROM t", []
+        )
+
+    assert session.calls == 8

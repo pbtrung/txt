@@ -67,5 +67,7 @@ class DbCleaner:
 
     def _delete_row(self, share_id_hash: bytes) -> None:
         self.owner.d1.execute(
-            "DELETE FROM shares WHERE share_id_hash = unhex(?)", [share_id_hash]
+            "DELETE FROM shares WHERE share_id_hash = unhex(?)",
+            [share_id_hash],
+            idempotent=True,
         )

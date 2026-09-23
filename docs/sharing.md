@@ -138,6 +138,11 @@ applies, keyed by the recipient's IP.
 }
 ```
 
+Before any decoding or decryption, the Worker bounds its inputs: a body
+over 1024 bytes is rejected with `413` while still streaming, and
+`share_id` must be exactly 43 base64url characters and `grant` at most
+683 (512 bytes decoded, §2), otherwise `400`.
+
 The Worker decrypts `grant` with `SHARE_GRANT_KEY` to recover the object
 path, hashes the capability, and selects an `active` `shares` row whose
 `object_path_hash` matches `SHA-256(decrypted path)`. It does not consult

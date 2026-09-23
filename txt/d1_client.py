@@ -9,6 +9,12 @@ class D1Error(RuntimeError):
     pass
 
 
+class D1AmbiguousWriteError(D1Error):
+    """A write's request failed in a way (timeout, connection error, 5xx)
+    that can arrive after D1 has already committed it -- whether it took
+    effect is unknown."""
+
+
 # Cloudflare's D1 HTTP API has a known latency tail -- an individual query
 # occasionally takes longer than a single request should reasonably wait
 # for, independent of that query's own cost. A batch command (--ingest,
@@ -16,7 +22,10 @@ class D1Error(RuntimeError):
 # small per-call chance of a transient timeout/connection error compounds
 # over a large library; retrying those specifically (never a definite
 # 4xx failure, which retrying would only delay reporting) keeps one slow
-# request from aborting an otherwise-healthy run.
+# request from aborting an otherwise-healthy run. Only reads and writes
+# the caller declares idempotent are replayed blindly: a timeout or 5xx can
+# arrive after D1 has already committed a write, so an INSERT is replayed
+# only once insert_row()'s lookup confirms the failed attempt didn't land.
 MAX_ATTEMPTS = 4  # 1 initial + 3 retries
 RETRY_DELAY_SECONDS = 1.0
 RETRYABLE_EXCEPTIONS = (
@@ -42,23 +51,69 @@ class D1Client:
         self.session = session
 
     def query(self, sql: str, params: Sequence | None = None) -> list[dict]:
-        return _rows(self._request(sql, params))
+        return _rows(self._request(sql, params, retry=True))
 
     def query_one(self, sql: str, params: Sequence | None = None) -> dict | None:
         rows = self.query(sql, params)
         return rows[0] if rows else None
 
-    def execute(self, sql: str, params: Sequence | None = None) -> dict:
-        return self._request(sql, params)
+    def execute(
+        self, sql: str, params: Sequence | None = None, *, idempotent: bool = False
+    ) -> dict:
+        """Sends a write once, raising D1AmbiguousWriteError when it may or
+        may not have committed -- unless `idempotent`, when replaying it is
+        harmless and it retries exactly like a read."""
+        return self._request(sql, params, retry=idempotent)
 
-    def _request(self, sql: str, params: Sequence | None) -> dict:
+    def insert_row(
+        self, sql: str, params: Sequence, lookup_sql: str, lookup_params: Sequence
+    ) -> int:
+        """Runs a single-row INSERT and returns its row id. After an ambiguous
+        failure, `lookup_sql` (which must select that exact row as `id`, e.g.
+        by a random ciphertext only this insert writes) decides whether the
+        attempt committed before the INSERT is ever replayed."""
+        for attempt in range(MAX_ATTEMPTS):
+            try:
+                return self.execute(sql, params)["meta"]["last_row_id"]
+            except D1AmbiguousWriteError as error:
+                row = self._committed_row(lookup_sql, lookup_params, attempt, error)
+                if row is not None:
+                    return row["id"]
+        raise AssertionError("unreachable")  # the last attempt always returns/raises
+
+    def _committed_row(
+        self, lookup_sql: str, lookup_params: Sequence, attempt: int, error: Exception
+    ) -> dict | None:
+        """The row an ambiguous insert attempt committed, if any; otherwise
+        backs off before the next attempt, or re-raises after the last."""
+        row = self.query_one(lookup_sql, lookup_params)
+        if row is None and attempt == MAX_ATTEMPTS - 1:
+            raise error
+        if row is None:
+            time.sleep(RETRY_DELAY_SECONDS * 2**attempt)
+        return row
+
+    def _request(self, sql: str, params: Sequence | None, *, retry: bool) -> dict:
         body = {"sql": sql, "params": _encode_params(params or [])}
-        response = self._post_with_retries(body)
+        response = (
+            self._post_with_retries(body) if retry else self._post_ambiguous(body)
+        )
         response.raise_for_status()
         payload = response.json()
         if not payload.get("success"):
             raise D1Error(_error_message(payload))
         return _first_result_entry(payload)
+
+    def _post_ambiguous(self, body: dict):
+        try:
+            response = self._post_once(body)
+        except RETRYABLE_EXCEPTIONS as error:
+            raise D1AmbiguousWriteError(f"D1 write outcome unknown: {error}") from error
+        if response.status_code >= 500:
+            raise D1AmbiguousWriteError(
+                f"D1 write outcome unknown: HTTP {response.status_code}"
+            )
+        return response
 
     def _post_with_retries(self, body: dict):
         for attempt in range(MAX_ATTEMPTS):

@@ -14,6 +14,7 @@ import {
 import { isValidSharePath, SHARE_ID_LEN } from "./shareValidation";
 import type { ProofContext } from "./requireProof";
 import { requireBinding } from "./requireVar";
+import { isForeignKeyViolation, isUniqueViolation } from "./d1Errors";
 
 interface ShareRow {
   share_id_hash: ArrayBuffer;
@@ -155,11 +156,15 @@ interface NewShareFields {
 // once, and which one D1's error text happens to mention isn't something
 // to depend on. Only when no row exists under our own share_id_hash is
 // the conflict genuinely about a different share_id's object_path_hash.
+// Anything other than a constraint violation (a transient or internal D1
+// failure) is rethrown to the server-error path, never reported as the
+// caller's own invalid input.
 async function responseForInsertConflict(
   error: unknown,
   env: Env,
   fields: NewShareFields,
 ): Promise<Response | null> {
+  if (!isUniqueViolation(error) && !isForeignKeyViolation(error)) throw error;
   const existing = await lookupShare(env, fields.shareIdHash);
   if (existing) {
     return respondToExistingShare(
@@ -170,9 +175,12 @@ async function responseForInsertConflict(
       fields.shareIdHash,
     );
   }
-  const message = error instanceof Error ? error.message : "";
-  if (message.includes("object_path_hash")) {
+  if (isUniqueViolation(error, "object_path_hash")) {
     return new Response("path reused for different material", { status: 409 });
+  }
+  if (isUniqueViolation(error)) {
+    // Collided on our own share_id_hash, but that row was revoked since.
+    return new Response("share was concurrently revoked, retry", { status: 409 });
   }
   return new Response("invalid document_id", { status: 400 });
 }
