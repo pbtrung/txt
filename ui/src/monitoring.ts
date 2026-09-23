@@ -12,7 +12,17 @@ export function initMonitoring(
   Sentry.init({
     dsn: configuredDsn,
     environment: import.meta.env.MODE,
-    sendDefaultPii: false,
+    // Collect no user info, cookies, headers, bodies, query params, or
+    // stack-frame locals -- any of these can carry a share capability or
+    // content key (docs/deployment.md §5).
+    dataCollection: {
+      userInfo: false,
+      cookies: false,
+      httpHeaders: false,
+      httpBodies: [],
+      urlQueryParams: false,
+      stackFrameVariables: false,
+    },
     tracesSampleRate: 0,
     replaysSessionSampleRate: 0,
     replaysOnErrorSampleRate: 0,

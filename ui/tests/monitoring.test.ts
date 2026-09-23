@@ -22,7 +22,14 @@ describe("initMonitoring", () => {
 
     expect(options).toMatchObject({
       dsn: "https://public@example.test/1",
-      sendDefaultPii: false,
+      dataCollection: {
+        userInfo: false,
+        cookies: false,
+        httpHeaders: false,
+        httpBodies: [],
+        urlQueryParams: false,
+        stackFrameVariables: false,
+      },
       tracesSampleRate: 0,
       replaysSessionSampleRate: 0,
       replaysOnErrorSampleRate: 0,
