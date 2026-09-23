@@ -8,8 +8,8 @@ const policy = headers
   .find((line) => line.trimStart().startsWith("Content-Security-Policy:"));
 
 describe("static security headers", () => {
-  it("allows HTTPS connections to the Worker API and R2", () => {
-    expect(policy).toContain("connect-src 'self' https:;");
+  it("allows connections only to the Worker API and R2", () => {
+    expect(policy).toContain("connect-src 'self' https://*.r2.cloudflarestorage.com;");
   });
 
   it("blocks external resources from inherited EPUB frame policies", () => {

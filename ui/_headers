@@ -1,13 +1,18 @@
 # Cloudflare Workers Static Assets honors this file (same syntax as Pages)
 # at the root of the assets directory -- copied into dist/ by `ui:build`.
 #
+# connect-src allows only the same-origin Worker API and the account's R2 S3
+# endpoint (https://<account>.r2.cloudflarestorage.com), where the browser
+# fetches and uploads encrypted objects and the shared reader follows its
+# presigned URL.
+#
 # EPUB sections render in sandboxed same-origin srcdoc frames and inherit this
 # policy. Scripts remain disabled by allowScriptedContent=false and the iframe
 # sandbox. Resource directives permit bundled/archive-local self, blob, and
 # data content while preventing an untrusted book from contacting an external
 # image, stylesheet, font, media, or nested-frame origin.
 /*
-  Content-Security-Policy: default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' https:; style-src 'self' 'unsafe-inline' blob: data:; img-src 'self' blob: data:; font-src 'self' blob: data:; media-src 'self' blob: data:; frame-src 'self' blob: data:; object-src 'none'; base-uri 'self'; frame-ancestors 'self'; form-action 'self'
+  Content-Security-Policy: default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' https://*.r2.cloudflarestorage.com; style-src 'self' 'unsafe-inline' blob: data:; img-src 'self' blob: data:; font-src 'self' blob: data:; media-src 'self' blob: data:; frame-src 'self' blob: data:; object-src 'none'; base-uri 'self'; frame-ancestors 'self'; form-action 'self'
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
   Referrer-Policy: strict-origin-when-cross-origin
